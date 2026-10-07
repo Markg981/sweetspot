@@ -1,0 +1,235 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - verifica del sistema e del percorso del segnale.
+#
+#   sweetspot-check          elenco leggibile
+#   sweetspot-check --dati   righe "ESITO|voce|dettaglio" per la pagina web
+#
+# ESITO e' OK, ATTENZIONE oppure INFO.
+
+. /usr/lib/sweetspot/common.sh
+
+SQLOG=/var/log/squeezelite.log
+OUT=""
+
+emit() { OUT="$OUT$1|$2|$3
+"; }
+
+check_kernel() {
+	if uname -v | grep -q PREEMPT_RT; then
+		emit OK "Kernel real-time" "$(uname -r), PREEMPT_RT attivo"
+	else
+		emit ATTENZIONE "Kernel real-time" "il kernel in uso non e' real-time"
+	fi
+}
+
+check_ram_system() {
+	local fs
+	fs=$(awk '$2=="/" {print $3}' "$PROC/mounts" | tail -n 1)
+	case "$fs" in
+		rootfs|tmpfs|ramfs) emit OK "Sistema in RAM" "nessun disco usato dal sistema" ;;
+		*) emit ATTENZIONE "Sistema in RAM" "radice su $fs" ;;
+	esac
+	if [ ! -f "$PROC/swaps" ] || [ "$(wc -l < "$PROC/swaps")" -le 1 ]; then
+		emit OK "Swap" "assente"
+	else
+		emit ATTENZIONE "Swap" "presente"
+	fi
+	if grep -q " $STICK_MNT " "$PROC/mounts"; then
+		emit INFO "Chiavetta" "in uso in questo momento"
+	else
+		emit OK "Chiavetta" "non in uso: si puo' togliere"
+	fi
+}
+
+check_cpu() {
+	local iso smt pol gov min max cur turbo states
+	cpu_layout
+	iso=$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)
+	if safe_mode; then
+		emit ATTENZIONE "Ottimizzazioni" "disattivate (avvio sicuro o OTTIMIZZAZIONI=no)"
+	fi
+	if [ -n "$iso" ]; then
+		emit OK "Core dedicati" "riproduzione sul core $LAYOUT_AUDIO, interruzioni USB sul core $LAYOUT_IRQ (isolati: $iso)"
+	elif [ "$LAYOUT_CORES" -le 1 ]; then
+		emit INFO "Core dedicati" "un solo core: solo priorita' real-time"
+	else
+		emit ATTENZIONE "Core dedicati" "nessun core isolato in questo avvio"
+	fi
+	smt=$(cpu_smt_state)
+	case "$smt" in
+		on) emit ATTENZIONE "Hyper-Threading" "attivo" ;;
+		off|forceoff) emit OK "Hyper-Threading" "spento" ;;
+		*) emit OK "Hyper-Threading" "non presente" ;;
+	esac
+	for pol in "$SYS"/devices/system/cpu/cpufreq/policy*; do
+		[ -d "$pol" ] || continue
+		gov=$(cat "$pol/scaling_governor" 2>/dev/null)
+		min=$(cat "$pol/scaling_min_freq" 2>/dev/null)
+		max=$(cat "$pol/scaling_max_freq" 2>/dev/null)
+		cur=$(cat "$pol/scaling_cur_freq" 2>/dev/null)
+		break
+	done
+	if [ -n "$min" ] && [ "$min" = "$max" ]; then
+		emit OK "Frequenza CPU" "fissa a $((min / 1000)) MHz (profilo $(cut -d' ' -f1 "$RUN/cpu.stato" 2>/dev/null), governor $gov)"
+	elif [ -n "$min" ]; then
+		emit ATTENZIONE "Frequenza CPU" "variabile $((min / 1000))-$((max / 1000)) MHz, ora $((cur / 1000)) MHz"
+	else
+		emit INFO "Frequenza CPU" "non regolabile su questo computer"
+	fi
+	turbo=""
+	[ -f "$SYS/devices/system/cpu/intel_pstate/no_turbo" ] &&
+		{ [ "$(cat "$SYS/devices/system/cpu/intel_pstate/no_turbo")" = 1 ] && turbo=off || turbo=on; }
+	[ -f "$SYS/devices/system/cpu/cpufreq/boost" ] &&
+		{ [ "$(cat "$SYS/devices/system/cpu/cpufreq/boost")" = 0 ] && turbo=off || turbo=on; }
+	case "$turbo" in
+		off) emit OK "Turbo" "spento" ;;
+		on) emit ATTENZIONE "Turbo" "attivo" ;;
+	esac
+	states=$(cat "$SYS"/devices/system/cpu/cpu0/cpuidle/state*/name 2>/dev/null | tr '\n' ' ')
+	if cmdline_has intel_idle.max_cstate || cmdline_has processor.max_cstate; then
+		emit OK "Stati di risparmio" "limitati a C1 (disponibili: ${states:-nessuno})"
+	else
+		emit ATTENZIONE "Stati di risparmio" "non limitati (${states:-nessuno})"
+	fi
+	if [ -f "$RUN/pmqos.pid" ] && kill -0 "$(cat "$RUN/pmqos.pid")" 2>/dev/null; then
+		emit INFO "Core sempre svegli" "attivo (profilo prestazioni)"
+	fi
+}
+
+check_usb() {
+	local a
+	a=$(cat "$SYS/module/usbcore/parameters/autosuspend" 2>/dev/null)
+	if [ "$a" = "-1" ]; then
+		emit OK "Risparmio energetico USB" "spento"
+	else
+		emit ATTENZIONE "Risparmio energetico USB" "attivo (autosuspend $a s)"
+	fi
+}
+
+check_dac() {
+	local card name usbid fmts rates nat bdf irqs irq aff tid policy prio cpus hw st
+	card=$(dac_find)
+	if [ -z "$card" ]; then
+		emit ATTENZIONE "DAC" "nessun DAC USB trovato: e' acceso e collegato?"
+		return
+	fi
+	name=$(dac_name "$card")
+	usbid=$(dac_usbid "$card")
+	fmts=$(dac_formats "$card")
+	rates=$(dac_rates "$card")
+	emit OK "DAC" "$name (USB $usbid)"
+	emit INFO "Formati del DAC" "$fmts"
+	[ -n "$rates" ] && emit INFO "Frequenze del DAC" "$(echo "$rates" | sed 's/ /, /g') Hz"
+	nat=$(dac_native_dsd "$card")
+	case "$(lower "$(conf DSD auto)")" in
+		auto|nativo)
+			if [ -n "$nat" ]; then emit OK "DSD" "nativo ($nat)"
+			else emit INFO "DSD" "il DAC non dichiara il DSD nativo: lo converte il server"; fi ;;
+		dop) emit INFO "DSD" "tramite DoP" ;;
+		*) emit INFO "DSD" "convertito dal server" ;;
+	esac
+	if [ -f "$RUN/dac.controller" ]; then
+		bdf=$(cut -d' ' -f1 "$RUN/dac.controller")
+		irqs=$(cut -d' ' -f2- "$RUN/dac.controller")
+		for irq in $irqs; do
+			# Solo i vettori in uso (gli altri non hanno un core assegnato).
+			[ -n "$(cat "$PROC/irq/$irq/effective_affinity_list" 2>/dev/null)" ] || continue
+			# Il core richiesto: il kernel ci sposta l'interruzione alla
+			# prima attivita' USB.
+			aff=$(cat "$PROC/irq/$irq/smp_affinity_list" 2>/dev/null)
+			if [ "$aff" = "$LAYOUT_IRQ" ] || [ -z "$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)" ]; then
+				emit OK "Interruzioni USB del DAC" "controller $bdf, IRQ $irq sul core $aff"
+			else
+				emit ATTENZIONE "Interruzioni USB del DAC" "controller $bdf, IRQ $irq sul core $aff invece del $LAYOUT_IRQ"
+			fi
+		done
+	fi
+	if [ -f "$RUN/audio.tid" ]; then
+		tid=$(cat "$RUN/audio.tid")
+		policy=$(sed 's/.*) //' "$PROC/$tid/stat" 2>/dev/null | cut -d' ' -f39)
+		prio=$(sed 's/.*) //' "$PROC/$tid/stat" 2>/dev/null | cut -d' ' -f38)
+		cpus=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$PROC/$tid/status" 2>/dev/null)
+		if [ "$policy" = 1 ]; then
+			emit OK "Thread di riproduzione" "real-time priorita' $prio sul core $cpus"
+		else
+			emit ATTENZIONE "Thread di riproduzione" "non real-time"
+		fi
+	fi
+	hw=$PROC/asound/card$card/pcm0p/sub0/hw_params
+	st=$(sed -n 's/^state: //p' "$PROC/asound/card$card/pcm0p/sub0/status" 2>/dev/null)
+	if [ -f "$hw" ] && ! grep -q closed "$hw"; then
+		emit OK "Uscita in corso" "$(sed -n 's/^format: //p' "$hw"), $(sed -n 's/^rate: \([0-9]*\).*/\1/p' "$hw") Hz, $(sed -n 's/^channels: //p' "$hw") canali, ${st:-?}"
+		emit INFO "Buffer ALSA" "$(sed -n 's/^buffer_size: //p' "$hw") campioni, periodo $(sed -n 's/^period_size: //p' "$hw")"
+	else
+		emit INFO "Uscita" "chiusa (nessuna riproduzione)"
+	fi
+}
+
+check_player() {
+	local pid xr bufs
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		emit OK "Player" "$(cat "$RUN/player.stato" 2>/dev/null)"
+	else
+		emit ATTENZIONE "Player" "$(cat "$RUN/player.stato" 2>/dev/null || echo 'non avviato')"
+	fi
+	xr=$(grep -c XRUN "$SQLOG" 2>/dev/null)
+	xr=${xr:-0}
+	if [ "$xr" = 0 ]; then
+		emit OK "Interruzioni dell'audio" "nessuna dall'accensione"
+	else
+		emit ATTENZIONE "Interruzioni dell'audio" "$xr dall'accensione"
+	fi
+	bufs=$(player_buffers)
+	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB file + $(( ${bufs#*:} / 1024 )) MB campioni pronti"
+	emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
+}
+
+check_system() {
+	local srv ip disks b t st
+	emit INFO "Classe del computer" "$(machine_class) - $(cpu_model) - $(( $(mem_total_kb) / 1024 )) MB di RAM"
+	ip=$(net_ipv4)
+	if [ -n "$ip" ]; then emit OK "Rete" "indirizzo $ip"; else emit ATTENZIONE "Rete" "nessun indirizzo: il cavo e' collegato?"; fi
+	srv=$(lms_server_ip)
+	if [ -n "$srv" ]; then emit OK "Server Lyrion" "collegato a $srv"
+	else emit ATTENZIONE "Server Lyrion" "non collegato"; fi
+	for b in "$SYS"/block/sd*; do
+		[ -d "$b" ] || continue
+		[ "$(cat "$b/queue/rotational" 2>/dev/null)" = 1 ] || continue
+		[ "$(cat "$b/removable" 2>/dev/null)" = 0 ] || continue
+		case "$(readlink -f "$b/device")" in */usb*) continue ;; esac
+		st=$(hdparm -C "/dev/${b##*/}" 2>/dev/null | sed -n 's/.*drive state is: *//p')
+		disks="$disks ${b##*/}: ${st:-stato sconosciuto}"
+	done
+	[ -n "$disks" ] && emit INFO "Dischi meccanici" "${disks# }"
+	for t in "$SYS"/class/hwmon/hwmon*; do
+		case "$(cat "$t/name" 2>/dev/null)" in
+			coretemp|k10temp)
+				[ -f "$t/temp1_input" ] && emit INFO "Temperatura CPU" "$(( $(cat "$t/temp1_input") / 1000 )) gradi"
+				break ;;
+		esac
+	done
+}
+
+check_kernel
+check_ram_system
+check_cpu
+check_usb
+check_dac
+check_player
+check_system
+
+if [ "$1" = "--dati" ]; then
+	printf '%s' "$OUT"
+else
+	printf '%s' "$OUT" | while IFS='|' read -r esito voce dettaglio; do
+		case "$esito" in
+			OK) mark="  ok " ;;
+			ATTENZIONE) mark=" (!) " ;;
+			*) mark="     " ;;
+		esac
+		printf '%s %-28s %s\n' "$mark" "$voce" "$dettaglio"
+	done
+fi

@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - accesso SSH per l'assistenza, solo se attivato in sweetspot.txt
+# e con una password impostata.
+
+. /usr/lib/sweetspot/common.sh
+
+case "$1" in
+	start)
+		is_yes "$(conf SSH no)" || exit 0
+		pass=$(conf SSH_PASSWORD)
+		if [ -z "$pass" ]; then
+			log "ssh: attivato senza password, non avviato"
+			exit 0
+		fi
+		printf 'root:%s\n' "$pass" | chpasswd >/dev/null 2>&1
+		mkdir -p /etc/dropbear
+		dropbear -R -p 22
+		log "ssh: attivo"
+		;;
+	stop) killall dropbear 2>/dev/null ;;
+	*) echo "uso: $0 start|stop" ;;
+esac

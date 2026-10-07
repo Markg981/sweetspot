@@ -1,0 +1,66 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - primo avvio: legge le impostazioni dalla chiavetta, decide
+# quali moduli del kernel non caricare e imposta i parametri di sistema.
+# Gira prima di udev, cosi' i moduli esclusi non vengono mai caricati.
+
+. /usr/lib/sweetspot/common.sh
+
+write_blacklist() {
+	{
+		echo "# Generato all'avvio da Sweetspot."
+		# Mai necessari a un player: Bluetooth, webcam, lettori di schede,
+		# altoparlante di sistema, watchdog hardware.
+		for m in bluetooth btusb uvcvideo pcspkr iTCO_wdt sp5100_tco rtsx_pci rtsx_usb joydev; do
+			echo "blacklist $m"
+		done
+		if ! is_yes "$(conf USCITA_INTEGRATA no)"; then
+			echo "blacklist snd_hda_intel"
+		fi
+		if [ -z "$(conf WIFI_NOME)" ]; then
+			for m in iwlwifi iwlmvm iwlmld iwldvm ath9k mt7921e; do
+				echo "blacklist $m"
+			done
+		fi
+	} > /etc/modprobe.d/sweetspot-run.conf
+}
+
+tune_sysctl() {
+	# Nessun limite al tempo dei thread real-time: il thread audio non
+	# deve mai essere sospeso dal kernel.
+	put -1 /proc/sys/kernel/sched_rt_runtime_us
+	put 0 /proc/sys/vm/swappiness
+	put 0 /proc/sys/kernel/nmi_watchdog
+	put 0 /proc/sys/kernel/watchdog
+	# Statistiche della memoria aggiornate di rado: meno risvegli periodici.
+	put 10 /proc/sys/vm/stat_interval
+}
+
+case "$1" in
+	start)
+		mkdir -p "$RUN" /var/log /etc/modprobe.d
+		printf 'Sweetspot: lettura impostazioni... '
+		# La chiavetta puo' impiegare qualche secondo a comparire.
+		i=0
+		while [ $i -lt 20 ] && [ -z "$(stick_device)" ]; do
+			usleep 500000
+			i=$((i + 1))
+		done
+		if stick_mount ro; then
+			cp "$STICK_MNT/sweetspot.txt" "$RUN/sweetspot.txt" 2>/dev/null
+			cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
+			stick_umount
+			log "impostazioni lette dalla chiavetta"
+			echo "fatto"
+		else
+			log "chiavetta non trovata: impostazioni predefinite"
+			echo "chiavetta non trovata, uso i valori predefiniti"
+		fi
+		config_build "$RUN/sweetspot.txt"
+		write_blacklist
+		tune_sysctl
+		;;
+	stop) ;;
+	*) echo "uso: $0 start" ;;
+esac

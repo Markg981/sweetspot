@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - schermata di benvenuto con indirizzo e QR code.
+
+case "$1" in
+	start) start-stop-daemon -S -b -m -p /run/sweetspot/schermo.pid -x /usr/bin/sweetspot-display ;;
+	stop) start-stop-daemon -K -p /run/sweetspot/schermo.pid 2>/dev/null ;;
+	*) echo "uso: $0 start|stop" ;;
+esac

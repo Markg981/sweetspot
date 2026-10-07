@@ -1,0 +1,56 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - ottimizzazioni dopo il riconoscimento dell'hardware:
+# parametri di avvio adattati al computer, frequenza fissa della CPU,
+# radio spente, dischi interni in standby, USB sempre alimentato.
+
+. /usr/lib/sweetspot/common.sh
+
+radios_off() {
+	local r type
+	for r in "$SYS"/class/rfkill/rfkill*; do
+		[ -d "$r" ] || continue
+		type=$(cat "$r/type" 2>/dev/null)
+		case "$type" in
+			wlan) [ -n "$(conf WIFI_NOME)" ] && continue ;;
+		esac
+		put 1 "$r/soft"
+	done
+}
+
+# I dischi interni non servono: il sistema e' in RAM e la musica arriva
+# dalla rete. Quelli meccanici vengono fermati.
+disks_standby() {
+	local b dev
+	for b in "$SYS"/block/sd*; do
+		[ -d "$b" ] || continue
+		dev=${b##*/}
+		[ "$(cat "$b/removable" 2>/dev/null)" = 0 ] || continue
+		case "$(readlink -f "$b/device")" in */usb*) continue ;; esac
+		[ "$(cat "$b/queue/rotational" 2>/dev/null)" = 1 ] || continue
+		hdparm -S 12 "/dev/$dev" >/dev/null 2>&1
+		hdparm -y "/dev/$dev" >/dev/null 2>&1 && log "disco $dev in standby"
+	done
+}
+
+usb_power_on() {
+	local c
+	for c in "$SYS"/bus/usb/devices/*/power/control; do
+		put on "$c"
+	done
+}
+
+case "$1" in
+	start)
+		# Attende che udev abbia riconosciuto le periferiche (DAC compreso).
+		udevadm settle --timeout=10 2>/dev/null
+		sweetspot-autotune --applica
+		sweetspot-cpu
+		radios_off
+		usb_power_on
+		disks_standby &
+		;;
+	stop) ;;
+	*) echo "uso: $0 start" ;;
+esac

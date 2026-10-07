@@ -1,0 +1,123 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - adatta i parametri di avvio del kernel a questo computer.
+#
+#   sweetspot-autotune --stampa    mostra i parametri consigliati
+#   sweetspot-autotune --applica   li scrive sulla chiavetta e, se
+#                                  cambiano, riavvia una sola volta
+#
+# I parametri (core isolati, Hyper-Threading, stati di risparmio della CPU,
+# DSD nativo forzato) si possono cambiare solo all'avvio: per questo vengono
+# scritti in /boot/grub/auto.cfg sulla chiavetta, letto dal menu di avvio.
+
+. /usr/lib/sweetspot/common.sh
+
+tune_params() {
+	local p="" iso hk card vidpid
+	if safe_mode; then
+		printf ''
+		return
+	fi
+	cpu_layout
+	[ "$LAYOUT_NOSMT" = 1 ] && p="nosmt"
+	# Solo lo stato C1: la CPU non scende negli stati profondi, che fanno
+	# variare continuamente l'assorbimento.
+	p="$p intel_idle.max_cstate=1 processor.max_cstate=1"
+	if [ -n "$LAYOUT_ISO" ]; then
+		iso=$(join_list "$LAYOUT_ISO")
+		hk=$(join_list "$LAYOUT_HK")
+		p="$p isolcpus=managed_irq,domain,$iso nohz_full=$iso rcu_nocbs=$iso irqaffinity=$hk"
+	fi
+	# Il TSC e' affidabile solo se costante e attivo anche negli stati di
+	# risparmio: solo allora si disattiva il suo controllo periodico.
+	if cpu_has_flag constant_tsc && cpu_has_flag nonstop_tsc; then
+		p="$p tsc=reliable"
+	fi
+	# DSD nativo forzato per DAC che non lo dichiarano. Se il parametro e'
+	# gia' attivo si conserva: cosi' un DAC spento all'avvio, o che ora
+	# dichiara il DSD proprio grazie al parametro, non provoca riavvii.
+	if [ "$(lower "$(conf DSD auto)")" = nativo ]; then
+		vidpid=$(cmdline_value snd_usb_audio.quirk_flags)
+		if [ -n "$vidpid" ]; then
+			p="$p snd_usb_audio.quirk_flags=$vidpid"
+		else
+			card=$(dac_find)
+			if [ -n "$card" ] && [ -z "$(dac_native_dsd "$card")" ]; then
+				vidpid=$(dac_usbid "$card")
+				[ -n "$vidpid" ] && p="$p snd_usb_audio.quirk_flags=$vidpid:dsd_raw"
+			fi
+		fi
+	fi
+	printf '%s' "$p" | sed 's/^ *//'
+}
+
+params_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
+
+desired() {
+	local p h
+	p=$(tune_params)
+	h=$(params_hash "$p")
+	printf '%s sweetspot.tune=%s' "$p" "$h" | sed 's/^ *//'
+}
+
+case "$1" in
+	--stampa|--print|'')
+		desired
+		echo
+		;;
+	--applica|--apply)
+		# In avvio sicuro non si cambia nulla.
+		if cmdline_has sweetspot.sicuro; then
+			log "autotune: avvio sicuro, nessuna modifica"
+			exit 0
+		fi
+		want=$(desired)
+		want_hash=$(printf '%s' "$want" | sed -n 's/.*sweetspot.tune=\([0-9a-f]*\).*/\1/p')
+		have_hash=$(cmdline_value sweetspot.tune)
+		if [ "$want_hash" = "$have_hash" ]; then
+			log "autotune: parametri gia' attivi ($want_hash)"
+			exit 0
+		fi
+		# Evita i riavvii a ripetizione: se la chiavetta ha gia' questi
+		# parametri ma il kernel non li ha ricevuti, si segnala e basta.
+		if [ -f "$RUN/auto.cfg" ] && grep -q "sweetspot.tune=$want_hash" "$RUN/auto.cfg"; then
+			log "autotune: la chiavetta contiene gia' i parametri $want_hash ma non sono attivi"
+			echo "attenzione: parametri non applicati dal menu di avvio" > "$RUN/autotune.stato"
+			exit 0
+		fi
+		if ! stick_mount rw; then
+			log "autotune: chiavetta non trovata, parametri non salvati"
+			echo "chiavetta non trovata" > "$RUN/autotune.stato"
+			exit 0
+		fi
+		mkdir -p "$STICK_MNT/boot/grub"
+		{
+			echo "# Generato automaticamente da Sweetspot per questo computer:"
+			echo "# $(cpu_model)"
+			echo "# Si rigenera da solo: per ripartire da zero basta cancellarlo."
+			echo "set sweetspot_tune=\"$want\""
+		} > "$STICK_MNT/boot/grub/auto.cfg.tmp" &&
+			mv "$STICK_MNT/boot/grub/auto.cfg.tmp" "$STICK_MNT/boot/grub/auto.cfg"
+		ok=$?
+		cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
+		stick_umount
+		if [ $ok -ne 0 ]; then
+			log "autotune: scrittura non riuscita"
+			exit 0
+		fi
+		log "autotune: nuovi parametri $want, riavvio"
+		echo "riavvio" > "$RUN/autotune.stato"
+		{
+			printf '\033[2J\033[H\n\n'
+			echo "  Sweetspot si e' adattato a questo computer."
+			echo "  Riavvio in corso: succede solo la prima volta."
+		} > /dev/console 2>&1
+		sleep 4
+		reboot
+		;;
+	*)
+		echo "uso: $0 [--stampa|--applica]" >&2
+		exit 1
+		;;
+esac

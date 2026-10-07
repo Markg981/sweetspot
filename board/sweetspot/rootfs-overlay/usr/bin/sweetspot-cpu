@@ -1,0 +1,105 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - frequenza fissa della CPU secondo il profilo.
+#
+#   bilanciato   a meta' strada tra minima e nominale (predefinito)
+#   silenzio     alla minima: meno corrente e meno calore
+#   prestazioni  alla nominale, e i core non entrano mai in pausa
+#
+# In tutti i profili il Turbo e' spento: frequenza e tensione restano
+# costanti e l'assorbimento non varia con il carico.
+
+. /usr/lib/sweetspot/common.sh
+
+PROFILE=$(lower "${1:-$(conf PROFILO bilanciato)}")
+CPUFREQ=$SYS/devices/system/cpu/cpufreq
+
+turbo_off() {
+	[ -f "$SYS/devices/system/cpu/intel_pstate/no_turbo" ] &&
+		put 1 "$SYS/devices/system/cpu/intel_pstate/no_turbo"
+	[ -f "$CPUFREQ/boost" ] && put 0 "$CPUFREQ/boost"
+	for b in "$CPUFREQ"/policy*/boost; do
+		[ -f "$b" ] && put 0 "$b"
+	done
+}
+
+# Frequenza nominale (senza Turbo) in kHz.
+base_freq() {
+	local pol=$1 list f1 f2
+	if [ -f "$pol/base_frequency" ]; then
+		cat "$pol/base_frequency"
+		return
+	fi
+	if [ -f "$pol/scaling_available_frequencies" ]; then
+		list=$(tr ' ' '\n' < "$pol/scaling_available_frequencies" | grep . | sort -n -r)
+		f1=$(echo "$list" | sed -n 1p)
+		f2=$(echo "$list" | sed -n 2p)
+		# acpi-cpufreq indica il Turbo come "nominale + 1 MHz".
+		if [ -n "$f2" ] && [ $((f1 - f2)) -eq 1000 ]; then echo "$f2"; else echo "$f1"; fi
+		return
+	fi
+	cat "$pol/cpuinfo_max_freq"
+}
+
+# La frequenza disponibile piu' vicina a quella richiesta.
+snap_freq() {
+	local pol=$1 want=$2 best="" bestd="" f d
+	if [ ! -f "$pol/scaling_available_frequencies" ]; then
+		echo "$want"
+		return
+	fi
+	for f in $(cat "$pol/scaling_available_frequencies"); do
+		d=$((f - want)); [ $d -lt 0 ] && d=$((-d))
+		if [ -z "$bestd" ] || [ $d -lt "$bestd" ]; then best=$f; bestd=$d; fi
+	done
+	echo "${best:-$want}"
+}
+
+set_policy() {
+	local pol=$1 min base target
+	min=$(cat "$pol/cpuinfo_min_freq")
+	base=$(base_freq "$pol")
+	case "$PROFILE" in
+		silenzio) target=$min ;;
+		prestazioni) target=$base ;;
+		*) target=$(( (min + base) / 2 )) ;;
+	esac
+	target=$(snap_freq "$pol" "$target")
+	if grep -qw performance "$pol/scaling_available_governors" 2>/dev/null; then
+		put performance "$pol/scaling_governor"
+	fi
+	# Prima si allarga l'intervallo, poi lo si chiude sul valore scelto.
+	put "$(cat "$pol/cpuinfo_max_freq")" "$pol/scaling_max_freq"
+	put "$target" "$pol/scaling_min_freq"
+	put "$target" "$pol/scaling_max_freq"
+	put "$target" "$pol/scaling_min_freq"
+	echo "$target"
+}
+
+# Profilo prestazioni: i core restano sempre svegli (nessuna latenza di
+# risveglio). Il valore resta attivo finche' il file rimane aperto.
+pm_qos() {
+	if [ -f "$RUN/pmqos.pid" ]; then
+		kill "$(cat "$RUN/pmqos.pid")" 2>/dev/null
+		rm -f "$RUN/pmqos.pid"
+	fi
+	if [ "$PROFILE" = prestazioni ] && [ -c /dev/cpu_dma_latency ]; then
+		sh -c 'exec 3>/dev/cpu_dma_latency; printf 0x00000000 >&3; exec sleep 2147483647' &
+		echo $! > "$RUN/pmqos.pid"
+	fi
+}
+
+mkdir -p "$RUN"
+if safe_mode; then
+	log "cpu: avvio senza ottimizzazioni, frequenza gestita dal kernel"
+	exit 0
+fi
+turbo_off
+for pol in "$CPUFREQ"/policy*; do
+	[ -d "$pol" ] || continue
+	f=$(set_policy "$pol")
+done
+pm_qos
+echo "$PROFILE ${f:-?}" > "$RUN/cpu.stato"
+log "cpu: profilo $PROFILE, frequenza ${f:-?} kHz"

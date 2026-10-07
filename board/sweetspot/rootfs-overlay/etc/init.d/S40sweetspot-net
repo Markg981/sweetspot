@@ -1,0 +1,69 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - rete: cavo (anche adattatori USB) con DHCP, Wi-Fi solo se
+# configurato. Il risparmio energetico della scheda (EEE) viene spento.
+
+. /usr/lib/sweetspot/common.sh
+
+HOST=sweetspot
+
+wifi_conf() {
+	local ssid pass
+	ssid=$(conf WIFI_NOME | sed 's/\\/\\\\/g; s/"/\\"/g')
+	pass=$(conf WIFI_PASSWORD | sed 's/\\/\\\\/g; s/"/\\"/g')
+	{
+		echo "ctrl_interface=/run/wpa_supplicant"
+		echo "network={"
+		echo "	ssid=\"$ssid\""
+		if [ -n "$pass" ]; then echo "	psk=\"$pass\""; else echo "	key_mgmt=NONE"; fi
+		echo "}"
+	} > "$RUN/wpa.conf"
+	chmod 600 "$RUN/wpa.conf"
+}
+
+# Il collegamento del cavo puo' richiedere qualche secondo dopo
+# l'accensione della scheda: si attende e poi si chiede l'indirizzo,
+# riprovando ogni 5 secondi finche' non arriva.
+start_dhcp() {
+	local i=0
+	while [ $i -lt 10 ] && [ "$(cat "$SYS/class/net/$1/carrier" 2>/dev/null)" != 1 ]; do
+		usleep 500000
+		i=$((i + 1))
+	done
+	udhcpc -b -S -t 4 -T 3 -A 5 -i "$1" -x "hostname:$HOST" -p "/run/udhcpc.$1.pid" >/dev/null 2>&1
+}
+
+case "$1" in
+	start)
+		hostname "$HOST"
+		ip link set lo up
+		for n in "$SYS"/class/net/*; do
+			i=${n##*/}
+			# Solo schede vere (anche USB): niente interfacce virtuali.
+			[ -e "$n/device" ] || continue
+			[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
+			if [ -d "$n/wireless" ] || [ -d "$n/phy80211" ]; then
+				[ -n "$(conf WIFI_NOME)" ] || continue
+				wifi_conf
+				ip link set "$i" up
+				wpa_supplicant -B -i "$i" -c "$RUN/wpa.conf" >/dev/null 2>&1
+				start_dhcp "$i"
+				log "rete: Wi-Fi su $i"
+			else
+				ip link set "$i" up
+				if ! is_yes "$(conf RISPARMIO_RETE no)"; then
+					ethtool --set-eee "$i" eee off >/dev/null 2>&1
+				fi
+				start_dhcp "$i"
+				log "rete: cavo su $i"
+			fi
+		done
+		# Orologio sincronizzato una volta sola, poi nessun traffico.
+		(sleep 10; ntpd -n -q -p pool.ntp.org >/dev/null 2>&1) &
+		;;
+	stop)
+		killall udhcpc wpa_supplicant 2>/dev/null
+		;;
+	*) echo "uso: $0 start|stop" ;;
+esac

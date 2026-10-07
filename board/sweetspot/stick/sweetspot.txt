@@ -1,0 +1,65 @@
+# =====================================================================
+#  SWEETSPOT - impostazioni
+# =====================================================================
+#  Questo file si apre e si modifica con il Blocco note, da qualunque
+#  computer. Salva, rimetti la chiavetta nel player e riaccendilo.
+#
+#  Non serve cambiare niente: i valori qui sotto sono quelli consigliati.
+#  Le righe che iniziano con # sono commenti e vengono ignorate.
+# =====================================================================
+
+# Nome del player, come apparira' nell'app o nella pagina di Lyrion.
+NOME_PLAYER=Sweetspot
+
+# Indirizzo del server Lyrion Music Server.
+# Vuoto = Sweetspot lo cerca da solo nella rete di casa.
+SERVER=
+
+# Quale DAC usare.
+# auto = il primo DAC USB collegato (consigliato).
+# Puoi anche scrivere il nome, per esempio DAC=R26.
+DAC=auto
+
+# Profilo di funzionamento del processore:
+#   bilanciato  = frequenza fissa intermedia (consigliato)
+#   silenzio    = frequenza fissa al minimo: meno consumo e meno calore
+#   prestazioni = frequenza fissa alla nominale, processore sempre sveglio
+PROFILO=bilanciato
+
+# DSD:
+#   auto   = DSD nativo se il DAC lo dichiara, altrimenti lo converte il server
+#   nativo = forza il DSD nativo (per DAC che lo supportano ma non lo dichiarano)
+#   dop    = DSD tramite DoP. Solo se il DAC lo supporta: altrimenti si sente
+#            un forte fruscio!
+#   no     = il DSD viene convertito dal server
+DSD=auto
+
+# Pausa (in millisecondi) quando si passa da PCM a DSD, per dare tempo
+# al DAC di agganciarsi senza perdere l'inizio del brano.
+PAUSA_DSD_MS=500
+
+# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento.
+# 0 = nessuna pausa. Prova 300-500 se senti un clic o perdi l'attacco del brano.
+PAUSA_FREQUENZA_MS=0
+
+# Rete Wi-Fi, solo se il player non e' collegato con il cavo.
+# Il cavo e' sempre preferibile.
+WIFI_NOME=
+WIFI_PASSWORD=
+
+# Risparmio energetico della scheda di rete (EEE). no = spento (consigliato).
+RISPARMIO_RETE=no
+
+# Usare l'uscita audio integrata del computer al posto del DAC USB.
+USCITA_INTEGRATA=no
+
+# Dopo quanti minuti spegnere lo schermo (0 = mai).
+SCHERMO_MINUTI=2
+
+# Accesso remoto per l'assistenza tecnica (SSH).
+SSH=no
+SSH_PASSWORD=
+
+# Ottimizzazioni di sistema (core dedicati, frequenza fissa, ecc.).
+# no = funzionamento normale, utile solo per confronti o problemi.
+OTTIMIZZAZIONI=si

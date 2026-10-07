@@ -1,0 +1,27 @@
+SWEETSPOT - player audio bit-perfect
+====================================
+
+Come si usa
+-----------
+1. Collega il DAC a una porta USB del computer e accendilo.
+2. Collega il computer alla rete di casa con il cavo.
+3. Inserisci questa chiavetta e accendi il computer. Se non parte da
+   solo, scegli la chiavetta dal menu di avvio del computer (di solito
+   compare premendo F8, F11, F12 o Esc subito dopo l'accensione).
+4. Al primo avvio Sweetspot si adatta al computer e si riavvia una volta.
+5. Dal telefono apri http://sweetspot.local per vedere lo stato.
+   La musica si sceglie con Lyrion Music Server o con le sue app.
+
+Impostazioni
+------------
+Si cambiano nel file sweetspot.txt, con il Blocco note. I valori gia'
+presenti sono quelli consigliati.
+
+Se qualcosa non va
+------------------
+- Nel menu di avvio scegli "Sweetspot - avvio sicuro".
+- Il computer deve avere Secure Boot disattivato nel BIOS/UEFI.
+- Per far ripartire da zero l'adattamento al computer, cancella il file
+  boot/grub/auto.cfg da questa chiavetta.
+
+Licenza: GNU GPL versione 3 o successiva.

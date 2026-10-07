@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - avvia il supervisore della riproduzione.
+
+PIDFILE=/run/sweetspot/supervisore.pid
+
+case "$1" in
+	start)
+		mkdir -p /run/sweetspot
+		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/sweetspot-player
+		;;
+	stop)
+		start-stop-daemon -K -p "$PIDFILE" 2>/dev/null
+		killall squeezelite 2>/dev/null
+		;;
+	restart) "$0" stop; sleep 1; "$0" start ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac

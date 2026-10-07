@@ -1,0 +1,153 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - supervisore della riproduzione.
+#
+# Attende il DAC, prepara il percorso del segnale e avvia squeezelite:
+#   - uscita ALSA diretta sul dispositivo hardware (hw:), mai plug o dmix;
+#   - buffer enormi, cosi' il brano arriva tutto in RAM prima di suonare
+#     e durante l'ascolto la rete resta muta;
+#   - thread di riproduzione in real-time sul core isolato;
+#   - interruzioni del controller USB del DAC sul loro core dedicato.
+# Se il DAC viene spento o scollegato, riparte da solo quando torna.
+
+. /usr/lib/sweetspot/common.sh
+
+SQLOG=/var/log/squeezelite.log
+STATE=$RUN/player.stato
+
+say() { echo "$1" > "$STATE"; log "player: $1"; }
+
+is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
+
+num_conf() {
+	local v
+	v=$(conf "$1" "$2")
+	is_number "$v" || v=$2
+	printf '%s' "$v"
+}
+
+# Core da usare: quelli effettivamente isolati da questo avvio.
+setup_layout() {
+	ISOLATED=$(expand_list "$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)")
+	cpu_layout
+	if [ -z "$ISOLATED" ] || safe_mode; then
+		PIN=0
+		HK=$(join_list "$(cpu_online)")
+	else
+		PIN=1
+		HK=$(join_list "$LAYOUT_HK")
+	fi
+}
+
+# Interruzioni del controller USB del DAC: core dedicato e priorita' alta.
+setup_usb_irq() {
+	local card=$1 bdf irqs irq target prio p comm usbdev
+	usbdev=$(dac_usb_device "$card")
+	[ -n "$usbdev" ] && [ -f "$usbdev/power/control" ] && put on "$usbdev/power/control"
+	bdf=$(dac_controller "$card")
+	[ -n "$bdf" ] || return 0
+	irqs=$(pci_irqs "$bdf")
+	prio=$(num_conf PRIORITA_IRQ_USB 90)
+	if [ "$PIN" = 1 ]; then target=$LAYOUT_IRQ; else target=""; fi
+	echo "$bdf $irqs" > "$RUN/dac.controller"
+	for irq in $irqs; do
+		[ -n "$target" ] && put "$target" "$PROC/irq/$irq/smp_affinity_list"
+		for p in "$PROC"/[0-9]*; do
+			comm=$(cat "$p/comm" 2>/dev/null) || continue
+			case "$comm" in
+				"irq/$irq-"*) chrt -f -p "$prio" "${p##*/}" >/dev/null 2>&1 ;;
+			esac
+		done
+	done
+	log "player: controller USB $bdf, interruzioni $irqs sul core ${target:-di sistema}"
+}
+
+# Sposta il thread real-time di squeezelite sul core della riproduzione.
+# Squeezelite lo crea dopo aver preparato i buffer: si riprova a ogni giro
+# di sorveglianza finche' non compare.
+pin_output_thread() {
+	local pid=$1 t policy
+	[ "$PIN" = 1 ] || return 0
+	[ -f "$RUN/audio.tid" ] && [ -d "$PROC/$pid/task/$(cat "$RUN/audio.tid")" ] && return 0
+	for t in "$PROC/$pid"/task/*; do
+		policy=$(sed 's/.*) //' "$t/stat" 2>/dev/null | cut -d' ' -f39)
+		if [ "$policy" = 1 ]; then
+			taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
+			echo "${t##*/}" > "$RUN/audio.tid"
+			log "player: thread di riproduzione ${t##*/} sul core $LAYOUT_AUDIO"
+			return 0
+		fi
+	done
+	return 1
+}
+
+run_player() {
+	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms
+	id=$(dac_id "$card")
+	name=$(conf NOME_PLAYER Sweetspot)
+	server=$(conf SERVER)
+	alsa=$(num_conf BUFFER_ALSA_MS 400)
+	[ "$alsa" -gt 499 ] && alsa=499
+	[ "$alsa" -lt 20 ] && alsa=20
+	periods=$(num_conf PERIODI_ALSA 4)
+	prio=$(num_conf PRIORITA_AUDIO 80)
+	pausa=$(num_conf PAUSA_DSD_MS 500)
+	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 0)
+
+	set -- -o "hw:CARD=$id,DEV=0" -n "$name" -M Sweetspot \
+		-a "$alsa:$periods::1" -b "$(player_buffers)" -C 30 -p "$prio" \
+		-d output=info -f "$SQLOG"
+	[ -n "$server" ] && set -- "$@" -s "$server"
+	[ "$rate_ms" -gt 0 ] && set -- "$@" -r ":$rate_ms"
+
+	dsd=$(lower "$(conf DSD auto)")
+	fmt=$(dac_native_dsd "$card")
+	case "$dsd" in
+		auto|nativo)
+			if [ -n "$fmt" ]; then
+				set -- "$@" -D "$pausa:$fmt"
+			else
+				[ "$dsd" = nativo ] && log "player: DSD nativo richiesto ma non dichiarato dal DAC"
+				set -- "$@" -e dsd
+			fi ;;
+		dop) set -- "$@" -D "$pausa:dop" ;;
+		*) set -- "$@" -e dsd ;;
+	esac
+
+	printf '%s ' "$@" > "$RUN/player.args"
+	taskset -c "$HK" squeezelite "$@" &
+	PID=$!
+	echo "$PID" > "$RUN/squeezelite.pid"
+}
+
+mkdir -p "$RUN" /var/log
+setup_layout
+log "player: core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
+
+while true; do
+	card=$(dac_find)
+	if [ -z "$card" ]; then
+		[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
+		sleep 3
+		continue
+	fi
+	id=$(dac_id "$card")
+	setup_usb_irq "$card"
+	run_player "$card"
+	say "attivo su $(dac_name "$card")"
+	# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
+	rm -f "$RUN/audio.tid"
+	while kill -0 "$PID" 2>/dev/null; do
+		if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
+		pin_output_thread "$PID"
+		if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
+			log "player: DAC scollegato"
+			kill "$PID" 2>/dev/null
+		fi
+	done
+	wait "$PID" 2>/dev/null
+	say "riavvio del player"
+	rm -f "$RUN/audio.tid"
+	sleep 2
+done

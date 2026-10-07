@@ -1,0 +1,32 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - misura la latenza real-time dei core dedicati all'audio.
+#   sweetspot-latenza [secondi]     (predefinito 60)
+# Meglio eseguirlo a riproduzione ferma: il risultato e' il ritardo
+# massimo con cui il kernel risveglia un thread real-time.
+
+. /usr/lib/sweetspot/common.sh
+
+secs=${1:-60}
+cpus=$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)
+[ -n "$cpus" ] || cpus=$(join_list "$(cpu_online)")
+n=$(count_words "$(expand_list "$cpus")")
+
+echo "Misura della latenza sui core $cpus per $secs secondi..."
+res=$(cyclictest -m -q -p 85 -i 500 -D "$secs" -a "$cpus" -t "$n" 2>/dev/null)
+max=$(printf '%s\n' "$res" | sed -n 's/.*Max:[[:space:]]*\([0-9]*\).*/\1/p' | sort -n | tail -n 1)
+avg=$(printf '%s\n' "$res" | sed -n 's/.*Avg:[[:space:]]*\([0-9]*\).*/\1/p' | sort -n | tail -n 1)
+if [ -z "$max" ]; then
+	echo "Misura non riuscita."
+	exit 1
+fi
+echo "Latenza media: $avg us, massima: $max us"
+if [ "$max" -le 50 ]; then
+	echo "Risultato: ottimo (obiettivo: sotto 50 us)."
+elif [ "$max" -le 150 ]; then
+	echo "Risultato: buono, ampiamente sufficiente per l'audio."
+else
+	echo "Risultato: alto. Prova il profilo 'prestazioni' e controlla le impostazioni del BIOS."
+fi
+log "latenza: media $avg us, massima $max us su $cpus"
