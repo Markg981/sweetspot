@@ -35,7 +35,7 @@ wait_network() {
 
 # mount_share N -> stampa "OK" oppure il messaggio d'errore
 mount_share() {
-	local n=$1 raw unc user pass mp cred err v name auth
+	local n=$1 raw unc user pass mp cred err e v name auth
 	raw=$(conf "CONDIVISIONE_$n")
 	[ -n "$raw" ] || return 1
 	if ! unc=$(normalize_unc "$raw"); then
@@ -59,12 +59,16 @@ mount_share() {
 	modprobe cifs 2>/dev/null
 	err=""
 	# Prima la versione del protocollo scelta dal NAS, poi le precedenti
-	# per i NAS piu' vecchi.
+	# per i NAS piu' vecchi. Si tengono tutti gli errori: quello che conta
+	# (password sbagliata, cartella inesistente) puo' arrivare da un
+	# tentativo precedente all'ultimo.
 	for v in "" ",vers=2.0" ",vers=1.0"; do
-		if err=$(mount.cifs "$unc" "$mp" -o "ro,$auth,iocharset=utf8,noserverino,soft$v" 2>&1); then
+		if e=$(mount.cifs "$unc" "$mp" -o "ro,$auth,iocharset=utf8,noserverino,soft$v" 2>&1); then
 			err=""
 			break
 		fi
+		err="$err$(printf '%s' "$e" | head -n 1)
+"
 	done
 	if [ -n "$err" ]; then
 		rmdir "$mp" 2>/dev/null

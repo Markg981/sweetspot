@@ -257,6 +257,24 @@ expect "vecchio nome della modalita' accettato" "player" "$(run "$ONE" "config_b
 expect "stringa JSON" '"a\"b\\c"' "$(run "$ONE" "json_str 'a\"b\\c'")"
 expect "bit dei formati ALSA" "16 24 32 1" "$(run "$ONE" 'echo $(alsa_bits S16_LE) $(alsa_bits S24_3LE) $(alsa_bits S32_LE) $(alsa_bits DSD_U32_BE)')"
 
+echo "Volume del DAC"
+mkdir -p "$WORK/amx"
+cat > "$WORK/amx/amixer" <<'FINTO'
+#!/bin/sh
+cat <<'OUT'
+Simple mixer control 'PCM',0
+  Capabilities: pvolume pswitch pswitch-joined
+  Playback channels: Front Left - Front Right
+Simple mixer control 'Mic',0
+  Capabilities: cvolume cswitch
+Simple mixer control 'Clock Source 41 Validity',0
+  Capabilities: pswitch pswitch-joined
+OUT
+FINTO
+chmod +x "$WORK/amx/amixer"
+expect "controlli di riproduzione del DAC" "PCM|Clock Source 41 Validity|" \
+	"$(SWEETSPOT_PATH="$WORK/amx:$SWEETSPOT_PATH" SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; dac_volume_controls 1" | tr '\n' '|')"
+
 echo "Plugin consigliati"
 CAT=$OVERLAY/usr/share/sweetspot/plugin-consigliati.txt
 bad=$(grep -v '^#' "$CAT" | grep . | awk -F'|' 'NF != 4 || $1 !~ /^[A-Za-z0-9_]+$/ || $3 == "" || $4 == ""')
