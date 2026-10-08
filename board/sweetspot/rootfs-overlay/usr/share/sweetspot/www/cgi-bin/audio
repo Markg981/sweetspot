@@ -33,7 +33,7 @@ verdict() { # formato frequenza canali
 	case "$hwfmt" in
 		DSD*)
 			case "$hwfmt" in DSD_U8) m=8 ;; DSD_U16*) m=16 ;; *) m=32 ;; esac
-			info_row OK "DSD nativo" "Il DAC riceve il flusso DSD cosi' com'e': DSD$((hwrate * m / 44100)), $hwch canali ($hwfmt)."
+			info_row OK "DSD nativo" "Il DAC riceve il flusso DSD così com'è: DSD$((hwrate * m / 44100)), $hwch canali ($hwfmt)."
 			return ;;
 	esac
 	out="$(alsa_bits "$hwfmt") bit ($hwfmt), $(awk "BEGIN {printf \"%g\", $hwrate/1000}") kHz, $hwch canali"
@@ -52,9 +52,9 @@ verdict() { # formato frequenza canali
 	elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$hwfmt")" ] 2>/dev/null; then
 		why="il brano ha $src_bits bit, il DAC ne riceve $(alsa_bits "$hwfmt")"
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
-		why="il volume e' regolato dal software"
+		why="il volume è regolato dal software"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
-		why="il ricampionamento e' attivo"
+		why="il ricampionamento è attivo"
 	fi
 	if [ -n "$why" ]; then
 		info_row ATTENZIONE "Non bit-perfect" "$why. Uscita: $out."
@@ -104,7 +104,7 @@ $(option dop "DoP: solo se il DAC lo supporta, altrimenti forte fruscio" "$(conf
 $(option no "Convertito in PCM" "$(conf DSD auto)")
 </select>
 
-<label for="rs">Ricampionamento <span>(cambia il segnale: di serie e' spento)</span></label>
+<label for="rs">Ricampionamento <span>(cambia il segnale: di serie è spento)</span></label>
 <select id="rs" name="ricampionamento">
 $(option no "Spento: ogni brano alla sua frequenza originale (bit-perfect)" "$rs")
 $(option sincrono "Multiplo intero: 44,1 kHz verso 176,4/352,8, 48 kHz verso 192/384" "$rs")

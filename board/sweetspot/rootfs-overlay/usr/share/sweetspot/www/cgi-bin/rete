@@ -27,7 +27,7 @@ for d in "$SYS"/class/net/*; do
 done
 [ $n -eq 0 ] && info_row ATTENZIONE "Nessuna scheda di rete" "Collega il cavo di rete o un adattatore USB."
 host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
-info_row "" "Nome in rete" "http://$host.local - si puo' usare al posto dell'indirizzo dal telefono e dal computer"
+info_row "" "Nome in rete" "http://$host.local - si può usare al posto dell'indirizzo dal telefono e dal computer"
 echo '</div>'
 
 ipmode=automatico

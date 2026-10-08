@@ -98,11 +98,14 @@ sub _cli {
 			type => 'plugin',
 			cb   => sub {
 				my ($data, $err) = @_;
-				my ($entry) = grep { $_->{name} eq $name } @{ $data || [] };
+				my @all = @{ $data || [] };
+				my ($entry) = grep { $_->{name} eq $name } @all;
 
 				if (!$entry || !$entry->{url} || !$entry->{sha}) {
 					$log->warn("plugin $name non trovato nei repository" . ($err ? ": $err" : ''));
-					$request->addResult('errore', $err ? 'repository non raggiungibile' : 'plugin non trovato');
+					$request->addResult('errore', ($err || !@all)
+						? 'elenco dei plugin non raggiungibile'
+						: 'plugin non presente nell\'elenco dei plugin');
 					$request->setStatusDone();
 					return;
 				}

@@ -16,7 +16,7 @@ saved_msg() { # codice testo
 	case "$1" in
 		0) printf '%s' "$2" ;;
 		2) printf '%s' "Chiavetta non trovata: le modifiche valgono solo fino al riavvio." ;;
-		*) printf '%s' "Valori non validi: niente e' stato cambiato." ;;
+		*) printf '%s' "Valori non validi: niente è stato cambiato." ;;
 	esac
 }
 
@@ -120,7 +120,7 @@ case "$F_a" in
 		for i in 1 2 3 4 5 6 7 8 9; do
 			[ -z "$(conf "CONDIVISIONE_$i")" ] && { n=$i; break; }
 		done
-		[ -n "$n" ] || done_to musica "Hai gia' 9 cartelle di rete: rimuovine una."
+		[ -n "$n" ] || done_to musica "Hai già 9 cartelle di rete: rimuovine una."
 		if [ -n "$F_utente" ]; then
 			sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir" \
 				"CONDIVISIONE_${n}_UTENTE" "$F_utente" "CONDIVISIONE_${n}_PASSWORD" "$F_password"
@@ -165,11 +165,11 @@ case "$F_a" in
 		if err=$(sweetspot-lms plugin installa "$F_nome"); then
 			done_to plugin "Plugin in arrivo: a scaricamento finito riavvia Lyrion per attivarlo."
 		fi
-		done_to plugin "Plugin non installato: ${err:-errore sconosciuto}. Sweetspot e' collegato a Internet?" ;;
+		done_to plugin "Plugin non installato: ${err:-errore sconosciuto}. Sweetspot è collegato a Internet?" ;;
 
 	plugin_rimuovi)
 		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
-		[ "$F_nome" = MaterialSkin ] && done_to plugin "L'interfaccia Material non si puo' togliere da qui."
+		[ "$F_nome" = MaterialSkin ] && done_to plugin "L'interfaccia Material non si può togliere da qui."
 		if err=$(sweetspot-lms plugin rimuovi "$F_nome"); then
 			done_to plugin "Il plugin viene tolto al riavvio di Lyrion."
 		fi
@@ -230,17 +230,17 @@ case "$F_a" in
 			[ -n "$mac" ] && lms_json "$mac" name "$nome" > /dev/null
 		fi
 		if [ "$F_modalita" != "$old_mode" ]; then
-			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalita' vale dal prossimo avvio: riavvia Sweetspot.")"
+			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalità vale dal prossimo avvio: riavvia Sweetspot.")"
 		fi
 		done_to sistema "$(saved_msg $rc "Impostazioni salvate.")" ;;
 
 	riavvia)
 		( sleep 2; reboot ) >/dev/null 2>&1 &
-		done_to stato "Riavvio in corso: la pagina tornera' disponibile tra circa un minuto." ;;
+		done_to stato "Riavvio in corso: la pagina tornerà disponibile tra circa un minuto." ;;
 
 	spegni)
 		( sleep 2; poweroff ) >/dev/null 2>&1 &
-		done_to stato "Spegnimento in corso. Puoi staccare la corrente quando il computer si e' spento." ;;
+		done_to stato "Spegnimento in corso. Puoi staccare la corrente quando il computer si è spento." ;;
 
 	*) done_to audio "Azione sconosciuta." ;;
 esac

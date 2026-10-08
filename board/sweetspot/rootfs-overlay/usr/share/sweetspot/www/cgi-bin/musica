@@ -8,9 +8,9 @@ page_start "Musica" musica
 
 if [ "$(mode)" = player ]; then
 	cat <<HTML
-<p class="sub">Sweetspot e' in modalita' solo player: la libreria e la scelta dei brani
+<p class="sub">Sweetspot è in modalità solo player: la libreria e la scelta dei brani
 sono sul server Lyrion dell'altro computer. Per avere libreria, plugin e
-interfaccia qui, passa alla modalita' completa in <a href="/cgi-bin/sistema">Sistema</a>.</p>
+interfaccia qui, passa alla modalità completa in <a href="/cgi-bin/sistema">Sistema</a>.</p>
 HTML
 	page_end
 	exit 0
@@ -96,7 +96,7 @@ cat <<HTML
 <input id="srv" name="server" required autocapitalize="off" autocorrect="off" placeholder="192.168.1.10">
 <label for="dir">Cartella condivisa <span>(es. Musica, oppure Musica/FLAC)</span></label>
 <input id="dir" name="cartella" required autocapitalize="off" placeholder="Musica">
-<label for="usr">Utente <span>(vuoto se la cartella e' aperta a tutti)</span></label>
+<label for="usr">Utente <span>(vuoto se la cartella è aperta a tutti)</span></label>
 <input id="usr" name="utente" autocapitalize="off" autocorrect="off" autocomplete="off">
 <label for="pwd">Password</label>
 <input id="pwd" name="password" type="password" autocomplete="new-password">

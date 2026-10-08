@@ -10,7 +10,7 @@ CATALOG=${SWEETSPOT_PLUGIN_CATALOG:-/usr/share/sweetspot/plugin-consigliati.txt}
 page_start "Plugin" plugin
 
 if [ "$(mode)" = player ]; then
-	echo '<p class="sub">In modalita'"'"' solo player i plugin si installano sul server Lyrion dell'"'"'altro computer.</p>'
+	echo "<p class=\"sub\">In modalità solo player i plugin si installano sul server Lyrion dell'altro computer.</p>"
 	page_end
 	exit 0
 fi

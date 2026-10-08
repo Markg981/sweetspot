@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Sweetspot - pagina d'ingresso (http://sweetspot.local): in modalita'
+# Sweetspot - pagina d'ingresso (http://sweetspot.local): in modalità
 # completa porta all'interfaccia del player, altrimenti allo stato.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"

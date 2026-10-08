@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Sweetspot - pagina "Sistema": nome, modalita', processore, accesso remoto,
+# Sweetspot - pagina "Sistema": nome, modalità, processore, accesso remoto,
 # riavvio e spegnimento.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
@@ -14,7 +14,7 @@ iso=$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)
 if [ -n "$iso" ]; then
 	info_row OK "Core dedicati all'audio" "riproduzione sul core $LAYOUT_AUDIO, interruzioni USB sul core $LAYOUT_IRQ; il resto del sistema sui core $(join_list "$LAYOUT_HK")"
 else
-	info_row "" "Core dedicati all'audio" "nessuno (avvio sicuro o processore con un solo core): la riproduzione ha comunque la priorita' real-time"
+	info_row "" "Core dedicati all'audio" "nessuno (avvio sicuro o processore con un solo core): la riproduzione ha comunque la priorità real-time"
 fi
 info_row "" "Versione di Sweetspot" "$(cat /etc/sweetspot-version 2>/dev/null)"
 echo '</div>'
@@ -26,7 +26,7 @@ cat <<HTML
 <label for="nome">Nome del player <span>(come compare nell'app e in Lyrion)</span></label>
 <input id="nome" name="nome" maxlength="40" value="$(esc "$(conf NOME_PLAYER Sweetspot)")">
 
-<label for="modo">Modalita'</label>
+<label for="modo">Modalità</label>
 <select id="modo" name="modalita">
 $(option completa "Completa: libreria, plugin e interfaccia su questo Sweetspot (come Daphile)" "$m")
 $(option player "Solo player: per un Lyrion Music Server su un altro computer" "$m")
@@ -41,7 +41,7 @@ $(option silenzio "Silenzio: frequenza fissa al minimo, meno consumo e calore" "
 $(option prestazioni "Prestazioni: frequenza fissa alla nominale" "$(conf PROFILO bilanciato)")
 </select>
 
-<label for="asc">Modalita' ascolto</label>
+<label for="asc">Modalità ascolto</label>
 <select id="asc" name="ascolto">
 $(option si "Attiva: mentre la musica suona la lettura della libreria si sospende (consigliato)" "$(conf MODALITA_ASCOLTO si)")
 $(option no "Spenta" "$(conf MODALITA_ASCOLTO si)")
@@ -62,7 +62,7 @@ $(option si "Attive: core dedicati, frequenza fissa, interruzioni isolate (consi
 $(option no "Spente: per provare se un problema dipende da loro" "$(conf OTTIMIZZAZIONI si)")
 </select>
 </details>
-<p class="sub">Nome e modalita' ascolto valgono subito; il resto dal prossimo avvio.</p>
+<p class="sub">Nome e modalità ascolto valgono subito; il resto dal prossimo avvio.</p>
 <button class="primary">Salva</button>
 </form>
 </div>

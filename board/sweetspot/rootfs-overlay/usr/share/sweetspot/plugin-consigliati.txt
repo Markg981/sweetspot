@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - plugin di Lyrion consigliati, mostrati nella pagina "Plugin".
 # Formato: NOME|GRUPPO|TITOLO|DESCRIZIONE
-# NOME e' quello del repository dei plugin di Lyrion. Si installano dal
+# NOME è quello del repository dei plugin di Lyrion. Si installano dal
 # repository ufficiale; tutti gli altri restano disponibili nelle
 # impostazioni di Lyrion.
 Qobuz|Streaming|Qobuz|Il catalogo Qobuz fino a 24 bit e 192 kHz. Serve un abbonamento Qobuz.
-TIDAL|Streaming|TIDAL|Il catalogo TIDAL in qualita' CD e alta risoluzione. Serve un abbonamento TIDAL.
+TIDAL|Streaming|TIDAL|Il catalogo TIDAL in qualità CD e alta risoluzione. Serve un abbonamento TIDAL.
 Spotty|Streaming|Spotify|Spotify dalla libreria di Sweetspot, e Sweetspot visibile come altoparlante nell'app Spotify (Spotify Connect). Serve un account Premium.
-Deezer|Streaming|Deezer|Il catalogo Deezer in qualita' CD. Serve un abbonamento Deezer.
+Deezer|Streaming|Deezer|Il catalogo Deezer in qualità CD. Serve un abbonamento Deezer.
 Bandcamp|Streaming|Bandcamp|Gli album acquistati e la tua raccolta Bandcamp.
-YouTube|Streaming|YouTube|L'audio dei video di YouTube. Qualita' compressa.
-RadioParadise|Radio|Radio Paradise|Radio senza pubblicita' con flusso FLAC senza perdita, ottima per provare l'impianto.
+YouTube|Streaming|YouTube|L'audio dei video di YouTube. Qualità compressa.
+RadioParadise|Radio|Radio Paradise|Radio senza pubblicità con flusso FLAC senza perdita, ottima per provare l'impianto.
 RadioBrowser|Radio|Radio Browser|Migliaia di radio di tutto il mondo, italiane comprese, cercabili per nome, paese e genere.
 RadioNet|Radio|radio.net|Le radio del catalogo radio.net, con le italiane.
-PodcastExt|Radio|Podcast|Piu' fonti per la ricerca dei podcast.
+PodcastExt|Radio|Podcast|Più fonti per la ricerca dei podcast.
 ShairTunes2W|Collegamenti|AirPlay in ingresso|Sweetspot compare come altoparlante AirPlay su iPhone, iPad e Mac.
 UPnPBridge|Collegamenti|Diffusori UPnP/DLNA|Usa come player anche i diffusori e i ricevitori UPnP/DLNA della casa.
 RaopBridge|Collegamenti|Diffusori AirPlay|Usa come player anche i diffusori AirPlay della casa.
 CastBridge|Collegamenti|Chromecast|Usa come player anche i dispositivi Chromecast della casa.
-Groups|Collegamenti|Gruppi di player|Riunisce piu' player in un gruppo che suona in sincrono.
+Groups|Collegamenti|Gruppi di player|Riunisce più player in un gruppo che suona in sincrono.

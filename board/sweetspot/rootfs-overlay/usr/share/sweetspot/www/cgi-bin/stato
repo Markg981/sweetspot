@@ -5,7 +5,7 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 # Traffico di rete in 2 secondi: durante l'ascolto deve essere quasi zero,
-# perche' i brani sono gia' tutti in memoria.
+# perché i brani sono già tutti in memoria.
 net_bytes() { awk 'NR>2 && $1 !~ /^lo:/ {sub(/^[^:]*:/, ""); split($0, a, " "); t += a[1] + a[9]} END {print t+0}' /proc/net/dev; }
 b1=$(net_bytes); sleep 2; b2=$(net_bytes)
 traffic=$(( (b2 - b1) / 2 ))

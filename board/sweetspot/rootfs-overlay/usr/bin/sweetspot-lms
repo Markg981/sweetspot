@@ -98,10 +98,10 @@ do_service() {
 		# Utente lms, core di sistema, priorita' bassa. taskset, nice, su
 		# (BusyBox) e la shell fanno exec: il PID resta quello di Lyrion,
 		# anche quando si riavvia da solo dopo l'installazione di un plugin.
+		# I percorsi sono fissi e senza spazi: si possono scrivere nel comando.
 		taskset -c "$hk" nice -n 10 \
-			su -s /bin/sh "$LMS_USER" -c 'exec perl "$0" "$@"' "$LMS_DIR/slimserver.pl" \
-				--prefsdir "$PREFS" --cachedir "$CACHE" --logdir "$LMS_LOG" \
-				--charset utf8 >> "$LMS_LOG/avvio.log" 2>&1 &
+			su -s /bin/sh "$LMS_USER" -c "exec perl $LMS_DIR/slimserver.pl --prefsdir $PREFS --cachedir $CACHE --logdir $LMS_LOG --charset utf8" \
+				>> "$LMS_LOG/avvio.log" 2>&1 &
 		echo $! > "$RUN/lms.pid"
 		wait $!
 		rc=$?
