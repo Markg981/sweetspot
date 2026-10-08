@@ -6,6 +6,9 @@ BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
 # Toolchain "bleeding-edge": glibc recente (i programmi compilati inclusi
 # in Lyrion chiedono almeno la 2.38) e intestazioni del kernel recenti.
 BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_X86_64_GLIBC_BLEEDING_EDGE=y
+# Conversione dei caratteri (UTF-16) per la cartella di rete dell'archivio
+BR2_TOOLCHAIN_GLIBC_GCONV_LIBS_COPY=y
+BR2_TOOLCHAIN_GLIBC_GCONV_LIBS_LIST="UTF-16 UTF-32 UNICODE"
 BR2_CCACHE=y
 
 # Sistema
