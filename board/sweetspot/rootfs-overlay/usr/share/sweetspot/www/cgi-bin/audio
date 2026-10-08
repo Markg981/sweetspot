@@ -1,0 +1,141 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Audio": il DAC, il formato che gli arriva davvero e le
+# impostazioni del percorso del segnale.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+page_start "Audio" audio
+
+card=$(dac_find)
+mac=$(cat "$RUN/player.mac" 2>/dev/null)
+
+# --- DAC ---------------------------------------------------------------------------
+echo '<h2>DAC</h2><div class="card">'
+if [ -z "$card" ]; then
+	info_row ATTENZIONE "Nessun DAC USB collegato" "Collega il DAC a una porta USB e accendilo: Sweetspot lo riconosce da solo."
+else
+	rates=$(dac_rates "$card")
+	maxr=$(last_word "$rates")
+	dsd=$(dac_native_dsd "$card")
+	if [ -n "$dsd" ]; then dsdtxt="DSD nativo ($dsd)"; else dsdtxt="DSD nativo non dichiarato (DoP o conversione in PCM)"; fi
+	info_row OK "$(dac_name "$card")" "USB $(dac_usbid "$card") - fino a $((maxr / 1000)) kHz - $dsdtxt"
+	info_row "" "Frequenze supportate" "$(printf '%s' "$rates" | tr ' ' '\n' | awk '{printf "%s%g", sep, $1/1000; sep=", "} END {print " kHz"}')"
+fi
+echo '</div>'
+
+# --- Cosa arriva al DAC adesso --------------------------------------------------------
+# Confronto tra il brano (dati di Lyrion) e il formato aperto sul DAC (ALSA):
+# stessa frequenza, nessun bit perso, volume fisso e nessun ricampionamento
+# = bit-perfect.
+verdict() { # formato frequenza canali
+	local hwfmt="$1" hwrate="$2" hwch="$3" m out why
+	case "$hwfmt" in
+		DSD*)
+			case "$hwfmt" in DSD_U8) m=8 ;; DSD_U16*) m=16 ;; *) m=32 ;; esac
+			info_row OK "DSD nativo" "Il DAC riceve il flusso DSD cosi' com'e': DSD$((hwrate * m / 44100)), $hwch canali ($hwfmt)."
+			return ;;
+	esac
+	out="$(alsa_bits "$hwfmt") bit ($hwfmt), $(awk "BEGIN {printf \"%g\", $hwrate/1000}") kHz, $hwch canali"
+	case "$src_type" in
+		dsf|dff)
+			if [ "$src_rate" = "$((hwrate * 16))" ]; then
+				info_row OK "DSD via DoP" "Il flusso DSD$((src_rate / 44100)) arriva intatto, impacchettato in PCM ($out)."
+			else
+				info_row ATTENZIONE "DSD convertito in PCM" "Il DAC riceve PCM: $out."
+			fi
+			return ;;
+	esac
+	why=""
+	if [ -n "$src_rate" ] && [ "$src_rate" != "$hwrate" ]; then
+		why="la frequenza del brano ($src_rate Hz) viene cambiata in $hwrate Hz"
+	elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$hwfmt")" ] 2>/dev/null; then
+		why="il brano ha $src_bits bit, il DAC ne riceve $(alsa_bits "$hwfmt")"
+	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
+		why="il volume e' regolato dal software"
+	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
+		why="il ricampionamento e' attivo"
+	fi
+	if [ -n "$why" ]; then
+		info_row ATTENZIONE "Non bit-perfect" "$why. Uscita: $out."
+	elif [ -n "$src_rate" ]; then
+		info_row OK "Bit-perfect" "Il DAC riceve esattamente i campioni del file${src_type:+ ($src_type${src_bits:+ $src_bits bit})}: $out."
+	else
+		info_row OK "Uscita diretta" "$out."
+	fi
+}
+
+echo '<h2>In riproduzione</h2><div class="card">'
+hw=""
+[ -n "$card" ] && hw=$(dac_hw_now "$card")
+np=""
+[ "$(mode)" = completa ] && [ -n "$mac" ] && np=$(lms_now_playing "$mac")
+src_rate=$(printf '%s' "$np" | jq -r '.rate // empty' 2>/dev/null)
+src_bits=$(printf '%s' "$np" | jq -r '.bits // empty' 2>/dev/null)
+src_type=$(printf '%s' "$np" | jq -r '.type // empty' 2>/dev/null)
+if [ -z "$hw" ]; then
+	info_row "" "Uscita ferma" "Quando la musica suona qui compare il formato che arriva al DAC, con la verifica bit-perfect."
+else
+	title=$(printf '%s' "$np" | jq -r '[.artist, .title] | map(select(. != "")) | join(" - ")' 2>/dev/null)
+	[ -n "$title" ] && info_row "" "Brano" "$title"
+	# shellcheck disable=SC2086
+	verdict $hw
+fi
+echo '</div>'
+
+# --- Impostazioni -------------------------------------------------------------------
+vol=$(lower "$(conf VOLUME fisso)")
+rs=$(lower "$(conf RICAMPIONAMENTO no)")
+echo '<h2>Impostazioni</h2><div class="card formcard">'
+form_start audio
+cat <<HTML
+<label for="vol">Volume</label>
+<select id="vol" name="volume">
+$(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
+$(option dac "Dal DAC: usa il controllo di volume del DAC (bit-perfect)" "$vol")
+$(option software "Dal software: per diffusori attivi senza volume (non bit-perfect)" "$vol")
+</select>
+
+<label for="dsd">DSD</label>
+<select id="dsd" name="dsd">
+$(option auto "Automatico: nativo se il DAC lo supporta (consigliato)" "$(conf DSD auto)")
+$(option nativo "Nativo forzato: per DAC che lo supportano senza dichiararlo" "$(conf DSD auto)")
+$(option dop "DoP: solo se il DAC lo supporta, altrimenti forte fruscio" "$(conf DSD auto)")
+$(option no "Convertito in PCM" "$(conf DSD auto)")
+</select>
+
+<label for="rs">Ricampionamento <span>(cambia il segnale: di serie e' spento)</span></label>
+<select id="rs" name="ricampionamento">
+$(option no "Spento: ogni brano alla sua frequenza originale (bit-perfect)" "$rs")
+$(option sincrono "Multiplo intero: 44,1 kHz verso 176,4/352,8, 48 kHz verso 192/384" "$rs")
+$(option asincrono "Tutto alla frequenza massima del DAC" "$rs")
+</select>
+
+<label for="fil">Filtro del ricampionamento</label>
+<select id="fil" name="filtro">
+$(option lineare "Fase lineare (predefinito)" "$(conf FILTRO lineare)")
+$(option intermedio "Fase intermedia" "$(conf FILTRO lineare)")
+$(option minimo "Fase minima: niente pre-eco" "$(conf FILTRO lineare)")
+</select>
+
+<details>
+<summary>Opzioni per esperti</summary>
+<label for="fmax">Frequenza massima inviata al DAC <span>(0 = quella dichiarata dal DAC)</span></label>
+<input id="fmax" name="frequenza_max" inputmode="numeric" value="$(esc "$(conf FREQUENZA_MAX 0)")">
+<label for="buf">Buffer ALSA in millisecondi <span>(20-499, predefinito 400)</span></label>
+<input id="buf" name="buffer" inputmode="numeric" value="$(esc "$(conf BUFFER_ALSA_MS 400)")">
+<label for="per">Periodi ALSA <span>(2-16, predefinito 4)</span></label>
+<input id="per" name="periodi" inputmode="numeric" value="$(esc "$(conf PERIODI_ALSA 4)")">
+<label for="pf">Pausa al cambio di frequenza, in millisecondi <span>(per DAC che perdono l'inizio del brano)</span></label>
+<input id="pf" name="pausa_frequenza" inputmode="numeric" value="$(esc "$(conf PAUSA_FREQUENZA_MS 0)")">
+<label for="pd">Pausa al passaggio tra DSD e PCM, in millisecondi</label>
+<input id="pd" name="pausa_dsd" inputmode="numeric" value="$(esc "$(conf PAUSA_DSD_MS 500)")">
+</details>
+
+<p class="sub">Le modifiche si applicano subito: il player si riavvia e la musica si ferma per qualche secondo.</p>
+<button class="primary">Salva e applica</button>
+</form>
+</div>
+HTML
+
+page_end

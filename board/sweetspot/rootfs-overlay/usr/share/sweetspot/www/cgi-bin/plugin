@@ -1,0 +1,107 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Plugin": streaming, radio e collegamenti per Lyrion,
+# installati con un clic dal repository ufficiale dei plugin di Lyrion.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+CATALOG=${SWEETSPOT_PLUGIN_CATALOG:-/usr/share/sweetspot/plugin-consigliati.txt}
+
+page_start "Plugin" plugin
+
+if [ "$(mode)" = player ]; then
+	echo '<p class="sub">In modalita'"'"' solo player i plugin si installano sul server Lyrion dell'"'"'altro computer.</p>'
+	page_end
+	exit 0
+fi
+
+state=$(sweetspot-lms plugin stato 2>/dev/null)
+if [ -z "$state" ]; then
+	echo '<div class="card"><div class="row"><div class="grow"><div class="k">Lyrion si sta avviando</div><div class="v">La pagina si aggiorna da sola tra poco.</div></div></div></div>'
+	echo '<meta http-equiv="refresh" content="10">'
+	page_end
+	exit 0
+fi
+summary=$(printf '%s\n' "$state" | sed -n 's/^#//p')
+downloading=${summary%%|*}
+restart=${summary#*|}
+
+# Stato di un plugin: installato, da-installare, da-rimuovere, errore, assente.
+plugin_state() {
+	local line st err
+	line=$(printf '%s\n' "$state" | grep "^$1|" | head -n 1)
+	[ -n "$line" ] || { echo assente; return; }
+	st=$(printf '%s' "$line" | cut -d'|' -f3)
+	err=$(printf '%s' "$line" | cut -d'|' -f4-)
+	if [ -n "$err" ]; then echo errore
+	else
+		case "$st" in
+			enabled|'') echo installato ;;
+			needs-install|needs-enable) echo da-installare ;;
+			needs-uninstall|needs-disable|disabled) echo da-rimuovere ;;
+			*) echo installato ;;
+		esac
+	fi
+}
+
+if [ "$downloading" -gt 0 ] 2>/dev/null; then
+	echo '<p class="msg">Scaricamento in corso: la pagina si aggiorna da sola.</p><meta http-equiv="refresh" content="5">'
+elif [ "$restart" = 1 ]; then
+	echo '<div class="card"><div class="row ATTENZIONE"><span class="dot"></span><div class="grow">'
+	echo '<div class="k">Per completare serve riavviare Lyrion</div>'
+	echo '<div class="v">Ci vuole circa un minuto; la musica si ferma e riparte la libreria.</div>'
+	button riavvia_lyrion "Riavvia Lyrion ora" "" "" primary
+	echo '</div></div></div>'
+fi
+
+group=""
+grep -v '^#' "$CATALOG" | grep . | while IFS='|' read -r name grp title desc; do
+	if [ "$grp" != "$group" ]; then
+		[ -n "$group" ] && echo '</div>'
+		printf '<h2>%s</h2><div class="card">\n' "$(esc "$grp")"
+		group=$grp
+	fi
+	st=$(plugin_state "$name")
+	case "$st" in
+		installato) cls=OK; note="Installato" ;;
+		da-installare) cls=ATTENZIONE; note="Si attiva al riavvio di Lyrion" ;;
+		da-rimuovere) cls=""; note="Viene tolto al riavvio di Lyrion" ;;
+		errore) cls=ATTENZIONE; note="Errore: $(printf '%s\n' "$state" | grep "^$name|" | cut -d'|' -f4-)" ;;
+		*) cls=""; note="" ;;
+	esac
+	printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s</div>' "$cls" "$(esc "$title")" "$(esc "$desc")"
+	[ -n "$note" ] && printf '<div class="v"><b>%s</b></div>' "$(esc "$note")"
+	echo '</div>'
+	case "$st" in
+		assente|da-rimuovere) button plugin_installa "Installa" nome "$name" primary ;;
+		*) button plugin_rimuovi "Rimuovi" nome "$name" danger ;;
+	esac
+	echo '</div>'
+done
+echo '</div>'
+
+# Altri plugin scaricati (dalle impostazioni di Lyrion o da Material).
+others=$(printf '%s\n' "$state" | grep -v '^#' | while IFS='|' read -r name ver st err; do
+	[ -n "$name" ] || continue
+	[ "$name" = MaterialSkin ] && continue
+	grep -q "^$name|" "$CATALOG" && continue
+	printf '%s|%s|%s\n' "$name" "$ver" "$st"
+done)
+if [ -n "$others" ]; then
+	echo '<h2>Altri plugin installati</h2><div class="card">'
+	printf '%s\n' "$others" | while IFS='|' read -r name ver st; do
+		printf '<div class="row OK"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">versione %s</div></div>' "$(esc "$name")" "$(esc "$ver")"
+		button plugin_rimuovi "Rimuovi" nome "$name" danger
+		echo '</div>'
+	done
+	echo '</div>'
+fi
+
+cat <<HTML
+<p class="sub">Tutti gli altri plugin di Lyrion, e le impostazioni di ciascuno (per esempio
+l'accesso a Qobuz o TIDAL), sono nelle
+<a href="http://$(esc "$(web_host)"):9000/settings/index.html" target="_top">impostazioni di Lyrion</a>
+e nel menu dell'interfaccia.</p>
+HTML
+
+page_end

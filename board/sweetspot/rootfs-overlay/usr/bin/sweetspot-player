@@ -201,17 +201,16 @@ run_player() {
 # ReplayGain, niente dissolvenze tra i brani, nessun limite di bitrate
 # (i file arrivano al player cosi' come sono).
 apply_player_prefs() {
-	local digital=0 r
+	local digital=0
 	[ "$(mode)" = completa ] || return 0
 	[ "$PREFS_SET" = 1 ] && return 0
-	r=$(lms_cli "$PLAYER_MAC" connected '?') || return 1
-	[ "$(lms_field "$r" connected 2>/dev/null || echo 0)" = 1 ] || return 1
+	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$PLAYER_MAC" connected '?')" = 1 ] || return 1
 	case "$(lower "$(conf VOLUME fisso)")" in software|dac) digital=1 ;; esac
-	lms_cli "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null
-	lms_cli "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null
-	lms_cli "$PLAYER_MAC" playerpref transitionType 0 > /dev/null
-	lms_cli "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null
-	[ "$digital" = 0 ] && lms_cli "$PLAYER_MAC" mixer volume 100 > /dev/null
+	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null
+	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null
+	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null
+	lms_json "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null
+	[ "$digital" = 0 ] && lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null
 	PREFS_SET=1
 	log "player: impostazioni in Lyrion applicate (volume $(lower "$(conf VOLUME fisso)"))"
 }

@@ -106,7 +106,7 @@ do_watch() {
 		[ "$(fingerprint)" = "$(cat "$STAMP" 2>/dev/null)" ] && continue
 		# Durante la lettura della libreria il database cambia di continuo:
 		# si salva a lettura finita.
-		[ "$(lms_field "$(lms_cli rescan '?')" rescan 2>/dev/null)" = 1 ] && continue
+		lms_scanning && continue
 		do_save
 	done
 }

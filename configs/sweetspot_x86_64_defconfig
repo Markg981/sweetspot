@@ -44,6 +44,8 @@ BR2_PACKAGE_LMS_MATERIAL=y
 BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/users.txt"
 # Copia sicura dei database della libreria sulla chiavetta
 BR2_PACKAGE_SQLITE=y
+# Lettura delle risposte di Lyrion (JSON) negli script
+BR2_PACKAGE_JQ=y
 
 # Player: Squeezelite, con tutti i formati decodificati sul player (FLAC,
 # ALAC, AAC, MP3, Ogg, WMA, DSD) e ricampionamento facoltativo (spento di

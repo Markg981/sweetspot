@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - esegue le azioni delle pagine Musica e Impostazioni.
+# Sweetspot - esegue le azioni delle pagine di impostazione.
 # Accetta solo richieste POST con il gettone della pagina.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
@@ -11,20 +11,54 @@ urlencode() {
 }
 done_to() { redirect "/cgi-bin/$1?msg=$(urlencode "$2")"; exit 0; }
 
-MPC="mpc -q --host $MPD_SOCKET"
+# Esito di sweetspot-config: 0 salvato, 2 solo fino al riavvio.
+saved_msg() { # codice testo
+	case "$1" in
+		0) printf '%s' "$2" ;;
+		2) printf '%s' "Chiavetta non trovata: le modifiche valgono solo fino al riavvio." ;;
+		*) printf '%s' "Valori non validi: niente e' stato cambiato." ;;
+	esac
+}
 
-# Campi del modulo, riempiti da read_form.
+# Campi dei moduli, riempiti da read_form.
 F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome=""
-F_modalita="" F_profilo="" F_dsd=""
+F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
+F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
+F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
+F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
-	redirect /cgi-bin/musica
+	redirect /cgi-bin/audio
 	exit 0
 fi
 read_form
 if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
-	done_to musica "Richiesta non valida: ricarica la pagina e riprova."
+	done_to audio "Richiesta non valida: ricarica la pagina e riprova."
 fi
+
+# numero VALORE MIN MAX
+in_range() {
+	case "$1" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$1" -ge "$2" ] && [ "$1" -le "$3" ]
+}
+
+is_ipv4() {
+	local IFS=. x
+	case "$1" in *[!0-9.]*|'') return 1 ;; esac
+	set -- $1
+	[ $# -eq 4 ] || return 1
+	for x in "$@"; do in_range "$x" 0 255 || return 1; done
+}
+
+is_cidr() {
+	is_ipv4 "${1%/*}" || return 1
+	case "$1" in */*) in_range "${1#*/}" 1 32 ;; *) return 1 ;; esac
+}
+
+# Riavvio del player in sottofondo: la pagina risponde subito.
+restart_player() {
+	setsid /etc/init.d/S60sweetspot-player restart > /dev/null 2>&1 < /dev/null &
+}
 
 # Aggiunge o toglie un nome dalla lista ESCLUDI_DISCHI.
 set_excluded() { # nome aggiungi|togli
@@ -44,12 +78,32 @@ set_excluded() { # nome aggiungi|togli
 }
 
 case "$F_a" in
+	# --- Audio -------------------------------------------------------------------
+	audio)
+		case "$F_volume" in fisso|dac|software) ;; *) F_volume=fisso ;; esac
+		case "$F_dsd" in auto|nativo|dop|no) ;; *) F_dsd=auto ;; esac
+		case "$F_ricampionamento" in no|sincrono|asincrono) ;; *) F_ricampionamento=no ;; esac
+		case "$F_filtro" in lineare|intermedio|minimo) ;; *) F_filtro=lineare ;; esac
+		in_range "$F_frequenza_max" 0 1536000 || done_to audio "Frequenza massima non valida: scrivi 0 oppure un valore in Hz, es. 192000."
+		in_range "$F_buffer" 20 499 || done_to audio "Il buffer ALSA va da 20 a 499 millisecondi."
+		in_range "$F_periodi" 2 16 || done_to audio "I periodi ALSA vanno da 2 a 16."
+		in_range "$F_pausa_frequenza" 0 5000 || done_to audio "La pausa al cambio di frequenza va da 0 a 5000 millisecondi."
+		in_range "$F_pausa_dsd" 0 5000 || done_to audio "La pausa tra DSD e PCM va da 0 a 5000 millisecondi."
+		sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" RICAMPIONAMENTO "$F_ricampionamento" \
+			FILTRO "$F_filtro" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
+			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd"
+		rc=$?
+		[ $rc -eq 1 ] && done_to audio "$(saved_msg 1)"
+		restart_player
+		done_to audio "$(saved_msg $rc "Impostazioni salvate: il player si sta riavviando.")" ;;
+
+	# --- Musica ------------------------------------------------------------------
 	aggiorna)
-		$MPC update
+		sweetspot-lms aggiorna
 		done_to musica "Aggiornamento della libreria avviato." ;;
 
 	ricostruisci)
-		$MPC rescan
+		sweetspot-lms ricostruisci
 		done_to musica "Ricostruzione della libreria avviata: con molti brani richiede alcuni minuti." ;;
 
 	aggiungi_condivisione)
@@ -67,29 +121,26 @@ case "$F_a" in
 			[ -z "$(conf "CONDIVISIONE_$i")" ] && { n=$i; break; }
 		done
 		[ -n "$n" ] || done_to musica "Hai gia' 9 cartelle di rete: rimuovine una."
-		sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir"
 		if [ -n "$F_utente" ]; then
-			sweetspot-config imposta "CONDIVISIONE_${n}_UTENTE" "$F_utente"
-			sweetspot-config imposta "CONDIVISIONE_${n}_PASSWORD" "$F_password"
+			sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir" \
+				"CONDIVISIONE_${n}_UTENTE" "$F_utente" "CONDIVISIONE_${n}_PASSWORD" "$F_password"
+		else
+			sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir"
 		fi
 		res=$(sweetspot-rete prova "$n")
 		if [ "$res" = OK ]; then
 			echo "$n|//$server/$dir|OK|montata" >> "$RUN/rete.list"
-			$MPC update
+			sweetspot-lms aggiorna
 			done_to musica "Cartella aggiunta: la libreria si sta aggiornando."
 		fi
-		sweetspot-config rimuovi "CONDIVISIONE_$n"
-		sweetspot-config rimuovi "CONDIVISIONE_${n}_UTENTE"
-		sweetspot-config rimuovi "CONDIVISIONE_${n}_PASSWORD"
+		sweetspot-config rimuovi "CONDIVISIONE_$n" "CONDIVISIONE_${n}_UTENTE" "CONDIVISIONE_${n}_PASSWORD"
 		done_to musica "Cartella non aggiunta: $res." ;;
 
 	rimuovi_condivisione)
 		case "$F_n" in [1-9]) ;; *) done_to musica "Richiesta non valida." ;; esac
 		sweetspot-rete smonta-una "$F_n"
-		sweetspot-config rimuovi "CONDIVISIONE_$F_n"
-		sweetspot-config rimuovi "CONDIVISIONE_${F_n}_UTENTE"
-		sweetspot-config rimuovi "CONDIVISIONE_${F_n}_PASSWORD"
-		$MPC update
+		sweetspot-config rimuovi "CONDIVISIONE_$F_n" "CONDIVISIONE_${F_n}_UTENTE" "CONDIVISIONE_${F_n}_PASSWORD"
+		sweetspot-lms aggiorna
 		done_to musica "Cartella rimossa dalla libreria." ;;
 
 	escludi_disco)
@@ -97,7 +148,7 @@ case "$F_a" in
 		[ -n "$name" ] || done_to musica "Richiesta non valida."
 		set_excluded "$name" aggiungi
 		sweetspot-dischi smonta "$name"
-		$MPC update
+		sweetspot-lms aggiorna
 		done_to musica "Disco escluso dalla libreria." ;;
 
 	includi_disco)
@@ -105,24 +156,83 @@ case "$F_a" in
 		[ -n "$name" ] || done_to musica "Richiesta non valida."
 		set_excluded "$name" togli
 		sweetspot-dischi monta
-		$MPC update
+		sweetspot-lms aggiorna
 		done_to musica "Disco aggiunto alla libreria." ;;
 
-	impostazioni)
+	# --- Plugin -------------------------------------------------------------------
+	plugin_installa)
+		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
+		if err=$(sweetspot-lms plugin installa "$F_nome"); then
+			done_to plugin "Plugin in arrivo: a scaricamento finito riavvia Lyrion per attivarlo."
+		fi
+		done_to plugin "Plugin non installato: ${err:-errore sconosciuto}. Sweetspot e' collegato a Internet?" ;;
+
+	plugin_rimuovi)
+		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
+		[ "$F_nome" = MaterialSkin ] && done_to plugin "L'interfaccia Material non si puo' togliere da qui."
+		if err=$(sweetspot-lms plugin rimuovi "$F_nome"); then
+			done_to plugin "Il plugin viene tolto al riavvio di Lyrion."
+		fi
+		done_to plugin "Plugin non rimosso: ${err:-errore sconosciuto}." ;;
+
+	riavvia_lyrion)
+		sweetspot-lms riavvia
+		done_to plugin "Lyrion si sta riavviando: tra circa un minuto i plugin sono attivi." ;;
+
+	# --- Rete --------------------------------------------------------------------
+	rete)
+		valid_value "$F_wifi_nome" && valid_value "$F_wifi_password" || done_to rete "Dati non validi."
+		case "$F_risparmio" in si|no) ;; *) F_risparmio=no ;; esac
+		F_nome_rete=$(lower "$F_nome_rete")
+		case "$F_nome_rete" in
+			'') F_nome_rete=sweetspot ;;
+			-*|*-|*[!a-z0-9-]*) done_to rete "Nome in rete non valido: solo lettere minuscole, cifre e trattini." ;;
+		esac
+		[ ${#F_nome_rete} -le 32 ] || done_to rete "Nome in rete troppo lungo (al massimo 32 caratteri)."
+		set -- WIFI_NOME "$F_wifi_nome" NOME_RETE "$F_nome_rete" RISPARMIO_RETE "$F_risparmio"
+		[ -n "$F_wifi_password" ] && set -- "$@" WIFI_PASSWORD "$F_wifi_password"
+		if [ "$F_ip_modo" = fisso ]; then
+			is_cidr "$F_ip_fisso" || done_to rete "Indirizzo fisso non valido: scrivilo con la maschera, es. 192.168.1.50/24."
+			is_ipv4 "$F_gateway" || done_to rete "Indirizzo del router non valido, es. 192.168.1.1."
+			[ -z "$F_dns" ] || is_ipv4 "$F_dns" || done_to rete "Indirizzo DNS non valido."
+			set -- "$@" IP_FISSO "$F_ip_fisso" GATEWAY "$F_gateway"
+			if [ -n "$F_dns" ]; then set -- "$@" DNS "$F_dns"; else sweetspot-config rimuovi DNS; fi
+		else
+			sweetspot-config rimuovi IP_FISSO GATEWAY DNS
+		fi
+		sweetspot-config imposta "$@"
+		rc=$?
+		done_to rete "$(saved_msg $rc "Impostazioni di rete salvate: valgono dal prossimo avvio.")" ;;
+
+	# --- Sistema -----------------------------------------------------------------
+	sistema)
 		nome=$(safe_name "$F_nome")
 		[ -n "$nome" ] || nome=Sweetspot
-		case "$F_modalita" in completa|lyrion) ;; *) F_modalita=completa ;; esac
+		case "$F_modalita" in completa|player) ;; *) F_modalita=completa ;; esac
 		case "$F_profilo" in bilanciato|silenzio|prestazioni) ;; *) F_profilo=bilanciato ;; esac
-		case "$F_dsd" in auto|nativo|dop|no) ;; *) F_dsd=auto ;; esac
-		ok=0
-		sweetspot-config imposta NOME_PLAYER "$nome" || ok=1
-		sweetspot-config imposta MODALITA "$F_modalita" || ok=1
-		sweetspot-config imposta PROFILO "$F_profilo" || ok=1
-		sweetspot-config imposta DSD "$F_dsd" || ok=1
-		if [ $ok -eq 0 ]; then
-			done_to impostazioni "Impostazioni salvate: valgono dal prossimo avvio."
+		case "$F_ascolto" in si|no) ;; *) F_ascolto=si ;; esac
+		case "$F_ssh" in si|no) ;; *) F_ssh=no ;; esac
+		case "$F_ottimizzazioni" in si|no) ;; *) F_ottimizzazioni=si ;; esac
+		case "$F_server" in *[!A-Za-z0-9.:_-]*) done_to sistema "Indirizzo del server non valido." ;; esac
+		valid_value "$F_ssh_password" || done_to sistema "Password non valida."
+		old_mode=$(mode)
+		old_name=$(conf NOME_PLAYER Sweetspot)
+		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
+			SSH "$F_ssh" OTTIMIZZAZIONI "$F_ottimizzazioni"
+		[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
+		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else sweetspot-config rimuovi SERVER; fi
+		sweetspot-config imposta "$@"
+		rc=$?
+		[ $rc -eq 1 ] && done_to sistema "$(saved_msg 1)"
+		# Il nome nuovo vale subito, in Lyrion e nel player.
+		if [ "$nome" != "$old_name" ] && [ "$old_mode" = completa ]; then
+			mac=$(cat "$RUN/player.mac" 2>/dev/null)
+			[ -n "$mac" ] && lms_json "$mac" name "$nome" > /dev/null
 		fi
-		done_to impostazioni "Chiavetta non trovata: le impostazioni valgono solo fino al riavvio." ;;
+		if [ "$F_modalita" != "$old_mode" ]; then
+			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalita' vale dal prossimo avvio: riavvia Sweetspot.")"
+		fi
+		done_to sistema "$(saved_msg $rc "Impostazioni salvate.")" ;;
 
 	riavvia)
 		( sleep 2; reboot ) >/dev/null 2>&1 &
@@ -132,5 +242,5 @@ case "$F_a" in
 		( sleep 2; poweroff ) >/dev/null 2>&1 &
 		done_to stato "Spegnimento in corso. Puoi staccare la corrente quando il computer si e' spento." ;;
 
-	*) done_to musica "Azione sconosciuta." ;;
+	*) done_to audio "Azione sconosciuta." ;;
 esac

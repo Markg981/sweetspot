@@ -1,24 +1,31 @@
 # =====================================================================
 #  SWEETSPOT - impostazioni
 # =====================================================================
-#  Questo file si apre e si modifica con il Blocco note, da qualunque
-#  computer. Salva, rimetti la chiavetta nel player e riaccendilo.
+#  Non serve aprire questo file: tutte le impostazioni si cambiano dal
+#  browser, dal telefono o dal computer, su http://sweetspot.local/
+#  (menu dell'interfaccia > Impostazioni Sweetspot).
 #
-#  Non serve cambiare niente: i valori qui sotto sono quelli consigliati.
-#  Le righe che iniziano con # sono commenti e vengono ignorate.
+#  Se preferisci, si modifica anche con il Blocco note: salva, rimetti la
+#  chiavetta nel player e riaccendilo. Le righe che iniziano con # sono
+#  commenti. I valori qui sotto sono quelli consigliati.
 # =====================================================================
 
-# La maggior parte delle impostazioni si cambia anche dal browser:
-# http://sweetspot.local:8080/ (pagine Musica e Impostazioni).
-
-# Nome del player, come apparira' nelle app e in rete.
+# Nome del player, come appare nell'interfaccia e nelle app.
 NOME_PLAYER=Sweetspot
 
 # Modalita' di funzionamento:
-#   completa = libreria, server e interfaccia web su Sweetspot (consigliato).
-#              Dal telefono o dal computer apri http://sweetspot.local/
-#   lyrion   = solo player, per un Lyrion Music Server su un altro computer
+#   completa = come Daphile: libreria, plugin (Qobuz, TIDAL, Spotify,
+#              radio...) e interfaccia su Sweetspot (consigliato).
+#   player   = solo player, per un Lyrion Music Server su un altro computer.
 MODALITA=completa
+
+# Solo modalita' player: indirizzo del server Lyrion.
+# Vuoto = Sweetspot lo cerca da solo nella rete di casa.
+SERVER=
+
+# Modalita' ascolto: mentre la musica suona, la lettura della libreria si
+# sospende e riparte quando la musica si ferma.
+MODALITA_ASCOLTO=si
 
 # --- Musica ---------------------------------------------------------------
 # Dischi interni e USB vengono trovati da soli e letti in sola lettura.
@@ -27,56 +34,79 @@ MODALITA=completa
 DISCHI=si
 ESCLUDI_DISCHI=
 
-# Cartelle condivise in rete (NAS, PC Windows, Mac), fino a 9.
-# Esempio:
+# Cartelle condivise in rete (NAS, PC Windows, Mac), fino a 9. Si
+# aggiungono piu' comodamente dalla pagina Musica. Esempio:
 #   CONDIVISIONE_1=//192.168.1.10/Musica
 #   CONDIVISIONE_1_UTENTE=marco
 #   CONDIVISIONE_1_PASSWORD=la-password
-# Senza utente si accede come ospite. Si aggiungono piu' comodamente dalla
-# pagina Musica.
+# Senza utente si accede come ospite.
 
-# --- Solo modalita' lyrion ------------------------------------------------
-# Indirizzo del server Lyrion Music Server.
-# Vuoto = Sweetspot lo cerca da solo nella rete di casa.
-SERVER=
-
-# Quale DAC usare.
-# auto = il primo DAC USB collegato (consigliato).
+# --- Audio ----------------------------------------------------------------
+# Quale DAC usare: auto = il primo DAC USB collegato (consigliato).
 # Puoi anche scrivere il nome, per esempio DAC=R26.
 DAC=auto
 
-# Profilo di funzionamento del processore:
-#   bilanciato  = frequenza fissa intermedia (consigliato)
-#   silenzio    = frequenza fissa al minimo: meno consumo e meno calore
-#   prestazioni = frequenza fissa alla nominale, processore sempre sveglio
-PROFILO=bilanciato
+# Volume:
+#   fisso    = 100%, si regola dall'amplificatore (bit-perfect, consigliato)
+#   dac      = usa il controllo di volume del DAC (bit-perfect)
+#   software = attenuazione digitale, per diffusori attivi senza volume
+VOLUME=fisso
 
 # DSD:
 #   auto   = DSD nativo se il DAC lo dichiara, altrimenti convertito in PCM
-#   nativo = forza il DSD nativo (per DAC che lo supportano ma non lo dichiarano)
+#   nativo = forza il DSD nativo (per DAC che lo supportano senza dichiararlo)
 #   dop    = DSD tramite DoP. Solo se il DAC lo supporta: altrimenti si sente
 #            un forte fruscio!
 #   no     = il DSD viene sempre convertito in PCM
 DSD=auto
 
+# Ricampionamento (cambia il segnale, quindi di serie e' spento):
+#   no        = ogni brano alla sua frequenza originale (bit-perfect)
+#   sincrono  = multiplo intero: 44,1 kHz verso 176,4/352,8 e 48 verso 192/384
+#   asincrono = tutto alla frequenza massima del DAC
+# FILTRO: lineare (predefinito), intermedio, minimo (fase minima).
+RICAMPIONAMENTO=no
+FILTRO=lineare
+
+# Frequenza massima inviata al DAC, in Hz. 0 = quella dichiarata dal DAC.
+FREQUENZA_MAX=0
+
 # Pausa (in millisecondi) quando si passa da PCM a DSD, per dare tempo
-# al DAC di agganciarsi senza perdere l'inizio del brano (modalita' lyrion).
+# al DAC di agganciarsi senza perdere l'inizio del brano.
 PAUSA_DSD_MS=500
 
-# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento
-# (modalita' lyrion). 0 = nessuna pausa. Prova 300-500 se senti un clic.
+# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento.
+# 0 = nessuna pausa. Prova 300-500 se il DAC perde l'inizio dei brani.
 PAUSA_FREQUENZA_MS=0
+
+# Usare l'uscita audio integrata del computer al posto del DAC USB.
+USCITA_INTEGRATA=no
+
+# --- Rete -----------------------------------------------------------------
+# Nome in rete: il player risponde su http://NOME.local/
+# Diverso per ogni Sweetspot della casa.
+NOME_RETE=sweetspot
 
 # Rete Wi-Fi, solo se il player non e' collegato con il cavo.
 # Il cavo e' sempre preferibile.
 WIFI_NOME=
 WIFI_PASSWORD=
 
+# Indirizzo fisso (vuoto = automatico dal router, consigliato). Esempio:
+#   IP_FISSO=192.168.1.50/24
+#   GATEWAY=192.168.1.1
+#   DNS=192.168.1.1
+IP_FISSO=
+
 # Risparmio energetico della scheda di rete (EEE). no = spento (consigliato).
 RISPARMIO_RETE=no
 
-# Usare l'uscita audio integrata del computer al posto del DAC USB.
-USCITA_INTEGRATA=no
+# --- Sistema --------------------------------------------------------------
+# Profilo di funzionamento del processore:
+#   bilanciato  = frequenza fissa intermedia (consigliato)
+#   silenzio    = frequenza fissa al minimo: meno consumo e meno calore
+#   prestazioni = frequenza fissa alla nominale, processore sempre sveglio
+PROFILO=bilanciato
 
 # Dopo quanti minuti spegnere lo schermo (0 = mai).
 SCHERMO_MINUTI=2

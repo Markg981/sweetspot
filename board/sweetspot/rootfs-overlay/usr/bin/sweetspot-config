@@ -3,8 +3,8 @@
 #
 # Sweetspot - modifica le impostazioni in sweetspot.txt sulla chiavetta.
 #
-#   sweetspot-config imposta CHIAVE VALORE
-#   sweetspot-config rimuovi CHIAVE
+#   sweetspot-config imposta CHIAVE VALORE [CHIAVE VALORE...]
+#   sweetspot-config rimuovi CHIAVE [CHIAVE...]
 #   sweetspot-config leggi CHIAVE
 #
 # Il file resta leggibile e modificabile con il Blocco note: le altre righe,
@@ -14,7 +14,7 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
-usage() { echo "uso: $0 imposta CHIAVE VALORE | rimuovi CHIAVE | leggi CHIAVE" >&2; exit 1; }
+usage() { echo "uso: $0 imposta CHIAVE VALORE [CHIAVE VALORE...] | rimuovi CHIAVE... | leggi CHIAVE" >&2; exit 1; }
 
 # edit_file OPERAZIONE CHIAVE VALORE < origine > destinazione
 edit_file() {
@@ -38,25 +38,61 @@ edit_file() {
 }
 
 OP=$1
-KEY=$(printf '%s' "$2" | tr 'a-z' 'A-Z')
-VAL=$3
+shift
 case "$OP" in
-	imposta) [ $# -eq 3 ] || usage ;;
-	rimuovi|leggi) [ $# -eq 2 ] || usage ;;
+	imposta) [ $# -ge 2 ] && [ $(($# % 2)) -eq 0 ] || usage ;;
+	rimuovi) [ $# -ge 1 ] || usage ;;
+	leggi) [ $# -eq 1 ] || usage ;;
 	*) usage ;;
 esac
-case "$KEY" in
-	''|*[!A-Z0-9_]*) echo "chiave non valida: $2" >&2; exit 1 ;;
-esac
+
+# Controlla tutte le chiavi e i valori prima di cambiare qualcosa.
+check_key() {
+	case "$1" in
+		''|*[!A-Za-z0-9_]*) echo "chiave non valida: $1" >&2; exit 1 ;;
+	esac
+}
 if [ "$OP" = leggi ]; then
-	conf "$KEY"
+	check_key "$1"
+	conf "$(printf '%s' "$1" | tr 'a-z' 'A-Z')"
 	echo
 	exit 0
 fi
-if ! valid_value "$VAL"; then
-	echo "valore non valido" >&2
-	exit 1
-fi
+n=$#
+i=0
+while [ $i -lt $n ]; do
+	check_key "$1"
+	if [ "$OP" = imposta ]; then
+		valid_value "$2" || { echo "valore non valido" >&2; exit 1; }
+		set -- "$@" "$1" "$2"
+		shift 2
+		i=$((i + 2))
+	else
+		set -- "$@" "$1"
+		shift
+		i=$((i + 1))
+	fi
+done
+
+# Applica le modifiche (argomenti rimasti: coppie o chiavi) a SORGENTE,
+# scrivendo DESTINAZIONE.
+edit_all() { # sorgente destinazione chiavi/valori...
+	local src=$1 dst=$2 key
+	shift 2
+	cp "$src" "$dst.1" || return 1
+	while [ $# -gt 0 ]; do
+		key=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
+		if [ "$OP" = imposta ]; then
+			edit_file "$OP" "$key" "$2" < "$dst.1" > "$dst.2" || return 1
+			shift 2
+		else
+			edit_file "$OP" "$key" "" < "$dst.1" > "$dst.2" || return 1
+			shift
+		fi
+		mv "$dst.2" "$dst.1"
+	done
+	mv "$dst.1" "$dst"
+}
 
 mkdir -p "$RUN"
 saved=2
@@ -65,22 +101,24 @@ flock 9
 if stick_mount rw; then
 	src="$STICK_MNT/sweetspot.txt"
 	[ -f "$src" ] || : > "$src"
-	if edit_file "$OP" "$KEY" "$VAL" < "$src" > "$STICK_MNT/sweetspot.tmp" &&
-		mv "$STICK_MNT/sweetspot.tmp" "$src"; then
+	if edit_all "$src" "$STICK_MNT/sweetspot.tmp" "$@" && mv "$STICK_MNT/sweetspot.tmp" "$src"; then
 		cp "$src" "$RUN/sweetspot.txt"
 		saved=0
 	fi
+	rm -f "$STICK_MNT/sweetspot.tmp.1" "$STICK_MNT/sweetspot.tmp.2"
 	stick_umount
 fi
 if [ $saved -ne 0 ]; then
 	# Senza chiavetta la modifica vale fino al riavvio.
 	[ -f "$RUN/sweetspot.txt" ] || : > "$RUN/sweetspot.txt"
-	edit_file "$OP" "$KEY" "$VAL" < "$RUN/sweetspot.txt" > "$RUN/sweetspot.tmp" &&
-		mv "$RUN/sweetspot.tmp" "$RUN/sweetspot.txt"
+	edit_all "$RUN/sweetspot.txt" "$RUN/sweetspot.tmp" "$@" && mv "$RUN/sweetspot.tmp" "$RUN/sweetspot.txt"
 fi
 config_build "$RUN/sweetspot.txt"
-case "$KEY" in
-	*PASSWORD) log "impostazioni: $OP $KEY" ;;
-	*) log "impostazioni: $OP $KEY=$VAL" ;;
-esac
+while [ $# -gt 0 ]; do
+	case "$1" in
+		*PASSWORD) log "impostazioni: $OP $1" ;;
+		*) if [ "$OP" = imposta ]; then log "impostazioni: $OP $1=$2"; else log "impostazioni: $OP $1"; fi ;;
+	esac
+	if [ "$OP" = imposta ]; then shift 2; else shift; fi
+done
 exit $saved

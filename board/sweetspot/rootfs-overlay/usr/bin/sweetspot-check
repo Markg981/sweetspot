@@ -201,16 +201,17 @@ check_player() {
 }
 
 check_library() {
-	local r songs albums scanning
-	r=$(lms_cli serverstatus 0 0) || { emit ATTENZIONE "Lyrion Music Server" "non risponde (si sta avviando?)"; return; }
-	emit OK "Lyrion Music Server" "versione $(lms_field "$r" version)"
-	songs=$(lms_field "$r" 'info total songs')
-	albums=$(lms_field "$r" 'info total albums')
-	scanning=$(lms_field "$r" rescan)
+	local r ver songs albums scanning
+	r=$(lms_json '' serverstatus 0 0) || { emit ATTENZIONE "Lyrion Music Server" "non risponde (si sta avviando?)"; return; }
+	ver=$(printf '%s\n' "$r" | jq -r '.result.version // empty')
+	songs=$(printf '%s\n' "$r" | jq -r '.result."info total songs" // 0')
+	albums=$(printf '%s\n' "$r" | jq -r '.result."info total albums" // 0')
+	scanning=$(printf '%s\n' "$r" | jq -r '.result.rescan // 0')
+	emit OK "Lyrion Music Server" "versione $ver"
 	if [ "$scanning" = 1 ]; then
-		emit INFO "Libreria" "lettura in corso (${songs:-0} brani finora)"
-	elif [ -n "$songs" ] && [ "$songs" -gt 0 ]; then
-		emit OK "Libreria" "$songs brani, ${albums:-0} album"
+		emit INFO "Libreria" "lettura in corso ($songs brani finora)"
+	elif [ "$songs" -gt 0 ] 2>/dev/null; then
+		emit OK "Libreria" "$songs brani, $albums album"
 	else
 		emit ATTENZIONE "Libreria" "vuota: collega un disco o aggiungi una cartella di rete in Musica"
 	fi

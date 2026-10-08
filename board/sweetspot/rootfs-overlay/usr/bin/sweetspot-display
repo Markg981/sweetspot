@@ -10,7 +10,8 @@
 TTY=/dev/tty1
 
 draw() {
-	local ip=$1 srv
+	local ip=$1 srv host
+	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 	printf '\033[2J\033[H'
 	echo
 	echo "   SWEETSPOT"
@@ -21,12 +22,14 @@ draw() {
 	elif [ "$(mode)" = completa ]; then
 		echo "   Dal telefono o dal computer apri:"
 		echo
-		echo "     Player:        http://$ip/     (oppure http://sweetspot.local/)"
-		echo "     Musica e impostazioni:  http://$ip:8080/"
+		echo "     http://$host.local/     oppure     http://$ip/"
+		echo
+		echo "   Musica, plugin e impostazioni sono tutti li'."
+		echo "   Funzionano anche le app per Lyrion (iPeng, Squeezer, Material)."
 		echo
 		qrencode -t ANSI -m 2 "http://$ip/" 2>/dev/null | sed 's/^/   /'
 	else
-		echo "   Stato del player:   http://$ip/   (oppure http://sweetspot.local/)"
+		echo "   Stato e impostazioni:   http://$host.local/   oppure   http://$ip/"
 		echo
 		qrencode -t ANSI -m 2 "http://$ip/" 2>/dev/null | sed 's/^/   /'
 		srv=$(lms_server_ip)

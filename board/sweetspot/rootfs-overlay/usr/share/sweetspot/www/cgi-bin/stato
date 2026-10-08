@@ -13,7 +13,7 @@ traffic=$(( (b2 - b1) / 2 ))
 page_start "Stato" stato 15
 printf '<p class="sub">Player in %s &middot; si aggiorna ogni 15 secondi</p>\n' "$(esc "$(net_ipv4)")"
 srv=$(lms_server_ip)
-if [ "$(mode)" = lyrion ] && [ -n "$srv" ]; then
+if [ "$(mode)" = player ] && [ -n "$srv" ]; then
 	printf '<p><a class="btn" href="http://%s:9000/">Apri Lyrion per scegliere la musica</a></p>\n' "$srv"
 fi
 echo '<div class="card">'

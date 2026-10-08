@@ -95,11 +95,11 @@ do_service() {
 	while [ ! -f "$STOPFLAG" ]; do
 		started=$(date +%s)
 		log "lyrion: avvio sui core $hk"
-		# setpriv fa exec: il PID resta quello di Lyrion, anche quando si
-		# riavvia da solo (dopo l'installazione di un plugin).
-		HOME=$LMS_DATA taskset -c "$hk" nice -n 10 \
-			setpriv --reuid="$LMS_USER" --regid="$LMS_USER" --init-groups \
-			perl "$LMS_DIR/slimserver.pl" \
+		# Utente lms, core di sistema, priorita' bassa. taskset, nice, su
+		# (BusyBox) e la shell fanno exec: il PID resta quello di Lyrion,
+		# anche quando si riavvia da solo dopo l'installazione di un plugin.
+		taskset -c "$hk" nice -n 10 \
+			su -s /bin/sh "$LMS_USER" -c 'exec perl "$0" "$@"' "$LMS_DIR/slimserver.pl" \
 				--prefsdir "$PREFS" --cachedir "$CACHE" --logdir "$LMS_LOG" \
 				--charset utf8 >> "$LMS_LOG/avvio.log" 2>&1 &
 		echo $! > "$RUN/lms.pid"
@@ -152,15 +152,27 @@ do_first_check() {
 		sleep 1
 		i=$((i + 1))
 	done
-	[ "$(lms_field "$(lms_cli rescan '?')" rescan 2>/dev/null)" = 1 ] && return 0
-	lms_cli rescan > /dev/null && log "lyrion: controllo della libreria dopo l'avvio"
+	lms_scanning && return 0
+	lms_json '' rescan > /dev/null && log "lyrion: controllo della libreria dopo l'avvio"
 }
 
+# plugin stato: righe "nome|versione|stato|errore" dei plugin scaricati,
+# poi "#scaricamenti|riavvio" (riavvio=1: serve riavviare Lyrion).
+# plugin installa|rimuovi NOME: stampa l'eventuale errore e fallisce.
 do_plugin() {
+	local r err
 	case "$1" in
-		stato) lms_cli sweetspot plugin-stato ;;
-		installa) [ -n "$2" ] && lms_cli sweetspot plugin-installa "nome:$2" ;;
-		rimuovi) [ -n "$2" ] && lms_cli sweetspot plugin-rimuovi "nome:$2" ;;
+		stato)
+			r=$(lms_json '' sweetspot plugin-stato) || return 1
+			printf '%s\n' "$r" | jq -r '.result | ((.plugins_loop // [])[] | "\(.nome)|\(.versione)|\(.stato)|\(.errore)"), "#\(.scaricamenti)|\(.riavvio)"'
+			;;
+		installa|rimuovi)
+			case "$2" in ''|*[!A-Za-z0-9_]*) echo "nome non valido"; return 1 ;; esac
+			r=$(LMS_TIMEOUT=60 lms_json '' sweetspot "plugin-$1" "nome:$2") || { echo "Lyrion non risponde"; return 1; }
+			err=$(printf '%s\n' "$r" | jq -r '.result.errore // empty')
+			[ -z "$err" ] || { echo "$err"; return 1; }
+			log "lyrion: plugin $2: $1"
+			;;
 		*) return 1 ;;
 	esac
 }
@@ -173,9 +185,9 @@ case "$1" in
 	ferma) do_stop ;;
 	attendi) do_wait "$2" ;;
 	primo-controllo) do_first_check ;;
-	aggiorna) lms_cli rescan > /dev/null ;;
-	ricostruisci) lms_cli wipecache > /dev/null ;;
+	aggiorna) lms_json '' rescan > /dev/null ;;
+	ricostruisci) lms_json '' wipecache > /dev/null ;;
 	plugin) shift; do_plugin "$@" ;;
-	riavvia) lms_cli restartserver > /dev/null ;;
+	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
 	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|plugin|riavvia" >&2; exit 1 ;;
 esac

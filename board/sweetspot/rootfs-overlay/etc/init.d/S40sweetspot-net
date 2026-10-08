@@ -1,12 +1,15 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - rete: cavo (anche adattatori USB) con DHCP, Wi-Fi solo se
-# configurato. Il risparmio energetico della scheda (EEE) viene spento.
+# Sweetspot - rete: cavo (anche adattatori USB) con DHCP o indirizzo fisso,
+# Wi-Fi solo se configurato. Il risparmio energetico della scheda (EEE)
+# viene spento.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
-HOST=sweetspot
+# Nome in rete (http://NOME.local): lettere minuscole, cifre e trattini.
+HOST=$(lower "$(conf NOME_RETE sweetspot)" | tr -c 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//' | cut -c1-32)
+[ -n "$HOST" ] || HOST=sweetspot
 
 wifi_conf() {
 	local ssid pass
@@ -34,9 +37,22 @@ start_dhcp() {
 	udhcpc -b -S -t 4 -T 3 -A 5 -i "$1" -x "hostname:$HOST" -p "/run/udhcpc.$1.pid" >/dev/null 2>&1
 }
 
+# Indirizzo fisso (IP_FISSO=192.168.1.50/24, GATEWAY, DNS facoltativo):
+# solo sulla prima scheda via cavo.
+static_ip() {
+	local dns
+	ip addr add "$(conf IP_FISSO)" dev "$1" || return 1
+	ip route add default via "$(conf GATEWAY)" dev "$1" 2>/dev/null
+	dns=$(conf DNS "$(conf GATEWAY)")
+	echo "nameserver $dns" > /etc/resolv.conf
+	log "rete: indirizzo fisso $(conf IP_FISSO) su $1"
+}
+
 case "$1" in
 	start)
+		static_done=""
 		hostname "$HOST"
+		echo "$HOST" > /etc/hostname
 		ip link set lo up
 		for n in "$SYS"/class/net/*; do
 			i=${n##*/}
@@ -55,7 +71,11 @@ case "$1" in
 				if ! is_yes "$(conf RISPARMIO_RETE no)"; then
 					ethtool --set-eee "$i" eee off >/dev/null 2>&1
 				fi
-				start_dhcp "$i"
+				if [ -n "$(conf IP_FISSO)" ] && [ -z "$static_done" ] && static_ip "$i"; then
+					static_done=1
+				else
+					start_dhcp "$i"
+				fi
 				log "rete: cavo su $i"
 			fi
 		done

@@ -163,7 +163,8 @@ expect "classe 16 GB" "completa" "$(run "$N550" machine_class)"
 expect "classe 2 GB" "essenziale" "$(run "$DUAL" machine_class)"
 expect "classe 1 GB" "leggera" "$(run "$ONE" machine_class)"
 expect "buffer 16 GB" "1048576:2000000" "$(run "$N550" player_buffers)"
-expect "buffer 2 GB" "250625:501250" "$(run "$DUAL" player_buffers)"
+expect "buffer 2 GB" "203094:406189" "$(run "$DUAL" player_buffers)"
+expect "buffer 1 GB" "33928:67856" "$(run "$ONE" player_buffers)"
 
 echo "DAC"
 expect "trova il DAC USB, non la scheda integrata" "1" "$(run "$N550" dac_find)"
@@ -234,6 +235,13 @@ expect "chiave nuova in fondo, chiave esistente sostituita, prefissi intatti, a 
 expect "configurazione ricostruita" "nativo" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf DSD")"
 expect "rifiuta valori su piu' righe" "1" "$(cfgset imposta NOME_PLAYER "$(printf 'a\nB=c')")"
 expect "rifiuta chiavi non valide" "1" "$(cfgset imposta 'A;B' x)"
+cfgset imposta VOLUME dac RICAMPIONAMENTO sincrono FILTRO minimo >/dev/null
+cfgset rimuovi RICAMPIONAMENTO FILTRO >/dev/null
+expect "piu' chiavi in una volta (tolte: tornano i predefiniti)" "dac|no|lineare" \
+	"$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; echo \"\$(conf VOLUME)|\$(conf RICAMPIONAMENTO)|\$(conf FILTRO)\"")"
+expect "numero dispari di argomenti rifiutato" "1" "$(cfgset imposta VOLUME)"
+expect "un valore non valido blocca tutto" "1" "$(cfgset imposta VOLUME software NOME_PLAYER "$(printf 'x\ny')")"
+expect "niente cambiato dopo il rifiuto" "dac" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf VOLUME")"
 
 echo "Nomi e percorsi"
 expect "nome di cartella sicuro" "Musica _rock_ 2024" "$(run "$ONE" "safe_name 'Musica /rock\$ 2024'")"
@@ -242,27 +250,71 @@ expect "percorso di rete Windows" "//NAS/Musica" "$(run "$ONE" "normalize_unc '\
 expect "percorso di rete smb://" "//nas.local/Musica" "$(run "$ONE" "normalize_unc 'smb://nas.local/Musica'")"
 expect "percorso di rete incompleto" "no" "$(run "$ONE" "normalize_unc '//192.168.1.10' || echo no")"
 expect "modalita' predefinita" "completa" "$(run "$ONE" mode)"
-expect "precarica 16 GB" "3980" "$(run "$N550" cache_mb)"
-expect "precarica 1 GB" "241" "$(run "$ONE" cache_mb)"
+printf 'MODALITA=player\n' > "$WORK/m.txt"
+expect "modalita' solo player" "player" "$(run "$ONE" "config_build $WORK/m.txt; mode")"
+printf 'MODALITA=lyrion\n' > "$WORK/m.txt"
+expect "vecchio nome della modalita' accettato" "player" "$(run "$ONE" "config_build $WORK/m.txt; mode")"
+expect "stringa JSON" '"a\"b\\c"' "$(run "$ONE" "json_str 'a\"b\\c'")"
+expect "bit dei formati ALSA" "16 24 32 1" "$(run "$ONE" 'echo $(alsa_bits S16_LE) $(alsa_bits S24_3LE) $(alsa_bits S32_LE) $(alsa_bits DSD_U32_BE)')"
 
-echo "Configurazione di MPD"
-mpdconf() { # ambiente scheda [impostazioni]
-	mkdir -p "$1/run"
-	printf '%s\n' "${3:-}" > "$WORK/mpd.txt"
-	SWEETSPOT_SYSFS=$1/sys SWEETSPOT_PROCFS=$1/proc SWEETSPOT_RUN=$1/run SWEETSPOT_LOG=$1/log \
-		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
-		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WORK/mpd.txt; . $OVERLAY/usr/bin/sweetspot-mpd-conf" sh "$2"
+echo "Plugin consigliati"
+CAT=$OVERLAY/usr/share/sweetspot/plugin-consigliati.txt
+bad=$(grep -v '^#' "$CAT" | grep . | awk -F'|' 'NF != 4 || $1 !~ /^[A-Za-z0-9_]+$/ || $3 == "" || $4 == ""')
+expect "catalogo: quattro campi e nomi validi" "" "$bad"
+dups=$(grep -v '^#' "$CAT" | grep . | cut -d'|' -f1 | sort | uniq -d)
+expect "catalogo: nessun doppione" "" "$dups"
+
+echo "Pagine web (con un Lyrion finto)"
+# Lyrion finto: risponde ai comandi JSON usati dalle pagine.
+WEB=$WORK/web
+mkdir -p "$WEB/bin" "$WEB/run"
+cp -r "$N550/sys" "$N550/proc" "$WEB/"
+cat > "$WEB/bin/wget" <<'FINTO'
+#!/bin/sh
+for a; do case "$a" in --post-data=*) d=${a#--post-data=} ;; esac; done
+prev=""; for a; do [ "$prev" = --post-data ] && d=$a; prev=$a; done
+case "$d" in
+	*serverstatus*) echo '{"result":{"version":"9.1.1","info total songs":1200,"info total albums":100,"info total artists":80}}' ;;
+	*plugin-stato*) echo '{"result":{"plugins_loop":[{"nome":"MaterialSkin","versione":"6.4.12","stato":"enabled","errore":""},{"nome":"Qobuz","versione":"3.7.2","stato":"enabled","errore":""},{"nome":"Altro","versione":"1.0","stato":"enabled","errore":""}],"scaricamenti":0,"riavvio":1}}' ;;
+	*'"status"'*) echo '{"result":{"mode":"play","playlist_loop":[{"samplerate":"96000","samplesize":"24","type":"flc","title":"Brano","artist":"Artista"}]}}' ;;
+	*version*) echo '{"result":{"_version":"9.1.1"}}' ;;
+	*) echo '{"result":{}}' ;;
+esac
+FINTO
+mkdir -p "$WEB/proc/sys/kernel"
+echo sweetspot > "$WEB/proc/sys/kernel/hostname"
+chmod +x "$WEB/bin/wget"
+ln -sf "$OVERLAY/usr/bin/sweetspot-lms" "$WEB/bin/sweetspot-lms"
+mkdir -p "$WEB/proc/asound/card1/pcm0p/sub0"
+printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
+echo "00:11:22:33:44:55" > "$WEB/run/player.mac"
+page() { # pagina [impostazioni]
+	printf '%s\n' "${2:-}" > "$WEB/s.txt"
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$WEB/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_PLUGIN_CATALOG=$OVERLAY/usr/share/sweetspot/plugin-consigliati.txt \
+		SWEETSPOT_WGET=$WEB/bin/wget REQUEST_METHOD=GET QUERY_STRING="" HTTP_HOST=sweetspot.local \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/$1" 2>&1
 }
-c=$(mpdconf "$N550" 1)
-for want in 'device          "hw:CARD=R26,DEV=0"' 'mixer_type      "none"' 'auto_resample   "no"' \
-	'auto_format     "no"' 'auto_channels   "no"' 'dop             "no"' 'size "3980 MB"' \
-	'replaygain              "off"' 'buffer_time     "400000"'; do
-	case "$c" in *"$want"*) ok "MPD: $want" ;; *) ko "MPD: $want" "$want" "(assente)" ;; esac
+for p in audio musica plugin rete sistema; do
+	out=$(page "$p")
+	case "$out" in
+		"Content-Type: text/html"*"</html>") ok "pagina $p completa" ;;
+		*) ko "pagina $p" "pagina HTML completa" "$(printf '%s' "$out" | tail -n 3)" ;;
+	esac
 done
-case "$(mpdconf "$N550" 1 DSD=dop)" in *'dop             "yes"'*) ok "MPD: DoP su richiesta" ;; *) ko "MPD: DoP" "dop yes" "-" ;; esac
-case "$(mpdconf "$N550" 1 DSD=no)" in *'allowed_formats "*:16:* *:24:* *:32:*"'*) ok "MPD: DSD convertito in PCM" ;; *) ko "MPD: DSD in PCM" "allowed_formats" "-" ;; esac
-case "$(mpdconf "$N550" "")" in *'type            "null"'*) ok "MPD: senza DAC uscita fittizia" ;; *) ko "MPD senza DAC" "null" "-" ;; esac
-case "$(mpdconf "$N550" 1 'NOME_PLAYER=Sala "grande"')" in *'zeroconf_name           "Sala grande"'*) ok "MPD: nome senza virgolette" ;; *) ko "MPD nome" "Sala grande" "-" ;; esac
+case "$(page audio)" in *"Bit-perfect"*"24 bit"*) ok "audio: FLAC 24/96 su S32_LE 96 kHz e' bit-perfect" ;; *) ko "audio bit-perfect" "Bit-perfect" "-" ;; esac
+printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
+case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
+case "$(page audio 'VOLUME=software')" in *"Non bit-perfect"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect" "-" ;; esac
+printf 'access: MMAP_INTERLEAVED\nformat: DSD_U32_BE\nsubformat: STD\nchannels: 2\nrate: 88200 (88200/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
+case "$(page audio)" in *"DSD nativo"*"DSD64"*) ok "audio: DSD64 nativo riconosciuto" ;; *) ko "audio DSD nativo" "DSD64" "-" ;; esac
+out=$(page plugin)
+case "$out" in *"Riavvia Lyrion ora"*) ok "plugin: richiesta di riavvio mostrata" ;; *) ko "plugin riavvio" "Riavvia Lyrion ora" "-" ;; esac
+case "$out" in *"Qobuz"*"Installato"*) ok "plugin: Qobuz installato" ;; *) ko "plugin Qobuz" "Installato" "-" ;; esac
+case "$out" in *"Altri plugin installati"*"Altro"*) ok "plugin: plugin fuori catalogo elencati" ;; *) ko "plugin altri" "Altro" "-" ;; esac
+case "$(page musica)" in *"1200 brani, 100 album, 80 artisti"*) ok "musica: numeri della libreria" ;; *) ko "musica libreria" "1200 brani" "-" ;; esac
+case "$(page musica 'MODALITA=player')" in *"solo player"*) ok "musica: modalita' solo player" ;; *) ko "musica player" "solo player" "-" ;; esac
 
 echo "Dischi nella libreria"
 DSK=$WORK/dischi

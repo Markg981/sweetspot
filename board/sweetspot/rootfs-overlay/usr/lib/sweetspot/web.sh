@@ -4,8 +4,8 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
-# Testo sicuro dentro l'HTML.
-esc() { httpd -e "$1"; }
+# Testo sicuro dentro l'HTML (anche tra virgolette negli attributi).
+esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'; }
 
 # Gettone anti-CSRF valido fino al riavvio: una pagina esterna non puo'
 # leggerlo, quindi non puo' inviare comandi al player al posto dell'utente.

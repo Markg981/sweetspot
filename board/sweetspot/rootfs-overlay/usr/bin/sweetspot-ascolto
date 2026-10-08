@@ -1,0 +1,57 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - modalita' ascolto: mentre il DAC suona, i lavori che possono
+# aspettare restano fermi (oggi la lettura della libreria di Lyrion) e
+# ripartono da soli quando la musica si ferma. Si disattiva con
+# MODALITA_ASCOLTO=no.
+#
+# Il salvataggio sulla chiavetta (sweetspot-dati) aspetta gia' da solo la
+# fine dell'ascolto; i plugin di Lyrion si aggiornano solo su richiesta.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+STOPPED=$RUN/ascolto.fermi
+
+# Processi della lettura della libreria di Lyrion.
+scanner_pids() {
+	local p
+	for p in "$PROC"/[0-9]*; do
+		case "$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)" in
+			*scanner.pl*) printf '%s\n' "${p##*/}" ;;
+		esac
+	done
+}
+
+pause_work() {
+	local pid
+	for pid in $(scanner_pids); do
+		grep -qx "$pid" "$STOPPED" 2>/dev/null && continue
+		kill -STOP "$pid" 2>/dev/null && echo "$pid" >> "$STOPPED" &&
+			log "ascolto: lettura della libreria sospesa durante l'ascolto"
+	done
+}
+
+resume_work() {
+	local pid
+	[ -s "$STOPPED" ] || return 0
+	while read -r pid; do
+		kill -CONT "$pid" 2>/dev/null
+	done < "$STOPPED"
+	: > "$STOPPED"
+	log "ascolto: lettura della libreria ripresa"
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+mkdir -p "$RUN"
+: > "$STOPPED"
+trap 'resume_work; exit 0' TERM INT
+while true; do
+	if is_yes "$(conf MODALITA_ASCOLTO si)" && dac_playing; then
+		pause_work
+	else
+		resume_work
+	fi
+	sleep 5
+done

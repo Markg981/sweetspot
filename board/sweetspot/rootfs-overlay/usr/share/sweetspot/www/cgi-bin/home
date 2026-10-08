@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina d'ingresso (http://sweetspot.local): in modalita'
+# completa porta all'interfaccia del player, altrimenti allo stato.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+if [ "$(mode)" = completa ] && lms_ready; then
+	redirect "$(player_url)"
+else
+	redirect /cgi-bin/stato
+fi

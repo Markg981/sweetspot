@@ -9,13 +9,23 @@ Come si usa
    solo, scegli la chiavetta dal menu di avvio del computer (di solito
    compare premendo F8, F11, F12 o Esc subito dopo l'accensione).
 4. Al primo avvio Sweetspot si adatta al computer e si riavvia una volta.
-5. Dal telefono apri http://sweetspot.local per vedere lo stato.
-   La musica si sceglie con Lyrion Music Server o con le sue app.
+5. Dal telefono, dal tablet o dal computer apri http://sweetspot.local/
+   (oppure l'indirizzo che compare sullo schermo del computer).
+   Li' scegli la musica, installi i plugin (Qobuz, TIDAL, Spotify, radio)
+   e trovi le impostazioni: menu dell'interfaccia > Impostazioni Sweetspot.
+
+La musica
+---------
+- Dischi interni e USB: vengono trovati da soli e letti in sola lettura.
+  Sweetspot non scrive e non cancella mai niente sui tuoi dischi.
+- Cartelle di rete (NAS, PC): si aggiungono dalla pagina Musica.
+- Funzionano anche le app per Lyrion Music Server (iPeng, Squeezer,
+  Material) e gli altri player Squeezebox della casa.
 
 Impostazioni
 ------------
-Si cambiano nel file sweetspot.txt, con il Blocco note. I valori gia'
-presenti sono quelli consigliati.
+Si cambiano dal browser. Restano salvate in questa chiavetta, nel file
+sweetspot.txt, che si puo' modificare anche con il Blocco note.
 
 Se qualcosa non va
 ------------------
@@ -23,5 +33,7 @@ Se qualcosa non va
 - Il computer deve avere Secure Boot disattivato nel BIOS/UEFI.
 - Per far ripartire da zero l'adattamento al computer, cancella il file
   boot/grub/auto.cfg da questa chiavetta.
+- Prima di staccare la corrente spegni Sweetspot dalla pagina Sistema:
+  libreria, plugin e impostazioni vengono salvati sulla chiavetta.
 
 Licenza: GNU GPL versione 3 o successiva.

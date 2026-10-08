@@ -6,39 +6,42 @@
 
 page_start "Musica" musica
 
-if [ "$(mode)" = lyrion ]; then
+if [ "$(mode)" = player ]; then
 	cat <<HTML
-<p class="sub">Sweetspot e' in modalita' Lyrion: la libreria e la scelta dei brani
-sono sul server Lyrion. Per avere libreria e interfaccia qui sul player,
-passa alla modalita' completa nelle <a href="/cgi-bin/impostazioni">Impostazioni</a>.</p>
+<p class="sub">Sweetspot e' in modalita' solo player: la libreria e la scelta dei brani
+sono sul server Lyrion dell'altro computer. Per avere libreria, plugin e
+interfaccia qui, passa alla modalita' completa in <a href="/cgi-bin/sistema">Sistema</a>.</p>
 HTML
 	page_end
 	exit 0
 fi
 
 # --- Libreria ---------------------------------------------------------------------
-stats=$(mpc --host "$MPD_SOCKET" stats 2>/dev/null)
-songs=$(printf '%s\n' "$stats" | sed -n 's/^Songs: *//p')
-albums=$(printf '%s\n' "$stats" | sed -n 's/^Albums: *//p')
-artists=$(printf '%s\n' "$stats" | sed -n 's/^Artists: *//p')
-updating=$(mpc --host "$MPD_SOCKET" status 2>/dev/null | grep -c 'Updating DB')
+r=$(lms_json '' serverstatus 0 0)
+songs=$(printf '%s' "$r" | jq -r '.result."info total songs" // empty' 2>/dev/null)
+albums=$(printf '%s' "$r" | jq -r '.result."info total albums" // 0' 2>/dev/null)
+artists=$(printf '%s' "$r" | jq -r '.result."info total artists" // 0' 2>/dev/null)
+scanning=$(printf '%s' "$r" | jq -r '.result.rescan // 0' 2>/dev/null)
+progress=$(printf '%s' "$r" | jq -r 'if .result.progressname then "\(.result.progressname) \(.result.progressdone // 0)/\(.result.progresstotal // 0)" else "" end' 2>/dev/null)
 
 echo '<h2>Libreria</h2><div class="card"><div class="row"><div class="grow">'
-if [ -n "$songs" ]; then
-	printf '<div class="k">%s brani, %s album, %s artisti</div>' "$songs" "$albums" "$artists"
-else
-	echo '<div class="k">Libreria non disponibile</div>'
-fi
-if [ "$updating" -gt 0 ]; then
-	echo '<div class="v">Aggiornamento in corso: la pagina si aggiorna da sola tra poco.</div>'
+if [ -z "$r" ]; then
+	echo '<div class="k">Lyrion si sta avviando</div><div class="v">La pagina si aggiorna da sola tra poco.</div>'
 	echo '<meta http-equiv="refresh" content="10">'
 else
-	echo '<div class="v">Sweetspot legge i dischi e le cartelle qui sotto. Dopo aver aggiunto musica, premi Aggiorna.</div>'
+	printf '<div class="k">%s brani, %s album, %s artisti</div>' "${songs:-0}" "$albums" "$artists"
+	if [ "$scanning" = 1 ]; then
+		printf '<div class="v">Lettura della libreria in corso%s: la pagina si aggiorna da sola.</div>' "$(esc "${progress:+ ($progress)}")"
+		echo '<meta http-equiv="refresh" content="10">'
+	else
+		echo '<div class="v">Sweetspot legge i dischi e le cartelle qui sotto. I dischi USB collegati vengono aggiunti da soli; dopo aver copiato musica nuova premi Aggiorna.</div>'
+	fi
+	echo '<div>'
+	button aggiorna "Aggiorna la libreria" "" "" primary
+	button ricostruisci "Ricostruisci da zero"
+	echo '</div>'
 fi
-echo '<div>'
-button aggiorna "Aggiorna la libreria" "" "" primary
-button ricostruisci "Ricostruisci da zero"
-echo '</div></div></div></div>'
+echo '</div></div></div>'
 
 # --- Dischi -------------------------------------------------------------------------
 echo '<h2>Dischi</h2><div class="card">'

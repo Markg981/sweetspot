@@ -94,7 +94,7 @@ DATA_DIR_NAME=sweetspot-dati
 # shellcheck disable=SC2034
 LMS_DATA=${SWEETSPOT_LMS_DATA:-/var/lib/lms}
 LMS_HOST=${SWEETSPOT_LMS_HOST:-127.0.0.1}
-LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
+LMS_HTTP_PORT=${SWEETSPOT_LMS_HTTP_PORT:-9000}
 
 # Nome di cartella leggibile e sicuro: lettere, cifre, spazi e . _ -
 safe_name() {
@@ -425,35 +425,73 @@ lms_server_ip() {
 
 # --- Lyrion Music Server ------------------------------------------------------------
 
-# Codifica un parametro per la riga di comando di Lyrion (ogni byte in %XX:
-# vale per qualunque nome, anche con spazi, accenti o virgolette).
-urlenc() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g'; }
+# Le richieste a Lyrion passano dal JSON-RPC sulla porta web: ogni richiesta
+# ha la sua risposta, anche per i comandi che richiedono tempo (installazione
+# di un plugin), e jq legge i risultati senza ambiguita'.
 
-# lms_cli PAROLA...: invia un comando alla porta CLI di Lyrion e stampa la
-# risposta (una riga, parametri codificati). Fallisce se Lyrion non risponde.
-lms_cli() {
-	local cmd="" w out
-	for w in "$@"; do cmd="$cmd $(urlenc "$w")"; done
-	out=$(printf '%s\nexit\n' "${cmd# }" | timeout 15 nc "$LMS_HOST" "$LMS_CLI_PORT" 2>/dev/null | head -n 1 | tr -d '\r')
+# Stringa JSON (i valori arrivano gia' privi di caratteri di controllo).
+json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+# lms_json PLAYER PAROLA...: invia un comando a Lyrion (PLAYER vuoto per i
+# comandi del server) e stampa la risposta JSON. Fallisce se non risponde.
+lms_json() {
+	local player=$1 args="" w out
+	shift
+	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
+	out=$("${SWEETSPOT_WGET:-wget}" -q -T "${LMS_TIMEOUT:-20}" -O - --header 'Content-Type: application/json' \
+		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
+		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null) || return 1
 	[ -n "$out" ] || return 1
 	printf '%s\n' "$out"
 }
 
-# lms_field RISPOSTA CHIAVE: valore (decodificato) del primo "chiave:valore".
-lms_field() {
-	local t
-	for t in $1; do
-		t=$(httpd -d "$t" 2>/dev/null)
-		case "$t" in "$2":*) printf '%s' "${t#*:}"; return 0 ;; esac
+# lms_get FILTRO PLAYER PAROLA...: valore del risultato scelto con un filtro
+# jq relativo a .result (es. '._version'), vuoto se manca.
+lms_get() {
+	local filter=$1
+	shift
+	lms_json "$@" | jq -r ".result | ($filter) // empty" 2>/dev/null
+}
+
+# Lyrion risponde?
+lms_ready() { [ -n "$(LMS_TIMEOUT=5 lms_get '._version' '' version '?')" ]; }
+
+# Lyrion sta leggendo la libreria?
+lms_scanning() { [ "$(lms_get '.rescan' '' rescan '?')" = 1 ]; }
+
+# Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
+dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
+
+# Formato che arriva davvero al DAC adesso: "FORMATO FREQUENZA CANALI"
+# (es. "S32_LE 96000 2"), niente se l'uscita e' chiusa.
+dac_hw_now() {
+	local f
+	for f in "$PROC"/asound/card"$1"/pcm*p/sub*/hw_params; do
+		[ -f "$f" ] || continue
+		grep -q '^format:' "$f" || continue
+		awk '/^format:/ {f=$2} /^rate:/ {r=$2} /^channels:/ {c=$2} END {print f, r, c}' "$f"
+		return 0
 	done
 	return 1
 }
 
-# Lyrion risponde?
-lms_ready() { lms_cli version '?' > /dev/null; }
+# Bit utili di un formato ALSA (contenitore): S16_LE 16, S24_3LE 24, S32_LE 32.
+alsa_bits() {
+	case "$1" in
+		S16*|U16*) echo 16 ;;
+		S24*|U24*) echo 24 ;;
+		S32*|U32*|FLOAT*) echo 32 ;;
+		DSD*) echo 1 ;;
+		*) echo 0 ;;
+	esac
+}
 
-# Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
-dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
+# Brano in riproduzione sul player indicato (MAC), in JSON: tipo, frequenza,
+# bit, titolo, artista e album, piu' lo stato del player (mode).
+lms_now_playing() {
+	lms_json "$1" status - 1 'tags:aloITr' |
+		jq -c '.result | {mode, rate: (.playlist_loop[0].samplerate // ""), bits: (.playlist_loop[0].samplesize // ""), type: (.playlist_loop[0].type // ""), title: (.playlist_loop[0].title // ""), artist: (.playlist_loop[0].artist // ""), album: (.playlist_loop[0].album // ""), bitrate: (.playlist_loop[0].bitrate // "")}' 2>/dev/null
+}
 
 # --- Chiavetta ------------------------------------------------------------------
 

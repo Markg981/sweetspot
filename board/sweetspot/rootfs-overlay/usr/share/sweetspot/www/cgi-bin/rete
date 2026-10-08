@@ -1,0 +1,68 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Rete": schede di rete, Wi-Fi e indirizzo.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+page_start "Rete" rete
+
+echo '<h2>Collegamento</h2><div class="card">'
+n=0
+for d in "$SYS"/class/net/*; do
+	i=${d##*/}
+	[ -e "$d/device" ] || continue
+	[ "$(cat "$d/type" 2>/dev/null)" = 1 ] || continue
+	n=$((n + 1))
+	if [ -d "$d/wireless" ] || [ -d "$d/phy80211" ]; then kind="Wi-Fi"; else kind="Cavo"; fi
+	ip=$(ip -4 -o addr show dev "$i" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\/[0-9]*\).*/\1/p' | head -n 1)
+	speed=$(cat "$d/speed" 2>/dev/null)
+	case "$speed" in ''|-*) speed="" ;; *) speed=", $speed Mbit/s" ;; esac
+	if [ -n "$ip" ]; then
+		info_row OK "$kind ($i)" "indirizzo $ip$speed - MAC $(cat "$d/address" 2>/dev/null)"
+	elif [ "$kind" = "Wi-Fi" ] && [ -z "$(conf WIFI_NOME)" ]; then
+		info_row "" "$kind ($i)" "spento: inserisci qui sotto il nome della rete per usarlo"
+	else
+		info_row ATTENZIONE "$kind ($i)" "nessun indirizzo$( [ "$(cat "$d/carrier" 2>/dev/null)" = 1 ] || echo ': cavo scollegato?')"
+	fi
+done
+[ $n -eq 0 ] && info_row ATTENZIONE "Nessuna scheda di rete" "Collega il cavo di rete o un adattatore USB."
+host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
+info_row "" "Nome in rete" "http://$host.local - si puo' usare al posto dell'indirizzo dal telefono e dal computer"
+echo '</div>'
+
+ipmode=automatico
+[ -n "$(conf IP_FISSO)" ] && ipmode=fisso
+echo '<h2>Impostazioni</h2><div class="card formcard">'
+form_start rete
+cat <<HTML
+<label for="wn">Wi-Fi: nome della rete <span>(vuoto = Wi-Fi spento; il cavo resta la scelta migliore per il suono)</span></label>
+<input id="wn" name="wifi_nome" autocapitalize="off" autocorrect="off" value="$(esc "$(conf WIFI_NOME)")">
+<label for="wp">Wi-Fi: password <span>(lascia vuoto per non cambiarla)</span></label>
+<input id="wp" name="wifi_password" type="password" autocomplete="new-password">
+
+<label for="im">Indirizzo</label>
+<select id="im" name="ip_modo">
+$(option automatico "Automatico dal router (consigliato)" "$ipmode")
+$(option fisso "Fisso" "$ipmode")
+</select>
+<label for="ip">Indirizzo fisso con maschera <span>(es. 192.168.1.50/24)</span></label>
+<input id="ip" name="ip_fisso" inputmode="decimal" value="$(esc "$(conf IP_FISSO)")">
+<label for="gw">Router (gateway) <span>(es. 192.168.1.1)</span></label>
+<input id="gw" name="gateway" inputmode="decimal" value="$(esc "$(conf GATEWAY)")">
+<label for="dns">DNS <span>(vuoto = il router)</span></label>
+<input id="dns" name="dns" inputmode="decimal" value="$(esc "$(conf DNS)")">
+
+<label for="nr">Nome in rete <span>(lettere minuscole, cifre e trattini; diverso per ogni Sweetspot della casa)</span></label>
+<input id="nr" name="nome_rete" autocapitalize="off" autocorrect="off" value="$(esc "$(conf NOME_RETE sweetspot)")">
+
+<label for="rr">Risparmio energetico della scheda di rete</label>
+<select id="rr" name="risparmio">
+$(option no "Spento: collegamento sempre stabile (consigliato)" "$(conf RISPARMIO_RETE no)")
+$(option si "Acceso" "$(conf RISPARMIO_RETE no)")
+</select>
+<p class="sub">Le impostazioni di rete valgono dal prossimo avvio.</p>
+<button class="primary">Salva</button>
+</form>
+</div>
+HTML
+page_end
