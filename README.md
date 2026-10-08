@@ -1,56 +1,76 @@
 # Sweetspot
 
-Player audio bit-perfect per musica liquida, open source (GPLv3). Si avvia da
-una chiavetta USB, copia tutto il sistema in RAM e fa una sola cosa:
-consegnare al DAC esattamente i bit del file, con il minimo rumore elettrico e
-senza interruzioni.
-
-Questa è la **fase 1** del progetto: un sistema completo e usabile al posto di
-Daphile, che riproduce con Squeezelite e si pilota da Lyrion Music Server. Dalla
-fase 2 il motore di riproduzione diventa quello di Sweetspot.
+Player e server di musica liquida bit-perfect, open source (GPLv3), pensato
+come alternativa a Daphile: stesso motore (Lyrion Music Server con i suoi
+plugin, Squeezelite come player), con un sistema costruito per far suonare il
+DAC nel modo più pulito possibile. Si avvia da una chiavetta USB, copia tutto
+in RAM e si usa dal browser del telefono o del computer.
 
 ## Cosa fa all'accensione
 
 1. GRUB trova la chiavetta dall'etichetta `SWEETSPOT` (BIOS o UEFI a 64/32 bit)
-   e carica kernel e sistema in RAM. Da quel momento la chiavetta non viene più
-   letta e si può togliere.
-2. Legge `sweetspot.txt` dalla chiavetta: impostazioni in italiano, modificabili
-   con il Blocco note.
+   e carica kernel e sistema in RAM.
+2. Legge impostazioni, libreria e plugin salvati sulla chiavetta.
 3. Riconosce il computer e calcola i parametri di avvio: core dedicati
    all'audio (anche sulle CPU ibride Intel), Hyper-Threading spento, CPU limitata
    allo stato C1. Al primo avvio li scrive sulla chiavetta e riavvia **una sola
-   volta**; da lì in poi sono stabili.
-4. Fissa la frequenza della CPU secondo il profilo, spegne il Turbo, il
-   Bluetooth, il Wi-Fi non usato e il risparmio energetico USB e di rete, mette
-   in standby i dischi meccanici interni.
-5. Attende il DAC e avvia Squeezelite:
+   volta**.
+4. Fissa la frequenza della CPU, spegne Turbo, Bluetooth, Wi-Fi non usato e
+   risparmio energetico USB e di rete.
+5. Trova i dischi con la musica (interni e USB: NTFS, exFAT, ext4, FAT, HFS+) e
+   li monta **in sola lettura**; dai dischi di Windows e Linux prende solo le
+   cartelle Musica degli utenti. Monta le cartelle di rete (NAS, PC) indicate.
+6. Avvia **Lyrion Music Server** (utente proprio, priorità bassa, core di
+   sistema) con l'interfaccia **Material** e il plugin di Sweetspot.
+7. Attende il DAC e avvia **Squeezelite**:
    - uscita diretta `hw:` su ALSA, senza plug, dmix o ricampionamento;
-   - DSD nativo se il DAC lo dichiara (per il Gustard R26 è già riconosciuto
-     dal kernel), DoP o conversione dal server a scelta;
-   - buffer da centinaia di MB fino a ~3 GB: il brano arriva tutto in RAM, e
-     durante l'ascolto la rete resta muta;
+   - volume fisso al 100% e volume interno del DAC a 0 dB (bit-perfect);
+   - DSD nativo se il DAC lo dichiara, altrimenti DoP o PCM a scelta;
+   - buffer da centinaia di MB: il brano arriva tutto in RAM ed è già
+     decodificato prima di suonare, anche da Qobuz o TIDAL;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
      interruzioni del controller USB del DAC (priorità 90) sull'altro.
-   Se il DAC viene spento o scollegato, il player riparte da solo quando torna.
-6. Mostra sullo schermo l'indirizzo e un QR code, poi lo spegne.
+8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
+   sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
+   aspetta la fine dell'ascolto.
 
-Lo stato completo si vede dal telefono su `http://sweetspot.local`: ogni
-ottimizzazione con un pallino verde o arancione, il formato in uscita, le
-interruzioni dell'audio dall'accensione e il traffico di rete in quel momento.
+## Come si usa
+
+Dal telefono o dal computer apri `http://sweetspot.local/` (oppure l'indirizzo
+che compare sullo schermo): si apre l'interfaccia **Material** di Lyrion, con
+libreria, radio e servizi in streaming. Funzionano anche le app per Lyrion
+(iPeng, Squeezer, Material) e gli altri player Squeezebox della casa.
+
+Nel menu di Material, **Impostazioni Sweetspot** apre le sezioni, come su
+Daphile:
+
+| Sezione | Cosa contiene |
+| --- | --- |
+| **Audio** | DAC riconosciuto, formato che arriva al DAC in quel momento con la **verifica bit-perfect**, volume (fisso, del DAC, software), DSD, ricampionamento facoltativo con scelta del filtro, opzioni per esperti (buffer, periodi, pause) |
+| **Musica** | stato della libreria, dischi trovati (escludi/includi), cartelle di rete (aggiunta con prova di accesso) |
+| **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
+| **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
+| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, riavvio e spegnimento |
+| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete |
+
+Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
+anche con il Blocco note).
+
+### Modalità
+
+- **completa** (predefinita): tutto su Sweetspot, come Daphile.
+- **player**: solo Squeezelite, per un Lyrion Music Server su un altro
+  computer (per chi vuole server e player separati).
 
 ## Cosa serve
 
-- Un PC x86 a 64 bit con almeno 1 GB di RAM (consigliati 4 GB o più).
+- Un PC x86 a 64 bit con almeno 2 GB di RAM (consigliati 4 GB o più).
   Prototipo di riferimento: Asus N550JV con 16 GB.
 - Un DAC USB.
 - Il cavo di rete (il Wi-Fi funziona, ma è un ripiego).
 - Una chiavetta USB da almeno 1 GB.
-- **Lyrion Music Server** su un altro computer o su un NAS: la libreria
-  musicale e l'interfaccia di controllo restano lì, lontano dal DAC. Va bene
-  anche un PC Windows (per esempio il Galaxy Book) o la versione Docker.
 
-Secure Boot va disattivato nel BIOS/UEFI: la firma del bootloader arriva in una
-fase successiva.
+Secure Boot va disattivato nel BIOS/UEFI.
 
 ## Ottenere l'immagine
 
@@ -91,8 +111,9 @@ sudo apt install qemu-system-x86 mtools ovmf
 ./tests/qemu-avvio.sh output/images/sweetspot.img.xz uefi     # UEFI
 ```
 
-Si vede il primo avvio con il riavvio di adattamento, poi la pagina di stato è
-su `http://localhost:8080`. Ctrl+A e poi X per uscire.
+Si vede il primo avvio con il riavvio di adattamento; poi l'interfaccia è su
+`http://localhost:9000/material/` e le impostazioni su
+`http://localhost:8080/cgi-bin/audio`. Ctrl+A e poi X per uscire.
 
 ## Scrivere la chiavetta
 
@@ -107,29 +128,30 @@ decomprimerlo. La chiavetta resta leggibile da Windows e macOS come unità
 2. Accendi e scegli la chiavetta dal menu di avvio del PC.
 3. Sweetspot si adatta al computer e si riavvia una volta.
 4. Sul monitor compare l'indirizzo; dal telefono apri `http://sweetspot.local`.
-5. In Lyrion il player compare come **Sweetspot** (o con il nome scelto).
-
-### Impostazioni consigliate in Lyrion
-
-- *Impostazioni del player → Audio → Controllo del volume*: **livello di
-  uscita fisso al 100%**. Con un volume diverso Squeezelite moltiplica i
-  campioni e il percorso non è più bit-perfect.
-- Volume regolato dall'amplificatore.
-- Per il DSD, plugin **DSD Player** attivo (incluso in Lyrion).
+5. Collega un disco con la musica o aggiungi la cartella del NAS in
+   *Impostazioni Sweetspot → Musica*: la libreria si crea da sola.
 
 ## Impostazioni (`sweetspot.txt`)
 
 | Voce | Valori | Predefinito |
 | --- | --- | --- |
 | `NOME_PLAYER` | testo | Sweetspot |
-| `SERVER` | indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
+| `MODALITA` | `completa`, `player` | completa |
+| `SERVER` | solo modalità player: indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
+| `MODALITA_ASCOLTO` | `si`, `no` | si |
+| `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
+| `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
 | `DAC` | `auto`, nome ALSA (es. `R26`) o `VID:PID` | auto |
-| `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |
+| `VOLUME` | `fisso`, `dac`, `software` | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
-| `PAUSA_DSD_MS` | pausa al passaggio PCM/DSD | 500 |
-| `PAUSA_FREQUENZA_MS` | pausa a ogni cambio di frequenza | 0 |
+| `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
+| `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
+| `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio | 500, 0 |
+| `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
+| `IP_FISSO`, `GATEWAY`, `DNS` | indirizzo fisso, es. `192.168.1.50/24` | vuoto |
 | `RISPARMIO_RETE` | risparmio energetico Ethernet (EEE) | no |
+| `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |
 | `USCITA_INTEGRATA` | usa la scheda audio del PC | no |
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
@@ -139,10 +161,11 @@ I profili cambiano solo la frequenza della CPU: *silenzio* la fissa alla
 minima, *bilanciato* a metà strada, *prestazioni* alla nominale tenendo i core
 sempre svegli. Il Turbo è sempre spento.
 
-## Verifiche della fase 1
+## Verifiche
 
 | Verifica | Come |
 | --- | --- |
+| Bit-perfect, in tempo reale | *Impostazioni Sweetspot → Audio*, riquadro "In riproduzione" |
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
@@ -161,7 +184,10 @@ Crea `sweetspot-test-dop.wav`: un PCM 24 bit / 176,4 kHz che contiene un tono
 DSD64 a 1 kHz in formato DoP. Copialo nella libreria, **abbassa
 l'amplificatore** e riproducilo. Se il DAC indica DSD e si sente un tono pulito,
 nessuno stadio ha toccato i campioni. Se indica PCM o si sente fruscio, qualcosa
-li altera: quasi sempre il volume del player in Lyrion.
+li altera: quasi sempre un volume diverso da "fisso".
+
+In macchina virtuale la catena è stata verificata registrando ciò che arriva al
+DAC USB emulato: i campioni sono identici a quelli del file, bit per bit.
 
 ## Struttura del progetto
 
@@ -170,7 +196,9 @@ configs/sweetspot_x86_64_defconfig    configurazione di Buildroot
 board/sweetspot/common/               kernel PREEMPT_RT, BusyBox
 board/sweetspot/x86/                  GRUB e struttura della chiavetta
 board/sweetspot/stick/                sweetspot.txt e LEGGIMI.txt
-board/sweetspot/rootfs-overlay/       script di sistema e pagina di stato
+board/sweetspot/rootfs-overlay/       script di sistema, pagine di impostazione,
+                                      plugin di Sweetspot per Lyrion
+package/lms, package/lms-material     Lyrion Music Server e Material Skin
 scripts/                              compilazione locale e con Docker
 tests/run.sh                          test degli script con /sys e /proc simulati
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)

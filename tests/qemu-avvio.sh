@@ -7,7 +7,8 @@
 #
 #   tests/qemu-avvio.sh [immagine] [bios|uefi]
 #
-# Durante la prova la pagina di stato e' su http://localhost:8080/ e la
+# Durante la prova le impostazioni di Sweetspot sono su http://localhost:8080/,
+# l'interfaccia Material su http://localhost:9000/material/ e la
 # console del player scorre nel terminale. Si esce con Ctrl+A poi X.
 #
 # Serve: qemu-system-x86, mtools, xz-utils e, per UEFI, ovmf.
@@ -35,7 +36,7 @@ set -- -machine q35,accel=$ACCEL -m 4096 -smp 8,sockets=1,cores=4,threads=2 \
 	-drive if=none,id=chiavetta,format=raw,file="$WORK/disco.img" \
 	-device usb-storage,bus=xhci.0,drive=chiavetta,bootindex=0 \
 	-audiodev none,id=audio0 -device usb-audio,bus=xhci.0,audiodev=audio0 \
-	-nic user,model=e1000,hostfwd=tcp::8080-:80 \
+	-nic user,model=e1000,hostfwd=tcp::8080-:80,hostfwd=tcp::9000-:9000 \
 	-display none
 
 if [ -n "${SERIAL_LOG:-}" ]; then
@@ -51,5 +52,5 @@ if [ "$MODE" = uefi ]; then
 		-drive if=pflash,format=raw,file="$WORK/vars.fd"
 fi
 
-echo "Avvio ($MODE, $ACCEL): pagina di stato su http://localhost:8080/"
+echo "Avvio ($MODE, $ACCEL): impostazioni su http://localhost:8080/cgi-bin/audio, interfaccia su http://localhost:9000/material/"
 exec qemu-system-x86_64 "$@"
