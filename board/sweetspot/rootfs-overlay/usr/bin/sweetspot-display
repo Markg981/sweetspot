@@ -5,30 +5,35 @@
 # telefono, QR code e stato. Si aggiorna solo quando qualcosa cambia e lo
 # schermo si spegne dopo SCHERMO_MINUTI (un tasto lo riaccende).
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 TTY=/dev/tty1
 
 draw() {
-	local ip=$1 url
+	local ip=$1 srv
 	printf '\033[2J\033[H'
 	echo
 	echo "   SWEETSPOT"
 	echo "   ---------"
 	echo
-	if [ -n "$ip" ]; then
-		url="http://$ip/"
-		echo "   Stato del player:   $url"
-		echo "                       http://sweetspot.local/"
-		echo
-		qrencode -t ANSI -m 2 "$url" 2>/dev/null | sed 's/^/   /'
-	else
+	if [ -z "$ip" ]; then
 		echo "   Rete non collegata: controlla il cavo."
+	elif [ "$(mode)" = completa ]; then
+		echo "   Dal telefono o dal computer apri:"
+		echo
+		echo "     Player:        http://$ip/     (oppure http://sweetspot.local/)"
+		echo "     Musica e impostazioni:  http://$ip:8080/"
+		echo
+		qrencode -t ANSI -m 2 "http://$ip/" 2>/dev/null | sed 's/^/   /'
+	else
+		echo "   Stato del player:   http://$ip/   (oppure http://sweetspot.local/)"
+		echo
+		qrencode -t ANSI -m 2 "http://$ip/" 2>/dev/null | sed 's/^/   /'
+		srv=$(lms_server_ip)
+		[ -n "$srv" ] && echo "   Musica: apri http://$srv:9000/ o la tua app Lyrion"
 	fi
 	echo
 	echo "   Player: $(cat "$RUN/player.stato" 2>/dev/null)"
-	srv=$(lms_server_ip)
-	[ -n "$srv" ] && echo "   Musica: apri http://$srv:9000/ o la tua app Lyrion"
 	echo
 	echo "   Alt+F2 per il terminale."
 }

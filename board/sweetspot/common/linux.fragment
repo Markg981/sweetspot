@@ -75,11 +75,15 @@ CONFIG_NLS_CODEPAGE_437=y
 CONFIG_NLS_ISO8859_1=y
 CONFIG_NLS_UTF8=y
 
-# --- Dischi interni (per metterli in standby) e NAS ------------------------
+# --- Dischi con la musica (sempre in sola lettura) e cartelle di rete -----
 CONFIG_ATA=y
 CONFIG_SATA_AHCI=y
 CONFIG_ATA_PIIX=y
 CONFIG_BLK_DEV_NVME=y
+CONFIG_EXT4_FS=y
+CONFIG_EXFAT_FS=m
+CONFIG_NTFS3_FS=m
+CONFIG_HFSPLUS_FS=m
 CONFIG_CIFS=m
 CONFIG_NFS_FS=m
 

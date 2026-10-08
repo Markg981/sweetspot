@@ -1,0 +1,87 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - genera la configurazione di MPD per il DAC indicato.
+#
+#   sweetspot-mpd-conf [numero_scheda_alsa]
+#
+# Senza DAC, MPD parte con un'uscita fittizia: libreria e interfaccia web
+# restano disponibili e il DAC viene agganciato appena compare.
+#
+# Percorso del segnale bit-perfect:
+#   - uscita diretta sul dispositivo hardware (hw:), nessun mixer software;
+#   - nessun ricampionamento o conversione di formato o canali;
+#   - volume fisso: si regola dall'amplificatore;
+#   - ReplayGain e normalizzazione spenti;
+#   - DSD nativo quando il DAC lo dichiara.
+# Precarica: la input_cache di MPD carica in RAM i brani in coda prima che
+# suonino, cosi' durante l'ascolto dischi e rete restano fermi.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+card=$1
+name=$(conf NOME_PLAYER Sweetspot | tr -d '"\\')
+buf=$(conf BUFFER_ALSA_MS 400)
+case "$buf" in ''|*[!0-9]*) buf=400 ;; esac
+[ "$buf" -lt 20 ] && buf=20
+[ "$buf" -gt 2000 ] && buf=2000
+
+cat <<EOF
+# Generato da Sweetspot a ogni avvio: le impostazioni vanno in sweetspot.txt.
+music_directory         "$MUSIC_DIR"
+playlist_directory      "/var/lib/mpd/playlists"
+db_file                 "/var/lib/mpd/database"
+state_file              "/var/lib/mpd/state"
+sticker_file            "/var/lib/mpd/sticker.sql"
+log_file                "/var/log/mpd.log"
+log_level               "verbose"
+bind_to_address         "$MPD_SOCKET"
+bind_to_address         "any"
+port                    "6600"
+auto_update             "no"
+restore_paused          "yes"
+follow_outside_symlinks "yes"
+follow_inside_symlinks  "yes"
+zeroconf_enabled        "yes"
+zeroconf_name           "$name"
+replaygain              "off"
+volume_normalization    "no"
+filesystem_charset      "UTF-8"
+max_output_buffer_size  "16384"
+
+input_cache {
+	size "$(cache_mb) MB"
+}
+
+EOF
+
+if [ -n "$card" ] && [ -n "$(dac_id "$card")" ]; then
+	dop=no
+	formats=""
+	case "$(lower "$(conf DSD auto)")" in
+		dop) dop=yes ;;
+		no) formats="*:16:* *:24:* *:32:*" ;;
+	esac
+	cat <<EOF
+audio_output {
+	type            "alsa"
+	name            "DAC"
+	device          "hw:CARD=$(dac_id "$card"),DEV=0"
+	mixer_type      "none"
+	auto_resample   "no"
+	auto_channels   "no"
+	auto_format     "no"
+	buffer_time     "$((buf * 1000))"
+	dop             "$dop"
+EOF
+	[ -n "$formats" ] && printf '\tallowed_formats "%s"\n' "$formats"
+	echo "}"
+else
+	cat <<EOF
+audio_output {
+	type            "null"
+	name            "Nessun DAC"
+	mixer_type      "none"
+}
+EOF
+fi

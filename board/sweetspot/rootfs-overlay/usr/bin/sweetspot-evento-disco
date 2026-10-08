@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - chiamato da udev quando si collega o si scollega un disco.
+# Lavora in secondo piano: udev non deve aspettare.
+
+[ -f /run/sweetspot/avvio-completato ] || exit 0
+setsid sh -c '
+	sleep 3
+	exec 9> /run/sweetspot/dischi.lock
+	flock 9
+	/usr/bin/sweetspot-dischi pulisci
+	/usr/bin/sweetspot-dischi monta
+	mpc -q --host /run/mpd/socket update >/dev/null 2>&1
+' >/dev/null 2>&1 < /dev/null &
+exit 0

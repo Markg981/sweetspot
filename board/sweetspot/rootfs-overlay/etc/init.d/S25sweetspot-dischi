@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - dischi con la musica (interni e USB), in sola lettura.
+
+case "$1" in
+	start)
+		printf 'Sweetspot: ricerca dei dischi con la musica... '
+		/usr/bin/sweetspot-dischi monta
+		echo "fatto"
+		;;
+	stop) ;;
+	*) echo "uso: $0 start" ;;
+esac

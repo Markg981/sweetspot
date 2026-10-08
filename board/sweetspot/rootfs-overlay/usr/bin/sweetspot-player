@@ -3,17 +3,22 @@
 #
 # Sweetspot - supervisore della riproduzione.
 #
-# Attende il DAC, prepara il percorso del segnale e avvia squeezelite:
+# Modalita' completa: avvia MPD (libreria, coda, riproduzione) per il DAC
+# collegato; myMPD fornisce l'interfaccia web. Senza DAC MPD parte lo stesso
+# con un'uscita fittizia, e viene riavviato sul DAC appena compare.
+# Modalita' lyrion: avvia squeezelite per un Lyrion Music Server esterno.
+#
+# In entrambe:
 #   - uscita ALSA diretta sul dispositivo hardware (hw:), mai plug o dmix;
-#   - buffer enormi, cosi' il brano arriva tutto in RAM prima di suonare
-#     e durante l'ascolto la rete resta muta;
+#   - brano intero in RAM prima di suonare: durante l'ascolto la rete e i
+#     dischi restano fermi;
 #   - thread di riproduzione in real-time sul core isolato;
 #   - interruzioni del controller USB del DAC sul loro core dedicato.
-# Se il DAC viene spento o scollegato, riparte da solo quando torna.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 SQLOG=/var/log/squeezelite.log
+MPDLOG=/var/log/mpd.log
 STATE=$RUN/player.stato
 
 say() { echo "$1" > "$STATE"; log "player: $1"; }
@@ -82,6 +87,24 @@ pin_output_thread() {
 	return 1
 }
 
+# MPD: il thread di uscita verso il DAC si chiama "output:DAC". MPD gli da'
+# gia' la priorita' real-time 40; qui sale alla priorita' configurata e
+# viene spostato sul core della riproduzione.
+pin_mpd_output() {
+	local pid=$1 t prio
+	[ -f "$RUN/audio.tid" ] && [ -d "$PROC/$pid/task/$(cat "$RUN/audio.tid")" ] && return 0
+	prio=$(num_conf PRIORITA_AUDIO 80)
+	for t in "$PROC/$pid"/task/*; do
+		[ "$(cat "$t/comm" 2>/dev/null)" = "output:DAC" ] || continue
+		chrt -f -p "$prio" "${t##*/}" >/dev/null 2>&1
+		[ "$PIN" = 1 ] && taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
+		echo "${t##*/}" > "$RUN/audio.tid"
+		log "player: thread di uscita di MPD ${t##*/} con priorita' $prio sul core ${LAYOUT_AUDIO}"
+		return 0
+	done
+	return 1
+}
+
 run_player() {
 	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms
 	id=$(dac_id "$card")
@@ -121,33 +144,121 @@ run_player() {
 	echo "$PID" > "$RUN/squeezelite.pid"
 }
 
+# --- Modalita' lyrion: squeezelite -----------------------------------------------
+
+loop_lyrion() {
+	while true; do
+		card=$(dac_find)
+		if [ -z "$card" ]; then
+			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
+			sleep 3
+			continue
+		fi
+		id=$(dac_id "$card")
+		setup_usb_irq "$card"
+		run_player "$card"
+		say "attivo su $(dac_name "$card")"
+		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
+		rm -f "$RUN/audio.tid"
+		while kill -0 "$PID" 2>/dev/null; do
+			if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
+			pin_output_thread "$PID"
+			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
+				log "player: DAC scollegato"
+				kill "$PID" 2>/dev/null
+			fi
+		done
+		wait "$PID" 2>/dev/null
+		say "riavvio del player"
+		rm -f "$RUN/audio.tid"
+		sleep 2
+	done
+}
+
+# --- Modalita' completa: MPD --------------------------------------------------------
+
+start_mpd() {
+	local card=$1 i=0
+	mkdir -p /run/mpd /var/lib/mpd/playlists
+	sweetspot-mpd-conf "$card" > "$RUN/mpd.conf"
+	rm -f "$RUN/audio.tid"
+	taskset -c "$HK" mpd --no-daemon "$RUN/mpd.conf" >> "$MPDLOG" 2>&1 &
+	PID=$!
+	echo "$PID" > "$RUN/mpd.pid"
+	while [ $i -lt 30 ] && [ ! -S "$MPD_SOCKET" ]; do
+		usleep 500000
+		i=$((i + 1))
+	done
+}
+
+stop_mpd() {
+	local i=0
+	[ -n "$PID" ] || return 0
+	kill "$PID" 2>/dev/null
+	# MPD salva coda e libreria prima di uscire.
+	while [ $i -lt 20 ] && kill -0 "$PID" 2>/dev/null; do
+		usleep 500000
+		i=$((i + 1))
+	done
+	kill -9 "$PID" 2>/dev/null
+	wait "$PID" 2>/dev/null
+	PID=""
+}
+
+# Il registro di MPD resta piccolo: le interruzioni dell'audio (underrun)
+# vengono contate e il file svuotato.
+trim_mpd_log() {
+	local n old
+	[ -f "$MPDLOG" ] || return 0
+	[ "$(wc -c < "$MPDLOG")" -gt 2097152 ] || return 0
+	n=$(grep -c "Underrun" "$MPDLOG")
+	old=$(cat "$RUN/underrun.contati" 2>/dev/null || echo 0)
+	echo $((old + n)) > "$RUN/underrun.contati"
+	: > "$MPDLOG"
+}
+
+loop_completa() {
+	local card id cur="" restarts=0
+	trap 'stop_mpd; exit 0' TERM INT
+	PID=""
+	while true; do
+		card=$(dac_find)
+		id=""
+		[ -n "$card" ] && id=$(dac_id "$card")
+		if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null || [ "$id" != "$cur" ]; then
+			if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+				log "player: DAC cambiato (${cur:-nessuno} -> ${id:-nessuno}), riavvio di MPD"
+				stop_mpd
+			elif [ -n "$PID" ]; then
+				restarts=$((restarts + 1))
+				log "player: MPD si e' fermato, riavvio ($restarts)"
+				[ $restarts -gt 5 ] && sleep 30
+			fi
+			[ -n "$card" ] && setup_usb_irq "$card"
+			start_mpd "$card"
+			cur=$id
+			if [ -n "$card" ]; then
+				say "attivo su $(dac_name "$card")"
+			else
+				say "in attesa del DAC (libreria e interfaccia disponibili)"
+			fi
+			# Primo avvio: aggiorna la libreria (solo le cartelle cambiate).
+			if [ ! -f "$RUN/libreria.aggiornata" ]; then
+				mpc -q --host "$MPD_SOCKET" update >/dev/null 2>&1 && touch "$RUN/libreria.aggiornata"
+			fi
+		fi
+		[ -n "$card" ] && pin_mpd_output "$PID"
+		trim_mpd_log
+		if [ -f "$RUN/audio.tid" ] || [ -z "$card" ]; then sleep 5; else sleep 2; fi
+	done
+}
+
 mkdir -p "$RUN" /var/log
 setup_layout
-log "player: core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
+log "player: modalita' $(mode), core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
 
-while true; do
-	card=$(dac_find)
-	if [ -z "$card" ]; then
-		[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
-		sleep 3
-		continue
-	fi
-	id=$(dac_id "$card")
-	setup_usb_irq "$card"
-	run_player "$card"
-	say "attivo su $(dac_name "$card")"
-	# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
-	rm -f "$RUN/audio.tid"
-	while kill -0 "$PID" 2>/dev/null; do
-		if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
-		pin_output_thread "$PID"
-		if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
-			log "player: DAC scollegato"
-			kill "$PID" 2>/dev/null
-		fi
-	done
-	wait "$PID" 2>/dev/null
-	say "riavvio del player"
-	rm -f "$RUN/audio.tid"
-	sleep 2
-done
+if [ "$(mode)" = lyrion ]; then
+	loop_lyrion
+else
+	loop_completa
+fi

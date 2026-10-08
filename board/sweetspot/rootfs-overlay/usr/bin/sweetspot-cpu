@@ -10,7 +10,7 @@
 # In tutti i profili il Turbo e' spento: frequenza e tensione restano
 # costanti e l'assorbimento non varia con il carico.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 PROFILE=$(lower "${1:-$(conf PROFILO bilanciato)}")
 CPUFREQ=$SYS/devices/system/cpu/cpufreq

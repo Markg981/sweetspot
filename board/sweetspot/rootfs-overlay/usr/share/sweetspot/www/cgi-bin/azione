@@ -1,0 +1,136 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - esegue le azioni delle pagine Musica e Impostazioni.
+# Accetta solo richieste POST con il gettone della pagina.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+urlencode() {
+	printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g; s/&/%26/g; s/?/%3F/g; s/#/%23/g; s/+/%2B/g; s/"/%22/g; s/'"'"'/%27/g; s/</%3C/g; s/>/%3E/g'
+}
+done_to() { redirect "/cgi-bin/$1?msg=$(urlencode "$2")"; exit 0; }
+
+MPC="mpc -q --host $MPD_SOCKET"
+
+# Campi del modulo, riempiti da read_form.
+F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome=""
+F_modalita="" F_profilo="" F_dsd=""
+
+if [ "$REQUEST_METHOD" != POST ]; then
+	redirect /cgi-bin/musica
+	exit 0
+fi
+read_form
+if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
+	done_to musica "Richiesta non valida: ricarica la pagina e riprova."
+fi
+
+# Aggiunge o toglie un nome dalla lista ESCLUDI_DISCHI.
+set_excluded() { # nome aggiungi|togli
+	local cur out e want
+	want=$(lower "$1")
+	cur=$(conf ESCLUDI_DISCHI | tr ',' '\n')
+	out=$(printf '%s\n' "$cur" | while IFS= read -r e; do
+		[ -n "$e" ] && [ "$(lower "$e")" != "$want" ] && printf '%s\n' "$e"
+	done)
+	[ "$2" = aggiungi ] && out=$(printf '%s\n%s\n' "$out" "$1")
+	out=$(printf '%s\n' "$out" | grep . | tr '\n' ',' | sed 's/,$//')
+	if [ -n "$out" ]; then
+		sweetspot-config imposta ESCLUDI_DISCHI "$out"
+	else
+		sweetspot-config rimuovi ESCLUDI_DISCHI
+	fi
+}
+
+case "$F_a" in
+	aggiorna)
+		$MPC update
+		done_to musica "Aggiornamento della libreria avviato." ;;
+
+	ricostruisci)
+		$MPC rescan
+		done_to musica "Ricostruzione della libreria avviata: con molti brani richiede alcuni minuti." ;;
+
+	aggiungi_condivisione)
+		server=$(printf '%s' "$F_server" | tr -d ' \\/' )
+		dir=$(printf '%s' "$F_cartella" | tr '\\' '/' | sed 's#^/*##; s#/*$##')
+		case "$server" in
+			''|*[!A-Za-z0-9._-]*) done_to musica "Indirizzo non valido: scrivi solo l'indirizzo, per esempio 192.168.1.10." ;;
+		esac
+		if [ -z "$dir" ] || ! valid_value "$dir" || ! valid_value "$F_utente" || ! valid_value "$F_password"; then
+			done_to musica "Dati non validi."
+		fi
+		case "$dir$F_utente" in *'"'*|*'$'*|*'`'*) done_to musica "La cartella e l'utente non possono contenere virgolette o simboli \$ \`." ;; esac
+		n=""
+		for i in 1 2 3 4 5 6 7 8 9; do
+			[ -z "$(conf "CONDIVISIONE_$i")" ] && { n=$i; break; }
+		done
+		[ -n "$n" ] || done_to musica "Hai gia' 9 cartelle di rete: rimuovine una."
+		sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir"
+		if [ -n "$F_utente" ]; then
+			sweetspot-config imposta "CONDIVISIONE_${n}_UTENTE" "$F_utente"
+			sweetspot-config imposta "CONDIVISIONE_${n}_PASSWORD" "$F_password"
+		fi
+		res=$(sweetspot-rete prova "$n")
+		if [ "$res" = OK ]; then
+			echo "$n|//$server/$dir|OK|montata" >> "$RUN/rete.list"
+			$MPC update
+			done_to musica "Cartella aggiunta: la libreria si sta aggiornando."
+		fi
+		sweetspot-config rimuovi "CONDIVISIONE_$n"
+		sweetspot-config rimuovi "CONDIVISIONE_${n}_UTENTE"
+		sweetspot-config rimuovi "CONDIVISIONE_${n}_PASSWORD"
+		done_to musica "Cartella non aggiunta: $res." ;;
+
+	rimuovi_condivisione)
+		case "$F_n" in [1-9]) ;; *) done_to musica "Richiesta non valida." ;; esac
+		sweetspot-rete smonta-una "$F_n"
+		sweetspot-config rimuovi "CONDIVISIONE_$F_n"
+		sweetspot-config rimuovi "CONDIVISIONE_${F_n}_UTENTE"
+		sweetspot-config rimuovi "CONDIVISIONE_${F_n}_PASSWORD"
+		$MPC update
+		done_to musica "Cartella rimossa dalla libreria." ;;
+
+	escludi_disco)
+		name=$(safe_name "$F_nome")
+		[ -n "$name" ] || done_to musica "Richiesta non valida."
+		set_excluded "$name" aggiungi
+		sweetspot-dischi smonta "$name"
+		$MPC update
+		done_to musica "Disco escluso dalla libreria." ;;
+
+	includi_disco)
+		name=$(safe_name "$F_nome")
+		[ -n "$name" ] || done_to musica "Richiesta non valida."
+		set_excluded "$name" togli
+		sweetspot-dischi monta
+		$MPC update
+		done_to musica "Disco aggiunto alla libreria." ;;
+
+	impostazioni)
+		nome=$(safe_name "$F_nome")
+		[ -n "$nome" ] || nome=Sweetspot
+		case "$F_modalita" in completa|lyrion) ;; *) F_modalita=completa ;; esac
+		case "$F_profilo" in bilanciato|silenzio|prestazioni) ;; *) F_profilo=bilanciato ;; esac
+		case "$F_dsd" in auto|nativo|dop|no) ;; *) F_dsd=auto ;; esac
+		ok=0
+		sweetspot-config imposta NOME_PLAYER "$nome" || ok=1
+		sweetspot-config imposta MODALITA "$F_modalita" || ok=1
+		sweetspot-config imposta PROFILO "$F_profilo" || ok=1
+		sweetspot-config imposta DSD "$F_dsd" || ok=1
+		if [ $ok -eq 0 ]; then
+			done_to impostazioni "Impostazioni salvate: valgono dal prossimo avvio."
+		fi
+		done_to impostazioni "Chiavetta non trovata: le impostazioni valgono solo fino al riavvio." ;;
+
+	riavvia)
+		( sleep 2; reboot ) >/dev/null 2>&1 &
+		done_to stato "Riavvio in corso: la pagina tornera' disponibile tra circa un minuto." ;;
+
+	spegni)
+		( sleep 2; poweroff ) >/dev/null 2>&1 &
+		done_to stato "Spegnimento in corso. Puoi staccare la corrente quando il computer si e' spento." ;;
+
+	*) done_to musica "Azione sconosciuta." ;;
+esac

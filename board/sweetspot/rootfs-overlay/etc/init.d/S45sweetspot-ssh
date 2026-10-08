@@ -3,7 +3,7 @@
 # Sweetspot - accesso SSH per l'assistenza, solo se attivato in sweetspot.txt
 # e con una password impostata.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 case "$1" in
 	start)

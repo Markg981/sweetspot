@@ -4,7 +4,7 @@
 # Sweetspot - rete: cavo (anche adattatori USB) con DHCP, Wi-Fi solo se
 # configurato. Il risparmio energetico della scheda (EEE) viene spento.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 HOST=sweetspot
 

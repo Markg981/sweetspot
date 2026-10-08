@@ -6,7 +6,7 @@
 # Meglio eseguirlo a riproduzione ferma: il risultato e' il ritardo
 # massimo con cui il kernel risveglia un thread real-time.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 secs=${1:-60}
 cpus=$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)

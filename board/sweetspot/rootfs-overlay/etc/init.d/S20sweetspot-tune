@@ -5,7 +5,7 @@
 # parametri di avvio adattati al computer, frequenza fissa della CPU,
 # radio spente, dischi interni in standby, USB sempre alimentato.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 radios_off() {
 	local r type

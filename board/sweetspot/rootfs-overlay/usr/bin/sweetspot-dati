@@ -1,0 +1,97 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - conserva libreria, playlist e impostazioni dell'interfaccia
+# sulla chiavetta, nella cartella sweetspot-dati.
+#
+#   sweetspot-dati ripristina   all'avvio: chiavetta -> RAM
+#   sweetspot-dati salva        RAM -> chiavetta (subito)
+#   sweetspot-dati sorveglia    salva da solo quando qualcosa cambia, ma mai
+#                               durante l'ascolto
+#
+# Il sistema gira in RAM: senza questo salvataggio libreria e playlist
+# andrebbero ricostruite a ogni accensione.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+MPD_DATA=${SWEETSPOT_MPD_DATA:-/var/lib/mpd}
+MYMPD_DATA=${SWEETSPOT_MYMPD_DATA:-/var/lib/mympd}
+# Cartelle di myMPD da conservare (non la cache delle copertine).
+MYMPD_KEEP="config state smartpls pics tags"
+STAMP=$RUN/dati.impronta
+
+fingerprint() {
+	{
+		find "$MPD_DATA" -type f 2>/dev/null
+		for d in $MYMPD_KEEP; do find "$MYMPD_DATA/$d" -type f 2>/dev/null; done
+	} | sort | while IFS= read -r f; do
+		stat -c '%n %s %Y' "$f" 2>/dev/null
+	done | md5sum | cut -d' ' -f1
+}
+
+# Copia il contenuto di una cartella (la FAT32 della chiavetta non conserva
+# proprietari e permessi: si copia solo il contenuto).
+copy_dir() {
+	[ -d "$1" ] || return 0
+	mkdir -p "$2"
+	cp -r "$1/." "$2/" 2>/dev/null
+}
+
+do_restore() {
+	local src=$1
+	[ -d "$src" ] || return 0
+	copy_dir "$src/mpd" "$MPD_DATA"
+	copy_dir "$src/mympd" "$MYMPD_DATA"
+	log "dati: libreria e impostazioni ripristinate dalla chiavetta"
+}
+
+do_save() {
+	local dst tmp d
+	exec 8> "$RUN/dati.lock"
+	flock 8
+	if ! stick_mount rw; then
+		log "dati: chiavetta non trovata, salvataggio rimandato"
+		return 1
+	fi
+	dst="$STICK_MNT/$DATA_DIR_NAME"
+	tmp="$STICK_MNT/$DATA_DIR_NAME.nuovo"
+	rm -rf "$tmp"
+	mkdir -p "$tmp/mpd" "$tmp/mympd"
+	copy_dir "$MPD_DATA" "$tmp/mpd"
+	for d in $MYMPD_KEEP; do
+		copy_dir "$MYMPD_DATA/$d" "$tmp/mympd/$d"
+	done
+	sync
+	rm -rf "$dst.vecchio"
+	[ -d "$dst" ] && mv "$dst" "$dst.vecchio"
+	mv "$tmp" "$dst"
+	rm -rf "$dst.vecchio"
+	stick_umount
+	fingerprint > "$STAMP"
+	log "dati: salvati sulla chiavetta"
+}
+
+playing() {
+	mpc --host "$MPD_SOCKET" status 2>/dev/null | grep -q '^\[playing\]'
+}
+
+do_watch() {
+	[ -f "$STAMP" ] || fingerprint > "$STAMP"
+	while true; do
+		sleep 60
+		[ -n "$(stick_device)" ] || continue
+		playing && continue
+		[ "$(fingerprint)" = "$(cat "$STAMP" 2>/dev/null)" ] && continue
+		do_save
+	done
+}
+
+case "$1" in
+	ripristina)
+		# Chiamato con la chiavetta gia' montata dallo script di avvio.
+		do_restore "${2:-$STICK_MNT/$DATA_DIR_NAME}"
+		;;
+	salva) do_save ;;
+	sorveglia) do_watch ;;
+	*) echo "uso: $0 ripristina|salva|sorveglia" >&2; exit 1 ;;
+esac

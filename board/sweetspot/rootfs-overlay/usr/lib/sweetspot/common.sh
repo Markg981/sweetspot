@@ -74,6 +74,47 @@ conf() {
 
 lower() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
 
+# Modalita' di funzionamento:
+#   completa  libreria, server e interfaccia web su Sweetspot (MPD + myMPD)
+#   lyrion    solo player, per un Lyrion Music Server su un altro computer
+mode() {
+	case "$(lower "$(conf MODALITA completa)")" in
+		lyrion|squeezelite|lms) echo lyrion ;;
+		*) echo completa ;;
+	esac
+}
+
+# shellcheck disable=SC2034
+MPD_SOCKET=${SWEETSPOT_MPD_SOCKET:-/run/mpd/socket}
+# shellcheck disable=SC2034
+MUSIC_DIR=${SWEETSPOT_MUSICA:-/musica}
+# shellcheck disable=SC2034
+MEDIA_DIR=${SWEETSPOT_MEDIA:-/media}
+# shellcheck disable=SC2034
+DATA_DIR_NAME=sweetspot-dati
+
+# Nome di cartella leggibile e sicuro: lettere, cifre, spazi e . _ -
+safe_name() {
+	printf '%s' "$1" | tr -c 'A-Za-z0-9 ._-' '_' | sed 's/^[ ._-]*//; s/[ ]*$//' | cut -c1-40
+}
+
+# Percorso di una cartella di rete nella forma //server/cartella/sotto.
+# Accetta anche \\server\cartella (Windows) e smb://server/cartella.
+normalize_unc() {
+	local p
+	p=$(printf '%s' "$1" | tr '\\' '/' | sed 's#^smb:##; s#^/*#//#; s#/*$##; s#\([^/]\)//*#\1/#g')
+	case "$p" in
+		//?*/?*) printf '%s' "$p" ;;
+		*) return 1 ;;
+	esac
+}
+
+# Il valore e' accettabile in sweetspot.txt? (niente a capo e niente
+# caratteri di controllo)
+valid_value() {
+	[ "$(printf '%s' "$1" | tr -d '[:cntrl:]')" = "$1" ]
+}
+
 # put VALORE FILE: scrive in un file di /sys o /proc solo se esiste, in
 # silenzio (non tutti i computer hanno tutte le voci).
 put() {
@@ -261,6 +302,17 @@ player_buffers() {
 	[ "$o" -gt 2000000 ] && o=2000000
 	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$o" -gt 524288 ] && o=524288
 	echo "$s:$o"
+}
+
+# Memoria (MB) per la precarica dei brani in modalita' completa: un quarto
+# della RAM, fino a 4 GB. MPD vi carica per intero i brani in coda.
+cache_mb() {
+	local c
+	c=$(( $(mem_total_kb) / 1024 / 4 ))
+	[ "$c" -gt 4096 ] && c=4096
+	[ "$c" -lt 64 ] && c=64
+	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$c" -gt 768 ] && c=768
+	echo "$c"
 }
 
 # --- DAC -------------------------------------------------------------------

@@ -1,0 +1,149 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - cartelle condivise in rete (NAS, PC Windows, Mac) via SMB.
+#
+#   sweetspot-rete monta      monta le condivisioni configurate
+#   sweetspot-rete smonta     le smonta
+#   sweetspot-rete elenco     righe "numero|percorso|stato|dettaglio"
+#   sweetspot-rete prova N    prova la condivisione N e risponde OK o l'errore
+#
+# Configurazione in sweetspot.txt (fino a 9 condivisioni):
+#   CONDIVISIONE_1=//192.168.1.10/Musica
+#   CONDIVISIONE_1_UTENTE=marco          (vuoto = accesso ospite)
+#   CONDIVISIONE_1_PASSWORD=...
+# Le condivisioni sono montate in sola lettura.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+LIST=$RUN/rete.list
+
+share_name() {
+	local p=$1 last
+	last=${p##*/}
+	safe_name "Rete - $last"
+}
+
+wait_network() {
+	local i=0
+	while [ $i -lt 30 ] && [ -z "$(net_ipv4)" ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	[ -n "$(net_ipv4)" ]
+}
+
+# mount_share N -> stampa "OK" oppure il messaggio d'errore
+mount_share() {
+	local n=$1 raw unc user pass mp cred err v name auth
+	raw=$(conf "CONDIVISIONE_$n")
+	[ -n "$raw" ] || return 1
+	if ! unc=$(normalize_unc "$raw"); then
+		echo "percorso non valido: scrivi //indirizzo/cartella"
+		return 1
+	fi
+	user=$(conf "CONDIVISIONE_${n}_UTENTE")
+	pass=$(conf "CONDIVISIONE_${n}_PASSWORD")
+	mp="$MEDIA_DIR/rete-$n"
+	cred="$RUN/credenziali-$n"
+	mkdir -p "$mp"
+	grep -q " $mp " "$PROC/mounts" && umount -l "$mp" 2>/dev/null
+	if [ -n "$user" ]; then
+		# Le credenziali vanno in un file: la password puo' contenere
+		# virgole e altri caratteri che non si possono passare come opzione.
+		( umask 077; printf 'username=%s\npassword=%s\n' "$user" "$pass" > "$cred" )
+		auth="credentials=$cred"
+	else
+		auth=guest
+	fi
+	modprobe cifs 2>/dev/null
+	err=""
+	# Prima la versione del protocollo scelta dal NAS, poi le precedenti
+	# per i NAS piu' vecchi.
+	for v in "" ",vers=2.0" ",vers=1.0"; do
+		if err=$(mount.cifs "$unc" "$mp" -o "ro,$auth,iocharset=utf8,noserverino,soft$v" 2>&1); then
+			err=""
+			break
+		fi
+	done
+	if [ -n "$err" ]; then
+		rmdir "$mp" 2>/dev/null
+		case "$err" in
+			*"Permission denied"*|*"error(13)"*) echo "accesso negato: controlla utente e password" ;;
+			*"No such file"*|*"error(2)"*) echo "cartella non trovata sul server" ;;
+			*"Host is down"*|*"error(112)"*|*"No route"*|*"error(113)"*) echo "server non raggiungibile" ;;
+			*"could not resolve"*|*"resolve address"*) echo "nome del server sconosciuto: prova con l'indirizzo IP" ;;
+			*) echo "errore: $(printf '%s' "$err" | head -n 1)" ;;
+		esac
+		return 1
+	fi
+	name=$(share_name "$unc")
+	ln -sfn "$mp" "$MUSIC_DIR/$name"
+	echo OK
+}
+
+do_mount() {
+	local n res has=0
+	mkdir -p "$MEDIA_DIR" "$MUSIC_DIR" "$RUN"
+	: > "$LIST"
+	for n in 1 2 3 4 5 6 7 8 9; do
+		[ -n "$(conf "CONDIVISIONE_$n")" ] && has=1
+	done
+	[ $has = 1 ] || return 0
+	if ! wait_network; then
+		log "rete: nessuna connessione, condivisioni non montate"
+	fi
+	for n in 1 2 3 4 5 6 7 8 9; do
+		[ -n "$(conf "CONDIVISIONE_$n")" ] || continue
+		res=$(mount_share "$n")
+		if [ "$res" = OK ]; then
+			echo "$n|$(conf "CONDIVISIONE_$n")|OK|montata" >> "$LIST"
+			log "rete: condivisione $n montata"
+		else
+			echo "$n|$(conf "CONDIVISIONE_$n")|ERRORE|$res" >> "$LIST"
+			log "rete: condivisione $n non montata: $res"
+		fi
+	done
+}
+
+do_umount() {
+	local mp l
+	for mp in "$MEDIA_DIR"/rete-*; do
+		[ -d "$mp" ] || continue
+		umount -l "$mp" 2>/dev/null
+		rmdir "$mp" 2>/dev/null
+	done
+	for l in "$MUSIC_DIR"/*; do
+		[ -L "$l" ] || continue
+		case "$(readlink "$l")" in "$MEDIA_DIR"/rete-*) rm -f "$l" ;; esac
+	done
+	rm -f "$RUN"/credenziali-*
+}
+
+do_umount_one() {
+	local n=$1 mp l
+	mp="$MEDIA_DIR/rete-$n"
+	for l in "$MUSIC_DIR"/*; do
+		[ -L "$l" ] && [ "$(readlink "$l")" = "$mp" ] && rm -f "$l"
+	done
+	umount -l "$mp" 2>/dev/null
+	rmdir "$mp" 2>/dev/null
+	rm -f "$RUN/credenziali-$n"
+	if [ -f "$LIST" ]; then
+		grep -v "^$n|" "$LIST" > "$LIST.new"
+		mv "$LIST.new" "$LIST"
+	fi
+	return 0
+}
+
+case "$1" in
+	monta) do_mount ;;
+	smonta) do_umount ;;
+	smonta-una)
+		case "$2" in [1-9]) do_umount_one "$2" ;; *) exit 1 ;; esac ;;
+	elenco) cat "$LIST" 2>/dev/null ;;
+	prova)
+		case "$2" in [1-9]) ;; *) echo "numero non valido"; exit 1 ;; esac
+		mount_share "$2" ;;
+	*) echo "uso: $0 monta|smonta|smonta-una N|elenco|prova N" >&2; exit 1 ;;
+esac

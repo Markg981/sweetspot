@@ -1,0 +1,86 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - modifica le impostazioni in sweetspot.txt sulla chiavetta.
+#
+#   sweetspot-config imposta CHIAVE VALORE
+#   sweetspot-config rimuovi CHIAVE
+#   sweetspot-config leggi CHIAVE
+#
+# Il file resta leggibile e modificabile con il Blocco note: le altre righe,
+# i commenti e gli a capo in stile Windows vengono conservati.
+# Esce con 0 se la modifica e' salvata sulla chiavetta, con 2 se vale solo
+# fino al prossimo riavvio (chiavetta assente o in sola lettura).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+usage() { echo "uso: $0 imposta CHIAVE VALORE | rimuovi CHIAVE | leggi CHIAVE" >&2; exit 1; }
+
+# edit_file OPERAZIONE CHIAVE VALORE < origine > destinazione
+edit_file() {
+	OP=$1 KEY=$2 VAL=$3 awk '
+		BEGIN { k = toupper(ENVIRON["KEY"]); op = ENVIRON["OP"]; done = 0 }
+		{
+			line = $0
+			sub(/\r$/, "", line)
+			t = line
+			sub(/^[ \t]+/, "", t)
+			head = toupper(substr(t, 1, length(k)))
+			rest = substr(t, length(k) + 1)
+			if (head == k && rest ~ /^[ \t]*=/) {
+				if (op == "imposta" && !done) { print k "=" ENVIRON["VAL"] "\r"; done = 1 }
+				next
+			}
+			print line "\r"
+		}
+		END { if (op == "imposta" && !done) print k "=" ENVIRON["VAL"] "\r" }
+	'
+}
+
+OP=$1
+KEY=$(printf '%s' "$2" | tr 'a-z' 'A-Z')
+VAL=$3
+case "$OP" in
+	imposta) [ $# -eq 3 ] || usage ;;
+	rimuovi|leggi) [ $# -eq 2 ] || usage ;;
+	*) usage ;;
+esac
+case "$KEY" in
+	''|*[!A-Z0-9_]*) echo "chiave non valida: $2" >&2; exit 1 ;;
+esac
+if [ "$OP" = leggi ]; then
+	conf "$KEY"
+	echo
+	exit 0
+fi
+if ! valid_value "$VAL"; then
+	echo "valore non valido" >&2
+	exit 1
+fi
+
+mkdir -p "$RUN"
+saved=2
+exec 9> "$RUN/config.lock"
+flock 9
+if stick_mount rw; then
+	src="$STICK_MNT/sweetspot.txt"
+	[ -f "$src" ] || : > "$src"
+	if edit_file "$OP" "$KEY" "$VAL" < "$src" > "$STICK_MNT/sweetspot.tmp" &&
+		mv "$STICK_MNT/sweetspot.tmp" "$src"; then
+		cp "$src" "$RUN/sweetspot.txt"
+		saved=0
+	fi
+	stick_umount
+fi
+if [ $saved -ne 0 ]; then
+	# Senza chiavetta la modifica vale fino al riavvio.
+	[ -f "$RUN/sweetspot.txt" ] || : > "$RUN/sweetspot.txt"
+	edit_file "$OP" "$KEY" "$VAL" < "$RUN/sweetspot.txt" > "$RUN/sweetspot.tmp" &&
+		mv "$RUN/sweetspot.tmp" "$RUN/sweetspot.txt"
+fi
+config_build "$RUN/sweetspot.txt"
+case "$KEY" in
+	*PASSWORD) log "impostazioni: $OP $KEY" ;;
+	*) log "impostazioni: $OP $KEY=$VAL" ;;
+esac
+exit $saved

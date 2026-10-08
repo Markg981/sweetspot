@@ -1,1 +1,1 @@
-# Sweetspot non aggiunge pacchetti propri nella fase 1.
+include $(sort $(wildcard $(BR2_EXTERNAL_SWEETSPOT_PATH)/package/*/*.mk))

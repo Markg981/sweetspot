@@ -11,6 +11,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OVERLAY=$ROOT/board/sweetspot/rootfs-overlay
+export SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 FAIL=0
@@ -213,10 +214,76 @@ case "$p5" in "sweetspot.tune="????????) ok "ottimizzazioni spente" ;; *) ko "ot
 p6=$(tune "$ONE")
 case "$p6" in *isolcpus*|*nosmt*) ko "single core senza isolamento" "nessun isolcpus" "$p6" ;; *) ok "single core senza isolamento" ;; esac
 
+echo "Modifica di sweetspot.txt (senza chiavetta: copia in RAM)"
+CFG=$WORK/cfgedit
+mkdir -p "$CFG/run" "$CFG/proc"
+printf '# Impostazioni\r\nNOME_PLAYER=Sala\r\nCONDIVISIONE_1_UTENTE=marco\r\n\r\nDSD=auto\r\n' > "$CFG/run/sweetspot.txt"
+cfgset() {
+	SWEETSPOT_RUN=$CFG/run SWEETSPOT_PROCFS=$CFG/proc SWEETSPOT_LOG=$CFG/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-config" "$@" >/dev/null 2>&1
+	echo $?
+}
+expect "senza chiavetta: valida fino al riavvio (codice 2)" "2" "$(cfgset imposta CONDIVISIONE_1 '//192.168.1.10/Musica')"
+cfgset imposta dsd nativo >/dev/null
+cfgset imposta NOME_PLAYER "Sala d'ascolto" >/dev/null
+cfgset rimuovi CONDIVISIONE_1_UTENTE >/dev/null
+expect "chiave nuova in fondo, chiave esistente sostituita, prefissi intatti, a capo Windows" \
+	"$(printf '# Impostazioni\r\nNOME_PLAYER=Sala d'"'"'ascolto\r\n\r\nDSD=nativo\r\nCONDIVISIONE_1=//192.168.1.10/Musica\r\n')" \
+	"$(cat "$CFG/run/sweetspot.txt")"
+expect "configurazione ricostruita" "nativo" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf DSD")"
+expect "rifiuta valori su piu' righe" "1" "$(cfgset imposta NOME_PLAYER "$(printf 'a\nB=c')")"
+expect "rifiuta chiavi non valide" "1" "$(cfgset imposta 'A;B' x)"
+
+echo "Nomi e percorsi"
+expect "nome di cartella sicuro" "Musica _rock_ 2024" "$(run "$ONE" "safe_name 'Musica /rock\$ 2024'")"
+expect "percorso di rete //" "//192.168.1.10/Musica/FLAC" "$(run "$ONE" "normalize_unc '//192.168.1.10/Musica/FLAC/'")"
+expect "percorso di rete Windows" "//NAS/Musica" "$(run "$ONE" "normalize_unc '\\\\\\\\NAS\\\\Musica'")"
+expect "percorso di rete smb://" "//nas.local/Musica" "$(run "$ONE" "normalize_unc 'smb://nas.local/Musica'")"
+expect "percorso di rete incompleto" "no" "$(run "$ONE" "normalize_unc '//192.168.1.10' || echo no")"
+expect "modalita' predefinita" "completa" "$(run "$ONE" mode)"
+expect "precarica 16 GB" "3980" "$(run "$N550" cache_mb)"
+expect "precarica 1 GB" "241" "$(run "$ONE" cache_mb)"
+
+echo "Configurazione di MPD"
+mpdconf() { # ambiente scheda [impostazioni]
+	mkdir -p "$1/run"
+	printf '%s\n' "${3:-}" > "$WORK/mpd.txt"
+	SWEETSPOT_SYSFS=$1/sys SWEETSPOT_PROCFS=$1/proc SWEETSPOT_RUN=$1/run SWEETSPOT_LOG=$1/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WORK/mpd.txt; . $OVERLAY/usr/bin/sweetspot-mpd-conf" sh "$2"
+}
+c=$(mpdconf "$N550" 1)
+for want in 'device          "hw:CARD=R26,DEV=0"' 'mixer_type      "none"' 'auto_resample   "no"' \
+	'auto_format     "no"' 'auto_channels   "no"' 'dop             "no"' 'size "3980 MB"' \
+	'replaygain              "off"' 'buffer_time     "400000"'; do
+	case "$c" in *"$want"*) ok "MPD: $want" ;; *) ko "MPD: $want" "$want" "(assente)" ;; esac
+done
+case "$(mpdconf "$N550" 1 DSD=dop)" in *'dop             "yes"'*) ok "MPD: DoP su richiesta" ;; *) ko "MPD: DoP" "dop yes" "-" ;; esac
+case "$(mpdconf "$N550" 1 DSD=no)" in *'allowed_formats "*:16:* *:24:* *:32:*"'*) ok "MPD: DSD convertito in PCM" ;; *) ko "MPD: DSD in PCM" "allowed_formats" "-" ;; esac
+case "$(mpdconf "$N550" "")" in *'type            "null"'*) ok "MPD: senza DAC uscita fittizia" ;; *) ko "MPD senza DAC" "null" "-" ;; esac
+case "$(mpdconf "$N550" 1 'NOME_PLAYER=Sala "grande"')" in *'zeroconf_name           "Sala grande"'*) ok "MPD: nome senza virgolette" ;; *) ko "MPD nome" "Sala grande" "-" ;; esac
+
+echo "Dischi nella libreria"
+DSK=$WORK/dischi
+mkdir -p "$DSK/media/Win/Windows/System32" "$DSK/media/Win/Users/marco/Music" "$DSK/media/Win/Users/Public/Music" \
+	"$DSK/media/Linux/usr/bin" "$DSK/media/Linux/etc" "$DSK/media/Linux/home/anna/Musica" \
+	"$DSK/media/Archivio/FLAC" "$DSK/musica" "$DSK/run"
+touch "$DSK/media/Win/Users/marco/Music/a.flac"
+links() {
+	SWEETSPOT_MUSICA=$DSK/musica SWEETSPOT_MEDIA=$DSK/media SWEETSPOT_RUN=$DSK/run SWEETSPOT_LOG=$DSK/log SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-dischi; library_links \"\$1\" \"\$2\"" sh "$DSK/media/$1" "$1"
+}
+expect "disco Windows: solo le cartelle Musica non vuote" "Win - marco" "$(links Win)"
+expect "disco Linux: cartelle Musica degli utenti" "Linux - anna" "$(links Linux)"
+expect "disco dati: tutto il disco" "Archivio" "$(links Archivio)"
+expect "collegamenti nella libreria" "Archivio Linux - anna Win - marco" "$(ls "$DSK/musica" | tr '\n' ' ' | sed 's/ $//')"
+expect "collegamento al disco" "$DSK/media/Archivio" "$(readlink "$DSK/musica/Archivio")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
-	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
-		$OVERLAY/usr/share/sweetspot/www/cgi-bin/stato $ROOT/board/sweetspot/*.sh $ROOT/scripts/*.sh"
+	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
+		$OVERLAY/usr/share/sweetspot/www/cgi-bin/* $ROOT/board/sweetspot/*.sh $ROOT/scripts/*.sh"
 	# SC1091: file inclusi; SC3043: 'local' (supportato dalla shell di BusyBox).
 	if out=$(shellcheck -s dash -S warning -e SC1091,SC3043 $files 2>&1); then
 		ok "nessun avviso"

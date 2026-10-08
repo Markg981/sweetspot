@@ -1,0 +1,107 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Musica": da dove arriva la libreria.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+page_start "Musica" musica
+
+if [ "$(mode)" = lyrion ]; then
+	cat <<HTML
+<p class="sub">Sweetspot e' in modalita' Lyrion: la libreria e la scelta dei brani
+sono sul server Lyrion. Per avere libreria e interfaccia qui sul player,
+passa alla modalita' completa nelle <a href="/cgi-bin/impostazioni">Impostazioni</a>.</p>
+HTML
+	page_end
+	exit 0
+fi
+
+# --- Libreria ---------------------------------------------------------------------
+stats=$(mpc --host "$MPD_SOCKET" stats 2>/dev/null)
+songs=$(printf '%s\n' "$stats" | sed -n 's/^Songs: *//p')
+albums=$(printf '%s\n' "$stats" | sed -n 's/^Albums: *//p')
+artists=$(printf '%s\n' "$stats" | sed -n 's/^Artists: *//p')
+updating=$(mpc --host "$MPD_SOCKET" status 2>/dev/null | grep -c 'Updating DB')
+
+echo '<h2>Libreria</h2><div class="card"><div class="row"><div class="grow">'
+if [ -n "$songs" ]; then
+	printf '<div class="k">%s brani, %s album, %s artisti</div>' "$songs" "$albums" "$artists"
+else
+	echo '<div class="k">Libreria non disponibile</div>'
+fi
+if [ "$updating" -gt 0 ]; then
+	echo '<div class="v">Aggiornamento in corso: la pagina si aggiorna da sola tra poco.</div>'
+	echo '<meta http-equiv="refresh" content="10">'
+else
+	echo '<div class="v">Sweetspot legge i dischi e le cartelle qui sotto. Dopo aver aggiunto musica, premi Aggiorna.</div>'
+fi
+echo '<div>'
+button aggiorna "Aggiorna la libreria" "" "" primary
+button ricostruisci "Ricostruisci da zero"
+echo '</div></div></div></div>'
+
+# --- Dischi -------------------------------------------------------------------------
+echo '<h2>Dischi</h2><div class="card">'
+n=0
+if [ -s "$RUN/dischi.list" ]; then
+	while IFS='|' read -r name _dev type gb links; do
+		n=$((n + 1))
+		printf '<div class="row OK"><span class="dot"></span><div class="grow"><div class="k">%s</div>' "$(esc "$name")"
+		printf '<div class="v">%s, %s GB, sola lettura. In libreria: %s</div></div>' \
+			"$(esc "$type")" "$gb" "$(esc "${links:-nessuna cartella con musica}")"
+		button escludi_disco "Escludi" nome "$name" danger
+		echo '</div>'
+	done < "$RUN/dischi.list"
+fi
+for e in $(conf ESCLUDI_DISCHI | tr ',' ' '); do
+	n=$((n + 1))
+	printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">Escluso dalla libreria</div></div>' "$(esc "$e")"
+	button includi_disco "Includi" nome "$e"
+	echo '</div>'
+done
+if [ $n -eq 0 ]; then
+	echo '<div class="row"><div class="grow"><div class="v">Nessun disco con musica trovato. Puoi collegare un disco USB: viene aggiunto da solo.</div></div></div>'
+fi
+echo '</div>'
+
+# --- Cartelle di rete ---------------------------------------------------------------------
+echo '<h2>Cartelle condivise in rete</h2><div class="card">'
+n=0
+for i in 1 2 3 4 5 6 7 8 9; do
+	path=$(conf "CONDIVISIONE_$i")
+	[ -n "$path" ] || continue
+	n=$((n + 1))
+	line=$(grep "^$i|" "$RUN/rete.list" 2>/dev/null | head -n 1)
+	state=$(printf '%s' "$line" | cut -d'|' -f3)
+	detail=$(printf '%s' "$line" | cut -d'|' -f4-)
+	user=$(conf "CONDIVISIONE_${i}_UTENTE")
+	if [ "$state" = OK ]; then cls=OK; else cls=ATTENZIONE; fi
+	printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div>' "$cls" "$(esc "$path")"
+	printf '<div class="v">%s%s</div></div>' "$(esc "${detail:-in collegamento}")" "$(esc "${user:+, utente $user}")"
+	button rimuovi_condivisione "Rimuovi" n "$i" danger
+	echo '</div>'
+done
+[ $n -eq 0 ] && echo '<div class="row"><div class="grow"><div class="v">Nessuna cartella di rete. Aggiungi qui sotto quella del NAS o del computer con la musica.</div></div></div>'
+echo '</div>'
+
+cat <<HTML
+<div class="card formcard">
+<form method="post" action="/cgi-bin/azione">
+<input type="hidden" name="t" value="$(token)">
+<input type="hidden" name="a" value="aggiungi_condivisione">
+<label for="srv">Indirizzo del NAS o del computer <span>(meglio l'indirizzo IP, es. 192.168.1.10)</span></label>
+<input id="srv" name="server" required autocapitalize="off" autocorrect="off" placeholder="192.168.1.10">
+<label for="dir">Cartella condivisa <span>(es. Musica, oppure Musica/FLAC)</span></label>
+<input id="dir" name="cartella" required autocapitalize="off" placeholder="Musica">
+<label for="usr">Utente <span>(vuoto se la cartella e' aperta a tutti)</span></label>
+<input id="usr" name="utente" autocapitalize="off" autocorrect="off" autocomplete="off">
+<label for="pwd">Password</label>
+<input id="pwd" name="password" type="password" autocomplete="new-password">
+<p class="sub">Sweetspot legge soltanto: non modifica e non cancella nulla sul NAS.
+La password resta salvata in sweetspot.txt sulla chiavetta.</p>
+<button class="primary">Aggiungi la cartella</button>
+</form>
+</div>
+HTML
+
+page_end

@@ -1,0 +1,2 @@
+# Sweetspot - dischi collegati o scollegati dopo l'avvio.
+SUBSYSTEM=="block", ACTION=="add|remove", RUN+="/usr/bin/sweetspot-evento-disco"

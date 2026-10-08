@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - cartelle condivise in rete (NAS, PC), in sola lettura.
+
+case "$1" in
+	start)
+		# In secondo piano: l'avvio non aspetta un NAS spento.
+		/usr/bin/sweetspot-rete monta &
+		;;
+	stop) /usr/bin/sweetspot-rete smonta ;;
+	*) echo "uso: $0 start|stop" ;;
+esac

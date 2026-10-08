@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - salva libreria e playlist sulla chiavetta quando cambiano.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+case "$1" in
+	start)
+		[ "$(mode)" = completa ] || exit 0
+		start-stop-daemon -S -b -m -p "$RUN/dati.pid" -x /usr/bin/sweetspot-dati -- sorveglia
+		;;
+	stop) start-stop-daemon -K -p "$RUN/dati.pid" 2>/dev/null ;;
+	*) echo "uso: $0 start|stop" ;;
+esac

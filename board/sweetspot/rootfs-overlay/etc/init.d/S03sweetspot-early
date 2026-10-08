@@ -5,7 +5,7 @@
 # quali moduli del kernel non caricare e imposta i parametri di sistema.
 # Gira prima di udev, cosi' i moduli esclusi non vengono mai caricati.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 write_blacklist() {
 	{
@@ -50,6 +50,8 @@ case "$1" in
 		if stick_mount ro; then
 			cp "$STICK_MNT/sweetspot.txt" "$RUN/sweetspot.txt" 2>/dev/null
 			cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
+			# Libreria, playlist e impostazioni dell'interfaccia salvate.
+			sweetspot-dati ripristina "$STICK_MNT/$DATA_DIR_NAME"
 			stick_umount
 			log "impostazioni lette dalla chiavetta"
 			echo "fatto"
@@ -60,6 +62,11 @@ case "$1" in
 		config_build "$RUN/sweetspot.txt"
 		write_blacklist
 		tune_sysctl
+		# Pagina di stato e impostazioni: porta 8080 in modalita' completa
+		# (la 80 e' dell'interfaccia del player), 80 in modalita' lyrion.
+		mkdir -p /etc/default
+		if [ "$(mode)" = completa ]; then port=8080; else port=80; fi
+		echo "HTTPD_ARGS=\"-p $port -h /usr/share/sweetspot/www\"" > /etc/default/httpd
 		;;
 	stop) ;;
 	*) echo "uso: $0 start" ;;

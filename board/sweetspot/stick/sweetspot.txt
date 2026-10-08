@@ -8,9 +8,34 @@
 #  Le righe che iniziano con # sono commenti e vengono ignorate.
 # =====================================================================
 
-# Nome del player, come apparira' nell'app o nella pagina di Lyrion.
+# La maggior parte delle impostazioni si cambia anche dal browser:
+# http://sweetspot.local:8080/ (pagine Musica e Impostazioni).
+
+# Nome del player, come apparira' nelle app e in rete.
 NOME_PLAYER=Sweetspot
 
+# Modalita' di funzionamento:
+#   completa = libreria, server e interfaccia web su Sweetspot (consigliato).
+#              Dal telefono o dal computer apri http://sweetspot.local/
+#   lyrion   = solo player, per un Lyrion Music Server su un altro computer
+MODALITA=completa
+
+# --- Musica ---------------------------------------------------------------
+# Dischi interni e USB vengono trovati da soli e letti in sola lettura.
+# DISCHI=no li ignora tutti; ESCLUDI_DISCHI ignora quelli indicati per nome,
+# separati da virgole (es. ESCLUDI_DISCHI=Backup,Dati vecchi).
+DISCHI=si
+ESCLUDI_DISCHI=
+
+# Cartelle condivise in rete (NAS, PC Windows, Mac), fino a 9.
+# Esempio:
+#   CONDIVISIONE_1=//192.168.1.10/Musica
+#   CONDIVISIONE_1_UTENTE=marco
+#   CONDIVISIONE_1_PASSWORD=la-password
+# Senza utente si accede come ospite. Si aggiungono piu' comodamente dalla
+# pagina Musica.
+
+# --- Solo modalita' lyrion ------------------------------------------------
 # Indirizzo del server Lyrion Music Server.
 # Vuoto = Sweetspot lo cerca da solo nella rete di casa.
 SERVER=
@@ -27,19 +52,19 @@ DAC=auto
 PROFILO=bilanciato
 
 # DSD:
-#   auto   = DSD nativo se il DAC lo dichiara, altrimenti lo converte il server
+#   auto   = DSD nativo se il DAC lo dichiara, altrimenti convertito in PCM
 #   nativo = forza il DSD nativo (per DAC che lo supportano ma non lo dichiarano)
 #   dop    = DSD tramite DoP. Solo se il DAC lo supporta: altrimenti si sente
 #            un forte fruscio!
-#   no     = il DSD viene convertito dal server
+#   no     = il DSD viene sempre convertito in PCM
 DSD=auto
 
 # Pausa (in millisecondi) quando si passa da PCM a DSD, per dare tempo
-# al DAC di agganciarsi senza perdere l'inizio del brano.
+# al DAC di agganciarsi senza perdere l'inizio del brano (modalita' lyrion).
 PAUSA_DSD_MS=500
 
-# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento.
-# 0 = nessuna pausa. Prova 300-500 se senti un clic o perdi l'attacco del brano.
+# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento
+# (modalita' lyrion). 0 = nessuna pausa. Prova 300-500 se senti un clic.
 PAUSA_FREQUENZA_MS=0
 
 # Rete Wi-Fi, solo se il player non e' collegato con il cavo.

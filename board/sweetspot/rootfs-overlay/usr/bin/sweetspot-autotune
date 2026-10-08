@@ -11,7 +11,7 @@
 # DSD nativo forzato) si possono cambiare solo all'avvio: per questo vengono
 # scritti in /boot/grub/auto.cfg sulla chiavetta, letto dal menu di avvio.
 
-. /usr/lib/sweetspot/common.sh
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 tune_params() {
 	local p="" iso hk card vidpid

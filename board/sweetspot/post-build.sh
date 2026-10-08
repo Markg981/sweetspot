@@ -14,6 +14,12 @@ rm -rf "${TARGET_DIR:?}/boot"
 # SSH parte solo se attivato in sweetspot.txt (S45sweetspot-ssh).
 rm -f "$TARGET_DIR/etc/init.d/S50dropbear"
 
+# MPD lo avvia il supervisore della riproduzione, con la configurazione
+# generata per il DAC collegato.
+rm -f "$TARGET_DIR/etc/init.d/S95mpd" "$TARGET_DIR/etc/mpd.conf"
+mkdir -p "$TARGET_DIR/var/lib/mpd/playlists" "$TARGET_DIR/var/lib/mympd" \
+	"$TARGET_DIR/musica" "$TARGET_DIR/media"
+
 # Permessi degli script, anche se il repository e' stato copiato da Windows.
 chmod 0755 "$TARGET_DIR"/etc/init.d/S*sweetspot-* \
 	"$TARGET_DIR"/usr/bin/sweetspot-* \

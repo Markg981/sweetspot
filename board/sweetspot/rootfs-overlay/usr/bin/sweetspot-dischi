@@ -1,0 +1,185 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - dischi con la musica: interni, USB, NAS montati localmente.
+#
+#   sweetspot-dischi monta     monta i dischi trovati e li aggiunge alla libreria
+#   sweetspot-dischi pulisci   toglie i dischi scollegati
+#   sweetspot-dischi smonta N  toglie il disco N dalla libreria
+#   sweetspot-dischi elenco    righe "nome|dispositivo|tipo|GB|cartelle"
+#
+# I dischi vengono montati SEMPRE in sola lettura, con il dispositivo
+# bloccato in sola lettura prima del montaggio: Sweetspot non scrive mai
+# sui dischi dell'utente.
+#
+# Sui dischi di sistema (Windows, Linux) entrano nella libreria solo le
+# cartelle Musica degli utenti; gli altri dischi entrano per intero.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+LIST=$RUN/dischi.list
+MIN_GB=${SWEETSPOT_DISCO_MIN_GB:-2}
+
+# Dispositivo, etichetta e tipo dalle righe di blkid.
+blkid_field() { printf '%s' "$1" | sed -n "s/.* $2=\"\\([^\"]*\\)\".*/\\1/p"; }
+
+excluded() {
+	local n e
+	n=$(lower "$1")
+	for e in $(lower "$(conf ESCLUDI_DISCHI)" | tr ',' ' '); do
+		[ "$n" = "$e" ] && return 0
+	done
+	return 1
+}
+
+unique_dir() {
+	local base=$1 d=$1 i=2
+	while [ -e "$MEDIA_DIR/$d" ]; do
+		d="$base $i"
+		i=$((i + 1))
+	done
+	printf '%s' "$d"
+}
+
+add_link() {
+	local target=$1 name=$2 link
+	name=$(safe_name "$name")
+	[ -n "$name" ] || return 0
+	link="$MUSIC_DIR/$name"
+	[ -e "$link" ] && [ "$(readlink "$link")" != "$target" ] && link="$link (2)"
+	ln -sfn "$target" "$link"
+	printf '%s' "$name"
+}
+
+# Cartelle da aggiungere alla libreria per un disco montato in $1.
+library_links() {
+	local mp=$1 name=$2 d u out=""
+	if [ -d "$mp/Windows/System32" ] || [ -d "$mp/windows/system32" ]; then
+		for d in "$mp"/Users/*/Music "$mp"/Users/*/Musica; do
+			[ -d "$d" ] || continue
+			[ -n "$(ls -A "$d" 2>/dev/null)" ] || continue
+			u=${d%/*}; u=${u##*/}
+			out="$out,$(add_link "$d" "$name - $u")"
+		done
+	elif [ -d "$mp/usr/bin" ] && [ -d "$mp/etc" ]; then
+		for d in "$mp"/home/*/Music "$mp"/home/*/Musica; do
+			[ -d "$d" ] || continue
+			u=${d%/*}; u=${u##*/}
+			out="$out,$(add_link "$d" "$name - $u")"
+		done
+	else
+		out=",$(add_link "$mp" "$name")"
+	fi
+	printf '%s' "${out#,}"
+}
+
+mount_one() {
+	local dev=$1 type=$2 label=$3 kname gb name mp fstype opts links
+	kname=${dev##*/}
+	gb=$(( $(cat "$SYS/class/block/$kname/size" 2>/dev/null || echo 0) / 2097152 ))
+	[ "$gb" -ge "$MIN_GB" ] || return 0
+	name=$(safe_name "${label:-Disco $kname}")
+	[ -n "$name" ] || name=$(safe_name "Disco $kname")
+	excluded "$name" && { log "dischi: $name escluso dalle impostazioni"; return 0; }
+	case "$type" in
+		ext2|ext3|ext4) fstype=ext4; opts=ro,noatime ;;
+		vfat) fstype=vfat; opts=ro,noatime,utf8,shortname=mixed ;;
+		exfat) fstype=exfat; opts=ro,noatime,iocharset=utf8 ;;
+		ntfs) fstype=ntfs3; opts=ro,noatime,iocharset=utf8 ;;
+		hfsplus|hfs) fstype=hfsplus; opts=ro,noatime ;;
+		*) return 0 ;;
+	esac
+	modprobe "$fstype" 2>/dev/null
+	mp="$MEDIA_DIR/$(unique_dir "$name")"
+	mkdir -p "$mp"
+	# Il dispositivo diventa di sola lettura prima del montaggio.
+	blockdev --setro "$dev" 2>/dev/null
+	if ! mount -t "$fstype" -o "$opts" "$dev" "$mp" 2>/dev/null; then
+		# ext4 con il diario da recuperare: si legge senza recuperarlo.
+		if [ "$fstype" = ext4 ] && mount -t ext4 -o ro,noatime,noload "$dev" "$mp" 2>/dev/null; then
+			log "dischi: $dev montato senza recuperare il diario (non era stato chiuso correttamente)"
+		else
+			rmdir "$mp" 2>/dev/null
+			log "dischi: impossibile leggere $dev ($type)"
+			return 0
+		fi
+	fi
+	links=$(library_links "$mp" "$name")
+	echo "$name|$dev|$type|$gb|$links" >> "$LIST"
+	log "dischi: $dev ($type, $gb GB) montato in $mp, in libreria: ${links:-niente}"
+}
+
+do_mount() {
+	local line dev type label
+	mkdir -p "$MEDIA_DIR" "$MUSIC_DIR" "$RUN"
+	[ "$(lower "$(conf DISCHI si)")" = no ] && { log "dischi: dischi locali disattivati"; return 0; }
+	blkid 2>/dev/null | while IFS= read -r line; do
+		dev=${line%%:*}
+		case "$dev" in
+			/dev/loop*|/dev/ram*|/dev/zram*|/dev/sr*|/dev/fd*) continue ;;
+		esac
+		grep -q "^$dev " "$PROC/mounts" && continue
+		label=$(blkid_field " $line" LABEL)
+		[ "$label" = "$STICK_LABEL" ] && continue
+		type=$(blkid_field " $line" TYPE)
+		[ -n "$type" ] || continue
+		mount_one "$dev" "$type" "$label"
+	done
+}
+
+# Toglie i dischi non piu' collegati e i collegamenti rimasti orfani.
+do_clean() {
+	local line name dev l
+	[ -f "$LIST" ] || return 0
+	: > "$LIST.new"
+	while IFS= read -r line; do
+		name=${line%%|*}
+		dev=$(echo "$line" | cut -d'|' -f2)
+		if [ -b "$dev" ]; then
+			echo "$line" >> "$LIST.new"
+		else
+			umount -l "$MEDIA_DIR/$name" 2>/dev/null
+			rmdir "$MEDIA_DIR/$name" 2>/dev/null
+			log "dischi: $name scollegato"
+		fi
+	done < "$LIST"
+	mv "$LIST.new" "$LIST"
+	for l in "$MUSIC_DIR"/*; do
+		[ -L "$l" ] && [ ! -e "$l" ] && rm -f "$l"
+	done
+}
+
+# Toglie un disco dalla libreria (resta collegato, non viene piu' letto).
+do_umount_one() {
+	local want line name l
+	want=$(lower "$1")
+	[ -f "$LIST" ] || return 0
+	: > "$LIST.new"
+	while IFS= read -r line; do
+		name=${line%%|*}
+		if [ "$(lower "$name")" = "$want" ]; then
+			for l in "$MUSIC_DIR"/*; do
+				[ -L "$l" ] || continue
+				case "$(readlink "$l")" in "$MEDIA_DIR/$name"|"$MEDIA_DIR/$name"/*) rm -f "$l" ;; esac
+			done
+			umount -l "$MEDIA_DIR/$name" 2>/dev/null
+			rmdir "$MEDIA_DIR/$name" 2>/dev/null
+			log "dischi: $name tolto dalla libreria"
+		else
+			echo "$line" >> "$LIST.new"
+		fi
+	done < "$LIST"
+	mv "$LIST.new" "$LIST"
+}
+
+# I test includono questo file per provare le singole funzioni.
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	monta) do_mount ;;
+	pulisci) do_clean ;;
+	smonta) do_umount_one "$2" ;;
+	elenco) cat "$LIST" 2>/dev/null ;;
+	*) echo "uso: $0 monta|pulisci|smonta NOME|elenco" >&2; exit 1 ;;
+esac
+exit 0
