@@ -8,6 +8,13 @@ case "$1" in
 		/usr/bin/sweetspot-dischi monta
 		echo "fatto"
 		;;
-	stop) ;;
+	stop)
+		# L'archivio musicale e' scrivibile: si chiude per bene.
+		a=$(/usr/bin/sweetspot-dischi archivio)
+		if [ -n "$a" ]; then
+			sync
+			umount "$a" 2>/dev/null || umount -l "$a" 2>/dev/null
+		fi
+		;;
 	*) echo "uso: $0 start" ;;
 esac

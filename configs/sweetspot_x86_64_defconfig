@@ -58,6 +58,8 @@ BR2_PACKAGE_FAAD2=y
 
 # Musica da cartelle condivise in rete (SMB)
 BR2_PACKAGE_CIFS_UTILS=y
+# Archivio musicale condiviso in rete (server SMB del kernel)
+BR2_PACKAGE_KSMBD_TOOLS=y
 
 # Certificati per i servizi in streaming, le radio e i plugin
 BR2_PACKAGE_CA_CERTIFICATES=y

@@ -1,0 +1,151 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Archivio": il disco dove copiare la musica e salvare
+# i CD, la sua condivisione in rete e la copia di cartelle da altri dischi.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+page_start "Archivio" archivio
+
+if [ "$(mode)" = player ]; then
+	echo '<p class="sub">In modalità solo player l'"'"'archivio musicale sta sul server Lyrion.</p>'
+	page_end
+	exit 0
+fi
+
+arch=$(sweetspot-dischi archivio)
+host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
+
+# --- Nessun archivio: scelta del disco --------------------------------------------
+if [ -z "$arch" ]; then
+	cat <<'HTML'
+<p class="sub">L'archivio è il disco dove Sweetspot copia la musica (da una chiavetta,
+da un altro disco o dal computer, come cartella di rete) e salva i CD.
+È l'unico disco su cui Sweetspot scrive: tutti gli altri restano in sola lettura.</p>
+HTML
+	echo '<h2>Scegli il disco</h2><div class="card">'
+	n=0
+	if [ -s "$RUN/dischi.list" ]; then
+		while IFS='|' read -r name _dev type gb links _how; do
+			# Solo dischi di dati (non quelli di sistema di Windows o Linux).
+			[ "$links" = "$(safe_name "$name")" ] || continue
+			n=$((n + 1))
+			printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s, %s GB</div></div>' \
+				"$(esc "$name")" "$(esc "$type")" "$gb"
+			button archivio_scegli "Usa come archivio" nome "$name" primary
+			echo '</div>'
+		done < "$RUN/dischi.list"
+	fi
+	[ $n -eq 0 ] && info_row "" "Nessun disco adatto" "Collega un disco USB o usa un disco interno di dati (non quello di Windows)."
+	echo '</div>'
+	page_end
+	exit 0
+fi
+
+# --- Archivio ------------------------------------------------------------------------
+aname=${arch##*/}
+space=$(df -h "$arch" 2>/dev/null | awk 'NR==2 {print $3 " usati, " $4 " liberi su " $2}')
+echo '<h2>Archivio</h2><div class="card">'
+printf '<div class="row OK"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s</div></div>' \
+	"$(esc "$aname")" "$(esc "$space")"
+button archivio_togli "Non usarlo più" "" "" danger
+echo '</div></div>'
+
+# --- Condivisione in rete ------------------------------------------------------------
+shared=no
+is_yes "$(conf ARCHIVIO_CONDIVISO no)" && shared=si
+echo '<h2>Cartella di rete</h2><div class="card formcard">'
+if [ "$shared" = si ] && pidof ksmbd.mountd > /dev/null 2>&1; then
+	printf '<p class="sub">La cartella <b>Musica</b> è visibile in rete. Da Windows apri <b>\\\\%s.local\\Musica</b>; dal Mac, nel Finder, <i>Vai &gt; Connessione al server</i> e <b>smb://%s.local/Musica</b>.</p>\n' \
+		"$(esc "$host")" "$(esc "$host")"
+fi
+form_start archivio_rete
+cat <<HTML
+<label for="cond">Condividi l'archivio in rete come cartella "Musica"</label>
+<select id="cond" name="condiviso">
+$(option no "No" "$shared")
+$(option si "Sì: per copiare la musica dal computer" "$shared")
+</select>
+<label for="cp">Password <span>(vuota = accesso libero dalla rete di casa; utente "sweetspot")</span></label>
+<input id="cp" name="password" type="password" autocomplete="new-password" placeholder="$( [ -n "$(conf ARCHIVIO_PASSWORD)" ] && echo 'impostata: lascia vuoto per non cambiarla')">
+<button class="primary">Salva</button>
+</form>
+</div>
+HTML
+
+# --- Copia in corso -------------------------------------------------------------------
+st=$(sweetspot-copia stato)
+if [ -n "$st" ]; then
+	state=${st%%|*}; rest=${st#*|}
+	done_kb=${rest%%|*}; rest=${rest#*|}
+	tot_kb=${rest%%|*}; src=${rest#*|}
+	case "$state" in
+		copia)
+			pct=0
+			[ "${tot_kb:-0}" -gt 0 ] 2>/dev/null && pct=$(( ${done_kb:-0} * 100 / tot_kb ))
+			[ "$pct" -gt 100 ] && pct=100
+			echo '<h2>Copia in corso</h2><div class="card"><div class="row ATTENZIONE"><span class="dot"></span><div class="grow">'
+			printf '<div class="k">%s</div><div class="v">%s%% - mentre la musica suona la copia si sospende e riprende da sola</div>' "$(esc "${src##*/}")" "$pct"
+			printf '<progress max="100" value="%s"></progress>' "$pct"
+			button copia_annulla "Annulla" "" "" danger
+			echo '</div></div></div><meta http-equiv="refresh" content="5">' ;;
+		finita) info_row OK "Ultima copia completata" "${src##*/}" | sed 's/^/<div class="card">/; s/$/<\/div>/' ;;
+		annullata) info_row "" "Ultima copia annullata" "${src##*/}" | sed 's/^/<div class="card">/; s/$/<\/div>/' ;;
+		errore) info_row ATTENZIONE "Ultima copia non riuscita" "${src##*/}: spazio esaurito o disco scollegato?" | sed 's/^/<div class="card">/; s/$/<\/div>/' ;;
+	esac
+fi
+
+# --- Copia da un altro disco o da una cartella di rete ------------------------------------
+p=$(query_param p)
+echo '<h2>Copia nell'"'"'archivio</h2><div class="card">'
+if [ -z "$p" ] || ! sweetspot-copia sorgente "$p"; then
+	n=0
+	for d in "$MEDIA_DIR"/*; do
+		[ -d "$d" ] || continue
+		sweetspot-copia sorgente "$d" || continue
+		n=$((n + 1))
+		label=${d##*/}
+		case "$label" in rete-*) label="Cartella di rete $(conf "CONDIVISIONE_${label#rete-}")" ;; esac
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/archivio?p=%s">%s</a></div></div></div>\n' \
+			"$(urlenc "$d")" "$(esc "$label")"
+	done
+	[ $n -eq 0 ] && info_row "" "Nessun disco da cui copiare" "Collega una chiavetta o un disco USB con la musica."
+else
+	real=$(readlink -f "$p")
+	up=${real%/*}
+	printf '<div class="row"><div class="grow"><div class="k">%s</div>' "$(esc "$real")"
+	if sweetspot-copia sorgente "$up"; then
+		printf '<div class="v"><a href="/cgi-bin/archivio?p=%s">&larr; cartella superiore</a></div>' "$(urlenc "$up")"
+	else
+		echo '<div class="v"><a href="/cgi-bin/archivio">&larr; elenco dei dischi</a></div>'
+	fi
+	echo '</div>'
+	button copia_avvia "Copia tutta questa cartella" cartella "$real" primary
+	echo '</div>'
+	ls -1 "$real" 2>/dev/null | head -n 500 | while IFS= read -r e; do
+		[ -d "$real/$e" ] || continue
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/archivio?p=%s">%s</a></div></div>' \
+			"$(urlenc "$real/$e")" "$(esc "$e")"
+		button copia_avvia "Copia" cartella "$real/$e"
+		echo '</div>'
+	done
+fi
+echo '</div>'
+
+# --- Contenuto dell'archivio -------------------------------------------------------------
+echo '<h2>Nell'"'"'archivio</h2><div class="card">'
+n=0
+for d in "$arch"/*; do
+	[ -d "$d" ] || continue
+	n=$((n + 1))
+	printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div></div>' "$(esc "${d##*/}")"
+	name=$(printf '%s' "${d##*/}" | tr -d '"\\')
+	printf '<form method="post" action="/cgi-bin/azione" class="inline" onsubmit="return %s">' \
+		"$(esc "confirm(\"Togliere $name dall'archivio? I file vengono cancellati.\")")"
+	printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="archivio_elimina">' "$(token)"
+	printf '<input type="hidden" name="cartella" value="%s"><button class="danger">Togli</button></form></div>\n' "$(esc "$d")"
+done
+[ $n -eq 0 ] && info_row "" "L'archivio è vuoto" "Copia qui sopra una cartella di musica, oppure usa la cartella di rete dal computer."
+echo '</div>'
+
+page_end

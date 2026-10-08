@@ -35,6 +35,11 @@ read_form() {
 	set +f
 }
 
+# Testo sicuro in un indirizzo (parametro di una pagina).
+urlenc() {
+	printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g'
+}
+
 query_param() {
 	printf '%s' "$QUERY_STRING" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1 | while IFS= read -r v; do httpd -d "$v"; done
 }
@@ -59,7 +64,7 @@ player_url() { printf 'http://%s:9000/material/' "$(web_host)"; }
 # e plugin stanno sul server Lyrion dell'altro computer.
 web_sections() {
 	if [ "$(mode)" = completa ]; then
-		echo "audio:Audio musica:Musica rete:Rete plugin:Plugin sistema:Sistema stato:Stato"
+		echo "audio:Audio musica:Musica archivio:Archivio plugin:Plugin rete:Rete sistema:Sistema stato:Stato"
 	else
 		echo "audio:Audio rete:Rete sistema:Sistema stato:Stato"
 	fi

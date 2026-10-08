@@ -6,10 +6,7 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
-urlencode() {
-	printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g; s/&/%26/g; s/?/%3F/g; s/#/%23/g; s/+/%2B/g; s/"/%22/g; s/'"'"'/%27/g; s/</%3C/g; s/>/%3E/g'
-}
-done_to() { redirect "/cgi-bin/$1?msg=$(urlencode "$2")"; exit 0; }
+done_to() { redirect "/cgi-bin/$1?msg=$(urlenc "$2")"; exit 0; }
 
 # Esito di sweetspot-config: 0 salvato, 2 solo fino al riavvio.
 saved_msg() { # codice testo
@@ -26,6 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
+F_condiviso=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -158,6 +156,64 @@ case "$F_a" in
 		sweetspot-dischi monta
 		sweetspot-lms aggiorna
 		done_to musica "Disco aggiunto alla libreria." ;;
+
+	# --- Archivio -----------------------------------------------------------------
+	archivio_scegli)
+		name=$(safe_name "$F_nome")
+		[ -n "$name" ] || done_to archivio "Richiesta non valida."
+		grep -q "^$name|" "$RUN/dischi.list" 2>/dev/null || done_to archivio "Disco non trovato."
+		sweetspot-config imposta ARCHIVIO "$name"
+		# Si rimonta il disco in scrittura.
+		sweetspot-dischi smonta "$name"
+		sweetspot-dischi monta
+		sweetspot-nas riavvia
+		sweetspot-lms aggiorna
+		[ -n "$(sweetspot-dischi archivio)" ] || done_to archivio "Il disco non si può usare in scrittura: controlla che non sia protetto o danneggiato."
+		done_to archivio "Archivio pronto: $name." ;;
+
+	archivio_togli)
+		a=$(sweetspot-dischi archivio)
+		[ -n "$a" ] || done_to archivio "Nessun archivio."
+		sweetspot-copia annulla
+		sweetspot-nas ferma
+		sweetspot-config rimuovi ARCHIVIO
+		sweetspot-dischi smonta "${a##*/}"
+		sweetspot-dischi monta
+		sweetspot-lms aggiorna
+		done_to archivio "Il disco è tornato in sola lettura." ;;
+
+	archivio_rete)
+		case "$F_condiviso" in si|no) ;; *) F_condiviso=no ;; esac
+		valid_value "$F_password" || done_to archivio "Password non valida."
+		if [ -n "$F_password" ]; then
+			sweetspot-config imposta ARCHIVIO_CONDIVISO "$F_condiviso" ARCHIVIO_PASSWORD "$F_password"
+		else
+			sweetspot-config imposta ARCHIVIO_CONDIVISO "$F_condiviso"
+		fi
+		rc=$?
+		sweetspot-nas riavvia
+		if [ "$F_condiviso" = si ]; then
+			done_to archivio "$(saved_msg $rc "Cartella di rete Musica attiva.")"
+		fi
+		done_to archivio "$(saved_msg $rc "Cartella di rete spenta.")" ;;
+
+	copia_avvia)
+		valid_value "$F_cartella" || done_to archivio "Richiesta non valida."
+		if err=$(sweetspot-copia avvia "$F_cartella"); then
+			done_to archivio "Copia avviata."
+		fi
+		done_to archivio "Copia non avviata: $err." ;;
+
+	copia_annulla)
+		sweetspot-copia annulla
+		done_to archivio "Copia annullata." ;;
+
+	archivio_elimina)
+		valid_value "$F_cartella" || done_to archivio "Richiesta non valida."
+		if err=$(sweetspot-copia elimina "$F_cartella"); then
+			done_to archivio "Cartella tolta dall'archivio."
+		fi
+		done_to archivio "Non tolta: $err." ;;
 
 	# --- Plugin -------------------------------------------------------------------
 	plugin_installa)

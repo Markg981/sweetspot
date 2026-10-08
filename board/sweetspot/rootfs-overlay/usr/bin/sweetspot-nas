@@ -1,0 +1,92 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - l'archivio musicale come cartella di rete "Musica", per
+# copiare la musica dal PC o dal Mac (server SMB del kernel, ksmbd).
+#
+#   sweetspot-nas avvia     avvia la condivisione, se attiva e c'e' l'archivio
+#   sweetspot-nas ferma     la ferma
+#   sweetspot-nas conf      stampa la configurazione (per i test)
+#
+# Impostazioni: ARCHIVIO_CONDIVISO=si, ARCHIVIO_PASSWORD (vuota = accesso
+# libero dalla rete di casa; altrimenti utente "sweetspot").
+# Dal PC: \\sweetspot.local\Musica oppure \\indirizzo\Musica.
+# Dal Mac: Finder > Vai > Connessione al server > smb://sweetspot.local/Musica
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+KSMBD_DIR=${SWEETSPOT_KSMBD_DIR:-/etc/ksmbd}
+SHARE_USER=sweetspot
+
+# Nome NetBIOS: il nome in rete in maiuscolo, al massimo 15 caratteri.
+netbios_name() {
+	cat "$PROC/sys/kernel/hostname" 2>/dev/null | tr 'a-z' 'A-Z' | tr -c 'A-Z0-9-\n' '-' | cut -c1-15
+}
+
+ksmbd_conf() { # percorso
+	local pass
+	pass=$(conf ARCHIVIO_PASSWORD)
+	cat <<EOF
+[global]
+	server string = Sweetspot
+	netbios name = $(netbios_name)
+	workgroup = WORKGROUP
+	guest account = nobody
+	map to guest = bad user
+	server min protocol = SMB2_10
+
+[Musica]
+	path = $1
+	comment = Archivio musicale di Sweetspot
+	read only = no
+	browseable = yes
+	force user = root
+	force group = root
+	create mask = 0664
+	directory mask = 0775
+EOF
+	if [ -n "$pass" ]; then
+		printf '\tguest ok = no\n\tvalid users = %s\n' "$SHARE_USER"
+	else
+		printf '\tguest ok = yes\n'
+	fi
+}
+
+start() {
+	local path
+	is_yes "$(conf ARCHIVIO_CONDIVISO no)" || return 0
+	path=$(sweetspot-dischi archivio)
+	if [ -z "$path" ]; then
+		log "nas: nessun archivio musicale, condivisione non attiva"
+		return 0
+	fi
+	modprobe ksmbd 2>/dev/null
+	mkdir -p "$KSMBD_DIR"
+	ksmbd_conf "$path" > "$KSMBD_DIR/ksmbd.conf"
+	rm -f "$KSMBD_DIR/ksmbdpwd.db"
+	: > "$KSMBD_DIR/ksmbdpwd.db"
+	if [ -n "$(conf ARCHIVIO_PASSWORD)" ]; then
+		ksmbd.adduser -P "$KSMBD_DIR/ksmbdpwd.db" -C "$KSMBD_DIR/ksmbd.conf" -a "$SHARE_USER" -p "$(conf ARCHIVIO_PASSWORD)" > /dev/null 2>&1
+	fi
+	# Il server di rete lavora sui core di sistema, mai su quello dell'audio.
+	cpu_layout
+	taskset -c "$(join_list "$LAYOUT_HK")" ksmbd.mountd > /dev/null 2>&1 ||
+		{ log "nas: ksmbd non avviato"; return 1; }
+	log "nas: cartella Musica condivisa in rete ($path)"
+}
+
+stop() {
+	ksmbd.control -s > /dev/null 2>&1
+	killall ksmbd.mountd 2>/dev/null
+	return 0
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	avvia) start ;;
+	ferma) stop ;;
+	riavvia) stop; sleep 1; start ;;
+	conf) ksmbd_conf "${2:-/media/Archivio}" ;;
+	*) echo "uso: $0 avvia|ferma|riavvia|conf" >&2; exit 1 ;;
+esac

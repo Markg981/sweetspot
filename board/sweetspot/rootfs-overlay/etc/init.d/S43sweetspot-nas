@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - archivio musicale condiviso in rete (se attivato).
+
+case "$1" in
+	start) /usr/bin/sweetspot-nas avvia ;;
+	stop) /usr/bin/sweetspot-nas ferma ;;
+	*) echo "uso: $0 start|stop" ;;
+esac

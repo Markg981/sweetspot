@@ -6,11 +6,14 @@
 #   sweetspot-dischi monta     monta i dischi trovati e li aggiunge alla libreria
 #   sweetspot-dischi pulisci   toglie i dischi scollegati
 #   sweetspot-dischi smonta N  toglie il disco N dalla libreria
-#   sweetspot-dischi elenco    righe "nome|dispositivo|tipo|GB|cartelle"
+#   sweetspot-dischi elenco    righe "nome|dispositivo|tipo|GB|cartelle|modo"
+#   sweetspot-dischi archivio  percorso dell'archivio musicale, se c'e'
 #
-# I dischi vengono montati SEMPRE in sola lettura, con il dispositivo
-# bloccato in sola lettura prima del montaggio: Sweetspot non scrive mai
-# sui dischi dell'utente.
+# I dischi vengono montati in sola lettura, con il dispositivo bloccato in
+# sola lettura prima del montaggio: Sweetspot non scrive sui dischi
+# dell'utente. L'unica eccezione e' il disco scelto come archivio musicale
+# (ARCHIVIO=nome del disco), dove si copia la musica e si salvano i CD: e'
+# scrivibile e si puo' condividere in rete come cartella "Musica".
 #
 # Sui dischi di sistema (Windows, Linux) entrano nella libreria solo le
 # cartelle Musica degli utenti; gli altri dischi entrano per intero.
@@ -73,27 +76,49 @@ library_links() {
 	printf '%s' "${out#,}"
 }
 
+# Il disco e' l'archivio musicale scelto nelle impostazioni?
+is_archive() {
+	local a
+	a=$(conf ARCHIVIO)
+	[ -n "$a" ] && [ "$(lower "$1")" = "$(lower "$a")" ]
+}
+
 mount_one() {
-	local dev=$1 type=$2 label=$3 kname gb name mp fstype opts links
+	local dev=$1 type=$2 label=$3 kname gb name mp fstype opts links rw="" how=ro
 	kname=${dev##*/}
 	gb=$(( $(cat "$SYS/class/block/$kname/size" 2>/dev/null || echo 0) / 2097152 ))
 	[ "$gb" -ge "$MIN_GB" ] || return 0
 	name=$(safe_name "${label:-Disco $kname}")
 	[ -n "$name" ] || name=$(safe_name "Disco $kname")
 	excluded "$name" && { log "dischi: $name escluso dalle impostazioni"; return 0; }
+	is_archive "$name" && rw=1
 	case "$type" in
-		ext2|ext3|ext4) fstype=ext4; opts=ro,noatime ;;
-		vfat) fstype=vfat; opts=ro,noatime,utf8,shortname=mixed ;;
-		exfat) fstype=exfat; opts=ro,noatime,iocharset=utf8 ;;
-		ntfs) fstype=ntfs3; opts=ro,noatime,iocharset=utf8 ;;
-		hfsplus|hfs) fstype=hfsplus; opts=ro,noatime ;;
+		ext2|ext3|ext4) fstype=ext4; opts=noatime ;;
+		vfat) fstype=vfat; opts=noatime,utf8,shortname=mixed ;;
+		exfat) fstype=exfat; opts=noatime,iocharset=utf8 ;;
+		ntfs) fstype=ntfs3; opts=noatime,iocharset=utf8 ;;
+		hfsplus|hfs) fstype=hfsplus; opts=noatime; rw="" ;;
 		*) return 0 ;;
 	esac
+	if [ -n "$rw" ]; then
+		# Archivio: scrivibile da tutti (Lyrion, la condivisione in rete,
+		# la copia dei CD) sui file system senza permessi Unix.
+		case "$fstype" in vfat|exfat|ntfs3) opts="$opts,umask=0000" ;; esac
+		opts="rw,$opts"
+		how=rw
+	else
+		opts="ro,$opts"
+	fi
 	modprobe "$fstype" 2>/dev/null
 	mp="$MEDIA_DIR/$(unique_dir "$name")"
 	mkdir -p "$mp"
-	# Il dispositivo diventa di sola lettura prima del montaggio.
-	blockdev --setro "$dev" 2>/dev/null
+	# Il dispositivo diventa di sola lettura prima del montaggio (non
+	# l'archivio).
+	if [ "$how" = ro ]; then
+		blockdev --setro "$dev" 2>/dev/null
+	else
+		blockdev --setrw "$dev" 2>/dev/null
+	fi
 	if ! mount -t "$fstype" -o "$opts" "$dev" "$mp" 2>/dev/null; then
 		# ext4 con il diario da recuperare: si legge senza recuperarlo.
 		if [ "$fstype" = ext4 ] && mount -t ext4 -o ro,noatime,noload "$dev" "$mp" 2>/dev/null; then
@@ -104,9 +129,14 @@ mount_one() {
 			return 0
 		fi
 	fi
-	links=$(library_links "$mp" "$name")
-	echo "$name|$dev|$type|$gb|$links" >> "$LIST"
-	log "dischi: $dev ($type, $gb GB) montato in $mp, in libreria: ${links:-niente}"
+	if [ "$how" = rw ]; then
+		links=$(add_link "$mp" "$name")
+		printf '%s\n' "$mp" > "$RUN/archivio"
+	else
+		links=$(library_links "$mp" "$name")
+	fi
+	echo "$name|$dev|$type|$gb|$links|$how" >> "$LIST"
+	log "dischi: $dev ($type, $gb GB) montato in $mp ($how), in libreria: ${links:-niente}"
 }
 
 do_mount() {
@@ -127,6 +157,11 @@ do_mount() {
 	done
 }
 
+forget_archive() {
+	[ "$(cat "$RUN/archivio" 2>/dev/null)" = "$MEDIA_DIR/$1" ] && rm -f "$RUN/archivio"
+	return 0
+}
+
 # Toglie i dischi non piu' collegati e i collegamenti rimasti orfani.
 do_clean() {
 	local line name dev l
@@ -140,6 +175,7 @@ do_clean() {
 		else
 			umount -l "$MEDIA_DIR/$name" 2>/dev/null
 			rmdir "$MEDIA_DIR/$name" 2>/dev/null
+			forget_archive "$name"
 			log "dischi: $name scollegato"
 		fi
 	done < "$LIST"
@@ -162,8 +198,10 @@ do_umount_one() {
 				[ -L "$l" ] || continue
 				case "$(readlink "$l")" in "$MEDIA_DIR/$name"|"$MEDIA_DIR/$name"/*) rm -f "$l" ;; esac
 			done
+			sync
 			umount -l "$MEDIA_DIR/$name" 2>/dev/null
 			rmdir "$MEDIA_DIR/$name" 2>/dev/null
+			forget_archive "$name"
 			log "dischi: $name tolto dalla libreria"
 		else
 			echo "$line" >> "$LIST.new"
@@ -180,6 +218,7 @@ case "$1" in
 	pulisci) do_clean ;;
 	smonta) do_umount_one "$2" ;;
 	elenco) cat "$LIST" 2>/dev/null ;;
-	*) echo "uso: $0 monta|pulisci|smonta NOME|elenco" >&2; exit 1 ;;
+	archivio) a=$(cat "$RUN/archivio" 2>/dev/null); [ -n "$a" ] && [ -d "$a" ] && echo "$a" ;;
+	*) echo "uso: $0 monta|pulisci|smonta NOME|elenco|archivio" >&2; exit 1 ;;
 esac
 exit 0

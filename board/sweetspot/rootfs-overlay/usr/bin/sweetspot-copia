@@ -1,0 +1,118 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - copia di cartelle di musica nell'archivio musicale (da un
+# disco USB, da un altro disco o da una cartella di rete) e pulizia
+# dell'archivio.
+#
+#   sweetspot-copia avvia CARTELLA   copia CARTELLA nell'archivio, in sottofondo
+#   sweetspot-copia stato            "stato|KB copiati|KB totali|cartella"
+#                                    (stato: copia, finita, annullata, errore)
+#   sweetspot-copia annulla          interrompe la copia in corso
+#   sweetspot-copia elimina CARTELLA toglie dall'archivio una cartella
+#   sweetspot-copia sorgente CARTELLA esce con 0 se si puo' copiare
+#
+# Si copia solo da /media (dischi e cartelle di rete), mai dall'archivio
+# verso se stesso; si elimina solo dentro l'archivio. Durante l'ascolto la
+# copia si sospende (modalita' ascolto) e riprende da sola.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+JOB=$RUN/copia
+PAUSABLE=$RUN/sospendibili
+
+# Percorso reale senza collegamenti, o niente se non esiste.
+real() { [ -e "$1" ] && readlink -f "$1"; }
+
+archive() { sweetspot-dischi archivio; }
+
+# La cartella e' una sorgente valida? (dentro /media, fuori dall'archivio)
+valid_source() {
+	local p a m
+	p=$(real "$1") || return 1
+	[ -d "$p" ] || return 1
+	m=$(real "$MEDIA_DIR") || return 1
+	case "$p" in "$m"/*) ;; *) return 1 ;; esac
+	a=$(real "$(archive)")
+	if [ -n "$a" ]; then
+		case "$p/" in "$a"/*) return 1 ;; esac
+	fi
+	return 0
+}
+
+# La cartella e' dentro l'archivio (e non e' l'archivio stesso)?
+inside_archive() {
+	local p a
+	p=$(real "$1") || return 1
+	a=$(real "$(archive)") || return 1
+	case "$p" in "$a"/?*) return 0 ;; esac
+	return 1
+}
+
+running() { [ -f "$JOB.pid" ] && kill -0 "$(cat "$JOB.pid")" 2>/dev/null; }
+
+kb() { du -sk "$1" 2>/dev/null | cut -f1; }
+
+do_start() {
+	local src dst a
+	a=$(archive)
+	[ -n "$a" ] || { echo "nessun archivio musicale"; return 1; }
+	valid_source "$1" || { echo "cartella non valida"; return 1; }
+	running && { echo "c'e' gia' una copia in corso"; return 1; }
+	src=$(real "$1")
+	dst="$a/$(basename "$src")"
+	mkdir -p "$RUN" "$PAUSABLE"
+	printf '%s\n' "$src" > "$JOB.src"
+	printf '%s\n' "$dst" > "$JOB.dst"
+	kb "$src" > "$JOB.tot"
+	echo copia > "$JOB.stato"
+	# Gruppo di processi proprio: la modalita' ascolto lo sospende intero.
+	setsid sh -c '
+		job=$1; src=$2; a=$3
+		if cp -a "$src" "$a/"; then echo finita > "$job.stato"
+		else [ "$(cat "$job.stato")" = annullata ] || echo errore > "$job.stato"; fi
+		sync
+		rm -f "$job.pid" "$4/copia"
+		/usr/bin/sweetspot-lms aggiorna
+	' sh "$JOB" "$src" "$a" "$PAUSABLE" > /dev/null 2>&1 < /dev/null &
+	echo $! > "$JOB.pid"
+	echo $! > "$PAUSABLE/copia"
+	log "copia: $src -> $a"
+}
+
+do_status() {
+	local st
+	st=$(cat "$JOB.stato" 2>/dev/null) || return 0
+	printf '%s|%s|%s|%s\n' "$st" "$(kb "$(cat "$JOB.dst")")" "$(cat "$JOB.tot")" "$(cat "$JOB.src")"
+}
+
+do_cancel() {
+	local pid
+	running || return 0
+	pid=$(cat "$JOB.pid")
+	echo annullata > "$JOB.stato"
+	kill -CONT "-$pid" 2>/dev/null
+	kill -TERM "-$pid" 2>/dev/null
+	rm -f "$JOB.pid" "$PAUSABLE/copia"
+	log "copia: annullata"
+}
+
+do_delete() {
+	local p
+	inside_archive "$1" || { echo "si possono togliere solo cartelle dell'archivio"; return 1; }
+	p=$(real "$1")
+	rm -rf "$p" && sync
+	log "copia: tolta dall'archivio $p"
+	sweetspot-lms aggiorna
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	avvia) do_start "$2" ;;
+	stato) do_status ;;
+	annulla) do_cancel ;;
+	elimina) do_delete "$2" ;;
+	sorgente) valid_source "$2" ;;
+	*) echo "uso: $0 avvia CARTELLA|stato|annulla|elimina CARTELLA|sorgente CARTELLA" >&2; exit 1 ;;
+esac
