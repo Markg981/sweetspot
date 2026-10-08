@@ -44,15 +44,29 @@ redirect() {
 	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n\r\n' "$1"
 }
 
-player_url() {
-	local ip
-	ip=${HTTP_HOST%%:*}
-	[ -n "$ip" ] || ip=$(net_ipv4)
-	printf 'http://%s/' "$ip"
+# Indirizzo con cui il browser ha raggiunto Sweetspot (nome o IP).
+web_host() {
+	local h
+	h=${HTTP_HOST%%:*}
+	[ -n "$h" ] || h=$(net_ipv4)
+	printf '%s' "$h"
+}
+
+# Interfaccia di Lyrion (Material Skin).
+player_url() { printf 'http://%s:9000/material/' "$(web_host)"; }
+
+# Sezioni delle impostazioni, come su Daphile. In modalita' player libreria
+# e plugin stanno sul server Lyrion dell'altro computer.
+web_sections() {
+	if [ "$(mode)" = completa ]; then
+		echo "audio:Audio musica:Musica rete:Rete plugin:Plugin sistema:Sistema stato:Stato"
+	else
+		echo "audio:Audio rete:Rete sistema:Sistema stato:Stato"
+	fi
 }
 
 page_start() {
-	local title=$1 active=$2 refresh=$3
+	local title=$1 active=$2 refresh=$3 p msg
 	printf 'Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
 	cat <<HTML
 <!doctype html>
@@ -70,9 +84,9 @@ ${refresh:+<meta http-equiv="refresh" content="$refresh">}
 <nav>
 HTML
 	if [ "$(mode)" = completa ]; then
-		printf '<a href="%s">Player</a>\n' "$(player_url)"
+		printf '<a class="play" href="%s" target="_top">Ascolta</a>\n' "$(player_url)"
 	fi
-	for p in musica:Musica impostazioni:Impostazioni stato:Stato; do
+	for p in $(web_sections); do
 		if [ "${p%%:*}" = "$active" ]; then
 			printf '<a class="on" href="/cgi-bin/%s">%s</a>\n' "${p%%:*}" "${p#*:}"
 		else
@@ -80,10 +94,26 @@ HTML
 		fi
 	done
 	echo '</nav></header>'
-	local msg
 	msg=$(query_param msg)
 	[ -n "$msg" ] && printf '<p class="msg">%s</p>\n' "$(esc "$msg")"
 	return 0
+}
+
+# Opzione di un elenco: VALORE ETICHETTA VALORE_ATTUALE
+option() {
+	local sel=''
+	[ "$(lower "$3")" = "$(lower "$1")" ] && sel=' selected'
+	printf '<option value="%s"%s>%s</option>' "$(esc "$1")" "$sel" "$(esc "$2")"
+}
+
+# Riga informativa: STATO(OK|ATTENZIONE|"") TITOLO TESTO
+info_row() {
+	printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s</div></div></div>\n' \
+		"$1" "$(esc "$2")" "$(esc "$3")"
+}
+
+form_start() { # azione
+	printf '<form method="post" action="/cgi-bin/azione">\n<input type="hidden" name="t" value="%s">\n<input type="hidden" name="a" value="%s">\n' "$(token)" "$1"
 }
 
 page_end() {

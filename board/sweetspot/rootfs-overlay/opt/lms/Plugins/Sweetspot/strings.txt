@@ -1,0 +1,7 @@
+PLUGIN_SWEETSPOT
+	EN	Sweetspot
+	IT	Sweetspot
+
+PLUGIN_SWEETSPOT_DESC
+	EN	Connects Lyrion Music Server to the Sweetspot system (plugin installation from the Sweetspot settings).
+	IT	Collega Lyrion Music Server al sistema Sweetspot (installazione dei plugin dalle impostazioni di Sweetspot).

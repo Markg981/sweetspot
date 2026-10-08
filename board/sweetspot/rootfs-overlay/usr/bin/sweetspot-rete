@@ -137,7 +137,7 @@ do_umount_one() {
 }
 
 case "$1" in
-	monta) do_mount ;;
+	monta) do_mount; touch "$RUN/rete.pronta" ;;
 	smonta) do_umount ;;
 	smonta-una)
 		case "$2" in [1-9]) do_umount_one "$2" ;; *) exit 1 ;; esac ;;

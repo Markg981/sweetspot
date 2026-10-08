@@ -1,0 +1,181 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - Lyrion Music Server sulla stessa macchina del player.
+#
+#   sweetspot-lms prepara          cartelle, preferenze iniziali, Material
+#   sweetspot-lms servizio         avvia Lyrion e lo riavvia se si ferma
+#   sweetspot-lms ferma            ferma Lyrion (salva le sue preferenze)
+#   sweetspot-lms attendi [s]      aspetta che Lyrion risponda
+#   sweetspot-lms primo-controllo  dopo l'avvio: cerca i brani aggiunti mentre
+#                                  Sweetspot era spento
+#   sweetspot-lms aggiorna         cerca nella libreria i brani nuovi o cambiati
+#   sweetspot-lms ricostruisci     rilegge tutta la libreria da capo
+#   sweetspot-lms plugin stato|installa NOME|rimuovi NOME
+#   sweetspot-lms riavvia          riavvia Lyrion (per i plugin)
+#
+# Lyrion gira con un utente proprio (lms), sui core di sistema e con
+# priorita' bassa: il player, sul suo core dedicato, ha sempre la precedenza.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+LMS_DIR=${SWEETSPOT_LMS_DIR:-/opt/lms}
+LMS_USER=lms
+LMS_LOG=/var/log/lms
+PREFS=$LMS_DATA/prefs
+CACHE=$LMS_DATA/cache
+PLAYLISTS=$LMS_DATA/playlists
+STOPFLAG=$RUN/lms.ferma
+PLUGIN_SRC=/usr/share/sweetspot/lms-plugins
+
+# Versione di un plugin dal suo install.xml.
+plugin_version() {
+	sed -n 's:.*<version>\([^<]*\)</version>.*:\1:p' "$1/install.xml" 2>/dev/null | head -n 1
+}
+
+# Preferenze del primo avvio: libreria in /musica, italiano, niente
+# procedura guidata di Lyrion (la fa Sweetspot), niente avvisi di
+# aggiornamento di Lyrion (si aggiorna tutto Sweetspot insieme).
+first_prefs() {
+	cat <<EOF
+---
+language: IT
+libraryname: $(conf NOME_PLAYER Sweetspot | tr -d '"\\:')
+mediadirs:
+  - $MUSIC_DIR
+playlistdir: $PLAYLISTS
+wizardDone: 1
+checkVersion: 0
+scannerPriority: 10
+EOF
+}
+
+# Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
+# aprono dentro l'interfaccia, come su Daphile.
+material_actions() {
+	cat <<'EOF'
+{
+  "settings": [
+    { "title": "Impostazioni Sweetspot", "icon": "tune", "iframe": "http://$HOST/cgi-bin/audio" },
+    { "title": "Stato di Sweetspot", "icon": "assessment", "iframe": "http://$HOST/cgi-bin/stato" }
+  ]
+}
+EOF
+}
+
+do_prepare() {
+	local inst have want
+	mkdir -p "$PREFS/material-skin" "$CACHE/InstalledPlugins/Plugins" "$PLAYLISTS" "$LMS_LOG"
+	if [ ! -s "$PREFS/server.prefs" ]; then
+		first_prefs > "$PREFS/server.prefs"
+		log "lyrion: preferenze iniziali scritte"
+	fi
+	material_actions > "$PREFS/material-skin/actions.json"
+	# Material Skin preinstallata. Se l'utente l'ha aggiornata dal gestore
+	# dei plugin si tiene la sua versione.
+	if [ -d "$PLUGIN_SRC/MaterialSkin" ]; then
+		inst=$CACHE/InstalledPlugins/Plugins/MaterialSkin
+		have=$(plugin_version "$inst")
+		want=$(plugin_version "$PLUGIN_SRC/MaterialSkin")
+		if [ -z "$have" ]; then
+			rm -rf "$inst"
+			cp -a "$PLUGIN_SRC/MaterialSkin" "$inst"
+			log "lyrion: Material Skin $want installata"
+		fi
+	fi
+	chown -R "$LMS_USER:$LMS_USER" "$LMS_DATA" "$LMS_LOG" 2>/dev/null
+}
+
+do_service() {
+	local restarts=0 started rc hk
+	rm -f "$STOPFLAG"
+	cpu_layout
+	hk=$(join_list "$LAYOUT_HK")
+	[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
+	while [ ! -f "$STOPFLAG" ]; do
+		started=$(date +%s)
+		log "lyrion: avvio sui core $hk"
+		# setpriv fa exec: il PID resta quello di Lyrion, anche quando si
+		# riavvia da solo (dopo l'installazione di un plugin).
+		HOME=$LMS_DATA taskset -c "$hk" nice -n 10 \
+			setpriv --reuid="$LMS_USER" --regid="$LMS_USER" --init-groups \
+			perl "$LMS_DIR/slimserver.pl" \
+				--prefsdir "$PREFS" --cachedir "$CACHE" --logdir "$LMS_LOG" \
+				--charset utf8 >> "$LMS_LOG/avvio.log" 2>&1 &
+		echo $! > "$RUN/lms.pid"
+		wait $!
+		rc=$?
+		[ -f "$STOPFLAG" ] && break
+		# Fermate ripetute subito dopo l'avvio: si aspetta di piu'.
+		if [ $(( $(date +%s) - started )) -lt 60 ]; then
+			restarts=$((restarts + 1))
+		else
+			restarts=0
+		fi
+		log "lyrion: fermo (codice $rc), riavvio"
+		if [ $restarts -gt 5 ]; then sleep 60; else sleep 3; fi
+	done
+	rm -f "$RUN/lms.pid"
+}
+
+do_stop() {
+	local pid i=0
+	touch "$STOPFLAG"
+	pid=$(cat "$RUN/lms.pid" 2>/dev/null)
+	[ -n "$pid" ] || return 0
+	kill "$pid" 2>/dev/null
+	# Lyrion salva preferenze e database prima di uscire.
+	while [ $i -lt 40 ] && kill -0 "$pid" 2>/dev/null; do
+		usleep 500000
+		i=$((i + 1))
+	done
+	kill -9 "$pid" 2>/dev/null
+}
+
+do_wait() {
+	local max=${1:-120} i=0
+	while [ $i -lt "$max" ]; do
+		lms_ready && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+# Una volta per avvio, quando Lyrion risponde e le cartelle di rete sono
+# montate: i dischi possono essere cambiati mentre Sweetspot era spento.
+# Lyrion legge solo cio' che e' nuovo o cambiato.
+do_first_check() {
+	local i=0
+	do_wait 600 || return 1
+	while [ $i -lt 120 ] && [ ! -f "$RUN/rete.pronta" ] && [ -n "$(conf CONDIVISIONE_1)" ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	[ "$(lms_field "$(lms_cli rescan '?')" rescan 2>/dev/null)" = 1 ] && return 0
+	lms_cli rescan > /dev/null && log "lyrion: controllo della libreria dopo l'avvio"
+}
+
+do_plugin() {
+	case "$1" in
+		stato) lms_cli sweetspot plugin-stato ;;
+		installa) [ -n "$2" ] && lms_cli sweetspot plugin-installa "nome:$2" ;;
+		rimuovi) [ -n "$2" ] && lms_cli sweetspot plugin-rimuovi "nome:$2" ;;
+		*) return 1 ;;
+	esac
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	prepara) do_prepare ;;
+	servizio) do_service ;;
+	ferma) do_stop ;;
+	attendi) do_wait "$2" ;;
+	primo-controllo) do_first_check ;;
+	aggiorna) lms_cli rescan > /dev/null ;;
+	ricostruisci) lms_cli wipecache > /dev/null ;;
+	plugin) shift; do_plugin "$@" ;;
+	riavvia) lms_cli restartserver > /dev/null ;;
+	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|plugin|riavvia" >&2; exit 1 ;;
+esac

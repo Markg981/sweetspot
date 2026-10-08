@@ -10,6 +10,6 @@ setsid sh -c '
 	flock 9
 	/usr/bin/sweetspot-dischi pulisci
 	/usr/bin/sweetspot-dischi monta
-	mpc -q --host /run/mpd/socket update >/dev/null 2>&1
+	/usr/bin/sweetspot-lms aggiorna
 ' >/dev/null 2>&1 < /dev/null &
 exit 0

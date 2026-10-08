@@ -1,24 +1,23 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - supervisore della riproduzione.
+# Sweetspot - supervisore della riproduzione: avvia squeezelite sul DAC e
+# lo segue (DAC scollegato, ricollegato, cambiato).
 #
-# Modalita' completa: avvia MPD (libreria, coda, riproduzione) per il DAC
-# collegato; myMPD fornisce l'interfaccia web. Senza DAC MPD parte lo stesso
-# con un'uscita fittizia, e viene riavviato sul DAC appena compare.
-# Modalita' lyrion: avvia squeezelite per un Lyrion Music Server esterno.
+# Modalita' completa: il server e' Lyrion su questa stessa macchina.
+# Modalita' player: il server e' un Lyrion Music Server su un altro computer.
 #
-# In entrambe:
+# Percorso del segnale:
 #   - uscita ALSA diretta sul dispositivo hardware (hw:), mai plug o dmix;
-#   - brano intero in RAM prima di suonare: durante l'ascolto la rete e i
-#     dischi restano fermi;
+#   - volume fisso al 100% (bit-perfect), salvo scelta diversa;
+#   - brano intero in RAM prima di suonare, e decodificato in anticipo:
+#     durante l'ascolto rete, dischi e decodifica restano fermi;
 #   - thread di riproduzione in real-time sul core isolato;
 #   - interruzioni del controller USB del DAC sul loro core dedicato.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 SQLOG=/var/log/squeezelite.log
-MPDLOG=/var/log/mpd.log
 STATE=$RUN/player.stato
 
 say() { echo "$1" > "$STATE"; log "player: $1"; }
@@ -87,29 +86,61 @@ pin_output_thread() {
 	return 1
 }
 
-# MPD: il thread di uscita verso il DAC si chiama "output:DAC". MPD gli da'
-# gia' la priorita' real-time 40; qui sale alla priorita' configurata e
-# viene spostato sul core della riproduzione.
-pin_mpd_output() {
-	local pid=$1 t prio
-	[ -f "$RUN/audio.tid" ] && [ -d "$PROC/$pid/task/$(cat "$RUN/audio.tid")" ] && return 0
-	prio=$(num_conf PRIORITA_AUDIO 80)
-	for t in "$PROC/$pid"/task/*; do
-		[ "$(cat "$t/comm" 2>/dev/null)" = "output:DAC" ] || continue
-		chrt -f -p "$prio" "${t##*/}" >/dev/null 2>&1
-		[ "$PIN" = 1 ] && taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
-		echo "${t##*/}" > "$RUN/audio.tid"
-		log "player: thread di uscita di MPD ${t##*/} con priorita' $prio sul core ${LAYOUT_AUDIO}"
+# Indirizzo del player (MAC) fisso: quello della prima scheda di rete, cosi'
+# Lyrion lo riconosce sempre e ne conserva le impostazioni.
+player_mac() {
+	local f m
+	for f in "$SYS"/class/net/*/address; do
+		case "$f" in */lo/address) continue ;; esac
+		m=$(cat "$f" 2>/dev/null)
+		case "$m" in ''|00:00:00:00:00:00) continue ;; esac
+		printf '%s' "$m"
 		return 0
 	done
-	return 1
+	printf '02:53:57:45:45:54'
+}
+
+# Controllo del volume hardware del DAC (per VOLUME=dac): quello indicato
+# in VOLUME_CONTROLLO o il primo con regolazione di riproduzione.
+dac_volume_control() {
+	local want line n=""
+	want=$(conf VOLUME_CONTROLLO)
+	if [ -n "$want" ]; then printf '%s' "$want"; return 0; fi
+	amixer -c "$1" scontents 2>/dev/null | while IFS= read -r line; do
+		case "$line" in
+			"Simple mixer control '"*)
+				n=${line#"Simple mixer control '"}
+				n=${n%"',"*} ;;
+			*Capabilities:*pvolume*)
+				[ -n "$n" ] && { printf '%s' "$n"; break; } ;;
+		esac
+	done
+}
+
+# Parametri di squeezelite per il ricampionamento facoltativo (spento di
+# serie: bit-perfect). RICAMPIONAMENTO=sincrono porta ogni brano alla
+# frequenza piu' alta della sua famiglia (44,1 -> 176,4/352,8 kHz, 48 ->
+# 192/384 kHz); asincrono porta tutto alla frequenza massima del DAC.
+# FILTRO: lineare (predefinito), intermedio, minimo.
+resample_args() {
+	local mode recipe phase
+	mode=$(lower "$(conf RICAMPIONAMENTO no)")
+	case "$mode" in sincrono|asincrono) ;; *) return 0 ;; esac
+	case "$(lower "$(conf FILTRO lineare)")" in
+		intermedio) phase=I ;;
+		minimo) phase=M ;;
+		*) phase=L ;;
+	esac
+	recipe="v$phase"
+	[ "$mode" = asincrono ] && recipe="${recipe}X"
+	printf '%s' "$recipe"
 }
 
 run_player() {
-	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms
+	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs
 	id=$(dac_id "$card")
 	name=$(conf NOME_PLAYER Sweetspot)
-	server=$(conf SERVER)
+	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
 	alsa=$(num_conf BUFFER_ALSA_MS 400)
 	[ "$alsa" -gt 499 ] && alsa=499
 	[ "$alsa" -lt 20 ] && alsa=20
@@ -117,12 +148,32 @@ run_player() {
 	prio=$(num_conf PRIORITA_AUDIO 80)
 	pausa=$(num_conf PAUSA_DSD_MS 500)
 	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 0)
+	maxrate=$(num_conf FREQUENZA_MAX 0)
+	case "$(conf FORMATO_USCITA auto)" in 16|24|24_3|32) outfmt=$(conf FORMATO_USCITA) ;; *) outfmt="" ;; esac
+	PLAYER_MAC=$(player_mac)
+	echo "$PLAYER_MAC" > "$RUN/player.mac"
 
-	set -- -o "hw:CARD=$id,DEV=0" -n "$name" -M Sweetspot \
-		-a "$alsa:$periods::1" -b "$(player_buffers)" -C 30 -p "$prio" \
+	set -- -o "hw:CARD=$id,DEV=0" -n "$name" -M Sweetspot -m "$PLAYER_MAC" \
+		-a "$alsa:$periods:$outfmt:1" -b "$(player_buffers)" -C 30 -p "$prio" \
 		-d output=info -f "$SQLOG"
 	[ -n "$server" ] && set -- "$@" -s "$server"
-	[ "$rate_ms" -gt 0 ] && set -- "$@" -r ":$rate_ms"
+	if [ "$maxrate" -gt 0 ]; then
+		set -- "$@" -r "$maxrate:$rate_ms"
+	elif [ "$rate_ms" -gt 0 ]; then
+		set -- "$@" -r ":$rate_ms"
+	fi
+	rs=$(resample_args)
+	[ -n "$rs" ] && set -- "$@" -R "$rs"
+
+	vol=$(lower "$(conf VOLUME fisso)")
+	if [ "$vol" = dac ]; then
+		ctl=$(dac_volume_control "$card")
+		if [ -n "$ctl" ]; then
+			set -- "$@" -V "$ctl"
+		else
+			log "player: il DAC non ha un controllo del volume, volume fisso"
+		fi
+	fi
 
 	dsd=$(lower "$(conf DSD auto)")
 	fmt=$(dac_native_dsd "$card")
@@ -142,11 +193,30 @@ run_player() {
 	taskset -c "$HK" squeezelite "$@" &
 	PID=$!
 	echo "$PID" > "$RUN/squeezelite.pid"
+	PREFS_SET=0
 }
 
-# --- Modalita' lyrion: squeezelite -----------------------------------------------
+# Impostazioni del player in Lyrion (modalita' completa), appena il player
+# e' collegato: volume fisso al 100% (bit-perfect) o regolabile, niente
+# ReplayGain, niente dissolvenze tra i brani, nessun limite di bitrate
+# (i file arrivano al player cosi' come sono).
+apply_player_prefs() {
+	local digital=0 r
+	[ "$(mode)" = completa ] || return 0
+	[ "$PREFS_SET" = 1 ] && return 0
+	r=$(lms_cli "$PLAYER_MAC" connected '?') || return 1
+	[ "$(lms_field "$r" connected 2>/dev/null || echo 0)" = 1 ] || return 1
+	case "$(lower "$(conf VOLUME fisso)")" in software|dac) digital=1 ;; esac
+	lms_cli "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null
+	lms_cli "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null
+	lms_cli "$PLAYER_MAC" playerpref transitionType 0 > /dev/null
+	lms_cli "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null
+	[ "$digital" = 0 ] && lms_cli "$PLAYER_MAC" mixer volume 100 > /dev/null
+	PREFS_SET=1
+	log "player: impostazioni in Lyrion applicate (volume $(lower "$(conf VOLUME fisso)"))"
+}
 
-loop_lyrion() {
+player_loop() {
 	while true; do
 		card=$(dac_find)
 		if [ -z "$card" ]; then
@@ -163,6 +233,7 @@ loop_lyrion() {
 		while kill -0 "$PID" 2>/dev/null; do
 			if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
 			pin_output_thread "$PID"
+			apply_player_prefs
 			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
 				log "player: DAC scollegato"
 				kill "$PID" 2>/dev/null
@@ -175,90 +246,7 @@ loop_lyrion() {
 	done
 }
 
-# --- Modalita' completa: MPD --------------------------------------------------------
-
-start_mpd() {
-	local card=$1 i=0
-	mkdir -p /run/mpd /var/lib/mpd/playlists
-	sweetspot-mpd-conf "$card" > "$RUN/mpd.conf"
-	rm -f "$RUN/audio.tid"
-	taskset -c "$HK" mpd --no-daemon "$RUN/mpd.conf" >> "$MPDLOG" 2>&1 &
-	PID=$!
-	echo "$PID" > "$RUN/mpd.pid"
-	while [ $i -lt 30 ] && [ ! -S "$MPD_SOCKET" ]; do
-		usleep 500000
-		i=$((i + 1))
-	done
-}
-
-stop_mpd() {
-	local i=0
-	[ -n "$PID" ] || return 0
-	kill "$PID" 2>/dev/null
-	# MPD salva coda e libreria prima di uscire.
-	while [ $i -lt 20 ] && kill -0 "$PID" 2>/dev/null; do
-		usleep 500000
-		i=$((i + 1))
-	done
-	kill -9 "$PID" 2>/dev/null
-	wait "$PID" 2>/dev/null
-	PID=""
-}
-
-# Il registro di MPD resta piccolo: le interruzioni dell'audio (underrun)
-# vengono contate e il file svuotato.
-trim_mpd_log() {
-	local n old
-	[ -f "$MPDLOG" ] || return 0
-	[ "$(wc -c < "$MPDLOG")" -gt 2097152 ] || return 0
-	n=$(grep -c "Underrun" "$MPDLOG")
-	old=$(cat "$RUN/underrun.contati" 2>/dev/null || echo 0)
-	echo $((old + n)) > "$RUN/underrun.contati"
-	: > "$MPDLOG"
-}
-
-loop_completa() {
-	local card id cur="" restarts=0
-	trap 'stop_mpd; exit 0' TERM INT
-	PID=""
-	while true; do
-		card=$(dac_find)
-		id=""
-		[ -n "$card" ] && id=$(dac_id "$card")
-		if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null || [ "$id" != "$cur" ]; then
-			if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-				log "player: DAC cambiato (${cur:-nessuno} -> ${id:-nessuno}), riavvio di MPD"
-				stop_mpd
-			elif [ -n "$PID" ]; then
-				restarts=$((restarts + 1))
-				log "player: MPD si e' fermato, riavvio ($restarts)"
-				[ $restarts -gt 5 ] && sleep 30
-			fi
-			[ -n "$card" ] && setup_usb_irq "$card"
-			start_mpd "$card"
-			cur=$id
-			if [ -n "$card" ]; then
-				say "attivo su $(dac_name "$card")"
-			else
-				say "in attesa del DAC (libreria e interfaccia disponibili)"
-			fi
-			# Primo avvio: aggiorna la libreria (solo le cartelle cambiate).
-			if [ ! -f "$RUN/libreria.aggiornata" ]; then
-				mpc -q --host "$MPD_SOCKET" update >/dev/null 2>&1 && touch "$RUN/libreria.aggiornata"
-			fi
-		fi
-		[ -n "$card" ] && pin_mpd_output "$PID"
-		trim_mpd_log
-		if [ -f "$RUN/audio.tid" ] || [ -z "$card" ]; then sleep 5; else sleep 2; fi
-	done
-}
-
 mkdir -p "$RUN" /var/log
 setup_layout
 log "player: modalita' $(mode), core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
-
-if [ "$(mode)" = lyrion ]; then
-	loop_lyrion
-else
-	loop_completa
-fi
+player_loop

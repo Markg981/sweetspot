@@ -168,21 +168,14 @@ check_dac() {
 }
 
 check_player() {
-	local pid xr bufs songs state
-	if [ "$(mode)" = lyrion ]; then
-		pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
-		xr=$(grep -c XRUN "$SQLOG" 2>/dev/null)
-	else
-		pid=$(cat "$RUN/mpd.pid" 2>/dev/null)
-		xr=$(grep -c Underrun /var/log/mpd.log 2>/dev/null)
-		xr=$(( ${xr:-0} + $(cat "$RUN/underrun.contati" 2>/dev/null || echo 0) ))
-	fi
+	local pid xr bufs state vol
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	xr=$(grep -c XRUN "$SQLOG" 2>/dev/null)
 	state=$(cat "$RUN/player.stato" 2>/dev/null)
 	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-		case "$state" in
-			*"attesa del DAC"*) emit ATTENZIONE "Player" "$state" ;;
-			*) emit OK "Player" "$state" ;;
-		esac
+		emit OK "Player" "$state"
+	elif [ "$state" = "in attesa del DAC" ]; then
+		emit ATTENZIONE "Player" "$state: collega il DAC e accendilo"
 	else
 		emit ATTENZIONE "Player" "${state:-non avviato}"
 	fi
@@ -192,19 +185,34 @@ check_player() {
 	else
 		emit ATTENZIONE "Interruzioni dell'audio" "$xr dall'accensione"
 	fi
-	if [ "$(mode)" = lyrion ]; then
-		bufs=$(player_buffers)
-		emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB file + $(( ${bufs#*:} / 1024 )) MB campioni pronti"
+	bufs=$(player_buffers)
+	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
+	vol=$(lower "$(conf VOLUME fisso)")
+	if [ "$(mode)" = player ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
+	elif [ "$vol" = fisso ]; then
+		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
 	else
-		songs=$(mpc --host "$MPD_SOCKET" stats 2>/dev/null | sed -n 's/^Songs: *//p')
-		if [ -n "$songs" ] && [ "$songs" -gt 0 ]; then
-			emit OK "Libreria" "$songs brani"
-		elif [ -n "$songs" ]; then
-			emit ATTENZIONE "Libreria" "vuota: aggiungi un disco o una cartella di rete nella pagina Musica"
-		fi
-		emit INFO "Memoria per i brani" "$(cache_mb) MB: i brani in coda vengono caricati per intero prima di suonare"
-		emit OK "Volume" "fisso, si regola dall'amplificatore (percorso bit-perfect)"
+		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
+	fi
+	if [ -n "$(conf RICAMPIONAMENTO)" ] && [ "$(lower "$(conf RICAMPIONAMENTO)")" != no ]; then
+		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta"
+	fi
+}
+
+check_library() {
+	local r songs albums scanning
+	r=$(lms_cli serverstatus 0 0) || { emit ATTENZIONE "Lyrion Music Server" "non risponde (si sta avviando?)"; return; }
+	emit OK "Lyrion Music Server" "versione $(lms_field "$r" version)"
+	songs=$(lms_field "$r" 'info total songs')
+	albums=$(lms_field "$r" 'info total albums')
+	scanning=$(lms_field "$r" rescan)
+	if [ "$scanning" = 1 ]; then
+		emit INFO "Libreria" "lettura in corso (${songs:-0} brani finora)"
+	elif [ -n "$songs" ] && [ "$songs" -gt 0 ]; then
+		emit OK "Libreria" "$songs brani, ${albums:-0} album"
+	else
+		emit ATTENZIONE "Libreria" "vuota: collega un disco o aggiungi una cartella di rete in Musica"
 	fi
 }
 
@@ -213,13 +221,12 @@ check_system() {
 	emit INFO "Classe del computer" "$(machine_class) - $(cpu_model) - $(( $(mem_total_kb) / 1024 )) MB di RAM"
 	ip=$(net_ipv4)
 	if [ -n "$ip" ]; then emit OK "Rete" "indirizzo $ip"; else emit ATTENZIONE "Rete" "nessun indirizzo: il cavo e' collegato?"; fi
-	if [ "$(mode)" = lyrion ]; then
+	if [ "$(mode)" = player ]; then
 		srv=$(lms_server_ip)
 		if [ -n "$srv" ]; then emit OK "Server Lyrion" "collegato a $srv"
 		else emit ATTENZIONE "Server Lyrion" "non collegato"; fi
 	elif [ -n "$ip" ]; then
-		if [ -n "$(pidof mympd)" ]; then emit OK "Interfaccia del player" "http://$ip/"
-		else emit ATTENZIONE "Interfaccia del player" "non avviata"; fi
+		emit INFO "Interfaccia" "http://$ip/ oppure http://$(hostname).local/"
 	fi
 	for b in "$SYS"/block/sd*; do
 		[ -d "$b" ] || continue
@@ -245,6 +252,7 @@ check_cpu
 check_usb
 check_dac
 check_player
+[ "$(mode)" = completa ] && check_library
 check_system
 
 if [ "$1" = "--dati" ]; then

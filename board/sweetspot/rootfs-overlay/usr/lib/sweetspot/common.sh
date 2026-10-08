@@ -75,23 +75,26 @@ conf() {
 lower() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
 
 # Modalita' di funzionamento:
-#   completa  libreria, server e interfaccia web su Sweetspot (MPD + myMPD)
-#   lyrion    solo player, per un Lyrion Music Server su un altro computer
+#   completa  Lyrion Music Server (libreria, plugin, interfaccia web) e
+#             player sulla stessa macchina, come Daphile (predefinita)
+#   player    solo player, per un Lyrion Music Server su un altro computer
 mode() {
 	case "$(lower "$(conf MODALITA completa)")" in
-		lyrion|squeezelite|lms) echo lyrion ;;
+		player|solo-player|soloplayer|squeezelite|lyrion|lms) echo player ;;
 		*) echo completa ;;
 	esac
 }
 
-# shellcheck disable=SC2034
-MPD_SOCKET=${SWEETSPOT_MPD_SOCKET:-/run/mpd/socket}
 # shellcheck disable=SC2034
 MUSIC_DIR=${SWEETSPOT_MUSICA:-/musica}
 # shellcheck disable=SC2034
 MEDIA_DIR=${SWEETSPOT_MEDIA:-/media}
 # shellcheck disable=SC2034
 DATA_DIR_NAME=sweetspot-dati
+# shellcheck disable=SC2034
+LMS_DATA=${SWEETSPOT_LMS_DATA:-/var/lib/lms}
+LMS_HOST=${SWEETSPOT_LMS_HOST:-127.0.0.1}
+LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
 
 # Nome di cartella leggibile e sicuro: lettere, cifre, spazi e . _ -
 safe_name() {
@@ -291,28 +294,23 @@ machine_class() {
 }
 
 # Buffer di squeezelite in KB: "stream:output".
-# Lo stream contiene il file compresso, l'output i campioni pronti.
-# Squeezelite accetta al massimo ~2 GB per buffer.
+# Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
+# i campioni gia' decodificati: con un output grande la decodifica finisce
+# molto prima dell'ascolto e durante la riproduzione la CPU resta ferma.
+# Si lasciano 768 MB al sistema e a Lyrion; squeezelite accetta al massimo
+# ~2 GB per buffer.
 player_buffers() {
-	local kb s o
+	local kb avail s o
 	kb=$(mem_total_kb)
-	s=$((kb / 8))
-	o=$((kb / 4))
+	avail=$((kb - 786432))
+	s=$((avail / 6))
+	o=$((avail / 3))
+	[ "$s" -lt 32768 ] && s=32768
+	[ "$o" -lt 65536 ] && o=65536
 	[ "$s" -gt 1048576 ] && s=1048576
 	[ "$o" -gt 2000000 ] && o=2000000
 	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$o" -gt 524288 ] && o=524288
 	echo "$s:$o"
-}
-
-# Memoria (MB) per la precarica dei brani in modalita' completa: un quarto
-# della RAM, fino a 4 GB. MPD vi carica per intero i brani in coda.
-cache_mb() {
-	local c
-	c=$(( $(mem_total_kb) / 1024 / 4 ))
-	[ "$c" -gt 4096 ] && c=4096
-	[ "$c" -lt 64 ] && c=64
-	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$c" -gt 768 ] && c=768
-	echo "$c"
 }
 
 # --- DAC -------------------------------------------------------------------
@@ -424,6 +422,38 @@ lms_server_ip() {
 		esac
 	done < "$PROC/net/tcp"
 }
+
+# --- Lyrion Music Server ------------------------------------------------------------
+
+# Codifica un parametro per la riga di comando di Lyrion (ogni byte in %XX:
+# vale per qualunque nome, anche con spazi, accenti o virgolette).
+urlenc() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g'; }
+
+# lms_cli PAROLA...: invia un comando alla porta CLI di Lyrion e stampa la
+# risposta (una riga, parametri codificati). Fallisce se Lyrion non risponde.
+lms_cli() {
+	local cmd="" w out
+	for w in "$@"; do cmd="$cmd $(urlenc "$w")"; done
+	out=$(printf '%s\nexit\n' "${cmd# }" | timeout 15 nc "$LMS_HOST" "$LMS_CLI_PORT" 2>/dev/null | head -n 1 | tr -d '\r')
+	[ -n "$out" ] || return 1
+	printf '%s\n' "$out"
+}
+
+# lms_field RISPOSTA CHIAVE: valore (decodificato) del primo "chiave:valore".
+lms_field() {
+	local t
+	for t in $1; do
+		t=$(httpd -d "$t" 2>/dev/null)
+		case "$t" in "$2":*) printf '%s' "${t#*:}"; return 0 ;; esac
+	done
+	return 1
+}
+
+# Lyrion risponde?
+lms_ready() { lms_cli version '?' > /dev/null; }
+
+# Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
+dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
 # --- Chiavetta ------------------------------------------------------------------
 

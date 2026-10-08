@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<extension>
+	<id>sweetspot-system</id>
+	<name>PLUGIN_SWEETSPOT</name>
+	<module>Plugins::Sweetspot::Plugin</module>
+	<version>1.0</version>
+	<description>PLUGIN_SWEETSPOT_DESC</description>
+	<creator>Sweetspot</creator>
+	<homepageURL>https://github.com/Markg981/sweetspot</homepageURL>
+	<category>misc</category>
+	<enforce>1</enforce>
+	<type>2</type>
+	<targetApplication>
+		<id>Lyrion Music Server</id>
+		<minVersion>9.0</minVersion>
+		<maxVersion>*</maxVersion>
+	</targetApplication>
+</extension>

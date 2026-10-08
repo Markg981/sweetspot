@@ -1,0 +1,10 @@
+config BR2_PACKAGE_LMS_MATERIAL
+	bool "lms-material"
+	depends on BR2_PACKAGE_LMS
+	help
+	  Material Skin: interfaccia web moderna per Lyrion Music Server,
+	  comoda da telefono, tablet e computer. Sweetspot la installa
+	  al primo avvio come plugin di Lyrion, cosi' si aggiorna dal
+	  gestore dei plugin.
+
+	  https://github.com/CDrummond/lms-material

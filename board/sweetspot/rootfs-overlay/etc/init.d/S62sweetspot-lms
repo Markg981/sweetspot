@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - Lyrion Music Server (solo in modalita' completa).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+case "$1" in
+	start)
+		[ "$(mode)" = completa ] || exit 0
+		printf "Avvio di Lyrion Music Server: "
+		sweetspot-lms prepara
+		start-stop-daemon -S -b -m -p "$RUN/lms-servizio.pid" -x /usr/bin/sweetspot-lms -- servizio
+		setsid /usr/bin/sweetspot-lms primo-controllo > /dev/null 2>&1 < /dev/null &
+		echo "fatto"
+		;;
+	stop)
+		[ -f "$RUN/lms-servizio.pid" ] || exit 0
+		printf "Arresto di Lyrion Music Server: "
+		sweetspot-lms ferma
+		start-stop-daemon -K -p "$RUN/lms-servizio.pid" 2>/dev/null
+		rm -f "$RUN/lms-servizio.pid"
+		echo "fatto"
+		;;
+	restart) "$0" stop; sleep 1; "$0" start ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac

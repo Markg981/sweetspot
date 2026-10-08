@@ -1,78 +1,100 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - conserva libreria, playlist e impostazioni dell'interfaccia
-# sulla chiavetta, nella cartella sweetspot-dati.
+# Sweetspot - conserva sulla chiavetta, nella cartella sweetspot-dati, cio'
+# che Lyrion costruisce o che l'utente sceglie: impostazioni, plugin
+# installati, playlist, libreria (database) e statistiche di ascolto.
 #
-#   sweetspot-dati ripristina   all'avvio: chiavetta -> RAM
-#   sweetspot-dati salva        RAM -> chiavetta (subito)
-#   sweetspot-dati sorveglia    salva da solo quando qualcosa cambia, ma mai
-#                               durante l'ascolto
+#   sweetspot-dati ripristina [cartella]   all'avvio: chiavetta -> RAM
+#   sweetspot-dati salva                   RAM -> chiavetta (subito)
+#   sweetspot-dati sorveglia               salva da solo quando qualcosa
+#                                          cambia, ma mai durante l'ascolto
 #
-# Il sistema gira in RAM: senza questo salvataggio libreria e playlist
-# andrebbero ricostruite a ogni accensione.
+# Il sistema gira in RAM: senza questo salvataggio libreria, plugin e
+# impostazioni andrebbero rifatti a ogni accensione.
+#
+# Sulla chiavetta (FAT32, che non conserva permessi e collegamenti):
+#   lyrion.tar     preferenze, plugin installati, playlist
+#   library.db     libreria
+#   persist.db     valutazioni e statistiche di ascolto
+# I database si copiano con il backup di SQLite, sicuro anche mentre
+# Lyrion li usa. Le copertine ridimensionate non si salvano: Lyrion le
+# rifa' quando servono.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
-MPD_DATA=${SWEETSPOT_MPD_DATA:-/var/lib/mpd}
-MYMPD_DATA=${SWEETSPOT_MYMPD_DATA:-/var/lib/mympd}
-# Cartelle di myMPD da conservare (non la cache delle copertine).
-MYMPD_KEEP="config state smartpls pics tags"
+CACHE=$LMS_DATA/cache
+KEEP="prefs playlists cache/InstalledPlugins"
+DBS="library.db persist.db"
 STAMP=$RUN/dati.impronta
 
 fingerprint() {
 	{
-		find "$MPD_DATA" -type f 2>/dev/null
-		for d in $MYMPD_KEEP; do find "$MYMPD_DATA/$d" -type f 2>/dev/null; done
+		for d in $KEEP; do find "$LMS_DATA/$d" -type f 2>/dev/null; done
+		for f in $DBS; do
+			ls "$CACHE/$f" "$CACHE/$f-wal" 2>/dev/null
+		done
 	} | sort | while IFS= read -r f; do
 		stat -c '%n %s %Y' "$f" 2>/dev/null
 	done | md5sum | cut -d' ' -f1
 }
 
-# Copia il contenuto di una cartella (la FAT32 della chiavetta non conserva
-# proprietari e permessi: si copia solo il contenuto).
-copy_dir() {
-	[ -d "$1" ] || return 0
-	mkdir -p "$2"
-	cp -r "$1/." "$2/" 2>/dev/null
+do_restore() {
+	local src=$1 f
+	[ -d "$src" ] || return 0
+	mkdir -p "$CACHE"
+	if [ -f "$src/lyrion.tar" ]; then
+		tar -xf "$src/lyrion.tar" -C "$LMS_DATA" 2>/dev/null ||
+			log "dati: archivio delle impostazioni di Lyrion illeggibile, si riparte da zero"
+	fi
+	for f in $DBS; do
+		[ -f "$src/$f" ] && cp "$src/$f" "$CACHE/$f"
+	done
+	chown -R lms:lms "$LMS_DATA" 2>/dev/null
+	log "dati: impostazioni, plugin e libreria ripristinati dalla chiavetta"
 }
 
-do_restore() {
-	local src=$1
-	[ -d "$src" ] || return 0
-	copy_dir "$src/mpd" "$MPD_DATA"
-	copy_dir "$src/mympd" "$MYMPD_DATA"
-	log "dati: libreria e impostazioni ripristinate dalla chiavetta"
+# Copia coerente di un database SQLite in uso.
+db_copy() {
+	if command -v sqlite3 > /dev/null; then
+		sqlite3 "$1" ".timeout 10000" ".backup '$2'" 2>/dev/null && return 0
+	fi
+	cp "$1" "$2"
 }
 
 do_save() {
-	local dst tmp d
+	local dst tmp d f list=""
+	[ -d "$LMS_DATA" ] || return 0
 	exec 8> "$RUN/dati.lock"
 	flock 8
+	# Copia in RAM prima: la chiavetta resta montata il meno possibile.
+	tmp=$RUN/dati.salva
+	rm -rf "$tmp"
+	mkdir -p "$tmp"
+	for d in $KEEP; do [ -e "$LMS_DATA/$d" ] && list="$list $d"; done
+	# shellcheck disable=SC2086
+	[ -n "$list" ] && tar -cf "$tmp/lyrion.tar" -C "$LMS_DATA" $list
+	for f in $DBS; do
+		[ -f "$CACHE/$f" ] && db_copy "$CACHE/$f" "$tmp/$f"
+	done
 	if ! stick_mount rw; then
+		rm -rf "$tmp"
 		log "dati: chiavetta non trovata, salvataggio rimandato"
 		return 1
 	fi
 	dst="$STICK_MNT/$DATA_DIR_NAME"
-	tmp="$STICK_MNT/$DATA_DIR_NAME.nuovo"
-	rm -rf "$tmp"
-	mkdir -p "$tmp/mpd" "$tmp/mympd"
-	copy_dir "$MPD_DATA" "$tmp/mpd"
-	for d in $MYMPD_KEEP; do
-		copy_dir "$MYMPD_DATA/$d" "$tmp/mympd/$d"
-	done
+	rm -rf "$dst.nuovo"
+	mkdir -p "$dst.nuovo"
+	cp "$tmp"/* "$dst.nuovo/" 2>/dev/null
 	sync
 	rm -rf "$dst.vecchio"
 	[ -d "$dst" ] && mv "$dst" "$dst.vecchio"
-	mv "$tmp" "$dst"
+	mv "$dst.nuovo" "$dst"
 	rm -rf "$dst.vecchio"
 	stick_umount
+	rm -rf "$tmp"
 	fingerprint > "$STAMP"
 	log "dati: salvati sulla chiavetta"
-}
-
-playing() {
-	mpc --host "$MPD_SOCKET" status 2>/dev/null | grep -q '^\[playing\]'
 }
 
 do_watch() {
@@ -80,11 +102,16 @@ do_watch() {
 	while true; do
 		sleep 60
 		[ -n "$(stick_device)" ] || continue
-		playing && continue
+		dac_playing && continue
 		[ "$(fingerprint)" = "$(cat "$STAMP" 2>/dev/null)" ] && continue
+		# Durante la lettura della libreria il database cambia di continuo:
+		# si salva a lettura finita.
+		[ "$(lms_field "$(lms_cli rescan '?')" rescan 2>/dev/null)" = 1 ] && continue
 		do_save
 	done
 }
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 case "$1" in
 	ripristina)

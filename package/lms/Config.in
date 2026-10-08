@@ -1,0 +1,22 @@
+config BR2_PACKAGE_LMS
+	bool "lms"
+	depends on BR2_x86_64 # moduli Perl compilati inclusi solo per x86_64 con Perl 5.42
+	depends on BR2_USE_MMU # perl
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_TOOLCHAIN_USES_GLIBC # moduli compilati per glibc
+	depends on !BR2_STATIC_LIBS
+	select BR2_PACKAGE_PERL
+	select BR2_PACKAGE_PERL_THREADS
+	select BR2_PACKAGE_PERL_NET_SSLEAY
+	select BR2_PACKAGE_PERL_IO_SOCKET_SSL
+	select BR2_PACKAGE_CA_CERTIFICATES
+	help
+	  Lyrion Music Server (in passato Logitech Media Server): la
+	  libreria musicale, i plugin (Spotify, Qobuz, TIDAL, radio,
+	  UPnP, AirPlay...) e il controllo dei player Squeezebox e
+	  Squeezelite. E' lo stesso motore usato da Daphile.
+
+	  https://lyrion.org/
+
+comment "lms needs an x86_64 glibc toolchain with threads"
+	depends on !BR2_x86_64 || !BR2_TOOLCHAIN_USES_GLIBC || !BR2_TOOLCHAIN_HAS_THREADS

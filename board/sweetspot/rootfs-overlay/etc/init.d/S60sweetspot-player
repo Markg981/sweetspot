@@ -13,17 +13,9 @@ case "$1" in
 		;;
 	stop)
 		start-stop-daemon -K -p "$PIDFILE" 2>/dev/null
-		if [ -f "$RUN/mpd.pid" ]; then
-			pid=$(cat "$RUN/mpd.pid")
-			kill "$pid" 2>/dev/null
-			i=0
-			while [ $i -lt 20 ] && kill -0 "$pid" 2>/dev/null; do
-				usleep 500000
-				i=$((i + 1))
-			done
-		fi
 		killall squeezelite 2>/dev/null
-		# Libreria e playlist sulla chiavetta prima di spegnere.
+		# Libreria, plugin e impostazioni sulla chiavetta prima di spegnere
+		# (Lyrion e' gia' fermo: si ferma prima del player).
 		[ "$(mode)" = completa ] && /usr/bin/sweetspot-dati salva
 		;;
 	restart) "$0" stop; sleep 1; "$0" start ;;
