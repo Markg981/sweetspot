@@ -23,7 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_condiviso=""
+F_condiviso="" F_album="" F_artista="" F_anno=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -214,6 +214,29 @@ case "$F_a" in
 			done_to archivio "Cartella tolta dall'archivio."
 		fi
 		done_to archivio "Non tolta: $err." ;;
+
+	# --- CD ----------------------------------------------------------------------
+	cd_leggi)
+		if err=$(sweetspot-cd leggi); then
+			done_to archivio "CD letto."
+		fi
+		done_to archivio "CD non letto: $err." ;;
+
+	cd_copia)
+		valid_value "$F_album" && valid_value "$F_artista" || done_to archivio "Dati non validi."
+		case "$F_anno" in ''|[12][0-9][0-9][0-9]) ;; *) done_to archivio "Anno non valido." ;; esac
+		if err=$(sweetspot-cd copia "$F_album" "$F_artista" "$F_anno"); then
+			done_to archivio "Copia del CD avviata."
+		fi
+		done_to archivio "Copia non avviata: $err." ;;
+
+	cd_annulla)
+		sweetspot-cd annulla
+		done_to archivio "Copia del CD annullata." ;;
+
+	cd_espelli)
+		sweetspot-cd espelli
+		done_to archivio "CD espulso." ;;
 
 	# --- Plugin -------------------------------------------------------------------
 	plugin_installa)

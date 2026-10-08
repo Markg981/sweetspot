@@ -1,0 +1,317 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - copia dei CD audio nell'archivio musicale, in FLAC, con
+# titoli e copertina da MusicBrainz e verifica AccurateRip.
+#
+#   sweetspot-cd lettore            dispositivo del lettore CD, se c'e'
+#   sweetspot-cd leggi              legge l'indice del CD e cerca titoli e
+#                                   copertina: scrive $RUN/cd/info.json
+#   sweetspot-cd copia [album artista anno]
+#                                   copia il CD nell'archivio (in sottofondo)
+#   sweetspot-cd stato              "stato|traccia|tracce|messaggio"
+#   sweetspot-cd annulla            interrompe la copia
+#   sweetspot-cd espelli            apre il cassetto
+#
+# La lettura e' quella "sicura" di cd-paranoia: ogni settore si rilegge
+# finche' i dati non sono certi. Ogni traccia si confronta poi con il
+# database AccurateRip (le copie dello stesso CD fatte da altri): se le
+# firme coincidono la copia e' perfetta. La correzione del lettore
+# (offset) si trova da sola al primo CD presente nel database e resta
+# salvata in LETTORE_OFFSET.
+#
+# Il lettore lavora solo quando lo si chiede: Sweetspot non lo interroga di
+# continuo (sarebbe attivita' inutile mentre si ascolta).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DIR=$RUN/cd
+INFO=$DIR/info.json
+PAUSABLE=$RUN/sospendibili
+UA="Sweetspot/0.2 ( https://github.com/Markg981/sweetspot )"
+ARCRC=${SWEETSPOT_ARCRC:-sweetspot-arcrc}
+
+drive() {
+	local d
+	for d in "$SYS"/block/sr*; do
+		[ -e "$d" ] || continue
+		printf '/dev/%s\n' "${d##*/}"
+		return 0
+	done
+	return 1
+}
+
+# --- Indice del CD --------------------------------------------------------------
+
+# Righe "traccia inizio lunghezza" (settori) dall'indice di cd-paranoia.
+toc() {
+	cd-paranoia -d "$1" -Q 2>&1 | awk '
+		$1 ~ /^[0-9]+\.$/ { sub(/\./, "", $1); print $1, $4, $2 }'
+}
+
+# Identificativo MusicBrainz dal file dell'indice.
+mb_discid() { # file_indice
+	awk '
+		{ n = $1; off[$1] = $2 + 150; last = $2 + $3 + 150; if (NR == 1) first = $1 }
+		END {
+			printf "%02X%02X%08X", first, n, last
+			for (i = 1; i <= 99; i++) printf "%08X", (i in off) ? off[i] : 0
+		}' "$1" | sha1sum | cut -c1-40 | xxd -r -p | base64 | tr '+/=' '._-'
+}
+
+# Identificativi AccurateRip: "tracce id1 id2 cddb" (esadecimali).
+ar_ids() { # file_indice
+	awk '
+		function digits(x,  s) { s = 0; while (x > 0) { s += x % 10; x = int(x / 10) }; return s }
+		{
+			n = $1; o = $2; lead = $2 + $3
+			id1 += o; id2 += (o > 0 ? o : 1) * $1
+			cd += digits(int((o + 150) / 75))
+			if (NR == 1) firsts = int((o + 150) / 75)
+		}
+		END {
+			id1 += lead; id2 += lead * (n + 1)
+			cddb = (cd % 255) * 16777216 + (int((lead + 150) / 75) - firsts) * 256 + n
+			id1 %= 4294967296; id2 %= 4294967296
+			printf "%d %04x%04x %04x%04x %04x%04x\n", n, int(id1 / 65536), id1 % 65536, \
+				int(id2 / 65536), id2 % 65536, int(cddb / 65536), cddb % 65536
+		}' "$1"
+}
+
+# Righe "traccia confidenza firma" dal file del database AccurateRip.
+ar_parse() { # file.bin
+	od -An -v -tu1 "$1" | tr -s ' \n' '\n\n' | grep . | awk '
+		function u32(   v) { v = b[p] + b[p+1] * 256 + b[p+2] * 65536 + b[p+3] * 16777216; p += 4; return v }
+		{ b[NR] = $1 }
+		END {
+			p = 1
+			while (p <= NR) {
+				c = b[p]; p += 13
+				for (t = 1; t <= c && p + 8 <= NR + 1; t++) {
+					conf = b[p]; p++
+					v = u32()
+					# Le firme superano 2^31: si stampano in due parti (awk
+					# lavora con interi con segno).
+					printf "%d %d %04x%04x\n", t, conf, int(v / 65536), v % 65536
+					p += 4
+				}
+			}
+		}'
+}
+
+ar_fetch() { # tracce id1 id2 cddb destinazione
+	local n=$1 id1=$2 id2=$3 cddb=$4
+	local a b c
+	a=$(printf '%s' "$id1" | tail -c 1)
+	b=$(printf '%s' "$id1" | tail -c 2 | head -c 1)
+	c=$(printf '%s' "$id1" | tail -c 3 | head -c 1)
+	curl -s -f -m 30 -A "$UA" -o "$5" \
+		"http://www.accuraterip.com/accuraterip/$a/$b/$c/dBAR-$(printf '%03d' "$n")-$id1-$id2-$cddb.bin"
+}
+
+# Titoli da MusicBrainz -> JSON di Sweetspot.
+mb_lookup() { # discid file_indice
+	local n r
+	n=$(wc -l < "$2")
+	r=$(curl -s -f -m 30 -A "$UA" "https://musicbrainz.org/ws/2/discid/$1?inc=artist-credits+recordings&fmt=json") || r=""
+	printf '%s' "$r" | jq -c --arg id "$1" --argjson n "$n" '
+		def artist(a): [a[]? | .name + (.joinphrase // "")] | join("");
+		[ .releases[]? as $r | $r.media[]? | select(any(.discs[]?; .id == $id)) |
+			{ mbid: $r.id, album: $r.title, artist: artist($r["artist-credit"]),
+			  year: (($r.date // "")[0:4]), disc: .position, discs: ($r.media | length),
+			  tracks: [ .tracks[] | { n: .position, title: .title, artist: artist(.["artist-credit"]) } ] } ]
+		| first // empty' 2>/dev/null
+}
+
+do_read() {
+	local dev id ids js
+	dev=$(drive) || { echo "nessun lettore CD"; return 1; }
+	mkdir -p "$DIR"
+	toc "$dev" > "$DIR/indice"
+	[ -s "$DIR/indice" ] || { rm -f "$INFO"; echo "nessun CD audio nel lettore"; return 1; }
+	id=$(mb_discid "$DIR/indice")
+	ids=$(ar_ids "$DIR/indice")
+	js=$(mb_lookup "$id" "$DIR/indice")
+	if [ -z "$js" ]; then
+		# CD non trovato: titoli generici, modificabili prima della copia.
+		js=$(awk '{ printf "%s{\"n\":%d,\"title\":\"Traccia %d\",\"artist\":\"\"}", (NR > 1 ? "," : ""), $1, $1 }' "$DIR/indice")
+		js="{\"mbid\":\"\",\"album\":\"CD sconosciuto\",\"artist\":\"Artista sconosciuto\",\"year\":\"\",\"disc\":1,\"discs\":1,\"tracks\":[$js]}"
+	fi
+	rm -f "$DIR/copertina.jpg"
+	mbid=$(printf '%s' "$js" | jq -r '.mbid')
+	if [ -n "$mbid" ]; then
+		curl -s -f -L -m 30 -A "$UA" -o "$DIR/copertina.jpg" "https://coverartarchive.org/release/$mbid/front-500" ||
+			rm -f "$DIR/copertina.jpg"
+	fi
+	printf '%s' "$js" | jq -c --arg id "$id" --arg ar "$ids" \
+		'. + {discid: $id, accuraterip: $ar, cover: false}' > "$INFO.tmp" 2>/dev/null ||
+		{ echo "dati del CD non leggibili"; return 1; }
+	mv "$INFO.tmp" "$INFO"
+	[ -f "$DIR/copertina.jpg" ] && jq -c '.cover = true' "$INFO" > "$INFO.tmp" && mv "$INFO.tmp" "$INFO"
+	log "cd: letto $(jq -r '.artist + " - " + .album' "$INFO") ($id)"
+}
+
+# Nome di file sicuro su tutti i file system (anche FAT ed exFAT).
+# Nome di file valido su FAT, exFAT, NTFS e per Windows e Mac:
+# "Titolo: sottotitolo" diventa "Titolo - sottotitolo", AC/DC diventa AC-DC.
+file_name() {
+	printf '%s' "$1" | tr -d '\000-\037' |
+		sed 's/: / - /g; s#[/:]#-#g; s/"/'"'"'/g; s/[\\*?<>|]/_/g; s/^[ .]*//; s/[ .]*$//' | cut -c1-120
+}
+
+state() { echo "$1|$2|$3|$4" > "$DIR/stato"; }
+
+# --- Correzione del lettore ---------------------------------------------------------
+
+# Trova l'offset del lettore su una traccia centrale confrontando le firme
+# con il database AccurateRip. Stampa l'offset o niente.
+find_offset() { # dispositivo tracce file_db
+	local dev=$1 n=$2 db=$3 t begin len margin s e
+	[ "$n" -ge 3 ] || return 0
+	t=$(( (n + 1) / 2 ))
+	begin=$(awk -v t="$t" '$1 == t { print $2 }' "$DIR/indice")
+	len=$(awk -v t="$t" '$1 == t { print $3 }' "$DIR/indice")
+	margin=5   # settori: +-2940 campioni, copre quasi tutti i lettori
+	s=$((begin - margin)); e=$((begin + len + margin))
+	# Posizioni assolute nel formato di cd-paranoia: [mm:ss.ff] dall'inizio.
+	cd-paranoia -d "$dev" -q -w -- "[$(sect_time "$s")]-[$(sect_time "$e")]" "$DIR/offset.wav" > /dev/null 2>&1 || return 0
+	"$ARCRC" cerca "$DIR/offset.wav" $((margin * 588)) $((len * 588)) 2>/dev/null |
+		awk -v t="$t" 'NR == FNR { if ($1 == t) want[$3] = 1; next } ($2 in want) { print $1; exit }' "$db" -
+	rm -f "$DIR/offset.wav"
+}
+
+sect_time() { printf '%d:%02d.%02d' $(($1 / 4500)) $(($1 / 75 % 60)) $(($1 % 75)); }
+
+# --- Copia -------------------------------------------------------------------------
+
+rip() { # album artista anno
+	local dev arch album artist year disc discs n dest work t title tartist num ids off db v1v2 v1 v2 conf ok=0 bad=0
+	dev=$(drive) || { state errore 0 0 "nessun lettore CD"; return 1; }
+	arch=$(sweetspot-dischi archivio)
+	[ -n "$arch" ] || { state errore 0 0 "nessun archivio musicale"; return 1; }
+	album=${1:-$(jq -r '.album' "$INFO")}
+	artist=${2:-$(jq -r '.artist' "$INFO")}
+	year=${3:-$(jq -r '.year' "$INFO")}
+	disc=$(jq -r '.disc' "$INFO"); discs=$(jq -r '.discs' "$INFO")
+	n=$(wc -l < "$DIR/indice")
+	dest="$arch/$(file_name "$artist")/$(file_name "$album${year:+ ($year)}")"
+	[ "$discs" -gt 1 ] 2>/dev/null && dest="$dest/CD $disc"
+	work=$DIR/lavoro
+	rm -rf "$work"; mkdir -p "$work" "$dest"
+	[ -f "$DIR/copertina.jpg" ] && cp "$DIR/copertina.jpg" "$dest/cover.jpg"
+
+	# Database AccurateRip e correzione del lettore.
+	ids=$(jq -r '.accuraterip' "$INFO")
+	db=$DIR/accuraterip.txt
+	: > "$db"
+	# shellcheck disable=SC2086
+	if ar_fetch $ids "$DIR/accuraterip.bin"; then ar_parse "$DIR/accuraterip.bin" > "$db"; fi
+	off=$(conf LETTORE_OFFSET)
+	if [ -z "$off" ] && [ -s "$db" ]; then
+		state copia 0 "$n" "ricerca della correzione del lettore"
+		off=$(find_offset "$dev" "$n" "$db")
+		if [ -n "$off" ]; then
+			sweetspot-config imposta LETTORE_OFFSET "$off" > /dev/null 2>&1
+			log "cd: correzione del lettore trovata: $off campioni"
+		fi
+	fi
+	off=${off:-0}
+
+	{
+		echo "Sweetspot - copia del CD"
+		echo "Album: $artist - $album${year:+ ($year)}"
+		echo "MusicBrainz: $(jq -r '.discid' "$INFO")   AccurateRip: $ids"
+		echo "Lettore: $dev, correzione $off campioni, lettura sicura (cd-paranoia)"
+		echo
+	} > "$work/registro.txt"
+
+	t=1
+	while [ $t -le "$n" ]; do
+		title=$(jq -r --argjson t "$t" '.tracks[] | select(.n == $t) | .title' "$INFO")
+		tartist=$(jq -r --argjson t "$t" '.tracks[] | select(.n == $t) | .artist' "$INFO")
+		[ -n "$title" ] || title="Traccia $t"
+		[ -n "$tartist" ] || tartist=$artist
+		num=$(printf '%02d' "$t")
+		state copia "$t" "$n" "$title"
+		if ! cd-paranoia -d "$dev" -q -w -O "$off" "$t" "$work/$num.wav" > /dev/null 2>&1; then
+			echo "Traccia $num: errore di lettura" >> "$work/registro.txt"
+			bad=$((bad + 1)); t=$((t + 1)); continue
+		fi
+		set -- crc "$work/$num.wav"
+		[ "$t" = 1 ] && set -- "$@" primo
+		[ "$t" = "$n" ] && set -- "$@" ultimo
+		v1v2=$("$ARCRC" "$@")
+		v1=${v1v2% *}; v2=${v1v2#* }
+		conf=$(awk -v t="$t" -v a="$v1" -v b="$v2" '$1 == t && ($3 == a || $3 == b) { c += $2 } END { print c + 0 }' "$db")
+		if [ "$conf" -gt 0 ]; then
+			echo "Traccia $num: copia perfetta, verificata con AccurateRip (affidabilità $conf) [$v1 $v2]" >> "$work/registro.txt"
+			ok=$((ok + 1))
+		elif [ -s "$db" ]; then
+			echo "Traccia $num: non confermata da AccurateRip [$v1 $v2]" >> "$work/registro.txt"
+		else
+			echo "Traccia $num: CD non presente nel database AccurateRip [$v1 $v2]" >> "$work/registro.txt"
+		fi
+		set -- -s -f --best -o "$dest/$num - $(file_name "$title").flac" \
+			-T "TITLE=$title" -T "ARTIST=$tartist" -T "ALBUM=$album" -T "ALBUMARTIST=$artist" \
+			-T "TRACKNUMBER=$t" -T "TRACKTOTAL=$n" -T "DISCNUMBER=$disc" -T "DISCTOTAL=$discs"
+		[ -n "$year" ] && set -- "$@" -T "DATE=$year"
+		[ -n "$(jq -r '.mbid' "$INFO")" ] && set -- "$@" -T "MUSICBRAINZ_ALBUMID=$(jq -r '.mbid' "$INFO")"
+		# Copertina dentro il file; se flac non riesce a leggerla (immagine
+		# rovinata o in un formato strano) la traccia si salva senza.
+		if ! { [ -f "$dest/cover.jpg" ] && flac "$@" "--picture=$dest/cover.jpg" "$work/$num.wav" > /dev/null 2>&1; } &&
+			! flac "$@" "$work/$num.wav" > /dev/null 2>&1; then
+			echo "Traccia $num: errore nel salvataggio del file FLAC (disco pieno?)" >> "$work/registro.txt"
+			bad=$((bad + 1))
+		fi
+		rm -f "$work/$num.wav"
+		t=$((t + 1))
+	done
+	{
+		echo
+		if [ "$ok" = "$n" ]; then echo "Risultato: tutte le $n tracce sono copie perfette."
+		else echo "Risultato: $ok tracce su $n confermate da AccurateRip, $bad con errori."; fi
+	} >> "$work/registro.txt"
+	cp "$work/registro.txt" "$dest/sweetspot-copia.txt"
+	sync
+	rm -rf "$work"
+	eject "$dev" 2>/dev/null
+	if [ "$bad" -gt 0 ]; then
+		state errore "$n" "$n" "$bad tracce con errori: vedi sweetspot-copia.txt nella cartella dell'album"
+	elif [ "$ok" = "$n" ]; then
+		state finita "$n" "$n" "tutte le tracce verificate con AccurateRip"
+	else
+		state finita "$n" "$n" "$ok tracce su $n verificate con AccurateRip"
+	fi
+	log "cd: copiato in $dest ($ok/$n verificate)"
+	sweetspot-lms aggiorna
+}
+
+do_copy() {
+	[ -s "$INFO" ] || { echo "leggi prima il CD"; return 1; }
+	[ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null && { echo "copia gia' in corso"; return 1; }
+	[ -n "$(sweetspot-dischi archivio)" ] || { echo "nessun archivio musicale: sceglilo nella pagina Archivio"; return 1; }
+	mkdir -p "$PAUSABLE"
+	state copia 0 "$(wc -l < "$DIR/indice")" "preparazione"
+	setsid "$0" _copia "$@" > /dev/null 2>&1 < /dev/null &
+	echo $! > "$DIR/pid"
+	echo $! > "$PAUSABLE/cd"
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	lettore) drive ;;
+	leggi) do_read ;;
+	copia) shift; do_copy "$@" ;;
+	_copia) shift; rip "$@"; rm -f "$DIR/pid" "$PAUSABLE/cd" ;;
+	stato) cat "$DIR/stato" 2>/dev/null ;;
+	annulla)
+		if [ -f "$DIR/pid" ]; then
+			kill -CONT "-$(cat "$DIR/pid")" 2>/dev/null
+			kill -TERM "-$(cat "$DIR/pid")" 2>/dev/null
+			rm -f "$DIR/pid" "$PAUSABLE/cd"
+			state annullata 0 0 "copia annullata"
+		fi ;;
+	espelli) d=$(drive) && eject "$d" ;;
+	*) echo "uso: $0 lettore|leggi|copia [album artista anno]|stato|annulla|espelli" >&2; exit 1 ;;
+esac

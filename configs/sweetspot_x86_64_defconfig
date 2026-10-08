@@ -64,6 +64,14 @@ BR2_PACKAGE_CIFS_UTILS=y
 # Archivio musicale condiviso in rete (server SMB del kernel)
 BR2_PACKAGE_KSMBD_TOOLS=y
 
+# Copia dei CD: lettura sicura, FLAC, titoli e copertine da MusicBrainz,
+# verifica AccurateRip
+BR2_PACKAGE_LIBCDIO_PARANOIA=y
+BR2_PACKAGE_FLAC=y
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_CURL=y
+BR2_PACKAGE_SWEETSPOT_TOOLS=y
+
 # Certificati per i servizi in streaming, le radio e i plugin
 BR2_PACKAGE_CA_CERTIFICATES=y
 

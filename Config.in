@@ -1,2 +1,3 @@
 source "$BR2_EXTERNAL_SWEETSPOT_PATH/package/lms/Config.in"
 source "$BR2_EXTERNAL_SWEETSPOT_PATH/package/lms-material/Config.in"
+source "$BR2_EXTERNAL_SWEETSPOT_PATH/package/sweetspot-tools/Config.in"

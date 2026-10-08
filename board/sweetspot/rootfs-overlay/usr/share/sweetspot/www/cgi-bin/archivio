@@ -95,6 +95,53 @@ if [ -n "$st" ]; then
 	esac
 fi
 
+# --- CD -------------------------------------------------------------------------------
+if [ -n "$(sweetspot-cd lettore)" ]; then
+	echo '<h2>CD</h2><div class="card formcard">'
+	cst=$(sweetspot-cd stato)
+	cstate=${cst%%|*}; crest=${cst#*|}
+	ctrack=${crest%%|*}; crest=${crest#*|}
+	ctotal=${crest%%|*}; cmsg=${crest#*|}
+	info=$RUN/cd/info.json
+	if [ "$cstate" = copia ]; then
+		pct=0
+		[ "${ctotal:-0}" -gt 0 ] 2>/dev/null && pct=$(( ${ctrack:-0} * 100 / ctotal ))
+		printf '<p><b>Copia in corso</b>: traccia %s di %s - %s</p>' "$(esc "$ctrack")" "$(esc "$ctotal")" "$(esc "$cmsg")"
+		printf '<progress max="100" value="%s"></progress>' "$pct"
+		echo '<p class="sub">Lettura sicura: ogni settore si rilegge finché i dati sono certi. Mentre la musica suona la copia si sospende.</p>'
+		button cd_annulla "Annulla" "" "" danger
+		echo '<meta http-equiv="refresh" content="5">'
+	else
+		case "$cstate" in
+			finita) printf '<p class="msg">CD copiato: %s.</p>' "$(esc "$cmsg")" ;;
+			errore) printf '<p class="msg">Copia non riuscita: %s.</p>' "$(esc "$cmsg")" ;;
+		esac
+		if [ -s "$info" ]; then
+			[ "$(jq -r '.cover' "$info")" = true ] && echo '<img class="cover" src="/cgi-bin/copertina" alt="Copertina">'
+			form_start cd_copia
+			cat <<HTML
+<label for="cal">Album</label>
+<input id="cal" name="album" value="$(esc "$(jq -r '.album' "$info")")">
+<label for="car">Artista</label>
+<input id="car" name="artista" value="$(esc "$(jq -r '.artist' "$info")")">
+<label for="cye">Anno</label>
+<input id="cye" name="anno" inputmode="numeric" value="$(esc "$(jq -r '.year' "$info")")">
+<ol class="tracks">
+$(jq -r '.tracks[] | .title' "$info" | while IFS= read -r t; do printf '<li>%s</li>' "$(esc "$t")"; done)
+</ol>
+<button class="primary">Copia il CD nell'archivio</button>
+</form>
+HTML
+			[ -z "$(jq -r '.mbid' "$info")" ] && echo '<p class="sub">CD non trovato su MusicBrainz: puoi scrivere album e artista prima della copia.</p>'
+		else
+			echo '<p class="sub">Inserisci un CD audio nel lettore e premi Leggi il CD: Sweetspot cerca titoli e copertina su MusicBrainz.</p>'
+		fi
+		button cd_leggi "Leggi il CD" "" "" "$( [ -s "$info" ] || echo primary)"
+		button cd_espelli "Espelli"
+	fi
+	echo '</div>'
+fi
+
 # --- Copia da un altro disco o da una cartella di rete ------------------------------------
 p=$(query_param p)
 echo '<h2>Copia nell'"'"'archivio</h2><div class="card">'

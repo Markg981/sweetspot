@@ -17,9 +17,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Strumenti di verifica
-        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck
+        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq
       - name: Test degli script
         run: sh tests/run.sh
+      - name: Copia di un CD simulato
+        run: sh tests/cd-simulato.sh
 
   build:
     needs: test

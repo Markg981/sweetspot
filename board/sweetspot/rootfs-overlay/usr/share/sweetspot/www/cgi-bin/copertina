@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - copertina del CD nel lettore.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+f=$RUN/cd/copertina.jpg
+if [ -f "$f" ]; then
+	printf 'Content-Type: image/jpeg\r\nCache-Control: no-store\r\n\r\n'
+	cat "$f"
+else
+	printf 'Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nnessuna copertina\n'
+fi
