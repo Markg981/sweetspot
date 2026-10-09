@@ -27,7 +27,7 @@ HTML
 	echo '<h2>Scegli il disco</h2><div class="card">'
 	n=0
 	if [ -s "$RUN/dischi.list" ]; then
-		while IFS='|' read -r name _dev type gb links _how; do
+		while IFS='|' read -r name _dev type gb links _how _id; do
 			# Solo dischi di dati (non quelli di sistema di Windows o Linux).
 			[ "$links" = "$(safe_name "$name")" ] || continue
 			n=$((n + 1))

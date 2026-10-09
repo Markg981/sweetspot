@@ -10,8 +10,8 @@
 # Percorso del segnale:
 #   - uscita ALSA diretta sul dispositivo hardware (hw:), mai plug o dmix;
 #   - volume fisso al 100% (bit-perfect), salvo scelta diversa;
-#   - brano intero in RAM prima di suonare, e decodificato in anticipo:
-#     durante l'ascolto rete, dischi e decodifica restano fermi;
+#   - buffer di ingresso e uscita in RAM per anticipare lettura e decodifica;
+#     la dimensione del buffer non garantisce il precaricamento dell'intero brano;
 #   - thread di riproduzione in real-time sul core isolato;
 #   - interruzioni del controller USB del DAC sul loro core dedicato.
 
@@ -178,8 +178,9 @@ resample_args() {
 }
 
 run_player() {
-	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp
+	local card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp
 	id=$(dac_id "$card")
+	dev=$(dac_playback_dev "$card") || return 1
 	name=$(conf NOME_PLAYER Sweetspot)
 	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
 	alsa=$(num_conf BUFFER_ALSA_MS 400)
@@ -212,7 +213,7 @@ run_player() {
 	if [ -n "$dsp" ]; then
 		set -- -o "$dsp" -O "hw:CARD=$id" -a "$alsa:$periods::0"
 	else
-		set -- -o "hw:CARD=$id,DEV=0" -a "$alsa:$periods:$outfmt:1"
+		set -- -o "hw:CARD=$id,DEV=$dev" -a "$alsa:$periods:$outfmt:1"
 	fi
 	set -- "$@" -n "$name" -M Sweetspot -m "$PLAYER_MAC" \
 		-b "$(player_buffers)" -C 30 -p "$prio" \
@@ -270,11 +271,13 @@ apply_player_prefs() {
 	[ "$PREFS_SET" = 1 ] && return 0
 	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$PLAYER_MAC" connected '?')" = 1 ] || return 1
 	case "$(lower "$(conf VOLUME fisso)")" in software|dac) digital=1 ;; esac
-	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null
-	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null
-	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null
-	lms_json "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null
-	[ "$digital" = 0 ] && lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null
+	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null || return 1
+	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
+	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null || return 1
+	lms_json "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null || return 1
+	if [ "$digital" = 0 ]; then
+		lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null || return 1
+	fi
 	PREFS_SET=1
 	log "player: impostazioni in Lyrion applicate (volume $(lower "$(conf VOLUME fisso)"))"
 }
@@ -290,7 +293,7 @@ player_loop() {
 		id=$(dac_id "$card")
 		setup_usb_irq "$card"
 		[ "$(lower "$(conf VOLUME fisso)")" = dac ] || dac_unity_gain "$card"
-		run_player "$card"
+		run_player "$card" || { sleep 2; continue; }
 		say "attivo su $(dac_name "$card")"
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"

@@ -30,14 +30,14 @@ echo '</div>'
 
 # --- Cosa arriva al DAC adesso --------------------------------------------------------
 # Confronto tra il brano (dati di Lyrion) e il formato aperto sul DAC (ALSA):
-# stessa frequenza, nessun bit perso, volume fisso e nessun ricampionamento
-# = bit-perfect.
+# Formato e configurazione descrivono il percorso, senza confrontare i
+# campioni: non sono una certificazione bit-perfect.
 verdict() { # formato frequenza canali
 	local hwfmt="$1" hwrate="$2" hwch="$3" m out why
 	case "$hwfmt" in
 		DSD*)
 			case "$hwfmt" in DSD_U8) m=8 ;; DSD_U16*) m=16 ;; *) m=32 ;; esac
-			info_row OK "DSD nativo" "Il DAC riceve il flusso DSD così com'è: DSD$((hwrate * m / 44100)), $hwch canali ($hwfmt)."
+			info_row INFO "DSD nativo" "Formato DSD$((hwrate * m / 44100)), $hwch canali ($hwfmt); integrità dei campioni non verificata."
 			return ;;
 	esac
 	out="$(alsa_bits "$hwfmt") bit ($hwfmt), $(awk "BEGIN {printf \"%g\", $hwrate/1000}") kHz, $hwch canali"
@@ -52,7 +52,7 @@ verdict() { # formato frequenza canali
 	case "$src_type" in
 		dsf|dff)
 			if [ "$src_rate" = "$((hwrate * 16))" ]; then
-				info_row OK "DSD via DoP" "Il flusso DSD$((src_rate / 44100)) arriva intatto, impacchettato in PCM ($out)."
+				info_row INFO "Formato compatibile con DoP" "DSD$((src_rate / 44100)) e uscita PCM ($out); marcatori DoP e integrità dei campioni non verificati."
 			else
 				info_row ATTENZIONE "DSD convertito in PCM" "Il DAC riceve PCM: $out."
 			fi
@@ -71,7 +71,7 @@ verdict() { # formato frequenza canali
 	if [ -n "$why" ]; then
 		info_row ATTENZIONE "Non bit-perfect" "$why. Uscita: $out."
 	elif [ -n "$src_rate" ]; then
-		info_row OK "Bit-perfect" "Il DAC riceve esattamente i campioni del file${src_type:+ ($src_type${src_bits:+ $src_bits bit})}: $out."
+		info_row INFO "Percorso originale configurato" "Formato compatibile con il brano${src_type:+ ($src_type${src_bits:+ $src_bits bit})}: $out; integrità dei campioni non verificata. Volume, conversioni e filtri effettivi del server richiedono una verifica separata."
 	else
 		info_row OK "Uscita diretta" "$out."
 	fi
@@ -86,7 +86,7 @@ src_rate=$(printf '%s' "$np" | jq -r '.rate // empty' 2>/dev/null)
 src_bits=$(printf '%s' "$np" | jq -r '.bits // empty' 2>/dev/null)
 src_type=$(printf '%s' "$np" | jq -r '.type // empty' 2>/dev/null)
 if [ -z "$hw" ]; then
-	info_row "" "Uscita ferma" "Quando la musica suona qui compare il formato che arriva al DAC, con la verifica bit-perfect."
+	info_row "" "Uscita ferma" "Durante la riproduzione qui compare il formato aperto sul DAC. Il confronto dei campioni richiede una prova dedicata."
 else
 	title=$(printf '%s' "$np" | jq -r '[.artist, .title] | map(select(. != "")) | join(" - ")' 2>/dev/null)
 	[ -n "$title" ] && info_row "" "Brano" "$title"
@@ -100,7 +100,7 @@ echo '<h2>Correzione ambientale</h2><div class="card">'
 case "$(lower "$(conf CORREZIONE no)")" in
 	si) cst="accesa"; ccl=OK ;;
 	confronto) cst="esclusa a pari volume, per il confronto"; ccl=ATTENZIONE ;;
-	*) cst="spenta: percorso bit-perfect"; ccl="" ;;
+	*) cst="spenta: uscita diretta senza correzione ambientale"; ccl="" ;;
 esac
 [ -s "$RUN/correzione/sinistro.txt" ] || cst="nessun filtro: si misura la stanza con REW e un microfono di misura"
 printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/correzione">Correggi i bassi della stanza</a></div><div class="v">%s</div></div></div>\n' "$ccl" "$(esc "$cst")"
@@ -135,7 +135,7 @@ cat <<HTML
 <label for="vol">Volume</label>
 <select id="vol" name="volume">
 $(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
-$(option dac "Dal DAC: usa il controllo di volume del DAC (bit-perfect)" "$vol")
+$(option dac "Dal DAC: usa il controllo hardware (dipende dal DAC)" "$vol")
 $(option software "Dal software: per diffusori attivi senza volume (non bit-perfect)" "$vol")
 </select>
 

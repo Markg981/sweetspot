@@ -26,7 +26,8 @@
 # versione, architettura e SHA256SUMS, che viene controllato prima di
 # rendere avviabile la nuova copia. La compilazione ufficiale aggiunge
 # SHA256SUMS.minisig, la firma con la chiave del progetto: se il sistema ha la
-# chiave pubblica (/etc/sweetspot/aggiornamenti.pub) la firma e' obbligatoria.
+# chiave pubblica (/etc/sweetspot/aggiornamenti.pub) la firma e' obbligatoria;
+# senza chiave gli aggiornamenti sono disabilitati.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -148,8 +149,50 @@ prepare_slot() {
 }
 
 # Controlla il pacchetto estratto in $1 e lo sposta nella copia $2.
+unsigned_fixture() {
+	case "${SWEETSPOT_TEST:-}" in 1|cli) [ "${SWEETSPOT_ALLOW_UNSIGNED:-}" = 1 ] ;; *) return 1 ;; esac
+}
+
+# Solo i file prodotti da post-image.sh possono entrare nella copia avviabile.
+package_payload() {
+	case "$1" in
+		"$(kernel_file)"|rootfs.cpio.zst|versione|architettura) return 0 ;;
+	esac
+	[ "$(boot_type)" = rpi ] || return 1
+	case "$1" in
+		overlays/README|overlays/overlay_map.dtb|overlays/*.dtbo)
+			case "${1#overlays/}" in */*) ;; *) return 0 ;; esac ;;
+		*.dtb) case "$1" in */*) ;; *) return 0 ;; esac ;;
+	esac
+	return 1
+}
+
+# Ispeziona il tar prima di estrarre: nessun link, dispositivo, percorso
+# esterno o membro ripetuto puo' alterare file fuori dalla cartella temporanea.
+extract_package() {
+	local archive="$1" x="$2" listing="$DIR/membri" raw="$DIR/tar.list" kind name
+	LC_ALL=C tar -tvf "$archive" > "$raw" 2>/dev/null || return 1
+	awk '
+		NF != 6 || $1 !~ /^[-d]/ { exit 1 }
+		{ n=$6; sub(/^\.\//, "", n); sub(/\/$/, "", n)
+		  if (n == ".") n=""
+		  if (n ~ /[^A-Za-z0-9._\/-]/ || n ~ /^\// || n ~ /(^|\/)\.\.?(\/|$)/) exit 1
+		  print (substr($1,1,1) == "d" ? "d" : "f") "|" n }
+	' "$raw" > "$listing" || return 1
+	[ -s "$listing" ] || return 1
+	[ -z "$(cut -d'|' -f2 "$listing" | LC_ALL=C sort | uniq -d)" ] || return 1
+	while IFS='|' read -r kind name; do
+		if [ "$kind" = d ]; then
+			case "$name" in '') ;; overlays) [ "$(boot_type)" = rpi ] || return 1 ;; *) return 1 ;; esac
+		else
+			case "$name" in SHA256SUMS|SHA256SUMS.minisig) ;; *) package_payload "$name" || return 1 ;; esac
+		fi
+	done < "$listing"
+	tar -xf "$archive" -C "$x" 2>/dev/null
+}
+
 verify_and_install() { # cartella_estratta cartella_copia copia
-	local x=$1 d=$2 other=$3 v tc f
+	local x="$1" d="$2" other="$3" v tc f manifest="$DIR/manifesto" actual="$DIR/file.reali"
 	state "controlla|verifica del pacchetto"
 	[ -f "$x/SHA256SUMS" ] || { echo "pacchetto incompleto"; return 1; }
 	# Firma dell'elenco dei file (SHA256SUMS): prima di tutto il resto. Il
@@ -161,9 +204,25 @@ verify_and_install() { # cartella_estratta cartella_copia copia
 			{ echo "firma non valida: il pacchetto è stato alterato o non è ufficiale"; return 1; }
 		[ "$tc" = "Sweetspot $(head -n 1 "$x/versione" 2>/dev/null) $(cat "$x/architettura" 2>/dev/null)" ] ||
 			{ echo "la firma appartiene a un altro pacchetto"; return 1; }
+	elif ! unsigned_fixture; then
+		echo "chiave pubblica degli aggiornamenti assente: installazione disabilitata"
+		return 1
 	fi
+	# Formato canonico di sha256sum, nomi relativi ammessi e copertura esatta:
+	# firmare il manifesto non autorizza file aggiunti al tar dopo la firma.
+	awk '{ h=substr($0,1,64); s=substr($0,65,2); f=substr($0,67)
+		if (length(h) != 64 || h ~ /[^0-9a-fA-F]/ || (s != "  " && s != " *") || f == "" || f ~ /[^A-Za-z0-9._\/-]/ || f ~ /^\// || f ~ /(^|\/)\.\.?(\/|$)/) exit 1
+		print f }' "$x/SHA256SUMS" > "$manifest" || { echo "manifesto non valido"; return 1; }
+	if [ ! -s "$manifest" ] || [ -n "$(LC_ALL=C sort "$manifest" | uniq -d)" ]; then echo "manifesto non valido"; return 1; fi
+	while IFS= read -r f; do
+		package_payload "$f" || { echo "file non ammesso nel pacchetto"; return 1; }
+	done < "$manifest"
+	[ -z "$(find "$x" ! -type f ! -type d -print)" ] || { echo "tipo di file non ammesso"; return 1; }
+	(cd "$x" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) > "$actual"
+	{ cat "$manifest"; echo SHA256SUMS; [ -f "$x/SHA256SUMS.minisig" ] && echo SHA256SUMS.minisig; } | LC_ALL=C sort > "$manifest.atteso"
+	cmp -s "$actual" "$manifest.atteso" || { echo "file non coperto dal manifesto"; return 1; }
 	for f in "$(kernel_file)" rootfs.cpio.zst versione architettura; do
-		grep -q " \*\{0,1\}$f\$" "$x/SHA256SUMS" || { echo "pacchetto incompleto"; return 1; }
+		grep -Fxq "$f" "$manifest" || { echo "pacchetto incompleto"; return 1; }
 	done
 	[ "$(cat "$x/architettura" 2>/dev/null)" = "$ARCH" ] ||
 		{ echo "pacchetto per un altro tipo di computer ($(cat "$x/architettura" 2>/dev/null))"; return 1; }
@@ -192,7 +251,7 @@ verify_and_install() { # cartella_estratta cartella_copia copia
 
 # Estrae il pacchetto (da internet o da un file) e lo installa.
 install_job() { # url|file SORGENTE
-	local kind=$1 src=$2 d x other err="" v try=1
+	local kind="$1" src="$2" d x other archive err="" v try=1 rc=0
 	other=$(other_slot "$(running_slot)")
 	rm -f "$DIR/fallita" "$DIR/riuscita"
 	if ! stick_mount rw; then
@@ -205,37 +264,45 @@ install_job() { # url|file SORGENTE
 		return 1
 	fi
 	x=$STICK_MNT/aggiornamento.tmp
+	archive=$STICK_MNT/aggiornamento.tar.tmp
 	state "scarica|$kind|$src"
 	if [ "$kind" = url ]; then
 		# Se la modalita' ascolto sospende lo scaricamento a lungo, la
 		# connessione puo' cadere: si riprova da capo, fino a 5 volte.
 		while :; do
-			curl -fsSL --connect-timeout 30 --speed-time 120 --speed-limit 1 "$src" 2>/dev/null |
-				tar -x -C "$x" 2>/dev/null && [ -f "$x/rootfs.cpio.zst" ] && break
+			curl -fsSL --connect-timeout 30 --speed-time 120 --speed-limit 1 -o "$archive" "$src" 2>/dev/null && break
 			if [ $try -ge 5 ]; then
 				err="scaricamento non riuscito: controlla la connessione a internet e riprova"
 				break
 			fi
 			try=$((try + 1))
-			rm -rf "$x"
-			mkdir -p "$x"
+			rm -f "$archive"
 			sleep 10
 		done
-	elif ! tar -x -C "$x" -f "$src" 2>/dev/null || [ ! -f "$x/rootfs.cpio.zst" ]; then
-		err="pacchetto illeggibile, oppure spazio esaurito sulla chiavetta"
+	else
+		# Il disco sorgente puo' essere condiviso e modificato durante il
+		# lavoro: elenco ed estrazione devono leggere la stessa copia privata.
+		cp "$src" "$archive" 2>/dev/null || err="copia del pacchetto non riuscita, oppure spazio esaurito sulla chiavetta"
+	fi
+	if [ -z "$err" ] && ! extract_package "$archive" "$x"; then
+		err="pacchetto illeggibile, contenuto non ammesso oppure spazio esaurito sulla chiavetta"
 	fi
 	if [ -n "$err" ]; then
 		state "errore|$err"
+		rc=1
 	elif v=$(verify_and_install "$x" "$d" "$other"); then
 		state "pronto|$v"
 		log "aggiornamento: versione $v installata nella copia $other, si prova al prossimo avvio"
 	else
 		state "errore|$v"
-		rm -f "$d/bzImage" "$d/rootfs.cpio.zst"
+		rm -f "$d/$(kernel_file)" "$d/rootfs.cpio.zst"
+		rc=1
 	fi
 	rm -rf "$x"
+	rm -f "$STICK_MNT/aggiornamento.tar.tmp" "$DIR/membri" "$DIR/tar.list" "$DIR/manifesto" "$DIR/manifesto.atteso" "$DIR/file.reali"
 	sync
 	stick_umount
+	return "$rc"
 }
 
 start_job() { # url|file SORGENTE
@@ -285,6 +352,7 @@ do_cancel() {
 	# La copia non in uso resta vuota: si torna a usare quella attuale.
 	if stick_mount rw; then
 		rm -rf "$STICK_MNT/aggiornamento.tmp"
+		rm -f "$STICK_MNT/aggiornamento.tar.tmp"
 		grubenv_set "$(boot_env)" prova=
 		stick_umount
 	fi
@@ -428,6 +496,6 @@ case "$1" in
 	altra) do_other ;;
 	predefinita) do_default ;;
 	conferma) do_confirm ;;
-	_lavoro) install_job "$2" "$3"; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento" ;;
+	_lavoro) install_job "$2" "$3"; rc=$?; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"; exit "$rc" ;;
 	*) echo "uso: $0 stato|cerca|scarica|file PACCHETTO|pacchetti|annulla|altra|predefinita|conferma" >&2; exit 1 ;;
 esac

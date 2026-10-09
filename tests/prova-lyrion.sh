@@ -35,6 +35,15 @@ if [ -z "${PROVA_LYRION_LOG:-}" ]; then
 fi
 # Nel sistema compilato c'e' solo la localizzazione C.
 export LC_ALL=C LANG=C
+umask 022
+TEST_DIR=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
+REPO_DIR=$(dirname "$TEST_DIR")
+SWEETSPOT_AUDIO_REPORT_DIR=${SWEETSPOT_AUDIO_REPORT_DIR:-$REPO_DIR/graphify-out/audio-evidence}
+mkdir -p "$SWEETSPOT_AUDIO_REPORT_DIR"
+SWEETSPOT_AUDIO_REPORT_DIR=$(readlink -f "$SWEETSPOT_AUDIO_REPORT_DIR")
+SWEETSPOT_AUDIO_REPORT_DIR=$(mktemp -d "$SWEETSPOT_AUDIO_REPORT_DIR/run.XXXXXX")
+chmod 755 "$SWEETSPOT_AUDIO_REPORT_DIR"
+echo "Evidenza della prova: $SWEETSPOT_AUDIO_REPORT_DIR"
 PKG=$(readlink -f "$1")
 W=$(mktemp -d)
 R=$W/sistema
@@ -49,14 +58,44 @@ stop_all() {
 }
 
 cleanup() {
+	cleanup_rc=$?
 	stop_all
+	if [ -d "$R/tmp/lms/log" ]; then
+		if ! mkdir -p "$SWEETSPOT_AUDIO_REPORT_DIR/lyrion-log" ||
+			! cp -a "$R/tmp/lms/log/." "$SWEETSPOT_AUDIO_REPORT_DIR/lyrion-log/"; then
+			echo "impossibile conservare i log Lyrion" >&2
+			[ "$cleanup_rc" -ne 0 ] || cleanup_rc=1
+		fi
+	fi
+	if [ -f "$W/avvio.log" ] && ! cp "$W/avvio.log" "$SWEETSPOT_AUDIO_REPORT_DIR/lyrion-startup.log"; then
+		echo "impossibile conservare il log di avvio" >&2
+		[ "$cleanup_rc" -ne 0 ] || cleanup_rc=1
+	fi
 	sleep 1
 	for m in dev/pts dev sys proc run tmp; do
 		umount "$R/$m" 2>/dev/null || true
 	done
-	rm -rf "$W"
+	# Non eliminare il contenuto di un mount che non siamo riusciti a smontare.
+	if awk -v r="$R" '$2 == r || index($2, r "/") == 1 { found=1 } END { exit !found }' /proc/mounts; then
+		echo "mount ancora presenti in $R: cartella temporanea conservata" >&2
+		[ "$cleanup_rc" -ne 0 ] || cleanup_rc=1
+	else
+		rm -rf "$W" || cleanup_rc=1
+	fi
+	return "$cleanup_rc"
 }
 trap cleanup EXIT
+
+# Non entrare in conflitto con un server musicale gia' in uso sul computer.
+python3 - <<'PYTHON'
+import socket
+for kind, port in ((socket.SOCK_STREAM, 9000), (socket.SOCK_STREAM, 3483), (socket.SOCK_DGRAM, 3483)):
+    with socket.socket(socket.AF_INET, kind) as probe:
+        try:
+            probe.bind(('0.0.0.0', port))
+        except OSError as error:
+            raise SystemExit(f"porta Lyrion {port} non disponibile: {error}")
+PYTHON
 
 echo "== Sistema dal pacchetto $(basename "$PKG")"
 tar -xf "$PKG" -C "$W" rootfs.cpio.zst architettura versione
@@ -143,7 +182,11 @@ if printf '%s' "$ans" | grep -q '"version"'; then
 		echo "errori di caricamento nel registro"
 		exit 1
 	fi
-	echo "== Lyrion funziona"
+	echo "== Verifica PCM e continuita' dei brani nel backend software"
+	python3 "$TEST_DIR/prova-audio.py" --rootfs "$R" \
+		--server "http://127.0.0.1:$PORT" --output "$SWEETSPOT_AUDIO_REPORT_DIR" \
+		--version "$(cat "$W/versione")"
+	echo "== Lyrion e verifica PCM software riusciti"
 	exit 0
 fi
 echo "Lyrion non risponde. Registro di avvio:"

@@ -58,7 +58,7 @@ curve_svg() {
 cat <<'HTML'
 <p class="sub">Corregge l'effetto della stanza sui bassi, dove le risonanze (modi) fanno rimbombare alcune note e ne spengono altre:
 si misura con REW e un microfono di misura, e Sweetspot applica i filtri con CamillaDSP in virgola mobile a 64 bit.
-Quando è spenta non c'è niente in mezzo: il percorso resta bit-perfect.</p>
+Quando è spenta il segnale passa direttamente al DAC, senza questa elaborazione.</p>
 HTML
 
 # --- Stato -------------------------------------------------------------------------
@@ -74,9 +74,9 @@ else
 		info_row ATTENZIONE "Correzione non applicata" "$(cat "$RUN/correzione.errore"): il DAC riceve il segnale diretto."
 	fi
 	case "$mode_now" in
-		si) info_row OK "Correzione accesa" "$nsx filtri sul sinistro, $ndx sul destro; attenuazione di $gain dB per non saturare. Il segnale è elaborato: non è più bit-perfect, per scelta." ;;
+		si) info_row OK "Correzione accesa" "$nsx filtri sul sinistro, $ndx sul destro; attenuazione di $gain dB per il guadagno massimo dei filtri. I picchi nel tempo possono richiedere ulteriore margine. Il segnale è elaborato: non è più bit-perfect, per scelta." ;;
 		confronto) info_row ATTENZIONE "Confronto: correzione esclusa" "Passa per CamillaDSP con la sola attenuazione di $gain dB, così il confronto con la correzione accesa è a pari volume." ;;
-		*) info_row "" "Correzione spenta" "$nsx filtri sul sinistro e $ndx sul destro pronti. Il DAC riceve il segnale diretto, bit-perfect." ;;
+		*) info_row "" "Correzione spenta" "$nsx filtri sul sinistro e $ndx sul destro pronti. Uscita diretta senza correzione ambientale." ;;
 	esac
 	echo '<div class="row"><div class="grow">'
 	echo '<div class="legenda"><span><span class="sx"></span>Sinistro</span><span><span class="dx"></span>Destro</span></div>'

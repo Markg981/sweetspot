@@ -10,7 +10,7 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
-SQLOG=/var/log/squeezelite.log
+SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
 OUT=""
 
 emit() { OUT="$OUT$1|$2|$3
@@ -109,7 +109,7 @@ check_usb() {
 }
 
 check_dac() {
-	local card name usbid fmts rates nat bdf irqs irq aff tid policy prio cpus hw st
+	local card name usbid fmts rates nat bdf irqs irq aff tid policy prio cpus hw st dev
 	card=$(dac_find)
 	if [ -z "$card" ]; then
 		emit ATTENZIONE "DAC" "nessun DAC USB trovato: e' acceso e collegato?"
@@ -161,8 +161,9 @@ check_dac() {
 			emit ATTENZIONE "Thread di riproduzione" "non real-time"
 		fi
 	fi
-	hw=$PROC/asound/card$card/pcm0p/sub0/hw_params
-	st=$(sed -n 's/^state: //p' "$PROC/asound/card$card/pcm0p/sub0/status" 2>/dev/null)
+	dev=$(dac_playback_dev "$card")
+	hw=$PROC/asound/card$card/pcm${dev:-0}p/sub0/hw_params
+	st=$(sed -n 's/^state: //p' "$PROC/asound/card$card/pcm${dev:-0}p/sub0/status" 2>/dev/null)
 	if [ -f "$hw" ] && ! grep -q closed "$hw"; then
 		emit OK "Uscita in corso" "$(sed -n 's/^format: //p' "$hw"), $(sed -n 's/^rate: \([0-9]*\).*/\1/p' "$hw") Hz, $(sed -n 's/^channels: //p' "$hw") canali, ${st:-?}"
 		emit INFO "Buffer ALSA" "$(sed -n 's/^buffer_size: //p' "$hw") campioni, periodo $(sed -n 's/^period_size: //p' "$hw")"
@@ -184,10 +185,12 @@ check_player() {
 		emit ATTENZIONE "Player" "${state:-non avviato}"
 	fi
 	xr=${xr:-0}
-	if [ "$xr" = 0 ]; then
-		emit OK "Interruzioni dell'audio" "nessuna dall'accensione"
+	if [ ! -f "$SQLOG" ]; then
+		emit INFO "XRUN ALSA registrati" "registro non disponibile"
+	elif [ "$xr" = 0 ]; then
+		emit INFO "XRUN ALSA registrati" "0 nel registro; non esclude interruzioni dello stream o del DSP e non misura il jitter del clock"
 	else
-		emit ATTENZIONE "Interruzioni dell'audio" "$xr dall'accensione"
+		emit ATTENZIONE "XRUN ALSA registrati" "$xr nel registro"
 	fi
 	bufs=$(player_buffers)
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"

@@ -321,7 +321,9 @@ for p in audio musica archivio plugin rete sistema; do
 		*) ko "pagina $p" "pagina HTML completa" "$(printf '%s' "$out" | tail -n 3)" ;;
 	esac
 done
-case "$(page audio)" in *"Bit-perfect"*"24 bit"*) ok "audio: FLAC 24/96 su S32_LE 96 kHz e' bit-perfect" ;; *) ko "audio bit-perfect" "Bit-perfect" "-" ;; esac
+out=$(page audio)
+case "$out" in *"Percorso originale configurato"*"integrità dei campioni non verificata"*) ok "audio: formato compatibile non certifica i campioni" ;; *) ko "audio integrita'" "Percorso originale configurato, integrita' non verificata" "-" ;; esac
+case "$out" in *"esattamente i campioni"*) ko "audio: nessuna prova campioni inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "audio: nessuna prova campioni inventata" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 case "$(page audio 'VOLUME=software')" in *"Non bit-perfect"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect" "-" ;; esac
@@ -339,6 +341,55 @@ case "$(page archivio)" in *"58 GB non usati"*'value="archivio_spazio"'*) ok "ar
 echo "formatta|formattazione" > "$WEB/spazio.lavoro"
 case "$(page archivio)" in *"Creazione dell&#39;archivio in corso"*"formattazione"*) ok "archivio: creazione in corso mostrata" ;; *) ko "archivio creazione in corso" "in corso" "-" ;; esac
 rm -f "$WEB/bin/sweetspot-spazio" "$WEB/spazio.lavoro"
+
+echo "Scelta dell'archivio dalla pagina web"
+mkdir -p "$WEB/actionbin"
+cat > "$WEB/actionbin/sweetspot-config" <<'FINTO'
+#!/bin/sh
+printf '%s\n' "$*" > "$SWEETSPOT_RUN/config.call"
+exit "${ARCHIVE_CONFIG_RC:-0}"
+FINTO
+cat > "$WEB/actionbin/sweetspot-dischi" <<'FINTO'
+#!/bin/sh
+printf '%s\n' "$*" >> "$SWEETSPOT_RUN/dischi.call"
+[ "$1" != archivio ] || echo /media/archivio-finto
+exit 0
+FINTO
+printf '#!/bin/sh\nexit 0\n' > "$WEB/actionbin/sweetspot-nas"
+cp "$WEB/actionbin/sweetspot-nas" "$WEB/actionbin/sweetspot-lms"
+chmod +x "$WEB/actionbin/"*
+archive_action() {
+	local body
+	body="t=$(cat "$WEB/run/web.token")&a=archivio_scegli&nome=Musica.a"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		ARCHIVE_CONFIG_RC=${1:-0} $TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
+}
+printf 'MusicaXa|sdb1|ext4|1G|ro|/media/MusicaXa|UUID=sbagliato\nMusica.a|sdc1|ext4|1G|ro|/media/Musica.a|UUID=corretto\n' > "$WEB/run/dischi.list"
+archive_action > /dev/null
+expect "archivio web: nome letterale e UUID stabile" "imposta ARCHIVIO UUID=corretto" "$(cat "$WEB/run/config.call")"
+sed 's/UUID=corretto/PARTUUID=partizione/' "$WEB/run/dischi.list" > "$WEB/list.tmp"
+mv "$WEB/list.tmp" "$WEB/run/dischi.list"
+archive_action > /dev/null
+expect "archivio web: PARTUUID stabile" "imposta ARCHIVIO PARTUUID=partizione" "$(cat "$WEB/run/config.call")"
+rm -f "$WEB/run/dischi.call"
+archive_action 2 > /dev/null
+expect "archivio web: salvataggio fallito non rimonta" "no" "$([ -e "$WEB/run/dischi.call" ] && echo si || echo no)"
+printf 'Musica.a|sdc1|ext4|1G|ro|/media/Musica.a|\n' > "$WEB/run/dischi.list"
+rm -f "$WEB/run/config.call"
+archive_action > /dev/null
+expect "archivio web: identita' ambigua non salvata" "no" "$([ -e "$WEB/run/config.call" ] && echo si || echo no)"
+rm -f "$WEB/run/dischi.list"
+
+echo "Diagnostica del percorso"
+printf 'buffering\n' > "$WEB/squeezelite.log"
+: > "$WEB/proc/mounts"
+diag=$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati)
+case "$diag" in *"XRUN ALSA registrati|0"*) ok "diagnostica: conta gli XRUN senza certificare la continuita'" ;; *) ko "diagnostica XRUN" "XRUN ALSA registrati|0" "-" ;; esac
+case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita' inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "diagnostica: nessuna continuita' inventata" ;; esac
 
 echo "Correzione ambientale (REW e CamillaDSP)"
 MATHAWK=$(command -v gawk || command -v mawk || command -v awk)
@@ -377,7 +428,7 @@ expect "filtri di REW (virgole, kHz, spenti, larghezza in ottave)" \
 expect "righe sbagliate segnalate" "errore|3|errore|4|1" \
 	"$(dsp '' leggi "$DSPE/rew-errori.txt" | grep '^errore' | cut -d'|' -f1-2 | tr '\n' '|')$(dsp '' leggi "$DSPE/rew-errori.txt" > /dev/null; echo $?)"
 cp "$DSPE/rew.txt" "$DSPE/run/correzione/sinistro.txt"
-expect "attenuazione contro la saturazione" "-2.9" "$(dsp '' guadagno)"
+expect "attenuazione conservativa dei filtri" "-4.5" "$(dsp '' guadagno)"
 expect "curva: 151 punti da 20 Hz" "151 20.0 1.36 1.36" "$(dsp '' risposta | awk 'NR == 1 { f = $0 } END { print NR, f }')"
 printf '63.3\n1000\n' > "$DSPE/griglia"
 expect "curva uguale alle formule di riferimento" "63.3 -8.12|1000 -0.02" \
@@ -386,12 +437,12 @@ expect "correzione spenta di serie" "1" "$(dsp '' attiva; echo $?)"
 expect "dispositivo della correzione" "sweetspot_correzione" "$(dsp 'CORREZIONE=si' prepara 1)"
 yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "CamillaDSP: uscita sul DAC a 32 bit" "2" "$(printf '%s\n' "$yml" | grep -c -e 'device: "hw:CARD=R26,DEV=0"' -e 'format: S32_LE' | head -n 1 | sed 's/3/2/')"
-expect "CamillaDSP: 12 filtri e l'attenuazione" "12 -2.9" "$(printf '%s\n' "$yml" | grep -c 'type: Biquad') $(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
+expect "CamillaDSP: 12 filtri e l'attenuazione" "12 -4.5" "$(printf '%s\n' "$yml" | grep -c 'type: Biquad') $(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
 expect "CamillaDSP: ingresso dal plugin" "type: Stdin" "$(printf '%s\n' "$yml" | grep -o 'type: Stdin')"
 expect "ALSA: frequenze del DAC fino a 384 kHz" "rates = [ 44100 48000 88200 96000 176400 192000 352800 384000 ]" \
 	"$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
 dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
-expect "confronto a pari volume: solo l'attenuazione" "0 -2.9" \
+expect "confronto a pari volume: solo l'attenuazione" "0 -4.5" \
 	"$(grep -c 'type: Biquad' "$DSPE/run/camilladsp.yml") $(sed -n 's/^      gain: //p' "$DSPE/run/camilladsp.yml")"
 printf 'Playback:\n  Interface 1\n    Format: S16_LE\n    Rates: 48000\n' > "$DSPE/proc/asound/card1/stream0"
 dsp 'CORREZIONE=si' prepara 1 > /dev/null
@@ -413,7 +464,7 @@ out=$(SWEETSPOT_AWK=$MATHAWK page correzione)
 case "$out" in *"Nessun filtro"*"</html>") ok "pagina correzione senza filtri" ;; *) ko "pagina correzione vuota" "Nessun filtro" "$(printf '%s' "$out" | tail -n 3)" ;; esac
 cp "$DSPE/rew.txt" "$WEB/run/correzione/sinistro.txt"
 out=$(SWEETSPOT_AWK=$MATHAWK page correzione 'CORREZIONE=si')
-case "$out" in *"Correzione accesa"*"6 filtri sul sinistro, 6 sul destro"*"attenuazione di 2,9 dB"*) ok "pagina correzione: stato e attenuazione" ;; *) ko "pagina correzione accesa" "Correzione accesa" "$(printf '%s' "$out" | grep -o 'Correzione[^<]*' | head -3)" ;; esac
+case "$out" in *"Correzione accesa"*"6 filtri sul sinistro, 6 sul destro"*"attenuazione di 4,5 dB"*) ok "pagina correzione: stato e attenuazione" ;; *) ko "pagina correzione accesa" "Correzione accesa" "$(printf '%s' "$out" | grep -o 'Correzione[^<]*' | head -3)" ;; esac
 expect "pagina correzione: curve sinistra e destra" "2" "$(printf '%s' "$out" | grep -o '<polyline' | wc -l | tr -d ' ')"
 echo si > "$WEB/run/correzione.attiva"
 printf 'access: RW_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
@@ -514,7 +565,7 @@ upd() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$UPD/stick \
 		SWEETSPOT_MEDIA=$UPD/media SWEETSPOT_ARCH=x86_64 SWEETSPOT_VERSION_FILE=$UPD/version \
 		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
-		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} \
+		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
 }
 genv() { $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; grubenv_get \"\$1\" \"\$2\"" sh "$UPD/stick/boot/grub/grubenv" "$1"; }
@@ -687,7 +738,7 @@ updpi() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$PI/stick \
 		SWEETSPOT_MEDIA=$PI/media SWEETSPOT_VERSION_FILE=$PI/version SWEETSPOT_AVVIO=$PI/avvio \
 		SWEETSPOT_WGET=$UPD/bin/wget-ok SWEETSPOT_CONFERMA_ATTESA=2 SWEETSPOT_RCK=$PI/bin/rcK SWEETSPOT_REBOOT=$PI/bin/reboot \
-		SWEETSPOT_CHIAVE_FIRMA=${PI_PUB:-$PI/nessuna-chiave} \
+		SWEETSPOT_CHIAVE_FIRMA=${PI_PUB:-$PI/nessuna-chiave} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
 		SWEETSPOT_PATH="$PI/bin:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/$s" "$@"
 }
 penv() { pi "grubenv_get $PI/stick/sweetspot-avvio.env $1"; }
@@ -894,4 +945,9 @@ fi
 
 echo
 echo "Superati: $PASS  Falliti: $FAIL"
-[ "$FAIL" -eq 0 ]
+[ "$FAIL" -eq 0 ] || exit 1
+sh "$ROOT/tests/audio-quality.sh" || exit 1
+sh "$ROOT/tests/ops-safety.sh" || exit 1
+python3 "$ROOT/tests/audio-verification.py" || exit 1
+python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
+python3 "$ROOT/tests/release-gates.py"
