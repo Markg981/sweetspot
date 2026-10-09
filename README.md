@@ -67,7 +67,9 @@ disco). Lì si copiano cartelle da chiavette, dischi o NAS (la copia si
 sospende mentre la musica suona) e lì finiscono i CD. Con *Condividi in rete*
 l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
 `smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd; password
-facoltativa).
+facoltativa). Sull'archivio stanno anche le copertine già ridimensionate da
+Lyrion (cartella `.sweetspot-cache`): non occupano RAM e non si rifanno a ogni
+avvio.
 
 ### Copia dei CD
 

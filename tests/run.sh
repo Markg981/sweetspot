@@ -532,6 +532,27 @@ if command -v sfdisk > /dev/null; then
 fi
 expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si')"
 
+echo "Cache delle copertine"
+CC=$WORK/cc
+mkdir -p "$CC/lms/cache" "$CC/archivio" "$CC/bin" "$CC/run"
+echo vecchia > "$CC/lms/cache/artwork.db"
+printf '#!/bin/sh\n[ "$1" = archivio ] && echo "%s"\n' "$CC/archivio" > "$CC/bin/sweetspot-dischi"
+chmod +x "$CC/bin/sweetspot-dischi"
+lmsfn() {
+	SWEETSPOT_LMS_DATA=$CC/lms SWEETSPOT_RUN=$CC/run SWEETSPOT_LOG=$CC/log SWEETSPOT_PATH="$CC/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-lms; $1"
+}
+lmsfn link_caches
+expect "copertine sull'archivio: collegamenti in RAM" "$CC/archivio/.sweetspot-cache/artwork.db $CC/archivio/.sweetspot-cache/imgproxy.db" \
+	"$(readlink "$CC/lms/cache/artwork.db") $(readlink "$CC/lms/cache/imgproxy.db")"
+expect "cache gia' in RAM spostata sull'archivio" "vecchia" "$(cat "$CC/archivio/.sweetspot-cache/artwork.db")"
+lmsfn link_caches
+expect "secondo avvio: stessa cache" "vecchia" "$(cat "$CC/lms/cache/artwork.db")"
+printf '#!/bin/sh\nexit 0\n' > "$CC/bin/sweetspot-dischi"
+rm -f "$CC/lms/cache/artwork.db"
+lmsfn link_caches
+expect "senza archivio: cache in RAM come prima" "no" "$([ -e "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*

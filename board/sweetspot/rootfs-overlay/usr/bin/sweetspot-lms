@@ -63,6 +63,31 @@ material_actions() {
 EOF
 }
 
+# Cache delle copertine di Lyrion (artwork.db: copertine ridimensionate;
+# imgproxy.db: copertine dei servizi in streaming). In RAM crescono con la
+# libreria (Lyrion le prepara durante la lettura) e si perdono a ogni
+# avvio: se c'e' l'archivio musicale stanno li', nella cartella
+# .sweetspot-cache, e in RAM resta solo un collegamento.
+CACHE_DBS="artwork.db imgproxy.db"
+
+link_caches() {
+	local arch dir f
+	arch=$(sweetspot-dischi archivio)
+	[ -n "$arch" ] && [ -d "$arch" ] || return 0
+	dir=$arch/.sweetspot-cache
+	mkdir -p "$dir" 2>/dev/null || { log "lyrion: archivio non scrivibile, copertine in RAM"; return 0; }
+	for f in $CACHE_DBS; do
+		# Una cache rimasta in RAM (es. archivio scelto dopo l'avvio) si sposta.
+		if [ -f "$CACHE/$f" ] && [ ! -L "$CACHE/$f" ] && [ ! -f "$dir/$f" ]; then
+			mv "$CACHE/$f" "$dir/$f" 2>/dev/null
+		fi
+		rm -f "$CACHE/$f" "$CACHE/$f-wal" "$CACHE/$f-shm"
+		ln -s "$dir/$f" "$CACHE/$f"
+	done
+	chown -R "$LMS_USER:$LMS_USER" "$dir" 2>/dev/null
+	log "lyrion: cache delle copertine sull'archivio ($dir)"
+}
+
 do_prepare() {
 	local inst have want
 	mkdir -p "$PREFS/material-skin" "$CACHE/InstalledPlugins/Plugins" "$PLAYLISTS" "$LMS_LOG"
@@ -83,6 +108,7 @@ do_prepare() {
 			log "lyrion: Material Skin $want installata"
 		fi
 	fi
+	link_caches
 	chown -R "$LMS_USER:$LMS_USER" "$LMS_DATA" "$LMS_LOG" 2>/dev/null
 }
 
