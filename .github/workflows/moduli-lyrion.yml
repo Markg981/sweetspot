@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Moduli compilati di Lyrion (XS) per Perl 5.42 sulle architetture per cui
+# Lyrion non li fornisce (oggi solo x86_64). Si compilano con lo script
+# ufficiale di Lyrion (LMS-Community/slimserver-vendor, CPAN/buildme.sh) in
+# Fedora 43, che ha Perl 5.42 e glibc 2.42 come la toolchain di Buildroot,
+# su un server ARM di GitHub. Il risultato si pubblica nella release
+# "dipendenze-lyrion" e lo usa il pacchetto Buildroot lms-moduli.
+name: Moduli di Lyrion
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/moduli-lyrion.yml', 'tools/moduli-lyrion/**']
+  push:
+    branches: [main]
+    paths: ['.github/workflows/moduli-lyrion.yml', 'tools/moduli-lyrion/**']
+
+permissions:
+  contents: write
+
+env:
+  # LMS-Community/slimserver-vendor, ramo public/9.1 (Lyrion 9.1)
+  VENDOR_REF: b62107b46a3cb9c452139cbe34d5fabbda61fb09
+  FEDORA: '43'
+
+jobs:
+  moduli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - piattaforma: arm64
+            runner: ubuntu-24.04-arm
+            arch: aarch64-linux-thread-multi
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: LMS-Community/slimserver-vendor
+          ref: ${{ env.VENDOR_REF }}
+          path: vendor
+      - name: Immagine Fedora con gli strumenti di compilazione
+        run: |
+          cd vendor/CPAN
+          sed -i "s/^FROM fedora:.*/FROM fedora:${FEDORA}/" Docker/Dockerfile.fedora
+          docker build --rm -f Docker/Dockerfile.fedora -t moduli .
+          docker run --rm moduli perl -e 'print "Perl $^V, $^O, $Config::Config{archname}\n"; use Config'
+      # Il registro completo resta negli allegati; qui solo l'esito.
+      - name: Compila i moduli
+        run: |
+          cd vendor/CPAN
+          set -o pipefail
+          docker run --rm -v "$PWD":/cpan moduli ./buildme.sh -t 2>&1 | tee build.log | grep -E '^(Building|ERROR|Error)|cannot|failed' || true
+          ls build/arch/5.42/${{ matrix.arch }}/auto
+      - name: Prova di caricamento
+        run: |
+          docker run --rm -v "$PWD":/w -w /w moduli \
+            perl -I vendor/CPAN/build/arch/5.42/${{ matrix.arch }} -I vendor/CPAN/build/arch/5.42 \
+            tools/moduli-lyrion/prova.pl
+      - name: Pacchetto
+        run: |
+          N=lyrion-cpan-5.42-${{ matrix.arch }}
+          tar -C vendor/CPAN/build/arch -cJf $N.tar.xz 5.42
+          sha256sum $N.tar.xz | tee $N.tar.xz.sha256
+      - name: Registro della compilazione
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registro-moduli-${{ matrix.piattaforma }}
+          path: vendor/CPAN/build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lyrion-cpan-5.42-${{ matrix.arch }}
+          path: lyrion-cpan-5.42-${{ matrix.arch }}.tar.xz*
+          compression-level: 0
+      - name: Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dipendenze-lyrion
+          name: Dipendenze di Lyrion (moduli compilati)
+          body: |
+            Moduli XS di Lyrion Music Server per Perl 5.42 sulle architetture che
+            Lyrion non fornisce. Compilati da slimserver-vendor ${{ env.VENDOR_REF }}
+            in Fedora ${{ env.FEDORA }} con lo script ufficiale CPAN/buildme.sh.
+            Li usa il pacchetto Buildroot lms-moduli: non sono un'immagine da scrivere.
+          prerelease: true
+          files: lyrion-cpan-5.42-${{ matrix.arch }}.tar.xz*
