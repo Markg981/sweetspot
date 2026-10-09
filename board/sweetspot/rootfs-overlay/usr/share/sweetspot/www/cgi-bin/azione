@@ -162,8 +162,11 @@ case "$F_a" in
 	archivio_scegli)
 		name=$(safe_name "$F_nome")
 		[ -n "$name" ] || done_to archivio "Richiesta non valida."
-		grep -q "^$name|" "$RUN/dischi.list" 2>/dev/null || done_to archivio "Disco non trovato."
-		sweetspot-config imposta ARCHIVIO "$name"
+		identity=$(awk -F'|' -v n="$name" '$1 == n {print $7; exit}' "$RUN/dischi.list" 2>/dev/null)
+		case "$identity" in UUID=?*|PARTUUID=?*) ;; *) done_to archivio "Identità del disco non disponibile: ricollega il disco e riprova." ;; esac
+		sweetspot-config imposta ARCHIVIO "$identity"
+		rc=$?
+		[ "$rc" -eq 0 ] || done_to archivio "$(saved_msg "$rc")"
 		# Si rimonta il disco in scrittura.
 		sweetspot-dischi smonta "$name"
 		sweetspot-dischi monta

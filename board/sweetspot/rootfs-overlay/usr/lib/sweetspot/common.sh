@@ -324,7 +324,7 @@ player_buffers() {
 # --- DAC -------------------------------------------------------------------
 
 # Trova la scheda audio del DAC. Stampa l'indice ALSA o niente.
-# DAC=auto sceglie il primo dispositivo USB Audio; altrimenti accetta il
+# DAC=auto sceglie il primo dispositivo USB Audio con playback; altrimenti accetta il
 # nome ALSA (es. R26), l'identificativo USB (es. 292b:0a26) o parte del nome.
 # Scheda DAC I2S del Raspberry Pi (SCHEDA_I2S = nome dell'overlay): con
 # DAC=auto si usa lei, cioe' la prima scheda audio non USB che non sia
@@ -337,6 +337,7 @@ i2s_card() {
 		[ -f "$d/usbid" ] && continue
 		id=$(cat "$d/id" 2>/dev/null)
 		case "$id" in vc4hdmi*|Headphones|HDMI*|b1|b2|Loopback|Dummy) continue ;; esac
+		[ -n "$(dac_playback_dev "${d##*card}")" ] || continue
 		echo "${d##*card}"
 		return 0
 	done
@@ -351,6 +352,7 @@ dac_find() {
 		[ -d "$d" ] || continue
 		idx=${d##*card}
 		[ -f "$d/usbid" ] || continue
+		[ -n "$(dac_playback_dev "$idx")" ] || continue
 		id=$(cat "$d/id" 2>/dev/null)
 		usbid=$(lower "$(cat "$d/usbid" 2>/dev/null)")
 		name=$(lower "$(sed -n "s/^ *$idx \[[^]]*\]: *//p" "$PROC/asound/cards" 2>/dev/null)")
@@ -371,17 +373,120 @@ dac_name() {
 	sed -n "s/^ *$1 \[[^]]*\]: [^ ]* - //p" "$PROC/asound/cards" 2>/dev/null | head -n 1
 }
 
-# Formati dichiarati dal DAC, es. "S32_LE DSD_U32_BE".
-dac_formats() {
-	cat "$PROC"/asound/card"$1"/stream* 2>/dev/null |
-		sed -n 's/^[[:space:]]*Format:[[:space:]]*//p' | tr ', ' '\n\n' | grep . | sort -u | tr '\n' ' ' |
+# Primo PCM di playback della scheda (un microfono USB puo' avere solo capture).
+# /proc/asound/pcm e pcmNp sono autorevoli; streamN e' il PCM N USB.
+dac_playback_dev() {
+	local card=$1 d p out streams=0
+	d=$PROC/asound/card$card
+	if [ -r "$PROC/asound/pcm" ]; then
+		out=$(awk -F '[-:]' -v card="$card" '$1 + 0 == card && /playback [1-9]/ { print $2 + 0 }' "$PROC/asound/pcm" | sort -n | head -n 1)
+		[ -n "$out" ] || return 1
+		echo "$out"; return 0
+	fi
+	out=$(
+		for p in "$d"/pcm[0-9]*p; do
+			[ -d "$p" ] || continue
+			p=${p##*/pcm}; echo "${p%p}"
+		done | sort -n | head -n 1
+	)
+	if [ -n "$out" ]; then echo "$out"; return 0; fi
+	for p in "$d"/pcm[0-9]*c; do [ ! -d "$p" ] || return 1; done
+	# Compatibilita' con kernel/fixture che espongono solo i descrittori USB.
+	for p in "$d"/stream[0-9]*; do
+		[ -r "$p" ] || continue
+		streams=1
+		if grep -q '^Playback:' "$p"; then echo "${p##*stream}"; return 0; fi
+	done
+	# Le schede I2S senza inventario PCM non hanno descrittori USB.
+	[ "$streams" = 0 ] && [ ! -f "$d/usbid" ] || return 1
+	echo 0
+}
+
+# Legge solo il Playback dello stream associato al PCM selezionato. Il
+# numero di canali facoltativo conserva solo gli altsetting compatibili;
+# i descrittori senza Channels restano leggibili (kernel/fixture precedenti).
+dac_playback_stream() { # scheda [canali]
+	local dev
+	dev=$(dac_playback_dev "$1") || return 1
+	[ -r "$PROC/asound/card$1/stream$dev" ] || return 1
+	awk -v want="${2:-}" '
+		function flush() {
+			if (block!="" && (want=="" || channels=="" || channels+0==want+0)) printf "%s", block
+			block=""; channels=""
+		}
+		/^Playback:/ { playback=1; next }
+		/^Capture:/ { flush(); playback=0; next }
+		playback {
+			if (/^[[:space:]]*Format:/) flush()
+			if (/^[[:space:]]*Format:/ || block!="") block=block $0 "\n"
+			if (/^[[:space:]]*Channels:/) { sub(/^[[:space:]]*Channels:[[:space:]]*/, ""); channels=$1 }
+		}
+		END { flush() }' "$PROC/asound/card$1/stream$dev"
+}
+
+# Senza stream USB (es. I2S), ALSA dichiara i formati prima di configurare
+# il PCM. /dev/null non contiene campioni da riprodurre. L'apertura puo'
+# fallire se il dispositivo e' occupato: in quel caso non si inventano capacita'.
+dac_hw_params() {
+	local dev id
+	dev=$(dac_playback_dev "$1") || return 1
+	id=$(dac_id "$1")
+	LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" --dump-hw-params -D "hw:CARD=$id,DEV=$dev" \
+		-t raw -c 2 -f S16_LE -r 44100 /dev/null 2>&1
+}
+
+# Formati del playback selezionato, es. "S32_LE DSD_U32_BE".
+dac_formats() { # scheda [canali]
+	local stream
+	if stream=$(dac_playback_stream "$1" "${2:-}"); then
+		printf '%s\n' "$stream" | sed -n 's/^[[:space:]]*Format:[[:space:]]*//p'
+	else
+		dac_hw_params "$1" | sed -n 's/^FORMAT:[[:space:]]*//p' | head -n 1
+	fi | tr ', ' '\n\n' | grep . | sort -u | tr '\n' ' ' |
 		sed 's/ $//'
 }
 
-dac_rates() {
-	cat "$PROC"/asound/card"$1"/stream* 2>/dev/null |
-		sed -n 's/^[[:space:]]*Rates:[[:space:]]*//p' | tr ', ' '\n\n' | grep -E '^[0-9]+$' | sort -n -u | tr '\n' ' ' |
-		sed 's/ $//'
+dac_rates() { # scheda [formato ALSA] [canali]
+	local stream f fmt=${2:-} id dev rate out actual
+	if stream=$(dac_playback_stream "$1" "${3:-}"); then
+		printf '%s\n' "$stream" | awk -v fmt="$fmt" '
+			BEGIN { n=split("8000 11025 16000 22050 32000 44100 48000 88200 96000 176400 192000 352800 384000 705600 768000", standard) }
+			/^[[:space:]]*Format:/ {
+				sub(/^[[:space:]]*Format:[[:space:]]*/, "")
+				match_format=(fmt=="" || index(" " $0 " ", " " fmt " ")>0)
+			}
+			/^[[:space:]]*Rates:/ && match_format {
+				sub(/^[[:space:]]*Rates:[[:space:]]*/, "")
+				if(/continuous/) {
+					split($0, limits, /[^0-9]+/)
+					for(i=1;i<=n;i++) if(standard[i]>=limits[1] && standard[i]<=limits[2]) print standard[i]
+				} else {
+					gsub(/,/, " "); for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) print $i
+				}
+			}' | sort -n -u | tr '\n' ' ' | sed 's/ $//'
+		return 0
+	fi
+	if [ -z "$fmt" ]; then
+		f=" $(dac_formats "$1" "${3:-}") "
+		case "$f" in
+			*" S32_LE "*) fmt=S32_LE ;;
+			*" S24_3LE "*) fmt=S24_3LE ;;
+			*" S24_LE "*) fmt=S24_LE ;;
+			*" S16_LE "*) fmt=S16_LE ;;
+			*) return 1 ;;
+		esac
+	fi
+	id=$(dac_id "$1")
+	dev=$(dac_playback_dev "$1") || return 1
+	# Un intervallo RATE non prova che ogni frequenza sia supportata. Prova
+	# le frequenze standard sul medesimo formato e richiedi il valore esatto,
+	# anche quando ALSA propone una frequenza vicina. Sempre senza campioni.
+	for rate in 8000 11025 16000 22050 32000 44100 48000 88200 96000 176400 192000 352800 384000 705600 768000; do
+		out=$(LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" -v -D "hw:CARD=$id,DEV=$dev" \
+			-t raw -c 2 -f "$fmt" -r "$rate" /dev/null 2>&1) || continue
+		actual=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*rate[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)
+		[ "$actual" != "$rate" ] || printf '%s\n' "$rate"
+	done | tr '\n' ' ' | sed 's/ $//'
 }
 
 # Formato squeezelite per il DSD nativo (u32be, u32le, u16be, u16le, u8) o niente.
@@ -468,6 +573,10 @@ lms_json() {
 		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null) || return 1
 	[ -n "$out" ] || return 1
+	# HTTP 200 puo' contenere un errore RPC o una pagina del proxy. Accetta
+	# una sola risposta JSON con il risultato di Lyrion, senza errore.
+	printf '%s\n' "$out" | jq -e -s 'length == 1 and
+		(.[0] | type == "object" and .error == null and (.result | type == "object"))' > /dev/null 2>&1 || return 1
 	printf '%s\n' "$out"
 }
 
@@ -776,4 +885,3 @@ mbr_read() { # dispositivo
 		}
 	}'
 }
-

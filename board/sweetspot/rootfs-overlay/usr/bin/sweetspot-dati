@@ -40,15 +40,20 @@ fingerprint() {
 }
 
 do_restore() {
-	local src=$1 f
+	local src="$1" f
+	[ -d "$src" ] || [ -d "$src.vecchio" ] || return 0
+	# Interruzione fra le due rinomine: la generazione precedente resta valida.
+	if ! generation_valid "$src"; then
+		if generation_valid "$src.vecchio"; then src=$src.vecchio
+		else log "dati: nessuna generazione valida da ripristinare"; return 1; fi
+	fi
 	[ -d "$src" ] || return 0
-	mkdir -p "$CACHE"
+	mkdir -p "$CACHE" || return 1
 	if [ -f "$src/lyrion.tar" ]; then
-		tar -xf "$src/lyrion.tar" -C "$LMS_DATA" 2>/dev/null ||
-			log "dati: archivio delle impostazioni di Lyrion illeggibile, si riparte da zero"
+		tar -xf "$src/lyrion.tar" -C "$LMS_DATA" 2>/dev/null || return 1
 	fi
 	for f in $DBS; do
-		[ -f "$src/$f" ] && cp "$src/$f" "$CACHE/$f"
+		if [ -f "$src/$f" ]; then cp "$src/$f" "$CACHE/$f" || return 1; fi
 	done
 	chown -R lms:lms "$LMS_DATA" 2>/dev/null
 	log "dati: impostazioni, plugin e libreria ripristinati dalla chiavetta"
@@ -56,40 +61,100 @@ do_restore() {
 
 # Copia coerente di un database SQLite in uso.
 db_copy() {
-	if command -v sqlite3 > /dev/null; then
-		sqlite3 "$1" ".timeout 10000" ".backup '$2'" 2>/dev/null && return 0
+	# Copiare il solo file principale dopo un errore perderebbe le transazioni
+	# presenti nel WAL: senza un backup SQLite riuscito non si pubblica nulla.
+	command -v sqlite3 > /dev/null || return 1
+	sqlite3 "$1" ".timeout 10000" ".backup '$2'" 2>/dev/null || return 1
+	snapshot_valid "$2"
+}
+
+snapshot_valid() {
+	local uri
+	# .backup include anche le transazioni commesse nel WAL, ma puo' lasciare
+	# l'header in modalita' WAL. La copia e' autosufficiente: immutable evita
+	# di creare -wal/-shm sulla chiavetta montata in sola lettura all'avvio.
+	# Non usare immutable sul database live, il cui WAL deve essere letto.
+	uri=$(printf '%s' "$1" | sed 's/%/%25/g; s/?/%3F/g; s/#/%23/g')
+	[ "$(sqlite3 -readonly "file:$uri?immutable=1" 'PRAGMA quick_check;' 2>/dev/null)" = ok ]
+}
+
+generation_valid() {
+	local src="$1" f found=0
+	[ -d "$src" ] || return 1
+	if [ -f "$src/lyrion.tar" ]; then
+		tar -tf "$src/lyrion.tar" > /dev/null 2>&1 || return 1
+		found=1
 	fi
-	cp "$1" "$2"
+	for f in $DBS; do
+		[ -f "$src/$f" ] || continue
+		snapshot_valid "$src/$f" || return 1
+		found=1
+	done
+	[ "$found" = 1 ]
+}
+
+save_failed() { # temporaneo destinazione [montata]
+	rm -rf "$1"
+	[ -n "$2" ] && rm -rf "$2.nuovo"
+	[ "${3:-}" = 1 ] && stick_umount
+	log "dati: salvataggio non riuscito, la generazione precedente e' conservata"
+	return 1
 }
 
 do_save() {
-	local dst tmp d f list=""
+	local dst tmp d f list="" found=0
 	[ -d "$LMS_DATA" ] || return 0
 	exec 8> "$RUN/dati.lock"
-	flock 8
+	flock 8 || return 1
 	# Copia in RAM prima: la chiavetta resta montata il meno possibile.
 	tmp=$RUN/dati.salva
 	rm -rf "$tmp"
-	mkdir -p "$tmp"
+	mkdir -p "$tmp" || return 1
 	for d in $KEEP; do [ -e "$LMS_DATA/$d" ] && list="$list $d"; done
 	# shellcheck disable=SC2086
-	[ -n "$list" ] && tar -cf "$tmp/lyrion.tar" -C "$LMS_DATA" $list
+	if [ -n "$list" ]; then
+		tar -cf "$tmp/lyrion.tar" -C "$LMS_DATA" $list || { save_failed "$tmp" ""; return 1; }
+		found=1
+	fi
 	for f in $DBS; do
-		[ -f "$CACHE/$f" ] && db_copy "$CACHE/$f" "$tmp/$f"
+		[ -f "$CACHE/$f" ] || continue
+		db_copy "$CACHE/$f" "$tmp/$f" || { save_failed "$tmp" ""; return 1; }
+		found=1
 	done
+	[ "$found" = 1 ] || { rm -rf "$tmp"; return 0; }
+	generation_valid "$tmp" || { save_failed "$tmp" ""; return 1; }
 	if ! stick_mount rw; then
 		rm -rf "$tmp"
 		log "dati: chiavetta non trovata, salvataggio rimandato"
 		return 1
 	fi
 	dst="$STICK_MNT/$DATA_DIR_NAME"
+	# Recupera la vecchia copia prima di rimuoverla: un precedente riavvio
+	# potrebbe essere avvenuto dopo dst -> dst.vecchio.
+	if [ -d "$dst.vecchio" ]; then
+		if [ ! -d "$dst" ] || { ! generation_valid "$dst" && generation_valid "$dst.vecchio"; }; then
+			rm -rf "$dst" || { save_failed "$tmp" "$dst" 1; return 1; }
+			mv "$dst.vecchio" "$dst" || { save_failed "$tmp" "$dst" 1; return 1; }
+		fi
+	fi
 	rm -rf "$dst.nuovo"
-	mkdir -p "$dst.nuovo"
-	cp "$tmp"/* "$dst.nuovo/" 2>/dev/null
-	sync
-	rm -rf "$dst.vecchio"
-	[ -d "$dst" ] && mv "$dst" "$dst.vecchio"
-	mv "$dst.nuovo" "$dst"
+	mkdir -p "$dst.nuovo" || { save_failed "$tmp" "$dst" 1; return 1; }
+	for f in "$tmp"/*; do
+		cp "$f" "$dst.nuovo/" 2>/dev/null || { save_failed "$tmp" "$dst" 1; return 1; }
+		cmp -s "$f" "$dst.nuovo/${f##*/}" || { save_failed "$tmp" "$dst" 1; return 1; }
+	done
+	if ! generation_valid "$dst.nuovo" || ! sync; then save_failed "$tmp" "$dst" 1; return 1; fi
+	rm -rf "$dst.vecchio" || { save_failed "$tmp" "$dst" 1; return 1; }
+	if [ -d "$dst" ]; then
+		mv "$dst" "$dst.vecchio" || { save_failed "$tmp" "$dst" 1; return 1; }
+	fi
+	if ! mv "$dst.nuovo" "$dst"; then
+		[ -d "$dst.vecchio" ] && mv "$dst.vecchio" "$dst"
+		save_failed "$tmp" "$dst" 1
+		return 1
+	fi
+	# Sincronizza la rinomina prima di eliminare la generazione precedente.
+	sync || { save_failed "$tmp" "$dst" 1; return 1; }
 	rm -rf "$dst.vecchio"
 	stick_umount
 	rm -rf "$tmp"

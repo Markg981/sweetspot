@@ -47,11 +47,13 @@ echo '</div></div></div>'
 echo '<h2>Dischi</h2><div class="card">'
 n=0
 if [ -s "$RUN/dischi.list" ]; then
-	while IFS='|' read -r name _dev type gb links; do
+	while IFS='|' read -r name _dev type gb links how _id; do
 		n=$((n + 1))
 		printf '<div class="row OK"><span class="dot"></span><div class="grow"><div class="k">%s</div>' "$(esc "$name")"
-		printf '<div class="v">%s, %s GB, sola lettura. In libreria: %s</div></div>' \
-			"$(esc "$type")" "$gb" "$(esc "${links:-nessuna cartella con musica}")"
+		access="sola lettura"
+		[ "$how" = rw ] && access="archivio scrivibile"
+		printf '<div class="v">%s, %s GB, %s. In libreria: %s</div></div>' \
+			"$(esc "$type")" "$gb" "$access" "$(esc "${links:-nessuna cartella con musica}")"
 		button escludi_disco "Escludi" nome "$name" danger
 		echo '</div>'
 	done < "$RUN/dischi.list"

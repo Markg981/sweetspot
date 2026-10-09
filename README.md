@@ -1,6 +1,6 @@
 # Sweetspot
 
-Player e server di musica liquida bit-perfect, open source (GPLv3), pensato
+Player e server di musica liquida con uscita ALSA diretta, open source (GPLv3), pensato
 come alternativa a Daphile: stesso motore (Lyrion Music Server con i suoi
 plugin, Squeezelite come player), con un sistema costruito per far suonare il
 DAC nel modo più pulito possibile. Gira su un PC (da una chiavetta USB o, dopo
@@ -28,8 +28,9 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    - uscita diretta `hw:` su ALSA, senza plug, dmix o ricampionamento;
    - volume fisso al 100% e volume interno del DAC a 0 dB (bit-perfect);
    - DSD nativo se il DAC lo dichiara, altrimenti DoP o PCM a scelta;
-   - buffer da centinaia di MB: il brano arriva tutto in RAM ed è già
-     decodificato prima di suonare, anche da Qobuz o TIDAL;
+   - buffer ampi per anticipare lettura e decodifica: non garantiscono il
+     caricamento e la decodifica dell'intero brano prima di suonare; i servizi
+     streaming e le radio possono continuare a usare la rete;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
      interruzioni del controller USB del DAC (priorità 90) sull'altro.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
@@ -48,7 +49,7 @@ Daphile:
 
 | Sezione | Cosa contiene |
 | --- | --- |
-| **Audio** | DAC riconosciuto, formato che arriva al DAC in quel momento con la **verifica bit-perfect**, volume (fisso, del DAC, software), DSD, ricampionamento facoltativo con scelta del filtro, **correzione ambientale** con REW, opzioni per esperti (buffer, periodi, pause) |
+| **Audio** | DAC riconosciuto, formato aperto sul DAC e configurazione del percorso (l'integrità dei campioni richiede una prova dedicata), volume (fisso, del DAC, software), DSD, ricampionamento facoltativo con scelta del filtro, **correzione ambientale** con REW, opzioni per esperti (buffer, periodi, pause) |
 | **Musica** | stato della libreria, dischi trovati (escludi/includi), cartelle di rete (aggiunta con prova di accesso) |
 | **Archivio** | il disco dove Sweetspot scrive: copia di cartelle da altri dischi e dal NAS, cartella di rete **Musica** per copiare dal PC o dal Mac, **copia dei CD** |
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
@@ -72,8 +73,11 @@ diffusore sinistro e uno per il destro.
   frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
   frequenza), sul core dedicato all'audio con priorità real-time; DAC a 16 bit
   con dither.
-- Sweetspot calcola la curva della correzione e un'**attenuazione** che evita
-  la saturazione; la pagina mostra la curva dei due canali.
+- Sweetspot calcola la curva della correzione e un'**attenuazione** conservativa
+  dal massimo guadagno dei singoli filtri, comprese le risonanze: i picchi
+  stretti non dipendono dalla griglia usata per disegnare la curva. Il margine
+  copre il guadagno in frequenza; i picchi della forma d'onda possono richiedere
+  ulteriore attenuazione, da verificare sul segnale elaborato.
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.
@@ -97,6 +101,10 @@ l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
 facoltativa). Sull'archivio stanno anche le copertine già ridimensionate da
 Lyrion (cartella `.sweetspot-cache`): non occupano RAM e non si rifanno a ogni
 avvio.
+
+La scelta salva l'identità UUID o PARTUUID della partizione, così due dischi
+con lo stesso nome non vengono confusi. Le vecchie configurazioni con il
+nome restano valide solo se quel nome identifica un'unica partizione.
 
 ### Copia dei CD
 
@@ -138,6 +146,14 @@ con una firma valida per la sua chiave pubblica
 architettura del pacchetto. La coppia di chiavi si crea con
 `scripts/genera-chiave-firma.sh` (chi pubblica una propria copia del progetto
 crea le sue).
+
+Senza una chiave pubblica incorporata, l'installazione degli aggiornamenti è
+disabilitata. Una release ufficiale richiede chiave, firma e test Lyrion
+riusciti per entrambe le architetture. Le compilazioni di sviluppo possono
+produrre artifact non firmati, che il player rifiuta. Il pacchetto viene
+controllato prima dell'estrazione: solo file previsti, tutti coperti dal
+manifesto, senza collegamenti o percorsi esterni. Per un aggiornamento serve
+spazio temporaneo anche per il tar completo, oltre ai file estratti.
 
 ### Modalità
 
@@ -315,7 +331,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
-| `ARCHIVIO` | nome del disco usato come archivio musicale | vuoto |
+| `ARCHIVIO` | UUID/PARTUUID dell'archivio; nome nelle vecchie configurazioni se univoco | vuoto |
 | `ARCHIVIO_CONDIVISO`, `ARCHIVIO_PASSWORD` | cartella di rete Musica | no, vuoto |
 | `AGGIORNAMENTI_URL` | altra fonte degli aggiornamenti (API release di GitHub) | questo progetto |
 
@@ -327,14 +343,14 @@ sempre svegli. Il Turbo è sempre spento.
 
 | Verifica | Come |
 | --- | --- |
-| Bit-perfect, in tempo reale | *Impostazioni Sweetspot → Audio*, riquadro "In riproduzione" |
+| Formato e percorso configurato | *Impostazioni Sweetspot → Audio*, riquadro "In riproduzione"; non confronta i campioni |
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
 | Bit-perfect | `tools/genera-test-dop.py`: vedi sotto |
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
-| 24 ore senza interruzioni | playlist lunga, poi pagina di stato: "Interruzioni dell'audio: nessuna" |
-| Rete muta durante l'ascolto | pagina di stato, "Traffico di rete ora" a brano caricato |
+| XRUN ALSA registrati | pagina di stato; zero XRUN nel log non esclude carenza di dati, errori DSP o altre interruzioni |
+| Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 
 ### Prova bit-perfect con il file DoP
 
@@ -345,11 +361,45 @@ python3 tools/genera-test-dop.py
 Crea `sweetspot-test-dop.wav`: un PCM 24 bit / 176,4 kHz che contiene un tono
 DSD64 a 1 kHz in formato DoP. Copialo nella libreria, **abbassa
 l'amplificatore** e riproducilo. Se il DAC indica DSD e si sente un tono pulito,
-nessuno stadio ha toccato i campioni. Se indica PCM o si sente fruscio, qualcosa
-li altera: quasi sempre un volume diverso da "fisso".
+il DAC riconosce il trasporto DoP di quel file. Questo controllo non confronta
+ogni campione e non certifica tutte le sorgenti o impostazioni. Se indica PCM
+o si sente fruscio, controlla supporto DoP, volume e conversioni del server.
 
-In macchina virtuale la catena è stata verificata registrando ciò che arriva al
-DAC USB emulato: i campioni sono identici a quelli del file, bit per bit.
+Per certificare PCM bit-perfect, registra l'uscita digitale della catena,
+allinea i campioni decodificati di riferimento e confrontali bit per bit,
+tenendo conto del contenitore ALSA. Conserva file, impostazioni e risultati
+per ogni formato e frequenza. Una prova con DAC emulato verifica quel percorso
+software; non misura il clock o il rumore dell'uscita analogica di un DAC reale.
+
+### Qualità sonora e compatibilità
+
+Sweetspot e Daphile condividono Lyrion/Squeezelite. RAM, kernel real-time e
+core dedicati non dimostrano da soli una superiorità sonora. Una catena
+bit-perfect preserva i campioni; il DSP li modifica intenzionalmente. Il
+confronto richiede lo stesso hardware, DAC e volume, misure digitali e
+analogiche e ascolto alla cieca quando si valutano differenze percepite.
+
+Con USB asincrona il clock della conversione è quello del DAC. Il programma
+alimenta i buffer tramite il driver ALSA; non può sostituire l'oscillatore del
+DAC con il clock del PC né realizzare un filtro elettrico sulle linee USB.
+La latenza misurata da `sweetspot-latenza` riguarda lo scheduler, non il jitter
+del clock audio. Per riferimenti: [Daphile](https://www.daphile.com/index.html),
+[clock USB XMOS](https://www.xmos.com/documentation/XM-012296-UG/html/doc/rst/sw_ep0.html).
+
+Il riconoscimento del DAC considera le uscite playback e il loro numero di
+dispositivo: un microfono USB collegato per REW non diventa l'uscita audio.
+Le capacità USB di acquisizione non vengono offerte alla riproduzione. La
+correzione sceglie formati e frequenze delle configurazioni stereo, senza
+confonderle con quelle multicanale. Per I2S interroga ALSA; se non può verificare le capacità, segnala
+l'errore senza inventare un formato o frequenze supportati.
+
+La compatibilità va riferita alla combinazione release, computer, DAC e
+firmware: **compatibile** (riconosciuto), **verificato** (prove funzionali) e
+**certificato audio** (confronto campioni e prove di continuità). Il progetto
+non garantisce tutti i DAC o tutti gli hardware. Prima della distribuzione
+servono una matrice PCM/DSD/gapless/hotplug su hardware reale, prove di
+aggiornamento con interruzione di alimentazione e protezione amministrativa
+del pannello web, attualmente accessibile dalla rete locale senza login.
 
 ## Struttura del progetto
 

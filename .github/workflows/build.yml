@@ -16,13 +16,16 @@ concurrency:
   group: compila-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - name: Strumenti di verifica
-        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign
+        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign python3-yaml cpio zstd sqlite3
       - name: Test degli script
         run: sh tests/run.sh
       - name: Copia di un CD simulato
@@ -55,7 +58,7 @@ jobs:
       - name: Dipendenze di Buildroot
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential cpio file libelf-dev libssl-dev rsync unzip wget xz-utils
+          sudo apt-get install -y bc build-essential cpio file libelf-dev libssl-dev minisign rsync unzip wget xz-utils zstd
       # Sorgenti scaricati e ccache: si salvano anche quando la compilazione
       # fallisce, cosi' il tentativo successivo riparte da dove era arrivato.
       - name: Cache di sorgenti e compilazione
@@ -91,28 +94,45 @@ jobs:
           name: registro-compilazione-${{ matrix.scheda }}
           path: build.log
       # Firma del pacchetto di aggiornamento con la chiave del progetto (segreto
-      # SWEETSPOT_FIRMA, vedi scripts/genera-chiave-firma.sh). Senza il segreto
-      # (es. PR da un fork) il pacchetto resta non firmato e gli Sweetspot con
-      # la chiave pubblica lo rifiutano.
+      # SWEETSPOT_FIRMA, vedi scripts/genera-chiave-firma.sh). Sui tag ufficiali
+      # firma e chiave incorporata sono obbligatorie. Senza il segreto, solo
+      # le compilazioni di sviluppo possono produrre pacchetti non firmati.
       - name: Firma del pacchetto di aggiornamento
         env:
           FIRMA: ${{ secrets.SWEETSPOT_FIRMA }}
         run: |
-          T=$(ls output/images/sweetspot-*-aggiornamento.tar)
+          set -euo pipefail
+          T=output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+          P=board/sweetspot/rootfs-overlay/etc/sweetspot/aggiornamenti.pub
           if [ -z "$FIRMA" ]; then
+            case "$GITHUB_REF" in
+              refs/tags/v*)
+                echo "::error title=Release non firmata::manca il segreto SWEETSPOT_FIRMA"
+                exit 1
+                ;;
+            esac
             echo "::warning title=Aggiornamento non firmato::manca il segreto SWEETSPOT_FIRMA (scripts/genera-chiave-firma.sh)"
             exit 0
           fi
-          sudo apt-get install -y minisign > /dev/null
+          [ -s "$P" ] || { echo "::error::manca la chiave pubblica degli aggiornamenti"; exit 1; }
           d=$(mktemp -d); chmod 700 "$d"
+          trap 'rm -rf "$d"' EXIT
           printf '%s\n' "$FIRMA" > "$d/chiave"
-          tar -xf "$T" -C "$d" SHA256SUMS versione architettura
-          minisign -S -s "$d/chiave" -m "$d/SHA256SUMS" -x "$d/SHA256SUMS.minisig" \
-            -t "Sweetspot $(cat "$d/versione") $(cat "$d/architettura")"
-          P=board/sweetspot/rootfs-overlay/etc/sweetspot/aggiornamenti.pub
-          if [ -f "$P" ]; then minisign -V -p "$P" -m "$d/SHA256SUMS" -x "$d/SHA256SUMS.minisig"; fi
-          tar -rf "$T" -C "$d" SHA256SUMS.minisig
-          rm -rf "$d"
+          mkdir "$d/pacchetto"
+          tar -xf "$T" -C "$d/pacchetto"
+          [ "$(cat "$d/pacchetto/architettura")" = '${{ matrix.scheda }}' ]
+          # Ricalcola tutti i file: il manifesto deve descrivere esattamente
+          # il contenuto che sara' installato, compresi versione e architettura.
+          (cd "$d/pacchetto" && find . -type f ! -path ./SHA256SUMS ! -path ./SHA256SUMS.minisig |
+            sed 's|^\./||' | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > "$d/SHA256SUMS.attesi"
+          cmp "$d/pacchetto/SHA256SUMS" "$d/SHA256SUMS.attesi"
+          zstd -dc "$d/pacchetto/rootfs.cpio.zst" |
+            cpio --quiet -i --to-stdout 'etc/sweetspot/aggiornamenti.pub' './etc/sweetspot/aggiornamenti.pub' > "$d/incorporata.pub"
+          cmp "$P" "$d/incorporata.pub"
+          minisign -S -s "$d/chiave" -m "$d/pacchetto/SHA256SUMS" -x "$d/pacchetto/SHA256SUMS.minisig" \
+            -t "Sweetspot $(cat "$d/pacchetto/versione") $(cat "$d/pacchetto/architettura")"
+          minisign -V -p "$P" -m "$d/pacchetto/SHA256SUMS" -x "$d/pacchetto/SHA256SUMS.minisig"
+          tar -rf "$T" -C "$d/pacchetto" SHA256SUMS.minisig
       - name: Salva la cache
         if: always()
         uses: actions/cache/save@v6
@@ -128,6 +148,7 @@ jobs:
         with:
           path: output/images/${{ matrix.immagine }}.xz
           archive: false
+          if-no-files-found: error
       # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
       - name: Disco per VMware
         if: matrix.scheda == 'x86_64'
@@ -141,21 +162,14 @@ jobs:
         with:
           path: output/images/sweetspot-vmware.vmdk
           archive: false
+          if-no-files-found: error
       # Pacchetto per aggiornare dalla pagina Sistema (da internet o da un disco).
       - name: Pubblica il pacchetto di aggiornamento
         uses: actions/upload-artifact@v7
         with:
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           archive: false
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            output/images/${{ matrix.immagine }}.xz
-            output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
-            output/images/sweetspot-vmware.vmdk
-          fail_on_unmatched_files: false
+          if-no-files-found: error
 
   # Lyrion nel sistema appena compilato, su un server della stessa
   # architettura: per il Raspberry Pi e' la prova che i moduli compilati per
@@ -183,3 +197,80 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
       - name: Avvio di Lyrion nel sistema compilato
         run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+
+  # Una sola pubblicazione, dopo il successo di entrambe le compilazioni e
+  # di entrambi i test Lyrion. Un gate fallito, saltato o annullato la blocca.
+  release:
+    needs: [test, build, lyrion]
+    if: >-
+      ${{ startsWith(github.ref, 'refs/tags/v') &&
+          needs.test.result == 'success' &&
+          needs.build.result == 'success' &&
+          needs.lyrion.result == 'success' }}
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      # archive:false usa il nome del file come nome dell'artifact. v8 lo
+      # scarica direttamente, senza estrarre il tar del pacchetto.
+      - uses: actions/download-artifact@v8
+        with:
+          name: sweetspot.img.xz
+          path: artifacts
+          digest-mismatch: error
+      - uses: actions/download-artifact@v8
+        with:
+          name: sweetspot-rpi.img.xz
+          path: artifacts
+          digest-mismatch: error
+      - uses: actions/download-artifact@v8
+        with:
+          name: sweetspot-vmware.vmdk
+          path: artifacts
+          digest-mismatch: error
+      - uses: actions/download-artifact@v8
+        with:
+          name: sweetspot-x86_64-aggiornamento.tar
+          path: artifacts
+          digest-mismatch: error
+      - uses: actions/download-artifact@v8
+        with:
+          name: sweetspot-rpi-aggiornamento.tar
+          path: artifacts
+          digest-mismatch: error
+      - name: Strumenti di verifica
+        run: sudo apt-get update && sudo apt-get install -y minisign cpio zstd
+      - name: Verifica degli aggiornamenti firmati
+        run: |
+          set -euo pipefail
+          P=board/sweetspot/rootfs-overlay/etc/sweetspot/aggiornamenti.pub
+          [ -s "$P" ] || { echo "::error::manca la chiave pubblica degli aggiornamenti"; exit 1; }
+          for image in sweetspot.img.xz sweetspot-rpi.img.xz sweetspot-vmware.vmdk; do
+            [ -s "artifacts/$image" ]
+          done
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          for board in x86_64 rpi; do
+            mkdir "$d/$board"
+            tar -xf "artifacts/sweetspot-$board-aggiornamento.tar" -C "$d/$board"
+            tc=$(minisign -V -Q -p "$P" -m "$d/$board/SHA256SUMS" -x "$d/$board/SHA256SUMS.minisig")
+            [ "$(cat "$d/$board/architettura")" = "$board" ]
+            [ "$tc" = "Sweetspot $(cat "$d/$board/versione") $board" ]
+            (cd "$d/$board" && find . -type f ! -path ./SHA256SUMS ! -path ./SHA256SUMS.minisig |
+              sed 's|^\./||' | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > "$d/SHA256SUMS.attesi"
+            cmp "$d/$board/SHA256SUMS" "$d/SHA256SUMS.attesi"
+            zstd -dc "$d/$board/rootfs.cpio.zst" |
+              cpio --quiet -i --to-stdout 'etc/sweetspot/aggiornamenti.pub' './etc/sweetspot/aggiornamenti.pub' > "$d/incorporata.pub"
+            cmp "$P" "$d/incorporata.pub"
+          done
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            artifacts/sweetspot.img.xz
+            artifacts/sweetspot-rpi.img.xz
+            artifacts/sweetspot-vmware.vmdk
+            artifacts/sweetspot-x86_64-aggiornamento.tar
+            artifacts/sweetspot-rpi-aggiornamento.tar
+          fail_on_unmatched_files: true
