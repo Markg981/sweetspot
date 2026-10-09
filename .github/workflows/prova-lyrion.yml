@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Prova di Lyrion sui pacchetti gia' compilati, senza ricompilare: utile per
+# correggere tests/prova-lyrion.sh o capire un errore in pochi minuti. Usa i
+# pacchetti di aggiornamento dell'ultima esecuzione di "Compila Sweetspot"
+# su main che li ha prodotti, oppure di quella indicata a mano. Si avvia a
+# mano (Actions > Prova di Lyrion > Run workflow): nelle PR la prova vera e'
+# il job "lyrion" di Compila Sweetspot, sui pacchetti della PR stessa.
+name: Prova di Lyrion
+
+on:
+  workflow_dispatch:
+    inputs:
+      esecuzione:
+        description: "Numero dell'esecuzione di Compila Sweetspot con i pacchetti (vuoto: l'ultima su main)"
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  lyrion:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheda: x86_64
+            runner: ubuntu-24.04
+          - scheda: rpi
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Esecuzione con i pacchetti
+        id: esecuzione
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCHEDA: ${{ matrix.scheda }}
+          SCELTA: ${{ inputs.esecuzione }}
+        run: |
+          id=$SCELTA
+          if [ -z "$id" ]; then
+            for r in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&status=completed&per_page=20" --jq '.workflow_runs[].id'); do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$r/artifacts" --jq '.artifacts[] | select(.expired | not) | .name' |
+                grep -qx "sweetspot-$SCHEDA-aggiornamento"; then
+                id=$r
+                break
+              fi
+            done
+          fi
+          [ -n "$id" ] || { echo "::error::nessuna esecuzione con il pacchetto sweetspot-$SCHEDA-aggiornamento"; exit 1; }
+          echo "Pacchetti dell'esecuzione $id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: sweetspot-${{ matrix.scheda }}-aggiornamento
+          run-id: ${{ steps.esecuzione.outputs.id }}
+          github-token: ${{ github.token }}
+      - name: Strumenti
+        run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
+      - name: Avvio di Lyrion nel sistema compilato
+        run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
