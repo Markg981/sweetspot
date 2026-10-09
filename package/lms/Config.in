@@ -1,6 +1,8 @@
 config BR2_PACKAGE_LMS
 	bool "lms"
-	depends on BR2_x86_64 # moduli Perl compilati inclusi solo per x86_64 con Perl 5.42
+	# Moduli Perl compilati: inclusi in Lyrion per x86_64, compilati da
+	# questo progetto per aarch64 (Raspberry Pi 4 e 5).
+	depends on BR2_x86_64 || BR2_aarch64
 	depends on BR2_USE_MMU # perl
 	depends on BR2_TOOLCHAIN_HAS_THREADS
 	depends on BR2_TOOLCHAIN_USES_GLIBC # moduli compilati per glibc
@@ -18,5 +20,6 @@ config BR2_PACKAGE_LMS
 
 	  https://lyrion.org/
 
-comment "lms needs an x86_64 glibc toolchain with threads"
-	depends on !BR2_x86_64 || !BR2_TOOLCHAIN_USES_GLIBC || !BR2_TOOLCHAIN_HAS_THREADS
+comment "lms needs an x86_64 or aarch64 glibc toolchain with threads"
+	depends on BR2_x86_64 || BR2_aarch64
+	depends on !BR2_TOOLCHAIN_USES_GLIBC || !BR2_TOOLCHAIN_HAS_THREADS

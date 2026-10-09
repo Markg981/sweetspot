@@ -12,10 +12,13 @@ SWEETSPOT_TOOLS_LICENSE = GPL-3.0+
 define SWEETSPOT_TOOLS_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
 		-o $(@D)/sweetspot-arcrc $(@D)/sweetspot-arcrc.c
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
+		-o $(@D)/sweetspot-reboot2 $(@D)/sweetspot-reboot2.c
 endef
 
 define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-arcrc $(TARGET_DIR)/usr/bin/sweetspot-arcrc
+	$(INSTALL) -D -m 0755 $(@D)/sweetspot-reboot2 $(TARGET_DIR)/usr/sbin/sweetspot-reboot2
 endef
 
 $(eval $(generic-package))

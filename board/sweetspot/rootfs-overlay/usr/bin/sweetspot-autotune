@@ -9,7 +9,8 @@
 #
 # I parametri (core isolati, Hyper-Threading, stati di risparmio della CPU,
 # DSD nativo forzato) si possono cambiare solo all'avvio: per questo vengono
-# scritti in /boot/grub/auto.cfg sulla chiavetta, letto dal menu di avvio.
+# scritti in /boot/grub/auto.cfg sulla chiavetta, letto dal menu di avvio
+# (sul Raspberry Pi nella riga di comando cmdline.txt di ogni copia).
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -22,8 +23,16 @@ tune_params() {
 	cpu_layout
 	[ "$LAYOUT_NOSMT" = 1 ] && p="nosmt"
 	# Solo lo stato C1: la CPU non scende negli stati profondi, che fanno
-	# variare continuamente l'assorbimento.
-	p="$p intel_idle.max_cstate=1 processor.max_cstate=1"
+	# variare continuamente l'assorbimento. Su ARM (Raspberry Pi) niente
+	# stati di risparmio oltre all'attesa semplice (WFI).
+	if [ "$(boot_type)" = rpi ]; then
+		p="$p cpuidle.off=1"
+		# La scheda DAC I2S la carica il firmware: entra nei parametri, cosi'
+		# cambiarla porta allo stesso unico riavvio.
+		[ -n "$(conf SCHEDA_I2S)" ] && p="$p sweetspot.i2s=$(conf SCHEDA_I2S)"
+	else
+		p="$p intel_idle.max_cstate=1 processor.max_cstate=1"
+	fi
 	if [ -n "$LAYOUT_ISO" ]; then
 		iso=$(join_list "$LAYOUT_ISO")
 		hk=$(join_list "$LAYOUT_HK")
@@ -61,6 +70,61 @@ desired() {
 	printf '%s sweetspot.tune=%s' "$p" "$h" | sed 's/^ *//'
 }
 
+restart_notice() {
+	log "autotune: nuovi parametri $1, riavvio"
+	echo "riavvio" > "$RUN/autotune.stato"
+	{
+		printf '\033[2J\033[H\n\n'
+		echo "  Sweetspot si e' adattato a questo computer."
+		echo "  Riavvio in corso: succede solo la prima volta."
+	} > /dev/console 2>&1
+	sleep 4
+}
+
+# Se questa e' una versione appena aggiornata, in prova, il riavvio deve
+# ripartire da lei: la prova si ripete con i nuovi parametri (senza, si
+# tornerebbe alla versione precedente). Da chiamare con la chiavetta montata.
+keep_trial() {
+	local env slot
+	env=$(boot_env)
+	slot=$(running_slot)
+	[ "$(grubenv_get "$env" tentato)" = "$slot" ] || return 0
+	grubenv_set "$env" "prova=$slot" tentato=
+}
+
+# Raspberry Pi: i parametri vanno nella riga di comando (cmdline.txt) di
+# entrambe le copie del sistema, ognuna con il suo nome.
+apply_rpi() { # parametri impronta
+	local slot ok=0
+	if ! stick_mount rw; then
+		log "autotune: scheda SD non trovata, parametri non salvati"
+		echo "scheda SD non trovata" > "$RUN/autotune.stato"
+		return 0
+	fi
+	if grep -q "sweetspot.tune=$2" "$STICK_MNT/$(running_slot)/cmdline.txt" 2>/dev/null; then
+		stick_umount
+		log "autotune: la scheda contiene gia' i parametri $2 ma non sono attivi"
+		echo "attenzione: parametri non applicati dal firmware" > "$RUN/autotune.stato"
+		return 0
+	fi
+	rpi_scheda_txt "$(conf SCHEDA_I2S)" > "$STICK_MNT/sweetspot-scheda.txt.nuovo" &&
+		mv "$STICK_MNT/sweetspot-scheda.txt.nuovo" "$STICK_MNT/sweetspot-scheda.txt" || ok=1
+	for slot in a b; do
+		[ -d "$STICK_MNT/$slot" ] || continue
+		rpi_cmdline "$slot" "$1" > "$STICK_MNT/$slot/cmdline.txt.nuovo" &&
+			mv "$STICK_MNT/$slot/cmdline.txt.nuovo" "$STICK_MNT/$slot/cmdline.txt" || ok=1
+	done
+	[ $ok -eq 0 ] && keep_trial
+	stick_umount
+	if [ $ok -ne 0 ]; then
+		log "autotune: scrittura non riuscita"
+		return 0
+	fi
+	restart_notice "$1"
+	# Una versione in prova riparte con il riavvio "tryboot" del firmware.
+	sweetspot-riavvia
+}
+
 case "$1" in
 	--stampa|--print|'')
 		desired
@@ -77,6 +141,10 @@ case "$1" in
 		have_hash=$(cmdline_value sweetspot.tune)
 		if [ "$want_hash" = "$have_hash" ]; then
 			log "autotune: parametri gia' attivi ($want_hash)"
+			exit 0
+		fi
+		if [ "$(boot_type)" = rpi ]; then
+			apply_rpi "$want" "$want_hash"
 			exit 0
 		fi
 		# Evita i riavvii a ripetizione: se la chiavetta ha gia' questi
@@ -101,19 +169,13 @@ case "$1" in
 			mv "$STICK_MNT/boot/grub/auto.cfg.tmp" "$STICK_MNT/boot/grub/auto.cfg"
 		ok=$?
 		cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
+		[ $ok -eq 0 ] && keep_trial
 		stick_umount
 		if [ $ok -ne 0 ]; then
 			log "autotune: scrittura non riuscita"
 			exit 0
 		fi
-		log "autotune: nuovi parametri $want, riavvio"
-		echo "riavvio" > "$RUN/autotune.stato"
-		{
-			printf '\033[2J\033[H\n\n'
-			echo "  Sweetspot si e' adattato a questo computer."
-			echo "  Riavvio in corso: succede solo la prima volta."
-		} > /dev/console 2>&1
-		sleep 4
+		restart_notice "$want"
 		reboot
 		;;
 	*)

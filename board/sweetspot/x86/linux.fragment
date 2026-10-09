@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - frammento del kernel per i PC x86 a 64 bit (sopra
+# x86_64_defconfig e common/linux.fragment, kernel LTS 6.18).
+
+# --- Frequenza e stati di risparmio della CPU ------------------------------
+CONFIG_X86_INTEL_PSTATE=y
+CONFIG_X86_ACPI_CPUFREQ=y
+CONFIG_X86_AMD_PSTATE=y
+CONFIG_INTEL_IDLE=y
+CONFIG_SENSORS_CORETEMP=m
+CONFIG_SENSORS_K10TEMP=m
+
+# --- Uscita audio integrata, disponibile come modulo -----------------------
+CONFIG_SND_HDA_INTEL=m
+
+# --- Controller USB di ogni epoca ------------------------------------------
+CONFIG_USB_XHCI_PCI=y
+CONFIG_USB_EHCI_HCD=y
+CONFIG_USB_OHCI_HCD=y
+CONFIG_USB_UHCI_HCD=y
+
+# --- Dischi interni ----------------------------------------------------------
+CONFIG_ATA=y
+CONFIG_SATA_AHCI=y
+CONFIG_ATA_PIIX=y
+CONFIG_BLK_DEV_NVME=y
+
+# --- Rete cablata ------------------------------------------------------------
+CONFIG_R8169=m
+CONFIG_E1000E=m
+CONFIG_IGB=m
+CONFIG_IGC=m
+CONFIG_TIGON3=m
+CONFIG_ATL1C=m
+CONFIG_ALX=m
+
+# --- Wi-Fi -------------------------------------------------------------------
+CONFIG_IWLWIFI=m
+CONFIG_IWLDVM=m
+CONFIG_IWLMVM=m
+CONFIG_IWLMLD=m
+CONFIG_ATH9K=m
+CONFIG_MT7921E=m
+
+# --- Schermo: console di base, spegnimento del pannello --------------------
+CONFIG_DRM=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_SYSFB_SIMPLEFB=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+# i915 non e' compatibile con PREEMPT_RT: lo schermo resta sul framebuffer
+# di base (simpledrm) e la retroilluminazione si spegne via ACPI, dove c'e'.
+CONFIG_ACPI_VIDEO=m
+# Nouveau serve solo a spegnere la GPU NVIDIA dei portatili Optimus.
+CONFIG_DRM_NOUVEAU=m
+CONFIG_BACKLIGHT_CLASS_DEVICE=y
+
+# Macchine virtuali VMware (Workstation, Player, ESXi) con l'hardware
+# predefinito: scheda di rete VMXNET3, dischi SCSI LSI Logic e paravirtuali.
+CONFIG_VMXNET3=m
+CONFIG_VMWARE_PVSCSI=m
+CONFIG_FUSION=y
+CONFIG_FUSION_SPI=m
+CONFIG_FUSION_SAS=m

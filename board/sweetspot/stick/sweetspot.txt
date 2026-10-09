@@ -88,6 +88,11 @@ PAUSA_FREQUENZA_MS=0
 # Usare l'uscita audio integrata del computer al posto del DAC USB.
 USCITA_INTEGRATA=no
 
+# Solo Raspberry Pi: scheda DAC montata sul Pi (I2S), con il nome del suo
+# overlay, per esempio hifiberry-dacplus, iqaudio-dacplus, allo-boss-dac-
+# pcm512x-audio. Vuoto = DAC USB. Si sceglie anche dalla pagina Audio.
+SCHEDA_I2S=
+
 # --- Rete -----------------------------------------------------------------
 # Nome in rete: il player risponde su http://NOME.local/
 # Diverso per ogni Sweetspot della casa.

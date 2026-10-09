@@ -307,6 +307,8 @@ install_job() { # disco si|no
 
 do_start() { # disco si|no
 	local d=$1 ok=""
+	# Sul Raspberry Pi il sistema sta gia' sulla scheda SD da cui parte.
+	[ "$(boot_type)" = grub ] || { echo "non serve su questo computer"; return 1; }
 	running && { echo "installazione gia' in corso"; return 1; }
 	case "$2" in si|no) ;; *) echo "scelta dell'archivio non valida"; return 1 ;; esac
 	case "$d" in ''|*[!a-z0-9]*) echo "disco non valido"; return 1 ;; esac

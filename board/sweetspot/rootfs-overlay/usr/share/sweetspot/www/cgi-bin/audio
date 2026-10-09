@@ -14,13 +14,17 @@ mac=$(cat "$RUN/player.mac" 2>/dev/null)
 echo '<h2>DAC</h2><div class="card">'
 if [ -z "$card" ]; then
 	info_row ATTENZIONE "Nessun DAC USB collegato" "Collega il DAC a una porta USB e accendilo: Sweetspot lo riconosce da solo."
+elif [ -z "$(dac_usbid "$card")" ]; then
+	# Scheda DAC I2S sul Raspberry Pi: niente descrittori USB, le frequenze
+	# le decide il driver della scheda.
+	info_row OK "$(dac_name "$card")" "Scheda DAC I2S ($(conf SCHEDA_I2S)) - DSD convertito in PCM"
 else
 	rates=$(dac_rates "$card")
 	maxr=$(last_word "$rates")
 	dsd=$(dac_native_dsd "$card")
 	if [ -n "$dsd" ]; then dsdtxt="DSD nativo ($dsd)"; else dsdtxt="DSD nativo non dichiarato (DoP o conversione in PCM)"; fi
-	info_row OK "$(dac_name "$card")" "USB $(dac_usbid "$card") - fino a $((maxr / 1000)) kHz - $dsdtxt"
-	info_row "" "Frequenze supportate" "$(printf '%s' "$rates" | tr ' ' '\n' | awk '{printf "%s%g", sep, $1/1000; sep=", "} END {print " kHz"}')"
+	info_row OK "$(dac_name "$card")" "USB $(dac_usbid "$card")${maxr:+ - fino a $((maxr / 1000)) kHz} - $dsdtxt"
+	[ -n "$rates" ] && info_row "" "Frequenze supportate" "$(printf '%s' "$rates" | tr ' ' '\n' | awk '{printf "%s%g", sep, $1/1000; sep=", "} END {print " kHz"}')"
 fi
 echo '</div>'
 
@@ -101,6 +105,26 @@ esac
 [ -s "$RUN/correzione/sinistro.txt" ] || cst="nessun filtro: si misura la stanza con REW e un microfono di misura"
 printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/correzione">Correggi i bassi della stanza</a></div><div class="v">%s</div></div></div>\n' "$ccl" "$(esc "$cst")"
 echo '</div>'
+
+# --- Scheda DAC sul Raspberry Pi (I2S) -------------------------------------------------
+if [ "$(boot_type)" = rpi ]; then
+	cur=$(conf SCHEDA_I2S)
+	known=""
+	echo '<h2>Scheda DAC sul Raspberry Pi</h2><div class="card formcard">'
+	echo '<p class="sub">Per un DAC montato sopra il Raspberry Pi (collegamento I2S). Con un DAC USB lascia "Nessuna".</p>'
+	form_start scheda_i2s
+	echo '<label for="sch">Scheda</label><select id="sch" name="scheda">'
+	option "" "Nessuna: DAC USB" "$cur"
+	while IFS='|' read -r ov nome; do
+		case "$ov" in ''|'#'*) continue ;; esac
+		[ "$ov" = "$cur" ] && known=1
+		option "$ov" "$nome" "$cur"
+	done < "${SWEETSPOT_SCHEDE_I2S:-/usr/share/sweetspot/schede-i2s.txt}"
+	echo '</select>'
+	printf '<label for="sov">Altra scheda <span>(nome dell%soverlay, dalle istruzioni del produttore)</span></label>' "'"
+	printf '<input id="sov" name="overlay" autocapitalize="off" autocorrect="off" value="%s">\n' "$( [ -n "$cur" ] && [ -z "$known" ] && esc "$cur")"
+	echo '<p class="sub">Il Raspberry Pi si riavvia per caricare la scheda.</p><button class="primary">Salva e riavvia</button></form></div>'
+fi
 
 # --- Impostazioni -------------------------------------------------------------------
 vol=$(lower "$(conf VOLUME fisso)")

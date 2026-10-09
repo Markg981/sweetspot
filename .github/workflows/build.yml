@@ -30,12 +30,28 @@ jobs:
 
   build:
     needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # PC x86 a 64 bit (chiavetta USB, VMware)
+          - scheda: x86_64
+            immagine: sweetspot.img
+          # Raspberry Pi 4, 400, 5, 500 e Compute Module 4/5 (scheda SD)
+          - scheda: rpi
+            immagine: sweetspot-rpi.img
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # Il kernel del Raspberry Pi con tutti i suoi moduli occupa parecchio:
+      # si libera spazio togliendo dal server gli strumenti che non servono.
+      - name: Spazio su disco
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tail -n 1
       - name: Dipendenze di Buildroot
         run: |
           sudo apt-get update
@@ -48,14 +64,16 @@ jobs:
           path: |
             ~/.buildroot-dl
             ~/.buildroot-ccache
-          key: buildroot-${{ github.run_id }}
-          restore-keys: buildroot-
+          key: buildroot-${{ matrix.scheda }}-${{ github.run_id }}
+          restore-keys: |
+            buildroot-${{ matrix.scheda }}-
+            buildroot-
       # Il registro completo va in build.log (allegato all'esecuzione); qui
       # si vedono solo le fasi (">>> pacchetto versione fase").
       - name: Compila
         run: |
           set -o pipefail
-          BR2_DL_DIR=$HOME/.buildroot-dl sh scripts/build.sh 2>&1 | tee build.log | grep --line-buffered '^>>>'
+          BR2_DL_DIR=$HOME/.buildroot-dl sh scripts/build.sh sweetspot_${{ matrix.scheda }}_defconfig 2>&1 | tee build.log | grep --line-buffered '^>>>'
       # Le ultime righe utili del registro (senza l'avanzamento degli scaricamenti)
       # diventano annotazioni dell'esecuzione, leggibili anche senza accedere a GitHub.
       - name: Motivo dell'errore
@@ -70,7 +88,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: registro-compilazione
+          name: registro-compilazione-${{ matrix.scheda }}
           path: build.log
       # Firma del pacchetto di aggiornamento con la chiave del progetto (segreto
       # SWEETSPOT_FIRMA, vedi scripts/genera-chiave-firma.sh). Senza il segreto
@@ -102,20 +120,22 @@ jobs:
           path: |
             ~/.buildroot-dl
             ~/.buildroot-ccache
-          key: buildroot-${{ github.run_id }}
+          key: buildroot-${{ matrix.scheda }}-${{ github.run_id }}
       - name: Pubblica l'immagine
         uses: actions/upload-artifact@v4
         with:
-          name: sweetspot-x86_64
-          path: output/images/sweetspot.img.xz
+          name: sweetspot-${{ matrix.scheda }}
+          path: output/images/${{ matrix.immagine }}.xz
           compression-level: 0
       # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
       - name: Disco per VMware
+        if: matrix.scheda == 'x86_64'
         run: |
           sudo apt-get install -y qemu-utils
           qemu-img convert -f raw -O vmdk -o adapter_type=lsilogic,subformat=monolithicSparse \
             output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
       - name: Pubblica il disco per VMware
+        if: matrix.scheda == 'x86_64'
         uses: actions/upload-artifact@v4
         with:
           name: sweetspot-vmware
@@ -124,14 +144,42 @@ jobs:
       - name: Pubblica il pacchetto di aggiornamento
         uses: actions/upload-artifact@v4
         with:
-          name: sweetspot-x86_64-aggiornamento
-          path: output/images/sweetspot-x86_64-aggiornamento.tar
+          name: sweetspot-${{ matrix.scheda }}-aggiornamento
+          path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           compression-level: 0
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            output/images/sweetspot.img.xz
-            output/images/sweetspot-x86_64-aggiornamento.tar
+            output/images/${{ matrix.immagine }}.xz
+            output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
             output/images/sweetspot-vmware.vmdk
+          fail_on_unmatched_files: false
+
+  # Lyrion nel sistema appena compilato, su un server della stessa
+  # architettura: per il Raspberry Pi e' la prova che i moduli compilati per
+  # ARM funzionano con il Perl del sistema.
+  lyrion:
+    needs: build
+    # Anche se una delle due compilazioni non e' riuscita, l'altra si prova.
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheda: x86_64
+            runner: ubuntu-24.04
+          - scheda: rpi
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: sweetspot-${{ matrix.scheda }}-aggiornamento
+      - name: Strumenti
+        run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
+      - name: Avvio di Lyrion nel sistema compilato
+        run: sudo sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar

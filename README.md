@@ -3,9 +3,9 @@
 Player e server di musica liquida bit-perfect, open source (GPLv3), pensato
 come alternativa a Daphile: stesso motore (Lyrion Music Server con i suoi
 plugin, Squeezelite come player), con un sistema costruito per far suonare il
-DAC nel modo più pulito possibile. Si avvia da una chiavetta USB (o, dopo
-l'installazione, dal disco interno), copia tutto in RAM e si usa dal browser
-del telefono o del computer.
+DAC nel modo più pulito possibile. Gira su un PC (da una chiavetta USB o, dopo
+l'installazione, dal disco interno) o su un Raspberry Pi 4 o 5 (dalla scheda
+SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
 
 ## Cosa fa all'accensione
 
@@ -115,7 +115,8 @@ tutto in RAM; la chiavetta resta valida come copia di riserva.
 ### Aggiornamenti
 
 *Sistema → Cerca aggiornamenti* controlla le release di GitHub; senza internet
-basta copiare il pacchetto `sweetspot-x86_64-aggiornamento.tar` su un disco
+basta copiare il pacchetto `sweetspot-x86_64-aggiornamento.tar` (sul
+Raspberry Pi `sweetspot-rpi-aggiornamento.tar`) su un disco
 collegato o nella cartella di rete Musica. Sulla partizione di sistema ci sono
 **due copie del sistema**: l'aggiornamento si scrive in quella non in uso
 (controllato con SHA-256), poi GRUB la avvia **una volta sola**. Se il nuovo
@@ -143,7 +144,9 @@ crea le sue).
 
 - Un PC x86 a 64 bit con almeno 2 GB di RAM (consigliati 4 GB o più).
   Prototipo di riferimento: Asus N550JV con 16 GB.
-- Un DAC USB.
+  Oppure un Raspberry Pi 4, 400, 5 o 500 (anche Compute Module 4 e 5), meglio
+  con almeno 2 GB: vedi [Raspberry Pi](#raspberry-pi).
+- Un DAC USB (sul Raspberry Pi anche una scheda DAC I2S, tipo HiFiBerry).
 - Il cavo di rete (il Wi-Fi funziona, ma è un ripiego).
 - Una chiavetta USB da almeno 1 GB (per l'installazione: un disco interno da
   almeno 2 GB, che viene cancellato).
@@ -159,7 +162,8 @@ Secure Boot va disattivato nel BIOS/UEFI.
    dura circa un'ora e mezza la prima volta, meno le successive grazie alla
    cache.
 3. A fine compilazione scarica `sweetspot-x86_64` dalla sezione **Artifacts**:
-   contiene `sweetspot.img.xz`.
+   contiene `sweetspot.img.xz`. Per il Raspberry Pi scarica `sweetspot-rpi`
+   (`sweetspot-rpi.img.xz`).
 
 Pubblicando un tag `v0.1.0` l'immagine finisce anche nella pagina Releases.
 
@@ -167,10 +171,12 @@ Pubblicando un tag `v0.1.0` l'immagine finisce anche nella pagina Releases.
 
 ```sh
 sudo apt install bc build-essential cpio file git libelf-dev libssl-dev rsync unzip wget xz-utils
-./scripts/build.sh
+./scripts/build.sh                           # PC
+./scripts/build.sh sweetspot_rpi_defconfig   # Raspberry Pi 4 e 5
 ```
 
-L'immagine è in `output/images/sweetspot.img.xz`. Servono circa 15 GB liberi.
+L'immagine è in `output/images/sweetspot.img.xz` (Raspberry Pi:
+`sweetspot-rpi.img.xz`). Servono circa 15 GB liberi, 25 GB per il Raspberry Pi.
 
 ### Con Docker
 
@@ -226,6 +232,38 @@ Con **Raspberry Pi Imager** ("Usa immagine personalizzata"), **balenaEtcher** o
 **Rufus** (modalità DD) si scrive direttamente `sweetspot.img.xz`, senza
 decomprimerlo. La chiavetta resta leggibile da Windows e macOS come unità
 `SWEETSPOT` e contiene `sweetspot.txt` e `LEGGIMI.txt`.
+
+## Raspberry Pi
+
+Un'unica immagine, `sweetspot-rpi.img.xz`, per Raspberry Pi 4, 400, 5, 500 e
+Compute Module 4/5: si scrive sulla scheda SD (o su una chiavetta USB, se il Pi
+parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
+
+- **Kernel**: quello della Raspberry Pi Foundation (6.12 LTS, lo stesso di
+  Raspberry Pi OS) con PREEMPT_RT e pagine da 4 KB, uguale per il Pi 4 e il Pi 5.
+  Programmi compilati per Cortex-A72, che girano identici sul Cortex-A76 del
+  Pi 5. Due core su quattro dedicati a riproduzione e interruzioni USB,
+  frequenza fissa, nessuno stato di risparmio della CPU (`cpuidle.off=1`).
+- **Uscite spente**: jack e HDMI audio (`dtparam=audio=off`), Bluetooth
+  (`disable-bt`), Wi-Fi se non configurato.
+- **DAC USB** come sul PC. **Schede DAC I2S** (HiFiBerry, Allo, IQaudio, Raspberry
+  Pi DAC+/DAC Pro, JustBoom, I-Sabre...): si sceglie la scheda in *Impostazioni
+  Sweetspot → Audio*, o si scrive il nome del suo overlay; il Pi si riavvia una
+  volta per caricarla. Con una scheda I2S il DSD arriva in PCM.
+- **Avvio e aggiornamenti**: la partizione FAT32 `SWEETSPOT` contiene il
+  firmware e due copie complete del sistema, nelle cartelle `a` e `b` (kernel,
+  sistema in RAM, alberi dei dispositivi, overlay, `cmdline.txt`). `config.txt`
+  sceglie la copia in uso (`os_prefix`); un aggiornamento si prova con il
+  riavvio *tryboot* del firmware, che usa `tryboot.txt` una volta sola. Se la
+  nuova versione non si conferma, al riavvio successivo (o staccando la
+  corrente) riparte quella di prima.
+- **Lyrion**: Lyrion non fornisce i suoi moduli compilati per ARM con Perl 5.42.
+  Li compila il workflow *Moduli di Lyrion* (`.github/workflows/moduli-lyrion.yml`)
+  con lo script ufficiale di Lyrion, in Fedora 43 su un server ARM di GitHub, e
+  li pubblica nella release `dipendenze-lyrion`; Buildroot li scarica con
+  impronta SHA-256 fissa. La CI avvia poi Lyrion nel sistema compilato, su un
+  server ARM, prima di considerare buona l'immagine.
+- Non c'è l'installazione sul disco interno: il sistema sta già sulla scheda SD.
 
 ## Primo avvio
 
@@ -301,9 +339,11 @@ DAC USB emulato: i campioni sono identici a quelli del file, bit per bit.
 ## Struttura del progetto
 
 ```
-configs/sweetspot_x86_64_defconfig    configurazione di Buildroot
-board/sweetspot/common/               kernel PREEMPT_RT, BusyBox
-board/sweetspot/x86/                  GRUB (due copie del sistema) e struttura della chiavetta
+configs/sweetspot_x86_64_defconfig    configurazione di Buildroot per i PC
+configs/sweetspot_rpi_defconfig       configurazione di Buildroot per Raspberry Pi 4 e 5
+board/sweetspot/common/               kernel PREEMPT_RT (parte comune), BusyBox
+board/sweetspot/x86/                  kernel dei PC, GRUB (due copie del sistema), chiavetta
+board/sweetspot/rpi/                  kernel del Pi, config.txt, scheda SD, LEGGIMI
 board/sweetspot/stick/                sweetspot.txt e LEGGIMI.txt
 board/sweetspot/rootfs-overlay/       script di sistema, pagine di impostazione,
                                       plugin di Sweetspot per Lyrion
@@ -314,10 +354,13 @@ scripts/                              compilazione locale e con Docker
 tests/run.sh                          test degli script con /sys e /proc simulati
 tests/cd-simulato.sh                  copia completa di un CD con un lettore finto
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)
+tests/prova-lyrion.sh                 Lyrion avviato nel sistema compilato (CI, anche su ARM)
+tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per ARM
 tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
-Basato su Buildroot 2026.08 e sul kernel LTS 6.18.55 con PREEMPT_RT.
+Basato su Buildroot 2026.08 e sul kernel LTS 6.18.55 con PREEMPT_RT (PC) o sul
+kernel 6.12 LTS della Raspberry Pi Foundation con PREEMPT_RT (Raspberry Pi).
 
 ## Licenza
 

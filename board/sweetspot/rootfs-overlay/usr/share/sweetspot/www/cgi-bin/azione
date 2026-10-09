@@ -23,7 +23,8 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_condiviso="" F_album="" F_artista="" F_anno="" F_disco="" F_archivio="" F_conferma="" F_file="" F_sinistro="" F_destro="" F_modo=""
+F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
+F_sinistro="" F_destro="" F_modo=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -283,6 +284,20 @@ case "$F_a" in
 		rc=$?
 		done_to rete "$(saved_msg $rc "Impostazioni di rete salvate: valgono dal prossimo avvio.")" ;;
 
+	# Scheda DAC I2S del Raspberry Pi: la carica il firmware all'avvio, quindi
+	# autotune scrive l'overlay e riavvia (una volta).
+	scheda_i2s)
+		[ "$(boot_type)" = rpi ] || done_to audio "Solo per il Raspberry Pi."
+		ov=${F_overlay:-$F_scheda}
+		case "$ov" in *[!a-z0-9-]*) done_to audio "Nome dell'overlay non valido: solo lettere minuscole, cifre e trattini." ;; esac
+		[ "${#ov}" -le 60 ] || done_to audio "Nome dell'overlay troppo lungo."
+		[ "$ov" = "$(conf SCHEDA_I2S)" ] && done_to audio "La scheda è già questa."
+		if [ -n "$ov" ]; then sweetspot-config imposta SCHEDA_I2S "$ov"; else sweetspot-config rimuovi SCHEDA_I2S; fi
+		rc=$?
+		[ $rc -eq 0 ] || done_to audio "$(saved_msg $rc)"
+		( sleep 2; setsid sweetspot-autotune --applica ) > /dev/null 2>&1 &
+		done_to stato "Scheda salvata: il Raspberry Pi si riavvia per caricarla (circa un minuto)." ;;
+
 	# --- Sistema -----------------------------------------------------------------
 	sistema)
 		nome=$(safe_name "$F_nome")
@@ -390,7 +405,7 @@ case "$F_a" in
 
 	aggiorna_altra)
 		out=$(sweetspot-aggiorna altra) || done_to sistema "Non si può: $out."
-		( sleep 2; reboot ) >/dev/null 2>&1 &
+		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
 		done_to stato "Riavvio con l'altra versione: la pagina tornerà disponibile tra circa un minuto." ;;
 
 	aggiorna_predefinita)
@@ -404,7 +419,7 @@ case "$F_a" in
 		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
 
 	riavvia)
-		( sleep 2; reboot ) >/dev/null 2>&1 &
+		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
 		done_to stato "Riavvio in corso: la pagina tornerà disponibile tra circa un minuto." ;;
 
 	spegni)

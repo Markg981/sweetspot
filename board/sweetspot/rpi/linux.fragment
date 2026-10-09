@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - frammento del kernel per Raspberry Pi 4 e 5 (sopra
+# bcm2711_rt_defconfig del kernel della Raspberry Pi Foundation e
+# common/linux.fragment). Un solo kernel per i due modelli, con pagine da
+# 4 KB come il kernel8.img di Raspberry Pi OS.
+
+CONFIG_ARM64_4K_PAGES=y
+
+# Frequenza della CPU gestita dal firmware del Pi.
+CONFIG_ARM_RASPBERRYPI_CPUFREQ=y
+CONFIG_SENSORS_RASPBERRYPI_HWMON=y
+
+# Uscita audio integrata (jack e HDMI): spenta in config.txt, resta un modulo.
+CONFIG_SND_BCM2835=m
+
+# Schede DAC I2S (HiFiBerry, Allo, IQaudio...): moduli caricati dall'overlay
+# scelto nella pagina Audio, sia sul Pi 4 sia sul Pi 5 (I2S di RP1).
+CONFIG_SND_SOC=m
+CONFIG_SND_BCM2835_SOC_I2S=m
+CONFIG_SND_DESIGNWARE_I2S=m
+
+# Niente fotocamere, codec video e Bluetooth: un player non li usa.
+# CONFIG_MEDIA_SUPPORT is not set
+# CONFIG_BT is not set

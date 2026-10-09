@@ -21,7 +21,8 @@
 # errore del kernel: riavvio automatico dopo 10 secondi) riparte la
 # versione di prima, che lo segnala nella pagina Sistema.
 #
-# Pacchetto (creato da post-image.sh): un .tar con bzImage, rootfs.cpio.zst,
+# Pacchetto (creato da post-image.sh): un .tar con il kernel (bzImage, sul
+# Raspberry Pi Image.gz con alberi dei dispositivi e overlay), rootfs.cpio.zst,
 # versione, architettura e SHA256SUMS, che viene controllato prima di
 # rendere avviabile la nuova copia. La compilazione ufficiale aggiunge
 # SHA256SUMS.minisig, la firma con la chiave del progetto: se il sistema ha la
@@ -35,7 +36,8 @@ PAUSABLE=$RUN/sospendibili
 # del progetto su GitHub), nella forma dell'API delle release di GitHub.
 RELEASES=${SWEETSPOT_RELEASES:-$(conf AGGIORNAMENTI_URL https://api.github.com/repos/Markg981/sweetspot/releases/latest)}
 AVVIO=${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}
-ARCH=${SWEETSPOT_ARCH:-$(uname -m)}
+# Scheda del sistema (x86_64, rpi): il pacchetto deve essere per lei.
+ARCH=${SWEETSPOT_ARCH:-$(board)}
 PKG_NAME="sweetspot-$ARCH-aggiornamento.tar"
 VERSION_FILE=${SWEETSPOT_VERSION_FILE:-/etc/sweetspot-version}
 # Chiave pubblica del progetto: con questa, solo i pacchetti firmati dalla
@@ -58,11 +60,11 @@ do_status() {
 	echo "versione=$(current_version)"
 	echo "copia=$slot"
 	if stick_mount ro; then
-		env=$STICK_MNT/boot/grub/grubenv
+		env=$(boot_env)
 		def=$(grubenv_get "$env" slot)
 		echo "predefinita=${def:-a}"
 		echo "prova=$(grubenv_get "$env" prova)"
-		if [ -f "$(slot_dir "$STICK_MNT" "$other")/bzImage" ]; then
+		if [ -f "$(slot_dir "$STICK_MNT" "$other")/$(kernel_file)" ]; then
 			echo "altra_versione=$(cat "$STICK_MNT/boot/versioni/$other" 2>/dev/null || echo sconosciuta)"
 		fi
 		stick_umount
@@ -131,11 +133,14 @@ prepare_slot() {
 	local slot other env d
 	slot=$(running_slot)
 	other=$(other_slot "$slot")
-	env=$STICK_MNT/boot/grub/grubenv
+	env=$(boot_env)
 	grubenv_set "$env" "slot=$slot" prova= tentato= || return 1
 	d=$(slot_dir "$STICK_MNT" "$other")
+	# Raspberry Pi: la copia e' una cartella intera (kernel, albero dei
+	# dispositivi, overlay); con GRUB la copia A sta nella cartella principale.
+	if [ "$(boot_type)" = rpi ]; then rm -rf "$d"; fi
 	mkdir -p "$d" "$STICK_MNT/boot/versioni" || return 1
-	rm -f "$d/bzImage" "$d/rootfs.cpio.zst" "$STICK_MNT/boot/versioni/$other"
+	rm -f "$d/$(kernel_file)" "$d/rootfs.cpio.zst" "$STICK_MNT/boot/versioni/$other"
 	rm -rf "$STICK_MNT/aggiornamento.tmp"
 	mkdir -p "$STICK_MNT/aggiornamento.tmp" || return 1
 	sync
@@ -157,7 +162,7 @@ verify_and_install() { # cartella_estratta cartella_copia copia
 		[ "$tc" = "Sweetspot $(head -n 1 "$x/versione" 2>/dev/null) $(cat "$x/architettura" 2>/dev/null)" ] ||
 			{ echo "la firma appartiene a un altro pacchetto"; return 1; }
 	fi
-	for f in bzImage rootfs.cpio.zst versione architettura; do
+	for f in "$(kernel_file)" rootfs.cpio.zst versione architettura; do
 		grep -q " \*\{0,1\}$f\$" "$x/SHA256SUMS" || { echo "pacchetto incompleto"; return 1; }
 	done
 	[ "$(cat "$x/architettura" 2>/dev/null)" = "$ARCH" ] ||
@@ -166,11 +171,22 @@ verify_and_install() { # cartella_estratta cartella_copia copia
 		{ echo "pacchetto rovinato (controllo SHA-256 non superato): riprova"; return 1; }
 	v=$(head -n 1 "$x/versione")
 	valid_value "$v" || { echo "versione non valida"; return 1; }
-	mv "$x/bzImage" "$d/bzImage" && mv "$x/rootfs.cpio.zst" "$d/rootfs.cpio.zst" || { echo "scrittura non riuscita"; return 1; }
+	# Tutto il contenuto del pacchetto va nella copia (kernel e sistema; sul
+	# Raspberry Pi anche alberi dei dispositivi e overlay).
+	for f in "$x"/*; do
+		case "${f##*/}" in SHA256SUMS*|versione|architettura) continue ;; esac
+		mv "$f" "$d/" || { echo "scrittura non riuscita"; return 1; }
+	done
+	if [ "$(boot_type)" = rpi ]; then
+		# Riga di comando della copia nuova, con i parametri adattati a questo
+		# Raspberry Pi; tryboot.txt la fa provare al prossimo riavvio.
+		rpi_cmdline "$other" "$(rpi_tune "$(running_slot)")" > "$d/cmdline.txt"
+		rpi_boot_config "$STICK_MNT/tryboot.txt" "$other" || { echo "scrittura non riuscita"; return 1; }
+	fi
 	echo "$v" > "$STICK_MNT/boot/versioni/$other"
 	sync
 	# Prova una volta sola al prossimo avvio.
-	grubenv_set "$STICK_MNT/boot/grub/grubenv" "prova=$other" || { echo "scrittura non riuscita"; return 1; }
+	grubenv_set "$(boot_env)" "prova=$other" || { echo "scrittura non riuscita"; return 1; }
 	echo "$v"
 }
 
@@ -269,7 +285,7 @@ do_cancel() {
 	# La copia non in uso resta vuota: si torna a usare quella attuale.
 	if stick_mount rw; then
 		rm -rf "$STICK_MNT/aggiornamento.tmp"
-		grubenv_set "$STICK_MNT/boot/grub/grubenv" prova=
+		grubenv_set "$(boot_env)" prova=
 		stick_umount
 	fi
 	state "annullato|"
@@ -283,12 +299,13 @@ do_other() {
 	other=$(other_slot "$(running_slot)")
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
 	d=$(slot_dir "$STICK_MNT" "$other")
-	if [ ! -f "$d/bzImage" ] || [ ! -f "$d/rootfs.cpio.zst" ]; then
+	if [ ! -f "$d/$(kernel_file)" ] || [ ! -f "$d/rootfs.cpio.zst" ]; then
 		stick_umount
 		echo "non c'e' un'altra versione installata"
 		return 1
 	fi
-	grubenv_set "$STICK_MNT/boot/grub/grubenv" "prova=$other"
+	grubenv_set "$(boot_env)" "prova=$other"
+	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/tryboot.txt" "$other"
 	stick_umount
 	log "aggiornamento: al prossimo avvio si prova la copia $other"
 }
@@ -296,7 +313,8 @@ do_other() {
 # La versione in uso (avviata a mano dal menu) diventa quella predefinita.
 do_default() {
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
-	grubenv_set "$STICK_MNT/boot/grub/grubenv" "slot=$(running_slot)" prova= tentato=
+	grubenv_set "$(boot_env)" "slot=$(running_slot)" prova= tentato=
+	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)"
 	stick_umount
 }
 
@@ -314,8 +332,23 @@ replace_file() { # nuovo destinazione
 }
 
 refresh_boot() {
-	local disk dev start n
 	[ -d "$AVVIO" ] || return 0
+	if [ "$(boot_type)" = rpi ]; then refresh_boot_rpi; else refresh_boot_grub; fi
+}
+
+# Raspberry Pi: config.txt dal modello di questa versione, con questa copia;
+# firmware del Pi 4 (start4.elf, fixup4.dat) se la versione ne porta uno nuovo.
+refresh_boot_rpi() {
+	local f
+	rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)" && sync
+	for f in "$AVVIO"/firmware/*; do
+		[ -f "$f" ] && replace_file "$f" "$STICK_MNT/${f##*/}"
+	done
+	return 0
+}
+
+refresh_boot_grub() {
+	local disk dev start n
 	replace_file "$AVVIO/BOOTX64.EFI" "$STICK_MNT/EFI/BOOT/BOOTX64.EFI"
 	replace_file "$AVVIO/BOOTIA32.EFI" "$STICK_MNT/EFI/BOOT/BOOTIA32.EFI"
 	# GRUB per BIOS: primo stadio nel settore 0 (senza la tabella delle
@@ -358,7 +391,7 @@ do_confirm() {
 	slot=$(running_slot)
 	mkdir -p "$DIR"
 	stick_mount rw || return 0
-	env=$STICK_MNT/boot/grub/grubenv
+	env=$(boot_env)
 	[ -f "$env" ] || grubenv_set "$env" "slot=$slot"
 	def=$(grubenv_get "$env" slot)
 	tried=$(grubenv_get "$env" tentato)

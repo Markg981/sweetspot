@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - riavvio dalle pagine web.
+#
+# Con GRUB e' un riavvio normale: la copia del sistema da provare la sceglie
+# il menu di avvio (grubenv). Sul Raspberry Pi una copia da provare parte
+# solo con il riavvio "tryboot" del firmware: si fermano i servizi come nel
+# riavvio normale (salvataggio di libreria e impostazioni compreso), poi si
+# riavvia con l'argomento per il firmware. Se la copia nuova non si conferma,
+# al riavvio successivo riparte quella di config.txt.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+# (SWEETSPOT_RCK, SWEETSPOT_REBOOT: sostituti per i test.)
+
+if [ "$(boot_type)" = rpi ] && stick_mount rw; then
+	env=$(boot_env)
+	prova=$(grubenv_get "$env" prova)
+	if [ -n "$prova" ]; then
+		grubenv_set "$env" "tentato=$prova" prova=
+		stick_umount
+		log "riavvio: prova della copia $prova (tryboot)"
+		"${SWEETSPOT_RCK:-/etc/init.d/rcK}"
+		sync
+		exec sweetspot-reboot2 "0 tryboot"
+	fi
+	stick_umount
+fi
+exec ${SWEETSPOT_REBOOT:-reboot}

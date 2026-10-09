@@ -279,7 +279,11 @@ cpu_layout() {
 cpu_has_flag() { grep -q "^flags.*[[:space:]]$1\([[:space:]]\|$\)" "$PROC/cpuinfo" 2>/dev/null; }
 
 cpu_model() {
-	sed -n 's/^model name[[:space:]]*:[[:space:]]*//p' "$PROC/cpuinfo" 2>/dev/null | head -n 1
+	local m
+	m=$(sed -n 's/^model name[[:space:]]*:[[:space:]]*//p' "$PROC/cpuinfo" 2>/dev/null | head -n 1)
+	# ARM (Raspberry Pi): il modello sta nell'albero dei dispositivi.
+	[ -n "$m" ] || m=$(tr -d '\000' < "$PROC/device-tree/model" 2>/dev/null)
+	printf '%s' "$m"
 }
 
 # --- Memoria ------------------------------------------------------------------
@@ -322,9 +326,27 @@ player_buffers() {
 # Trova la scheda audio del DAC. Stampa l'indice ALSA o niente.
 # DAC=auto sceglie il primo dispositivo USB Audio; altrimenti accetta il
 # nome ALSA (es. R26), l'identificativo USB (es. 292b:0a26) o parte del nome.
+# Scheda DAC I2S del Raspberry Pi (SCHEDA_I2S = nome dell'overlay): con
+# DAC=auto si usa lei, cioe' la prima scheda audio non USB che non sia
+# l'uscita HDMI o il jack del Pi.
+i2s_card() {
+	local d id
+	[ -n "$(conf SCHEDA_I2S)" ] || return 1
+	for d in "$PROC"/asound/card[0-9]*; do
+		[ -d "$d" ] || continue
+		[ -f "$d/usbid" ] && continue
+		id=$(cat "$d/id" 2>/dev/null)
+		case "$id" in vc4hdmi*|Headphones|HDMI*|b1|b2|Loopback|Dummy) continue ;; esac
+		echo "${d##*card}"
+		return 0
+	done
+	return 1
+}
+
 dac_find() {
 	local want d idx id usbid name
 	want=$(lower "$(conf DAC auto)")
+	case "$want" in auto|'') i2s_card && return 0 ;; esac
 	for d in "$PROC"/asound/card[0-9]*; do
 		[ -d "$d" ] || continue
 		idx=${d##*card}
@@ -592,8 +614,65 @@ running_slot() {
 
 other_slot() { if [ "$1" = b ]; then echo a; else echo b; fi; }
 
+# Scheda per cui e' compilato il sistema: x86_64 (PC, avvio con GRUB) o rpi
+# (Raspberry Pi 4 e 5, avvio con il firmware del Pi).
+board() {
+	local b
+	b=$(cat "${SWEETSPOT_SCHEDA_FILE:-/etc/sweetspot-scheda}" 2>/dev/null)
+	printf '%s' "${b:-x86_64}"
+}
+
+boot_type() { case "$(board)" in rpi*) echo rpi ;; *) echo grub ;; esac; }
+
+# Cartella di una copia del sistema. GRUB: A nella cartella principale, B in
+# b. Raspberry Pi: a e b (os_prefix in config.txt), ognuna con kernel,
+# albero dei dispositivi, overlay e riga di comando.
 slot_dir() { # radice copia
-	if [ "$2" = b ]; then echo "$1/b"; else echo "$1"; fi
+	if [ "$(boot_type)" = rpi ]; then echo "$1/$2"
+	elif [ "$2" = b ]; then echo "$1/b"
+	else echo "$1"; fi
+}
+
+kernel_file() { if [ "$(boot_type)" = rpi ]; then echo Image.gz; else echo bzImage; fi; }
+
+# Stato dell'avvio (slot, prova, tentato), nel formato di grubenv: con GRUB
+# lo legge e lo aggiorna il menu di avvio; sul Raspberry Pi lo gestiscono gli
+# script, e il firmware legge config.txt (copia in uso) e tryboot.txt (copia
+# da provare una volta, con il riavvio "tryboot").
+boot_env() {
+	if [ "$(boot_type)" = rpi ]; then echo "$STICK_MNT/sweetspot-avvio.env"
+	else echo "$STICK_MNT/boot/grub/grubenv"; fi
+}
+
+# Raspberry Pi: scrive config.txt o tryboot.txt dal modello con la copia
+# indicata (os_prefix).
+rpi_boot_config() { # file copia [modello]
+	local tpl=${3:-${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}/config.txt}
+	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && mv "$1.nuovo" "$1"
+}
+
+# Raspberry Pi: riga di comando del kernel di una copia (cmdline.txt).
+rpi_cmdline() { # copia parametri_adattati
+	printf 'console=tty1 quiet loglevel=3 usbcore.autosuspend=-1 audit=0 panic=10 sweetspot.slot=%s%s\n' "$1" "${2:+ $2}"
+}
+
+# Raspberry Pi: file incluso da config.txt con l'overlay della scheda DAC I2S.
+rpi_scheda_txt() { # overlay
+	echo "# Scheda DAC scelta nella pagina Audio (lo scrive Sweetspot)."
+	if [ -n "$1" ]; then
+		echo "dtparam=i2s=on"
+		echo "dtoverlay=$1"
+	fi
+}
+
+# Raspberry Pi: parametri adattati (autotune) nella riga di comando di una copia.
+rpi_tune() { # copia
+	sed -n 's/.*sweetspot\.slot=[ab] *//p' "$STICK_MNT/$1/cmdline.txt" 2>/dev/null | head -n 1
+}
+
+# Il Raspberry Pi e' partito con tryboot (prova di una copia nuova)?
+rpi_tryboot() {
+	[ "$(od -An -tx1 "$PROC/device-tree/chosen/bootloader/tryboot" 2>/dev/null | tr -d ' \n')" = 00000001 ]
 }
 
 grubenv_get() { # file chiave
