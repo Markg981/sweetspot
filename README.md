@@ -160,6 +160,33 @@ Si vede il primo avvio con il riavvio di adattamento; poi l'interfaccia è su
 `http://localhost:9000/material/` e le impostazioni su
 `http://localhost:8080/cgi-bin/audio`. Ctrl+A e poi X per uscire.
 
+### In VMware (Workstation Pro, Player, Fusion)
+
+Ogni compilazione produce anche `sweetspot-vmware.vmdk` (artifact
+`sweetspot-vmware`): la stessa chiavetta, come disco virtuale.
+
+1. *Crea una nuova macchina virtuale* → *Personalizzata* → *Installerò il
+   sistema operativo più tardi* → sistema **Linux**, versione **Altro Linux
+   6.x a 64 bit** (o "Other Linux 5.x and later kernel 64-bit").
+2. Processore: **almeno 2 core** (con un solo core non c'è il core dedicato
+   all'audio). Memoria: **4 GB**.
+3. Rete: **Bridged** (con la NAT il telefono e le app Lyrion non vedono
+   Sweetspot).
+4. Disco: *Usa un disco virtuale esistente* → `sweetspot-vmware.vmdk`
+   (se chiede di convertirlo al formato nuovo, va bene).
+5. Per provare l'installazione e l'archivio aggiungi un secondo disco nuovo,
+   per esempio da 20 GB.
+6. Firmware: BIOS o UEFI vanno bene entrambi (con UEFI, Secure Boot spento).
+7. Accendi: Sweetspot si adatta e si riavvia una volta; l'indirizzo compare
+   sulla console della macchina virtuale.
+8. Il DAC si collega dal menu di VMware (*VM → Dispositivi rimovibili →
+   il DAC → Connetti*), con il controller USB 3.1.
+
+In macchina virtuale si provano interfaccia, plugin, libreria, archivio,
+installazione e aggiornamenti; **il suono no**: l'audio passa per l'USB
+virtuale di VMware e per lo scheduler di Windows, e core dedicati e kernel
+real-time non possono fare il loro lavoro. Per ascoltare serve il PC vero.
+
 ## Scrivere la chiavetta
 
 Con **Raspberry Pi Imager** ("Usa immagine personalizzata"), **balenaEtcher** o

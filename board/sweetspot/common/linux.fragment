@@ -133,3 +133,11 @@ CONFIG_BACKLIGHT_CLASS_DEVICE=y
 CONFIG_DEBUG_INFO_NONE=y
 # CONFIG_KVM is not set
 # CONFIG_XEN is not set
+
+# Macchine virtuali VMware (Workstation, Player, ESXi) con l'hardware
+# predefinito: scheda di rete VMXNET3, dischi SCSI LSI Logic e paravirtuali.
+CONFIG_VMXNET3=m
+CONFIG_VMWARE_PVSCSI=m
+CONFIG_FUSION=y
+CONFIG_FUSION_SPI=m
+CONFIG_FUSION_SAS=m

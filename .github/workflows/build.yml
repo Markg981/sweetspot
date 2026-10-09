@@ -86,6 +86,17 @@ jobs:
           name: sweetspot-x86_64
           path: output/images/sweetspot.img.xz
           compression-level: 0
+      # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
+      - name: Disco per VMware
+        run: |
+          sudo apt-get install -y qemu-utils
+          qemu-img convert -f raw -O vmdk -o adapter_type=lsilogic,subformat=monolithicSparse \
+            output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
+      - name: Pubblica il disco per VMware
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweetspot-vmware
+          path: output/images/sweetspot-vmware.vmdk
       # Pacchetto per aggiornare dalla pagina Sistema (da internet o da un disco).
       - name: Pubblica il pacchetto di aggiornamento
         uses: actions/upload-artifact@v4
@@ -100,3 +111,4 @@ jobs:
           files: |
             output/images/sweetspot.img.xz
             output/images/sweetspot-x86_64-aggiornamento.tar
+            output/images/sweetspot-vmware.vmdk
