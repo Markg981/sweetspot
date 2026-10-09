@@ -19,7 +19,11 @@ Come si usa
 La musica
 ---------
 - Dischi USB: vengono trovati da soli e letti in sola lettura.
-  Sweetspot non scrive e non cancella mai niente sui tuoi dischi.
+  Sweetspot non scrive e non cancella mai niente sui tuoi dischi, tranne
+  quello che scegli come archivio (pagina Archivio).
+- Archivio sulla scheda SD: Sweetspot ne usa solo 1 GB. Nella pagina
+  Archivio il resto della scheda (o dell'SSD) puo' diventare l'archivio
+  musicale, dove copiare la musica e salvare i CD.
 - Cartelle di rete (NAS, PC): si aggiungono dalla pagina Musica.
 - Funzionano anche le app per Lyrion Music Server (iPeng, Squeezer,
   Material) e gli altri player Squeezebox della casa.
