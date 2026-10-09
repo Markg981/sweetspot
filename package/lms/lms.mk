@@ -31,11 +31,19 @@ LMS_CPAN_ARCH = aarch64-linux-thread-multi
 LMS_BIN_ARCH = aarch64-linux
 LMS_MODULI = lyrion-cpan-5.42-aarch64-linux-thread-multi-b62107b-fc43.tar.xz
 LMS_EXTRA_DOWNLOADS = https://github.com/Markg981/sweetspot/releases/download/dipendenze-lyrion/$(LMS_MODULI)
-LMS_DEPENDENCIES += $(BR2_XZCAT_HOST_DEPENDENCY)
+LMS_DEPENDENCIES += $(BR2_XZCAT_HOST_DEPENDENCY) host-patchelf
 # I moduli (.so) e i loro file .pm vengono dalla stessa compilazione: si
-# sovrappongono a quelli di Lyrion.
+# sovrappongono a quelli di Lyrion. Fedora collega i moduli a libperl.so,
+# che qui non c'e': il Perl di Buildroot e' un unico eseguibile che esporta
+# gli stessi simboli. La dipendenza da libperl.so si toglie, come nei
+# moduli di Lyrion per x86_64, che non la hanno.
 define LMS_INSTALL_MODULI
 	$(XZCAT) $(LMS_DL_DIR)/$(LMS_MODULI) | tar -C $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch -xf -
+	for f in $$(find $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch -name '*.so'); do \
+		for n in $$($(HOST_DIR)/bin/patchelf --print-needed $$f | grep '^libperl\.so'); do \
+			$(HOST_DIR)/bin/patchelf --remove-needed $$n $$f || exit 1; \
+		done; \
+	done
 endef
 endif
 

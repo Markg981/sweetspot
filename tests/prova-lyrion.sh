@@ -33,6 +33,8 @@ if [ -z "${PROVA_LYRION_LOG:-}" ]; then
 	rm -f "$PROVA_LYRION_LOG" "$PROVA_LYRION_LOG".*
 	exit "$rc"
 fi
+# Nel sistema compilato c'e' solo la localizzazione C.
+export LC_ALL=C LANG=C
 PKG=$(readlink -f "$1")
 W=$(mktemp -d)
 R=$W/sistema
