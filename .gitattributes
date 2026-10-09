@@ -1,0 +1,2 @@
+# Script e configurazioni girano su Linux (Buildroot, Docker, target): sempre LF
+* text=auto eol=lf
