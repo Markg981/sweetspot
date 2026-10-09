@@ -10,8 +10,29 @@
 # che i moduli compilati per ARM vadano d'accordo con il Perl di Buildroot.
 #
 #   sudo sh tests/prova-lyrion.sh sweetspot-<scheda>-aggiornamento.tar
+#
+# Nella CI (GITHUB_ACTIONS=true), se la prova non riesce, le ultime righe
+# dell'uscita diventano annotazioni dell'esecuzione: il motivo si legge
+# dalla pagina della CI senza scaricare i registri.
 
 set -eu
+
+# Prima esecuzione: si rilancia lo script registrandone l'uscita.
+if [ -z "${PROVA_LYRION_LOG:-}" ]; then
+	PROVA_LYRION_LOG=$(mktemp)
+	export PROVA_LYRION_LOG
+	{ rc=0; sh "$0" "$@" 2>&1 || rc=$?; echo "$rc" > "$PROVA_LYRION_LOG.rc"; } | tee "$PROVA_LYRION_LOG"
+	rc=$(cat "$PROVA_LYRION_LOG.rc")
+	if [ "$rc" != 0 ] && [ "${GITHUB_ACTIONS:-}" = true ]; then
+		grep -v '^[[:space:]]*$' "$PROVA_LYRION_LOG" | tail -n 120 | sed 's/%/%25/g; s/\r//g' > "$PROVA_LYRION_LOG.coda"
+		split -l 20 "$PROVA_LYRION_LOG.coda" "$PROVA_LYRION_LOG.parte."
+		for f in "$PROVA_LYRION_LOG".parte.*; do
+			echo "::error title=Prova di Lyrion (${f##*.})::$(awk 'BEGIN{ORS="%0A"} {print}' "$f")"
+		done
+	fi
+	rm -f "$PROVA_LYRION_LOG" "$PROVA_LYRION_LOG".*
+	exit "$rc"
+fi
 PKG=$(readlink -f "$1")
 W=$(mktemp -d)
 R=$W/sistema
@@ -81,7 +102,14 @@ die "JSON\n" unless JSON::XS->new->encode({ a => 1 }) eq '{"a":1}';
 die "YAML\n" unless YAML::XS::Load("a: 1\n")->{a} == 1;
 print "prova d'uso: ok\n";
 PERL
-chroot "$R" /usr/bin/perl /tmp/moduli.pl
+if ! chroot "$R" /usr/bin/perl /tmp/moduli.pl; then
+	echo "== Perl del sistema e cartelle dei moduli"
+	chroot "$R" /usr/bin/perl -V:archname -V:version -V:usethreads -V:useithreads -V:usemultiplicity 2>&1 || true
+	ls -la "$R"/opt/lms/CPAN/arch/ 2>&1 | head -n 20
+	ls -la "$R"/opt/lms/CPAN/arch/5.*/ 2>&1 | head -n 40
+	ls "$R"/usr/lib/perl5/*/ 2>&1 | head -n 10
+	exit 1
+fi
 
 echo "== Avvio di Lyrion"
 chroot "$R" /bin/sh -c '
