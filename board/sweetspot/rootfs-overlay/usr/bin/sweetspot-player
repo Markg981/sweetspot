@@ -86,6 +86,19 @@ pin_output_thread() {
 	return 1
 }
 
+# CamillaDSP (correzione ambientale) sul core della riproduzione, tutti i
+# suoi thread: lo avvia il plugin ALSA a ogni brano, si controlla a ogni giro.
+pin_dsp() {
+	local p t
+	[ "$PIN" = 1 ] || return 0
+	[ -f "$RUN/correzione.attiva" ] || return 0
+	for p in $(pidof camilladsp 2>/dev/null); do
+		for t in "$PROC/$p"/task/*; do
+			taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
+		done
+	done
+}
+
 # Indirizzo del player (MAC) fisso: quello della prima scheda di rete, cosi'
 # Lyrion lo riconosce sempre e ne conserva le impostazioni.
 player_mac() {
@@ -165,7 +178,7 @@ resample_args() {
 }
 
 run_player() {
-	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs
+	local card=$1 id name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp
 	id=$(dac_id "$card")
 	name=$(conf NOME_PLAYER Sweetspot)
 	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
@@ -181,8 +194,28 @@ run_player() {
 	PLAYER_MAC=$(player_mac)
 	echo "$PLAYER_MAC" > "$RUN/player.mac"
 
-	set -- -o "hw:CARD=$id,DEV=0" -n "$name" -M Sweetspot -m "$PLAYER_MAC" \
-		-a "$alsa:$periods:$outfmt:1" -b "$(player_buffers)" -C 30 -p "$prio" \
+	# Correzione ambientale (facoltativa): squeezelite suona sul dispositivo
+	# della correzione, che passa ogni brano a CamillaDSP; altrimenti
+	# direttamente sul DAC.
+	dsp=""
+	rm -f "$RUN/correzione.attiva" "$RUN/correzione.errore"
+	if sweetspot-dsp attiva; then
+		if dsp=$(sweetspot-dsp prepara "$card"); then
+			echo "$dsp" > "$RUN/correzione.attiva"
+			log "player: correzione ambientale attiva (CamillaDSP, attenuazione $(sweetspot-dsp guadagno) dB)"
+		else
+			dsp=""
+			echo "configurazione dei filtri non valida" > "$RUN/correzione.errore"
+			log "player: correzione ambientale non applicabile, uscita diretta sul DAC"
+		fi
+	fi
+	if [ -n "$dsp" ]; then
+		set -- -o "$dsp" -O "hw:CARD=$id" -a "$alsa:$periods::0"
+	else
+		set -- -o "hw:CARD=$id,DEV=0" -a "$alsa:$periods:$outfmt:1"
+	fi
+	set -- "$@" -n "$name" -M Sweetspot -m "$PLAYER_MAC" \
+		-b "$(player_buffers)" -C 30 -p "$prio" \
 		-d output=info -f "$SQLOG"
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	if [ "$maxrate" -gt 0 ]; then
@@ -205,6 +238,8 @@ run_player() {
 
 	dsd=$(lower "$(conf DSD auto)")
 	fmt=$(dac_native_dsd "$card")
+	# Con la correzione il DSD si converte in PCM (i filtri lavorano sul PCM).
+	[ -n "$dsp" ] && dsd=pcm
 	case "$dsd" in
 		auto|nativo)
 			if [ -n "$fmt" ]; then
@@ -214,6 +249,7 @@ run_player() {
 				set -- "$@" -e dsd
 			fi ;;
 		dop) set -- "$@" -D "$pausa:dop" ;;
+		pcm) ;;
 		*) set -- "$@" -e dsd ;;
 	esac
 
@@ -261,6 +297,7 @@ player_loop() {
 		while kill -0 "$PID" 2>/dev/null; do
 			if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
 			pin_output_thread "$PID"
+			pin_dsp
 			apply_player_prefs
 			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
 				log "player: DAC scollegato"

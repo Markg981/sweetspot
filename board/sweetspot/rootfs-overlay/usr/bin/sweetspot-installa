@@ -219,6 +219,9 @@ copy_system() { # radice_nuova archivio(si|no) etichetta_archivio_vecchio
 	if [ -d "$STICK_MNT/$DATA_DIR_NAME" ]; then
 		cp -r "$STICK_MNT/$DATA_DIR_NAME" "$new/" || return 1
 	fi
+	if [ -d "$STICK_MNT/correzione-ambientale" ]; then
+		cp -r "$STICK_MNT/correzione-ambientale" "$new/" || return 1
+	fi
 	sync
 	# Controllo: il sistema copiato e' identico a quello in uso.
 	cmp -s "$src/bzImage" "$new/bzImage" && cmp -s "$src/rootfs.cpio.zst" "$new/rootfs.cpio.zst"

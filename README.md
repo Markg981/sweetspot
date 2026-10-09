@@ -48,7 +48,7 @@ Daphile:
 
 | Sezione | Cosa contiene |
 | --- | --- |
-| **Audio** | DAC riconosciuto, formato che arriva al DAC in quel momento con la **verifica bit-perfect**, volume (fisso, del DAC, software), DSD, ricampionamento facoltativo con scelta del filtro, opzioni per esperti (buffer, periodi, pause) |
+| **Audio** | DAC riconosciuto, formato che arriva al DAC in quel momento con la **verifica bit-perfect**, volume (fisso, del DAC, software), DSD, ricampionamento facoltativo con scelta del filtro, **correzione ambientale** con REW, opzioni per esperti (buffer, periodi, pause) |
 | **Musica** | stato della libreria, dischi trovati (escludi/includi), cartelle di rete (aggiunta con prova di accesso) |
 | **Archivio** | il disco dove Sweetspot scrive: copia di cartelle da altri dischi e dal NAS, cartella di rete **Musica** per copiare dal PC o dal Mac, **copia dei CD** |
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
@@ -58,6 +58,28 @@ Daphile:
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
 anche con il Blocco note).
+
+### Correzione ambientale (REW)
+
+Facoltativa e spenta di serie: quando è spenta non c'è niente in mezzo e il
+percorso resta bit-perfect. Si misura la stanza con **REW** e un microfono di
+misura (UMIK-1/UMIK-2): REW crea uno sweep che si suona da Sweetspot, poi
+l'equalizzatore *Generic* calcola i filtri. Il loro testo (*Export filter
+settings as text*) si incolla in *Audio → Correzione ambientale*, uno per il
+diffusore sinistro e uno per il destro.
+
+- I filtri li applica **CamillaDSP** in virgola mobile a 64 bit, alla
+  frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
+  frequenza), sul core dedicato all'audio con priorità real-time; DAC a 16 bit
+  con dither.
+- Sweetspot calcola la curva della correzione e un'**attenuazione** che evita
+  la saturazione; la pagina mostra la curva dei due canali.
+- **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
+  attenuazione, così il confronto con la correzione accesa non è falsato dal
+  volume.
+- Il DSD diventa PCM mentre la correzione è accesa.
+- I filtri restano sulla chiavetta, nella cartella `correzione-ambientale`
+  (testo di REW, leggibile anche dal computer).
 
 ### Archivio musicale e cartella di rete
 
@@ -228,6 +250,7 @@ decomprimerlo. La chiavetta resta leggibile da Windows e macOS come unità
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
+| `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
 | `ARCHIVIO` | nome del disco usato come archivio musicale | vuoto |
 | `ARCHIVIO_CONDIVISO`, `ARCHIVIO_PASSWORD` | cartella di rete Musica | no, vuoto |
 | `AGGIORNAMENTI_URL` | altra fonte degli aggiornamenti (API release di GitHub) | questo progetto |
@@ -275,6 +298,7 @@ board/sweetspot/rootfs-overlay/       script di sistema, pagine di impostazione,
                                       plugin di Sweetspot per Lyrion
 package/lms, package/lms-material     Lyrion Music Server e Material Skin
 package/sweetspot-tools               firme AccurateRip per la copia dei CD
+package/camilladsp, package/alsa-cdsp CamillaDSP e plugin ALSA per la correzione ambientale
 scripts/                              compilazione locale e con Docker
 tests/run.sh                          test degli script con /sys e /proc simulati
 tests/cd-simulato.sh                  copia completa di un CD con un lettore finto

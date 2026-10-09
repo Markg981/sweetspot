@@ -1,0 +1,363 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - correzione ambientale con i filtri misurati con REW.
+#
+#   sweetspot-dsp leggi FILE        filtri di un'esportazione di REW, uno per
+#                                   riga: "TIPO FREQ GUADAGNO PARAMETRO VALORE";
+#                                   errori come "errore|riga|messaggio"
+#   sweetspot-dsp attiva            esce con 0 se la correzione va usata
+#                                   (CORREZIONE=si o confronto, filtri validi)
+#   sweetspot-dsp guadagno          attenuazione in dB che evita la saturazione
+#   sweetspot-dsp risposta          curva della correzione: "Hz sinistro destro"
+#   sweetspot-dsp prepara SCHEDA    scrive la configurazione di CamillaDSP e il
+#                                   dispositivo ALSA "sweetspot_correzione"
+#   sweetspot-dsp salva SX DX       conserva i filtri (file di testo di REW)
+#                                   sulla chiavetta e in memoria
+#
+# Come funziona: squeezelite suona sul dispositivo ALSA sweetspot_correzione
+# (plugin cdsp). A ogni brano il plugin avvia CamillaDSP con la frequenza, il
+# formato e i canali del brano; CamillaDSP applica i filtri in virgola mobile
+# a 64 bit e suona sul DAC con il formato migliore che accetta. Con la
+# correzione spenta niente di tutto questo e' in mezzo: il percorso resta
+# bit-perfect.
+#
+# Filtri: l'esportazione "Filter settings as text" dell'equalizzatore
+# "Generic" di REW (PK, LS/HS, LSC/HSC, HP/LP, HPQ/LPQ, NO, BP, AP), uno per
+# il diffusore sinistro e uno per il destro (se manca, il destro usa il
+# sinistro). Sono indipendenti dalla frequenza di campionamento: valgono per
+# tutti i brani. Sulla chiavetta stanno nella cartella correzione-ambientale.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DSP_DIR=$RUN/correzione
+DSP_YML=$RUN/camilladsp.yml
+ASOUND=${SWEETSPOT_ASOUND:-/etc/asound.conf}
+CAMILLADSP=${SWEETSPOT_CAMILLADSP:-/usr/bin/camilladsp}
+DSP_PCM=sweetspot_correzione
+MAX_TEXT=20000
+
+# --- Lettura dei filtri di REW --------------------------------------------------
+
+parse_rew() { # file
+	tr -d '\r' < "$1" | head -c "$MAX_TEXT" | awk '
+	function num(s) { gsub(/,/, ".", s); return s + 0 }
+	function isnum(s) { gsub(/,/, ".", s); return s ~ /^[-+]?[0-9]*\.?[0-9]+$/ }
+	function bad(msg) { printf "errore|%d|%s\n", NR, msg; errors++ }
+	/^[ \t]*Filter[ \t]+[0-9]+[ \t]*:/ {
+		sub(/^[ \t]*Filter[ \t]+[0-9]+[ \t]*:[ \t]*/, "")
+		n = split($0, t, /[ \t]+/)
+		if (t[1] != "ON") next
+		type = ""; i = 2
+		while (i <= n && t[i] != "Fc") { type = type (type == "" ? "" : " ") t[i]; i++ }
+		if (type == "" || type == "None") next
+		fc = ""; gain = ""; q = ""; bw = ""
+		for (; i <= n; i++) {
+			if (t[i] == "Fc" && isnum(t[i + 1])) { fc = num(t[i + 1]); if (t[i + 2] == "kHz") fc *= 1000 }
+			else if (t[i] == "Gain" && isnum(t[i + 1])) gain = num(t[i + 1])
+			else if (t[i] == "Q" && isnum(t[i + 1])) q = num(t[i + 1])
+			else if (t[i] == "BW" && t[i + 1] == "Oct" && isnum(t[i + 2])) bw = num(t[i + 2])
+		}
+		if (fc == "") { bad("frequenza mancante"); next }
+		if (fc < 5 || fc > 20000) { bad("frequenza " fc " Hz fuori dai limiti (5-20000 Hz)"); next }
+		if (gain != "" && (gain < -30 || gain > 20)) { bad("guadagno " gain " dB fuori dai limiti (-30/+20 dB)"); next }
+		if (q != "" && (q < 0.05 || q > 50)) { bad("Q " q " fuori dai limiti (0,05-50)"); next }
+		if (bw != "" && (bw < 0.01 || bw > 8)) { bad("larghezza " bw " ottave fuori dai limiti"); next }
+		if (type == "PK" || type == "PEQ") {
+			if (gain == "") { bad("guadagno mancante"); next }
+			if (q != "") print "Peaking", fc, gain, "q", q
+			else if (bw != "") print "Peaking", fc, gain, "bandwidth", bw
+			else bad("Q mancante")
+		} else if (type == "LS" || type == "LS 12dB" || type == "HS" || type == "HS 12dB") {
+			if (gain == "") { bad("guadagno mancante"); next }
+			print (substr(type, 1, 1) == "L" ? "Lowshelf" : "Highshelf"), fc, gain, "slope", 12
+		} else if (type == "LS 6dB" || type == "HS 6dB") {
+			if (gain == "") { bad("guadagno mancante"); next }
+			print (substr(type, 1, 1) == "L" ? "LowshelfFO" : "HighshelfFO"), fc, gain, "none", 0
+		} else if (type == "LSC" || type == "HSC" || type == "LSQ" || type == "HSQ") {
+			if (gain == "") { bad("guadagno mancante"); next }
+			print (substr(type, 1, 1) == "L" ? "Lowshelf" : "Highshelf"), fc, gain, "q", (q == "" ? 0.7071 : q)
+		} else if (type == "HP" || type == "LP" || type == "HPQ" || type == "LPQ") {
+			print (substr(type, 1, 1) == "H" ? "Highpass" : "Lowpass"), fc, 0, "q", (q == "" ? 0.7071 : q)
+		} else if (type == "HP1" || type == "LP1" || type == "HP 6dB" || type == "LP 6dB") {
+			print (substr(type, 1, 1) == "H" ? "HighpassFO" : "LowpassFO"), fc, 0, "none", 0
+		} else if (type == "NO") {
+			print "Notch", fc, 0, "q", (q == "" ? 30 : q)
+		} else if (type == "BP") {
+			print "Bandpass", fc, 0, "q", (q == "" ? 0.7071 : q)
+		} else if (type == "AP") {
+			print "Allpass", fc, 0, "q", (q == "" ? 0.7071 : q)
+		} else {
+			bad("tipo di filtro " type " non supportato (usa l'\''equalizzatore Generic di REW)")
+		}
+		count++
+		if (count > 60) { bad("troppi filtri (al massimo 60 per canale)"); exit }
+	}
+	END { exit errors > 0 }'
+}
+
+# Filtri validi di un canale (sinistro|destro) in memoria; il destro senza
+# file usa quelli del sinistro.
+channel_filters() {
+	local f=$DSP_DIR/$1.txt
+	[ "$1" = destro ] && [ ! -s "$f" ] && f=$DSP_DIR/sinistro.txt
+	[ -s "$f" ] || return 0
+	parse_rew "$f" 2>/dev/null | grep -v '^errore|'
+}
+
+filters_ok() {
+	[ -s "$DSP_DIR/sinistro.txt" ] || return 1
+	parse_rew "$DSP_DIR/sinistro.txt" > /dev/null || return 1
+	[ ! -s "$DSP_DIR/destro.txt" ] || parse_rew "$DSP_DIR/destro.txt" > /dev/null
+}
+
+# CORREZIONE: no (spenta: percorso bit-perfect), si, confronto (CamillaDSP
+# con la sola attenuazione, per confrontare a pari volume).
+dsp_mode() {
+	case "$(lower "$(conf CORREZIONE no)")" in
+		si|yes|1) echo si ;;
+		confronto) echo confronto ;;
+		*) echo no ;;
+	esac
+}
+
+active() {
+	[ "$(dsp_mode)" != no ] && filters_ok
+}
+
+# --- Risposta in frequenza (formule di R. Bristow-Johnson) -------------------------
+
+# Modulo in dB della catena di filtri letta da stdin, sulle frequenze di
+# "Hz" (una per riga in $1), a 48 kHz.
+RESPONSE_AWK='
+function biquad(type, f0, g, p, v, w,    A, w0, cw, sw, al, b0, b1, b2, a0, a1, a2, sa, nr, ni, dr, di) {
+	A = exp(g / 40 * log(10)); w0 = 2 * pi * f0 / fs; cw = cos(w0); sw = sin(w0)
+	if (p == "q") al = sw / (2 * v)
+	else if (p == "bandwidth") al = sw * sinh(log(2) / 2 * v * w0 / sw)
+	else if (p == "slope") al = sw / 2 * sqrt((A + 1 / A) * (12 / v - 1) + 2)
+	if (type == "Peaking") { b0 = 1 + al * A; b1 = -2 * cw; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cw; a2 = 1 - al / A }
+	else if (type == "Lowshelf") { sa = 2 * sqrt(A) * al
+		b0 = A * ((A + 1) - (A - 1) * cw + sa); b1 = 2 * A * ((A - 1) - (A + 1) * cw); b2 = A * ((A + 1) - (A - 1) * cw - sa)
+		a0 = (A + 1) + (A - 1) * cw + sa; a1 = -2 * ((A - 1) + (A + 1) * cw); a2 = (A + 1) + (A - 1) * cw - sa }
+	else if (type == "Highshelf") { sa = 2 * sqrt(A) * al
+		b0 = A * ((A + 1) + (A - 1) * cw + sa); b1 = -2 * A * ((A - 1) + (A + 1) * cw); b2 = A * ((A + 1) + (A - 1) * cw - sa)
+		a0 = (A + 1) - (A - 1) * cw + sa; a1 = 2 * ((A - 1) - (A + 1) * cw); a2 = (A + 1) - (A - 1) * cw - sa }
+	else if (type == "Lowpass") { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = (1 - cw) / 2; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al }
+	else if (type == "Highpass") { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al }
+	else if (type == "Notch") { b0 = 1; b1 = -2 * cw; b2 = 1; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al }
+	else if (type == "Bandpass") { b0 = al; b1 = 0; b2 = -al; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al }
+	else return 0
+	nr = b0 + b1 * cos(w) + b2 * cos(2 * w); ni = -(b1 * sin(w) + b2 * sin(2 * w))
+	dr = a0 + a1 * cos(w) + a2 * cos(2 * w); di = -(a1 * sin(w) + a2 * sin(2 * w))
+	return 10 * log((nr * nr + ni * ni) / (dr * dr + di * di)) / log(10)
+}
+function sinh(x) { return (exp(x) - exp(-x)) / 2 }
+function first_order(type, f0, g, f,    A2, r) {
+	A2 = exp(g / 10 * log(10)); r = (f / f0) * (f / f0)
+	if (type == "LowshelfFO") return 10 * log((r + A2) / (r + 1)) / log(10)
+	if (type == "HighshelfFO") return 10 * log((A2 * r + 1) / (r + 1)) / log(10)
+	if (type == "LowpassFO") return 10 * log(1 / (1 + r)) / log(10)
+	if (type == "HighpassFO") return 10 * log(r / (1 + r)) / log(10)
+	return 0
+}
+BEGIN { pi = atan2(0, -1); fs = 48000 }
+FNR == NR { hz[++nf] = $1; next }
+{ n++; type[n] = $1; f0[n] = $2; g[n] = $3; p[n] = $4; v[n] = $5 }
+END {
+	for (i = 1; i <= nf; i++) {
+		db = 0; w = 2 * pi * hz[i] / fs
+		for (k = 1; k <= n; k++) {
+			if (type[k] ~ /FO$/) db += first_order(type[k], f0[k], g[k], hz[i])
+			else if (type[k] != "Allpass") db += biquad(type[k], f0[k], g[k], p[k], v[k], w)
+		}
+		printf "%s %.2f\n", hz[i], db
+	}
+}'
+
+# Frequenze in scala logaritmica da 20 Hz a 20 kHz.
+freq_grid() {
+	$AWK 'BEGIN { for (i = 0; i <= 150; i++) printf "%.1f\n", 20 * exp(i / 150 * log(1000)) }'
+}
+
+do_response() {
+	local g
+	g=$RUN/correzione.griglia
+	mkdir -p "$RUN"
+	freq_grid > "$g"
+	channel_filters sinistro | $AWK "$RESPONSE_AWK" "$g" - > "$g.sx"
+	channel_filters destro | $AWK "$RESPONSE_AWK" "$g" - > "$g.dx"
+	# "Hz sinistro destro"
+	awk 'FNR == NR { dx[$1] = $2; next } { print $1, $2, dx[$1] }' "$g.dx" "$g.sx"
+	rm -f "$g" "$g.sx" "$g.dx"
+}
+
+# Attenuazione che tiene il punto piu' alto della correzione sotto 0 dB, con
+# mezzo dB di margine; la stessa sui due canali per non cambiare il
+# bilanciamento.
+do_gain() {
+	do_response | awk '
+		{ for (i = 2; i <= 3; i++) if ($i != "" && $i > m) m = $i }
+		END { if (m > 0) printf "%.1f\n", -(m + 0.5); else print "0.0" }'
+}
+
+# --- Configurazione di CamillaDSP e del dispositivo ALSA ---------------------------
+
+# Formato di uscita verso il DAC, il migliore che accetta (nomi di CamillaDSP).
+dsp_out_format() {
+	local f
+	f=" $(dac_formats "$1") "
+	case "$f" in
+		*" S32_LE "*) echo S32_LE ;;
+		*" S24_3LE "*) echo S24_3_LE ;;
+		*" S24_LE "*) echo S24_4_RJ_LE ;;
+		*) echo S16_LE ;;
+	esac
+}
+
+# Filtri attivi: nessuno nel confronto a pari volume.
+active_filters() {
+	[ "$(dsp_mode)" = confronto ] && return 0
+	channel_filters "$1"
+}
+
+write_filters_yaml() { # prefisso canale
+	active_filters "$2" | awk -v pre="$1" '
+		{ n++
+		  printf "  %s_%d:\n    type: Biquad\n    parameters:\n      type: %s\n      freq: %s\n", pre, n, $1, $2
+		  if ($1 ~ /shelf|Peaking/) printf "      gain: %s\n", $3
+		  if ($4 != "none") printf "      %s: %s\n", $4, $5 }'
+}
+
+filter_names() { # prefisso canale
+	active_filters "$2" | awk -v pre="$1" '{ printf "      - %s_%d\n", pre, NR }'
+}
+
+write_config() { # scheda
+	local card=$1 id fmt gain ch pre side
+	id=$(dac_id "$card")
+	fmt=$(dsp_out_format "$card")
+	gain=$(do_gain)
+	{
+		echo "---"
+		echo "# Generato da Sweetspot (sweetspot-dsp): non modificare."
+		echo "# Frequenza, formato e canali in ingresso li passa il plugin cdsp."
+		echo "devices:"
+		echo "  samplerate: 44100"
+		echo "  chunksize: 4096"
+		echo "  queuelimit: 1"
+		echo "  capture:"
+		echo "    type: Stdin"
+		echo "    channels: 2"
+		echo "    format: S32_LE"
+		echo "  playback:"
+		echo "    type: Alsa"
+		echo "    channels: 2"
+		echo "    device: \"hw:CARD=$id,DEV=0\""
+		echo "    format: $fmt"
+		echo "filters:"
+		echo "  attenuazione:"
+		echo "    type: Gain"
+		echo "    parameters:"
+		echo "      gain: $gain"
+		write_filters_yaml sx sinistro
+		write_filters_yaml dx destro
+		if [ "$fmt" = S16_LE ]; then
+			echo "  dither:"
+			echo "    type: Dither"
+			echo "    parameters:"
+			echo "      type: Flat"
+			echo "      bits: 16"
+			echo "      amplitude: 2.0"
+		fi
+		echo "pipeline:"
+		for ch in 0 1; do
+			if [ $ch = 0 ]; then pre=sx; side=sinistro; else pre=dx; side=destro; fi
+			echo "  - type: Filter"
+			echo "    channels: [$ch]"
+			echo "    names:"
+			echo "      - attenuazione"
+			filter_names "$pre" "$side"
+			if [ "$fmt" = S16_LE ]; then echo "      - dither"; fi
+		done
+	} > "$DSP_YML.nuovo" && mv "$DSP_YML.nuovo" "$DSP_YML"
+}
+
+# Frequenze offerte a squeezelite: quelle del DAC fino a 384 kHz.
+dsp_rates() {
+	local r out=""
+	for r in $(dac_rates "$1"); do
+		case "$r" in 44100|48000|88200|96000|176400|192000|352800|384000) out="$out $r" ;; esac
+	done
+	[ -n "$out" ] || out=" 44100 48000"
+	printf '%s' "${out# }"
+}
+
+write_asound() { # scheda
+	{
+		echo "# Generato da Sweetspot (sweetspot-dsp): correzione ambientale."
+		echo "pcm.$DSP_PCM {"
+		echo "	type cdsp"
+		echo "	cpath \"$CAMILLADSP\""
+		echo "	config_out \"$DSP_YML\""
+		echo "	config_cdsp 1"
+		echo "	channels 2"
+		echo "	rates = [ $(dsp_rates "$1") ]"
+		echo "	cargs [ -l \"warn\" -o \"/var/log/camilladsp.log\" ]"
+		echo "}"
+	} > "$ASOUND.nuovo" && mv "$ASOUND.nuovo" "$ASOUND"
+}
+
+do_prepare() { # scheda
+	active || return 1
+	mkdir -p "$RUN"
+	write_config "$1" && write_asound "$1" || return 1
+	if [ -x "$CAMILLADSP" ] && ! "$CAMILLADSP" -c "$DSP_YML" > "$RUN/camilladsp.verifica" 2>&1; then
+		log "correzione: configurazione rifiutata da CamillaDSP: $(tail -n 1 "$RUN/camilladsp.verifica")"
+		return 1
+	fi
+	echo "$DSP_PCM"
+}
+
+# --- Salvataggio -------------------------------------------------------------------
+
+# Sulla chiavetta i filtri stanno in una cartella propria, leggibile anche
+# dal computer: correzione-ambientale/sinistro.txt e destro.txt.
+STICK_DSP_DIR=correzione-ambientale
+
+do_save() { # file_sinistro file_destro
+	local side src tmp
+	mkdir -p "$DSP_DIR"
+	tmp=$DSP_DIR/.salva
+	rm -rf "$tmp"
+	mkdir -p "$tmp"
+	for side in sinistro destro; do
+		if [ "$side" = sinistro ]; then src=$1; else src=$2; fi
+		if [ -n "$src" ] && [ -s "$src" ]; then
+			tr -d '\r' < "$src" | head -c "$MAX_TEXT" > "$tmp/$side.txt"
+		fi
+	done
+	rm -f "$DSP_DIR/sinistro.txt" "$DSP_DIR/destro.txt"
+	cp "$tmp"/*.txt "$DSP_DIR/" 2>/dev/null
+	rm -rf "$tmp"
+	if stick_mount rw; then
+		rm -rf "${STICK_MNT:?}/$STICK_DSP_DIR"
+		mkdir -p "$STICK_MNT/$STICK_DSP_DIR"
+		cp "$DSP_DIR"/sinistro.txt "$DSP_DIR"/destro.txt "$STICK_MNT/$STICK_DSP_DIR/" 2>/dev/null
+		stick_umount
+		log "correzione: filtri salvati sulla chiavetta"
+		return 0
+	fi
+	return 2
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	leggi) parse_rew "$2" ;;
+	attiva) active ;;
+	guadagno) do_gain ;;
+	risposta) do_response ;;
+	prepara) do_prepare "$2" ;;
+	salva) do_save "$2" "$3" ;;
+	*) echo "uso: $0 leggi FILE|attiva|guadagno|risposta|prepara SCHEDA|salva SX DX" >&2; exit 1 ;;
+esac

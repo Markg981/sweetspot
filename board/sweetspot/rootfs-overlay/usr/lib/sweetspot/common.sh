@@ -16,6 +16,9 @@ RUN=${SWEETSPOT_RUN:-/run/sweetspot}
 CONF=$RUN/sweetspot.conf
 DEFAULTS=${SWEETSPOT_DEFAULTS:-/etc/sweetspot/defaults.conf}
 LOGFILE=${SWEETSPOT_LOG:-/var/log/sweetspot.log}
+# awk con le funzioni matematiche (curve dei filtri); nei test quello del sistema.
+# shellcheck disable=SC2034
+AWK=${SWEETSPOT_AWK:-awk}
 STICK_LABEL=SWEETSPOT
 # SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
 STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
