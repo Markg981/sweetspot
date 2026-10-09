@@ -1,18 +1,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - frammento di configurazione del kernel.
-# Si applica sopra x86_64_defconfig (kernel LTS 6.18).
+# Sweetspot - frammento di configurazione del kernel comune a tutte le
+# schede. Si applica sopra la configurazione di base della scheda, insieme
+# al frammento della scheda (x86/linux.fragment, rpi/linux.fragment).
 #
 # Obiettivi: kernel real-time, core isolabili, niente swap,
 # sistema interamente in RAM, uscita USB Audio bit-perfect con DSD nativo.
 
 # --- Identificazione -------------------------------------------------------
 CONFIG_LOCALVERSION="-sweetspot"
+# CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
 
 # --- Real-time e isolamento dei core ---------------------------------------
 CONFIG_EXPERT=y
+# CONFIG_PREEMPT is not set
+# CONFIG_PREEMPT_VOLUNTARY is not set
 CONFIG_PREEMPT_RT=y
 CONFIG_HZ_1000=y
 CONFIG_HIGH_RES_TIMERS=y
@@ -31,13 +35,7 @@ CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
 CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
 CONFIG_CPU_FREQ_GOV_POWERSAVE=y
 CONFIG_CPU_FREQ_GOV_USERSPACE=y
-CONFIG_X86_INTEL_PSTATE=y
-CONFIG_X86_ACPI_CPUFREQ=y
-CONFIG_X86_AMD_PSTATE=y
 CONFIG_CPU_IDLE=y
-CONFIG_INTEL_IDLE=y
-CONFIG_SENSORS_CORETEMP=m
-CONFIG_SENSORS_K10TEMP=m
 
 # --- Avvio da initramfs (sistema in RAM) -----------------------------------
 CONFIG_BLK_DEV_INITRD=y
@@ -47,26 +45,21 @@ CONFIG_TMPFS=y
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
 
-# --- Audio: solo USB Audio, uscita integrata disponibile come modulo ------
+# --- Audio: USB Audio nel kernel -------------------------------------------
 CONFIG_SOUND=y
 CONFIG_SND=y
 CONFIG_SND_VERBOSE_PROCFS=y
 CONFIG_SND_USB=y
 CONFIG_SND_USB_AUDIO=y
-CONFIG_SND_HDA_INTEL=m
 # CONFIG_SND_USB_UA101 is not set
 # CONFIG_SND_USB_CAIAQ is not set
 # CONFIG_SND_USB_6FIRE is not set
 # CONFIG_SND_USB_HIFACE is not set
 
-# --- USB: controller di ogni epoca, chiavetta di avvio ---------------------
+# --- USB e chiavetta (o scheda SD) di avvio --------------------------------
 CONFIG_USB_SUPPORT=y
 CONFIG_USB=y
 CONFIG_USB_XHCI_HCD=y
-CONFIG_USB_XHCI_PCI=y
-CONFIG_USB_EHCI_HCD=y
-CONFIG_USB_OHCI_HCD=y
-CONFIG_USB_UHCI_HCD=y
 CONFIG_USB_STORAGE=y
 CONFIG_USB_UAS=y
 CONFIG_VFAT_FS=y
@@ -76,10 +69,6 @@ CONFIG_NLS_ISO8859_1=y
 CONFIG_NLS_UTF8=y
 
 # --- Dischi con la musica (sempre in sola lettura) e cartelle di rete -----
-CONFIG_ATA=y
-CONFIG_SATA_AHCI=y
-CONFIG_ATA_PIIX=y
-CONFIG_BLK_DEV_NVME=y
 CONFIG_EXT4_FS=y
 CONFIG_EXFAT_FS=m
 CONFIG_NTFS3_FS=m
@@ -89,14 +78,7 @@ CONFIG_CIFS=m
 CONFIG_SMB_SERVER=m
 CONFIG_NFS_FS=m
 
-# --- Rete cablata (anche adattatori USB) -----------------------------------
-CONFIG_R8169=m
-CONFIG_E1000E=m
-CONFIG_IGB=m
-CONFIG_IGC=m
-CONFIG_TIGON3=m
-CONFIG_ATL1C=m
-CONFIG_ALX=m
+# --- Adattatori di rete USB ------------------------------------------------
 CONFIG_USB_USBNET=m
 CONFIG_USB_RTL8152=m
 CONFIG_USB_NET_AX88179_178A=m
@@ -107,25 +89,6 @@ CONFIG_USB_NET_CDCETHER=m
 CONFIG_RFKILL=y
 CONFIG_CFG80211=m
 CONFIG_MAC80211=m
-CONFIG_IWLWIFI=m
-CONFIG_IWLDVM=m
-CONFIG_IWLMVM=m
-CONFIG_IWLMLD=m
-CONFIG_ATH9K=m
-CONFIG_MT7921E=m
-
-# --- Schermo: console di base, spegnimento del pannello --------------------
-CONFIG_DRM=y
-CONFIG_DRM_SIMPLEDRM=y
-CONFIG_SYSFB_SIMPLEFB=y
-CONFIG_DRM_FBDEV_EMULATION=y
-CONFIG_FRAMEBUFFER_CONSOLE=y
-# i915 non e' compatibile con PREEMPT_RT: lo schermo resta sul framebuffer
-# di base (simpledrm) e la retroilluminazione si spegne via ACPI, dove c'e'.
-CONFIG_ACPI_VIDEO=m
-# Nouveau serve solo a spegnere la GPU NVIDIA dei portatili Optimus.
-CONFIG_DRM_NOUVEAU=m
-CONFIG_BACKLIGHT_CLASS_DEVICE=y
 
 # --- Meno attivita' di fondo ----------------------------------------------
 # CONFIG_DEBUG_INFO is not set
@@ -133,11 +96,3 @@ CONFIG_BACKLIGHT_CLASS_DEVICE=y
 CONFIG_DEBUG_INFO_NONE=y
 # CONFIG_KVM is not set
 # CONFIG_XEN is not set
-
-# Macchine virtuali VMware (Workstation, Player, ESXi) con l'hardware
-# predefinito: scheda di rete VMXNET3, dischi SCSI LSI Logic e paravirtuali.
-CONFIG_VMXNET3=m
-CONFIG_VMWARE_PVSCSI=m
-CONFIG_FUSION=y
-CONFIG_FUSION_SPI=m
-CONFIG_FUSION_SAS=m

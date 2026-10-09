@@ -1,0 +1,28 @@
+# Sweetspot - avvio del Raspberry Pi. Lo riscrive Sweetspot a ogni
+# aggiornamento: le impostazioni sono in sweetspot.txt e nelle pagine web.
+[all]
+arm_64bit=1
+# Copia del sistema da avviare (a o b): kernel, sistema in RAM, alberi dei
+# dispositivi, overlay e riga di comando (cmdline.txt) sono nella sua cartella.
+os_prefix=@COPIA@/
+kernel=Image.gz
+initramfs rootfs.cpio.zst followkernel
+
+# Firmware del Pi 4 (il Pi 5 ha il suo nella EEPROM).
+[pi4]
+start_file=start4.elf
+fixup_file=fixup4.dat
+dtoverlay=disable-bt
+[pi5]
+dtoverlay=disable-bt-pi5
+[all]
+
+# Uscita audio integrata (jack e HDMI) spenta: il suono va solo al DAC.
+dtparam=audio=off
+# Nessuna ricerca di fotocamere e schermi DSI, nessuna schermata iniziale.
+camera_auto_detect=0
+display_auto_detect=0
+disable_splash=1
+
+# Scheda DAC I2S scelta nella pagina Audio (overlay).
+include sweetspot-scheda.txt

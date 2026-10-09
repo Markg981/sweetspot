@@ -142,7 +142,10 @@ if [ "$jstate" != scarica ] && [ "$jstate" != controlla ] && [ "$jstate" != pron
 fi
 echo '</div>'
 
-# --- Installazione sul disco interno -------------------------------------------------
+# --- Installazione sul disco interno (solo PC: il Raspberry Pi parte gia'
+# dalla sua scheda SD) ------------------------------------------------------------
+installed=""
+if [ "$(boot_type)" = grub ]; then
 ist=$(sweetspot-installa stato)
 istate=${ist%%|*}; irest=${ist#*|}
 istep=${irest%%|*}; irest=${irest#*|}
@@ -203,10 +206,11 @@ EOF2
 [ -n "$installed" ] && echo '</details>'
 echo '</div>'
 
+fi
 cat <<HTML
 <h2>Accensione</h2>
 <div class="card formcard">
-<p class="sub">Spegni Sweetspot da qui prima di staccare la corrente: libreria, plugin e impostazioni vengono salvati sulla $( [ -n "$installed" ] && echo "partizione di sistema del disco" || echo chiavetta).</p>
+<p class="sub">Spegni Sweetspot da qui prima di staccare la corrente: libreria, plugin e impostazioni vengono salvati sulla $(if [ "$(boot_type)" = rpi ]; then echo "scheda SD"; elif [ -n "$installed" ]; then echo "partizione di sistema del disco"; else echo chiavetta; fi).</p>
 HTML
 button riavvia "Riavvia"
 button spegni "Spegni" "" "" danger

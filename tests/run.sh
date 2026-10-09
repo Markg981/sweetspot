@@ -606,6 +606,147 @@ if command -v minisign > /dev/null; then
 	rm -f "$UPD/pkg/SHA256SUMS.minisig"
 fi
 
+echo "Raspberry Pi"
+PI=$WORK/rpi
+mkdir -p "$PI/proc/device-tree/chosen/bootloader" "$PI/run" "$PI/sys/devices/system/cpu/smt" "$PI/stick/a/overlays" \
+	"$PI/stick/boot/versioni" "$PI/media/USB" "$PI/avvio/firmware" "$PI/bin" "$PI/pkg"
+echo rpi > "$PI/scheda"
+export SWEETSPOT_SCHEDA_FILE=$PI/scheda
+echo 0-3 > "$PI/sys/devices/system/cpu/online"
+echo notsupported > "$PI/sys/devices/system/cpu/smt/control"
+for c in 0 1 2 3; do mkcpu "$PI" $c "$c"; done
+printf 'MemTotal:        3884000 kB\n' > "$PI/proc/meminfo"
+printf 'processor\t: 0\nBogoMIPS\t: 108.00\nFeatures\t: fp asimd evtstrm crc32 cpuid\nCPU implementer\t: 0x41\n' > "$PI/proc/cpuinfo"
+printf 'Raspberry Pi 4 Model B Rev 1.5\000' > "$PI/proc/device-tree/model"
+printf '\000\000\000\000' > "$PI/proc/device-tree/chosen/bootloader/tryboot"
+echo "coherent_pool=1M 8250.nr_uarts=0 console=tty1 quiet loglevel=3 usbcore.autosuspend=-1 audit=0 panic=10 sweetspot.slot=a" > "$PI/proc/cmdline"
+echo "v1.0.0 (2026-10-01)" > "$PI/version"
+cp "$ROOT/board/sweetspot/rpi/config.txt" "$PI/avvio/config.txt"
+echo "firmware nuovo" > "$PI/avvio/firmware/start4.elf"
+echo "firmware vecchio" > "$PI/stick/start4.elf"
+echo A-kernel > "$PI/stick/a/Image.gz"
+echo A-rootfs > "$PI/stick/a/rootfs.cpio.zst"
+echo A-dtb > "$PI/stick/a/bcm2711-rpi-4-b.dtb"
+echo v1.0.0 > "$PI/stick/boot/versioni/a"
+pi() { run "$PI" "SWEETSPOT_STICK_DIR=$PI/stick; STICK_MNT=$PI/stick; SWEETSPOT_AVVIO=$PI/avvio; $*"; }
+expect "scheda e avvio del Pi" "rpi rpi Image.gz $PI/stick/b $PI/stick/sweetspot-avvio.env" \
+	"$(pi 'echo $(board) $(boot_type) $(kernel_file) $(slot_dir $STICK_MNT b) $(boot_env)')"
+expect "modello dall'albero dei dispositivi" "Raspberry Pi 4 Model B Rev 1.5" "$(pi cpu_model)"
+expect "non e' un avvio di prova (tryboot)" "no" "$(pi 'rpi_tryboot && echo si || echo no')"
+pi "rpi_boot_config $PI/stick/config.txt a"
+expect "config.txt dal modello, copia A" "os_prefix=a/|include sweetspot-scheda.txt" \
+	"$(grep -E '^(os_prefix|include)' "$PI/stick/config.txt" | tr '\n' '|' | sed 's/|$//')"
+pi "rpi_cmdline a 'cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678'" > "$PI/stick/a/cmdline.txt"
+expect "parametri adattati letti da cmdline.txt" "cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678" "$(pi 'rpi_tune a')"
+expect "scheda I2S in sweetspot-scheda.txt" "dtparam=i2s=on|dtoverlay=hifiberry-dacplus" \
+	"$(pi 'rpi_scheda_txt hifiberry-dacplus' | grep -v '^#' | tr '\n' '|' | sed 's/|$//')"
+expect "nessuna scheda I2S: file senza overlay" "" "$(pi 'rpi_scheda_txt ""' | grep -v '^#')"
+p=$(SWEETSPOT_SCHEDA_FILE=$PI/scheda tune "$PI")
+expect "parametri del Pi" "cpuidle.off=1 isolcpus=managed_irq,domain,2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0,1" "${p% sweetspot.tune=*}"
+printf 'SCHEDA_I2S=hifiberry-dacplus\n' > "$WORK/i2s.txt"
+run "$PI" "config_build $WORK/i2s.txt" >/dev/null
+p=$(tune "$PI")
+case "$p" in *" sweetspot.i2s=hifiberry-dacplus "*) ok "la scheda I2S entra nei parametri (un solo riavvio)" ;; *) ko "scheda I2S nei parametri" "... sweetspot.i2s=hifiberry-dacplus ..." "$p" ;; esac
+# Schede audio del Pi: HDMI (vc4hdmi0) e la scheda I2S
+mkdir -p "$PI/proc/asound/card0" "$PI/proc/asound/card1"
+echo vc4hdmi0 > "$PI/proc/asound/card0/id"
+echo sndrpihifiberry > "$PI/proc/asound/card1/id"
+cat > "$PI/proc/asound/cards" <<'C'
+ 0 [vc4hdmi0       ]: vc4-hdmi - vc4-hdmi-0
+                      vc4-hdmi-0
+ 1 [sndrpihifiberry]: RPi-simple - snd_rpi_hifiberry_dacplus
+                      snd_rpi_hifiberry_dacplus
+C
+expect "DAC I2S trovato (non l'HDMI)" "1 snd_rpi_hifiberry_dacplus" "$(pi 'c=$(dac_find); echo $c $(dac_name $c)')"
+printf 'SCHEDA_I2S=\n' > "$WORK/i2s.txt"
+run "$PI" "config_build $WORK/i2s.txt" >/dev/null
+expect "senza scheda I2S scelta si cerca solo il DAC USB" "" "$(pi dac_find)"
+# Aggiornamento sul Pi: la copia B e' una cartella intera, provata con tryboot
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=a"
+mkpkg_pi() { # versione scheda
+	rm -rf "$PI/pkg"; mkdir -p "$PI/pkg/overlays"
+	echo "kernel $1" > "$PI/pkg/Image.gz"
+	echo "rootfs $1" > "$PI/pkg/rootfs.cpio.zst"
+	echo "dtb $1" > "$PI/pkg/bcm2711-rpi-4-b.dtb"
+	echo "overlay $1" > "$PI/pkg/overlays/hifiberry-dacplus.dtbo"
+	echo "$1" > "$PI/pkg/versione"
+	echo "$2" > "$PI/pkg/architettura"
+	(cd "$PI/pkg" && find . -type f | sed 's|^\./||' | sort | while read -r f; do sha256sum "$f"; done > ../SHA256SUMS && mv ../SHA256SUMS .)
+	tar -C "$PI/pkg" -cf "$PI/media/USB/sweetspot-rpi-aggiornamento.tar" .
+}
+updpi() {
+	local s=$1
+	shift
+	SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$PI/stick \
+		SWEETSPOT_MEDIA=$PI/media SWEETSPOT_VERSION_FILE=$PI/version SWEETSPOT_AVVIO=$PI/avvio \
+		SWEETSPOT_WGET=$UPD/bin/wget-ok SWEETSPOT_CONFERMA_ATTESA=2 SWEETSPOT_RCK=$PI/bin/rcK SWEETSPOT_REBOOT=$PI/bin/reboot \
+		SWEETSPOT_CHIAVE_FIRMA=${PI_PUB:-$PI/nessuna-chiave} \
+		SWEETSPOT_PATH="$PI/bin:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/$s" "$@"
+}
+penv() { pi "grubenv_get $PI/stick/sweetspot-avvio.env $1"; }
+mkpkg_pi v1.1.0 rpi
+expect "pacchetto del Pi trovato" "$PI/media/USB/sweetspot-rpi-aggiornamento.tar" "$(updpi sweetspot-aggiorna pacchetti)"
+updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
+expect "aggiornamento del Pi pronto" "pronto|v1.1.0" "$(cat "$PI/run/aggiornamento/stato")"
+expect "copia B completa (kernel, sistema, albero, overlay)" "kernel v1.1.0|rootfs v1.1.0|dtb v1.1.0|overlay v1.1.0|v1.1.0" \
+	"$(cat "$PI/stick/b/Image.gz")|$(cat "$PI/stick/b/rootfs.cpio.zst")|$(cat "$PI/stick/b/bcm2711-rpi-4-b.dtb")|$(cat "$PI/stick/b/overlays/hifiberry-dacplus.dtbo")|$(cat "$PI/stick/boot/versioni/b")"
+expect "nella copia niente file del pacchetto" "no" "$([ -e "$PI/stick/b/SHA256SUMS" ] || [ -e "$PI/stick/b/versione" ] && echo si || echo no)"
+expect "riga di comando della copia B con i parametri adattati" \
+	"console=tty1 quiet loglevel=3 usbcore.autosuspend=-1 audit=0 panic=10 sweetspot.slot=b cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678" \
+	"$(cat "$PI/stick/b/cmdline.txt")"
+expect "tryboot.txt prova la copia B, config.txt resta su A" "os_prefix=b/|os_prefix=a/" \
+	"$(grep '^os_prefix' "$PI/stick/tryboot.txt")|$(grep '^os_prefix' "$PI/stick/config.txt")"
+expect "stato: prova della copia B" "a|b" "$(penv slot)|$(penv prova)"
+expect "copia A intatta" "A-kernel" "$(cat "$PI/stick/a/Image.gz")"
+# Riavvio dalla pagina: servizi fermati, poi riavvio "tryboot" del firmware
+printf '#!/bin/sh\necho fermati > %s/fermati\n' "$PI" > "$PI/bin/rcK"
+printf '#!/bin/sh\necho "$1" > %s/riavvio\n' "$PI" > "$PI/bin/sweetspot-reboot2"
+printf '#!/bin/sh\necho normale > %s/riavvio\n' "$PI" > "$PI/bin/reboot"
+chmod +x "$PI/bin"/*
+updpi sweetspot-riavvia
+expect "riavvio con tryboot dopo aver fermato i servizi" "fermati|0 tryboot|b|" \
+	"$(cat "$PI/fermati" 2>/dev/null)|$(cat "$PI/riavvio")|$(penv tentato)|$(penv prova)"
+rm -f "$PI/fermati"
+updpi sweetspot-riavvia
+expect "riavvio normale senza prove in sospeso" "normale|" "$(cat "$PI/riavvio")|$(cat "$PI/fermati" 2>/dev/null)"
+# Parte la copia B (tryboot) e si conferma
+echo "coherent_pool=1M console=tty1 quiet sweetspot.slot=b" > "$PI/proc/cmdline"
+printf '\000\000\000\001' > "$PI/proc/device-tree/chosen/bootloader/tryboot"
+expect "avvio di prova riconosciuto" "si" "$(pi 'rpi_tryboot && echo si || echo no')"
+updpi sweetspot-aggiorna conferma
+expect "la copia B si conferma ed e' quella in uso" "b|" "$(penv slot)|$(penv tentato)"
+expect "config.txt ora avvia la copia B" "os_prefix=b/" "$(grep '^os_prefix' "$PI/stick/config.txt")"
+expect "firmware del Pi 4 aggiornato" "firmware nuovo" "$(cat "$PI/stick/start4.elf")"
+# Secondo aggiornamento (copia A) che non parte: si torna a B
+rm -f "$PI/run/aggiornamento/riuscita"
+printf '\000\000\000\000' > "$PI/proc/device-tree/chosen/bootloader/tryboot"
+mkpkg_pi v1.2.0 rpi
+updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
+expect "secondo aggiornamento nella copia A, prova con tryboot" "kernel v1.2.0|a|os_prefix=a/" \
+	"$(cat "$PI/stick/a/Image.gz")|$(penv prova)|$(grep '^os_prefix' "$PI/stick/tryboot.txt")"
+expect "copia A riscritta per intero" "dtb v1.2.0|sweetspot.slot=a" 	"$(cat "$PI/stick/a/bcm2711-rpi-4-b.dtb")|$(grep -o 'sweetspot.slot=[ab]' "$PI/stick/a/cmdline.txt")"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env prova= tentato=a"
+updpi sweetspot-aggiorna conferma
+expect "versione non partita: si resta su B" "b||os_prefix=b/" "$(penv slot)|$(penv tentato)|$(grep '^os_prefix' "$PI/stick/config.txt")"
+expect "versione non partita segnalata" "fallita=v1.2.0" "$(updpi sweetspot-aggiorna stato | grep '^fallita=')"
+mkpkg_pi v1.3.0 x86_64
+updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
+expect "pacchetto per PC rifiutato sul Pi" "errore|pacchetto per un altro tipo di computer (x86_64)" "$(cat "$PI/run/aggiornamento/stato")"
+if command -v minisign > /dev/null; then
+	mkpkg_pi v1.4.0 rpi
+	minisign -S -s "$UPD/chiavi/ok.key" -m "$PI/pkg/SHA256SUMS" -x "$PI/pkg/SHA256SUMS.minisig" -t "Sweetspot v1.4.0 rpi" > /dev/null 2>&1
+	tar -C "$PI/pkg" -rf "$PI/media/USB/sweetspot-rpi-aggiornamento.tar" SHA256SUMS.minisig
+	PI_PUB=$UPD/chiavi/ok.pub updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
+	expect "pacchetto del Pi firmato accettato" "pronto|v1.4.0|no" \
+		"$(cat "$PI/run/aggiornamento/stato")|$([ -e "$PI/stick/a/SHA256SUMS.minisig" ] && echo si || echo no)"
+fi
+expect "installazione sul disco interno non disponibile sul Pi" "non serve su questo computer" \
+	"$(SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-installa; do_start sda si" 2>&1)"
+unset SWEETSPOT_SCHEDA_FILE
+
 echo "Installazione sul disco interno"
 INS=$WORK/ins
 mkdir -p "$INS/sys/block/sda/queue" "$INS/sys/block/sda/device" "$INS/sys/block/sda/sda1" "$INS/sys/block/mmcblk0boot0" \

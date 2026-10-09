@@ -1,0 +1,17 @@
+# Schede DAC per Raspberry Pi (I2S): overlay del firmware|nome per l'utente.
+hifiberry-dac|HiFiBerry DAC+ Light, DAC+ Zero, MiniAmp (e DAC con PCM5102A)
+hifiberry-dacplus|HiFiBerry DAC+, DAC+ Pro, DAC2 Pro, Amp2
+hifiberry-dacplushd|HiFiBerry DAC2 HD
+hifiberry-digi|HiFiBerry Digi+ (uscita S/PDIF)
+hifiberry-digi-pro|HiFiBerry Digi+ Pro (uscita S/PDIF)
+rpi-dacpro|Raspberry Pi DAC Pro
+rpi-dacplus|Raspberry Pi DAC+ e IQaudio DAC+
+rpi-digiampplus|Raspberry Pi DigiAMP+ e IQaudio DigiAMP+
+allo-boss-dac-pcm512x-audio|Allo Boss DAC
+allo-boss2-dac-audio|Allo Boss2
+allo-piano-dac-pcm512x-audio|Allo Piano DAC
+allo-katana-dac-audio|Allo Katana
+allo-digione|Allo DigiOne (uscita S/PDIF)
+justboom-dac|JustBoom DAC e Amp
+i-sabre-q2m|Audiophonics I-Sabre ES9028Q2M
+applepi-dac|Orchard Audio ApplePi DAC

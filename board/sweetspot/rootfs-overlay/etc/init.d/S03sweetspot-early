@@ -18,8 +18,9 @@ write_blacklist() {
 		if ! is_yes "$(conf USCITA_INTEGRATA no)"; then
 			echo "blacklist snd_hda_intel"
 		fi
+		# Wi-Fi dei PC e del Raspberry Pi (brcmfmac).
 		if [ -z "$(conf WIFI_NOME)" ]; then
-			for m in iwlwifi iwlmvm iwlmld iwldvm ath9k mt7921e; do
+			for m in iwlwifi iwlmvm iwlmld iwldvm ath9k mt7921e brcmfmac brcmfmac_wcc brcmutil; do
 				echo "blacklist $m"
 			done
 		fi

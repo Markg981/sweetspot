@@ -119,8 +119,12 @@ check_dac() {
 	usbid=$(dac_usbid "$card")
 	fmts=$(dac_formats "$card")
 	rates=$(dac_rates "$card")
-	emit OK "DAC" "$name (USB $usbid)"
-	emit INFO "Formati del DAC" "$fmts"
+	if [ -n "$usbid" ]; then
+		emit OK "DAC" "$name (USB $usbid)"
+	else
+		emit OK "DAC" "$name (scheda I2S $(conf SCHEDA_I2S))"
+	fi
+	[ -n "$fmts" ] && emit INFO "Formati del DAC" "$fmts"
 	[ -n "$rates" ] && emit INFO "Frequenze del DAC" "$(echo "$rates" | sed 's/ /, /g') Hz"
 	nat=$(dac_native_dsd "$card")
 	case "$(lower "$(conf DSD auto)")" in

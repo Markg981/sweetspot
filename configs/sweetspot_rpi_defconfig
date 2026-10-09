@@ -1,0 +1,138 @@
+# Sweetspot - Raspberry Pi 4, 400, CM4, 5, 500 e CM5 (64 bit). Un'unica
+# immagine per scheda SD (o chiavetta USB) per tutti i modelli: lo stesso
+# kernel e gli stessi programmi, il firmware sceglie da solo l'albero dei
+# dispositivi del modello.
+BR2_aarch64=y
+# Codice per Cortex-A72 (Pi 4): gira identico sul Cortex-A76 del Pi 5.
+BR2_cortex_a72=y
+BR2_ARM_FPU_VFPV4=y
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN=y
+# Toolchain "bleeding-edge": glibc recente come sui PC (2.42, la stessa di
+# Fedora 43, dove si compilano i moduli di Lyrion per ARM).
+BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_AARCH64_GLIBC_BLEEDING_EDGE=y
+# Conversione dei caratteri (UTF-16) per la cartella di rete dell'archivio
+BR2_TOOLCHAIN_GLIBC_GCONV_LIBS_COPY=y
+BR2_TOOLCHAIN_GLIBC_GCONV_LIBS_LIST="UTF-16 UTF-32 UNICODE"
+BR2_CCACHE=y
+# Impronte SHA-256 del kernel della Raspberry Pi Foundation (da Buildroot)
+BR2_GLOBAL_PATCH_DIR="board/raspberrypi/patches"
+
+# Sistema
+BR2_TARGET_GENERIC_HOSTNAME="sweetspot"
+BR2_TARGET_GENERIC_ISSUE="Sweetspot"
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
+BR2_TARGET_GENERIC_GETTY_PORT="tty2"
+BR2_SYSTEM_DHCP=""
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/post-image.sh"
+# Scheda: rpi (avvio con il firmware del Raspberry Pi)
+BR2_ROOTFS_POST_SCRIPT_ARGS="rpi"
+
+# Kernel della Raspberry Pi Foundation (6.12 LTS, lo stesso di Raspberry Pi
+# OS e del firmware qui sotto) nella sua configurazione PREEMPT_RT
+# (bcm2711_rt, la stessa del kernel8_rt.img del firmware): gira sul Pi 4 e
+# sul Pi 5.
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,21b410140c47ffab5668399f6f143c7d7b935c8b)/linux-21b410140c47ffab5668399f6f143c7d7b935c8b.tar.gz"
+BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+BR2_LINUX_KERNEL_DEFCONFIG="bcm2711_rt"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/common/linux.fragment $(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/rpi/linux.fragment"
+BR2_LINUX_KERNEL_IMAGEGZ=y
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-400 broadcom/bcm2711-rpi-cm4 broadcom/bcm2711-rpi-cm4s broadcom/bcm2712-rpi-5-b broadcom/bcm2712d0-rpi-5-b broadcom/bcm2712-d-rpi-5-b broadcom/bcm2712-rpi-500 broadcom/bcm2712-rpi-cm5-cm5io broadcom/bcm2712-rpi-cm5-cm4io broadcom/bcm2712-rpi-cm5l-cm5io broadcom/bcm2712-rpi-cm5l-cm4io"
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+
+# Firmware di avvio del Pi 4 (il Pi 5 lo ha nella EEPROM) e overlay per le
+# schede DAC I2S. config.txt e cmdline.txt li scrive post-image.sh.
+BR2_PACKAGE_RPI_FIRMWARE=y
+BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI4=y
+BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE=""
+BR2_PACKAGE_RPI_FIRMWARE_INSTALL_DTB_OVERLAYS=y
+
+# BusyBox con le applet usate dagli script
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/common/busybox.fragment"
+BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
+
+# Audio
+BR2_PACKAGE_ALSA_UTILS=y
+BR2_PACKAGE_ALSA_UTILS_AMIXER=y
+BR2_PACKAGE_ALSA_UTILS_APLAY=y
+
+# Server musicale: Lyrion Music Server con i suoi plugin e l'interfaccia
+# Material. I moduli compilati per ARM li prepara il workflow "Moduli di
+# Lyrion" di questo progetto.
+BR2_PACKAGE_LMS=y
+BR2_PACKAGE_LMS_MATERIAL=y
+BR2_ROOTFS_USERS_TABLES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/users.txt"
+BR2_PACKAGE_SQLITE=y
+BR2_PACKAGE_JQ=y
+
+# Player: Squeezelite, con tutti i formati e ricampionamento facoltativo
+BR2_PACKAGE_SQUEEZELITE=y
+BR2_PACKAGE_SQUEEZELITE_FFMPEG=y
+BR2_PACKAGE_SQUEEZELITE_DSD=y
+BR2_PACKAGE_SQUEEZELITE_RESAMPLE=y
+BR2_PACKAGE_FAAD2=y
+
+# Correzione ambientale facoltativa (filtri misurati con REW): CamillaDSP,
+# avviato a ogni brano dal plugin ALSA cdsp. Spenta, non e' nel percorso.
+BR2_PACKAGE_CAMILLADSP=y
+BR2_PACKAGE_ALSA_CDSP=y
+
+# Musica da cartelle condivise in rete (SMB) e archivio condiviso
+BR2_PACKAGE_CIFS_UTILS=y
+BR2_PACKAGE_KSMBD_TOOLS=y
+
+# Copia dei CD con un lettore USB
+BR2_PACKAGE_LIBCDIO_PARANOIA=y
+BR2_PACKAGE_FLAC=y
+BR2_PACKAGE_LIBCURL=y
+BR2_PACKAGE_LIBCURL_CURL=y
+BR2_PACKAGE_SWEETSPOT_TOOLS=y
+
+# Certificati per i servizi in streaming, le radio e i plugin
+BR2_PACKAGE_CA_CERTIFICATES=y
+
+# Firmware del Wi-Fi integrato (Pi 4 e 5) e delle schede di rete USB Realtek
+BR2_PACKAGE_BRCMFMAC_SDIO_FIRMWARE_RPI=y
+BR2_PACKAGE_BRCMFMAC_SDIO_FIRMWARE_RPI_WIFI=y
+BR2_PACKAGE_LINUX_FIRMWARE=y
+BR2_PACKAGE_LINUX_FIRMWARE_RTL_815X=y
+
+# Partizione di avvio (FAT32) e dischi USB con la musica
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
+BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
+BR2_PACKAGE_E2FSPROGS=y
+
+# Strumenti di sistema e diagnostica
+BR2_PACKAGE_RT_TESTS=y
+BR2_PACKAGE_HDPARM=y
+BR2_PACKAGE_KMOD=y
+BR2_PACKAGE_KMOD_TOOLS=y
+BR2_PACKAGE_LIBQRENCODE=y
+BR2_PACKAGE_LIBQRENCODE_TOOLS=y
+
+# Verifica della firma degli aggiornamenti
+BR2_PACKAGE_MINISIGN=y
+
+# Rete
+BR2_PACKAGE_AVAHI=y
+BR2_PACKAGE_AVAHI_DAEMON=y
+BR2_PACKAGE_DROPBEAR=y
+BR2_PACKAGE_ETHTOOL=y
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+
+# Sistema in RAM: tutto in un initramfs compresso, caricato dal firmware
+BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_ZSTD=y
+# BR2_TARGET_ROOTFS_TAR is not set
+
+# Strumenti per creare l'immagine
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_MTOOLS=y

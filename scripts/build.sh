@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Compila l'immagine Sweetspot con Buildroot.
-#   ./scripts/build.sh            immagine per PC x86 a 64 bit
+#   ./scripts/build.sh                            PC x86 a 64 bit
+#   ./scripts/build.sh sweetspot_rpi_defconfig    Raspberry Pi 4 e 5
 # Richiede Linux (o WSL2 su Windows) con gli strumenti di compilazione
 # elencati nel README, oppure Docker (vedi scripts/build-docker.sh).
 # La prima compilazione richiede da 40 minuti a qualche ora e circa 15 GB.
@@ -27,5 +28,5 @@ make -C "$BR" BR2_EXTERNAL="$ROOT" O="$OUT" "$DEFCONFIG"
 make -C "$BR" O="$OUT"
 
 echo
-echo "Fatto. Immagine da scrivere sulla chiavetta:"
-echo "  $OUT/images/sweetspot.img.xz"
+echo "Fatto. Immagine da scrivere sulla chiavetta (o sulla scheda SD):"
+ls "$OUT"/images/sweetspot*.img.xz

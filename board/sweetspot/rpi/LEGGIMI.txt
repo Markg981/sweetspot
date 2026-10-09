@@ -1,0 +1,47 @@
+SWEETSPOT - player audio bit-perfect per Raspberry Pi
+=====================================================
+
+Funziona su Raspberry Pi 4, 400, 5 e 500 (anche Compute Module 4 e 5),
+meglio con almeno 2 GB di memoria.
+
+Come si usa
+-----------
+1. Collega il DAC: a una porta USB del Pi (le blu, USB 3, o le nere,
+   USB 2: vanno bene tutte) oppure, se e' una scheda DAC montata sopra il
+   Pi (HiFiBerry, Allo, IQaudio...), sceglila poi nella pagina Audio.
+2. Collega il Pi alla rete di casa con il cavo.
+3. Inserisci questa scheda SD e collega l'alimentatore del Pi.
+4. Al primo avvio Sweetspot si adatta al Pi e si riavvia una volta.
+5. Dal telefono, dal tablet o dal computer apri http://sweetspot.local/
+   Li' scegli la musica, installi i plugin (Qobuz, TIDAL, Spotify, radio)
+   e trovi le impostazioni: menu dell'interfaccia > Impostazioni Sweetspot.
+
+La musica
+---------
+- Dischi USB: vengono trovati da soli e letti in sola lettura.
+  Sweetspot non scrive e non cancella mai niente sui tuoi dischi.
+- Cartelle di rete (NAS, PC): si aggiungono dalla pagina Musica.
+- Funzionano anche le app per Lyrion Music Server (iPeng, Squeezer,
+  Material) e gli altri player Squeezebox della casa.
+
+Aggiornamenti
+-------------
+Pagina Sistema > Cerca aggiornamenti. La versione in uso resta installata:
+se la nuova non parte, staccando e riattaccando l'alimentazione il Pi
+torna da solo alla versione di prima.
+
+Impostazioni
+------------
+Si cambiano dal browser. Restano salvate in questa scheda SD, nel file
+sweetspot.txt, che si puo' modificare anche con il Blocco note.
+
+Se qualcosa non va
+------------------
+- Avvio senza ottimizzazioni: con il computer apri sweetspot.txt su
+  questa scheda SD e scrivi OTTIMIZZAZIONI=no (poi =si per tornare).
+- Prima di staccare la corrente spegni Sweetspot dalla pagina Sistema:
+  libreria, plugin e impostazioni vengono salvati sulla scheda SD.
+- Usa un alimentatore ufficiale: con uno debole il DAC USB puo' perdere
+  il collegamento.
+
+Licenza: GNU GPL versione 3 o successiva.
