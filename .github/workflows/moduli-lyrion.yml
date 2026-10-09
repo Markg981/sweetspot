@@ -59,11 +59,16 @@ jobs:
           docker run --rm -v "$PWD":/w -w /w moduli \
             perl -I vendor/CPAN/build/arch/5.42/${{ matrix.arch }} -I vendor/CPAN/build/arch/5.42 \
             tools/moduli-lyrion/prova.pl
+      # Il nome porta la versione di slimserver-vendor e di Fedora: un file
+      # pubblicato non cambia mai, così Buildroot può fissarne lo SHA-256.
       - name: Pacchetto
+        id: pacchetto
         run: |
-          N=lyrion-cpan-5.42-${{ matrix.arch }}
-          tar -C vendor/CPAN/build/arch -cJf $N.tar.xz 5.42
+          N=lyrion-cpan-5.42-${{ matrix.arch }}-${VENDOR_REF:0:7}-fc${FEDORA}
+          tar -C vendor/CPAN/build/arch --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime=@0 -cJf $N.tar.xz 5.42
           sha256sum $N.tar.xz | tee $N.tar.xz.sha256
+          echo "nome=$N" >> "$GITHUB_OUTPUT"
       - name: Registro della compilazione
         if: always()
         uses: actions/upload-artifact@v4
@@ -72,19 +77,24 @@ jobs:
           path: vendor/CPAN/build.log
       - uses: actions/upload-artifact@v4
         with:
-          name: lyrion-cpan-5.42-${{ matrix.arch }}
-          path: lyrion-cpan-5.42-${{ matrix.arch }}.tar.xz*
+          name: ${{ steps.pacchetto.outputs.nome }}
+          path: ${{ steps.pacchetto.outputs.nome }}.tar.xz*
           compression-level: 0
+      # Si aggiunge solo un file che non c'è ancora: quelli già pubblicati
+      # restano identici (lo SHA-256 nel pacchetto Buildroot resta valido).
       - name: Release
         if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: dipendenze-lyrion
-          name: Dipendenze di Lyrion (moduli compilati)
-          body: |
-            Moduli XS di Lyrion Music Server per Perl 5.42 sulle architetture che
-            Lyrion non fornisce. Compilati da slimserver-vendor ${{ env.VENDOR_REF }}
-            in Fedora ${{ env.FEDORA }} con lo script ufficiale CPAN/buildme.sh.
-            Li usa il pacchetto Buildroot lms-moduli: non sono un'immagine da scrivere.
-          prerelease: true
-          files: lyrion-cpan-5.42-${{ matrix.arch }}.tar.xz*
+        env:
+          GH_TOKEN: ${{ github.token }}
+          N: ${{ steps.pacchetto.outputs.nome }}
+        run: |
+          T=dipendenze-lyrion
+          if ! gh release view $T >/dev/null 2>&1; then
+            gh release create $T --prerelease --title "Dipendenze di Lyrion (moduli compilati)" --notes \
+              "Moduli XS di Lyrion Music Server per Perl 5.42 sulle architetture che Lyrion non fornisce, compilati con lo script ufficiale CPAN/buildme.sh di LMS-Community/slimserver-vendor (il nome di ogni file dice la versione di slimserver-vendor e di Fedora). Li usa il pacchetto Buildroot lms-moduli: non sono un'immagine da scrivere."
+          fi
+          if gh release view $T --json assets --jq '.assets[].name' | grep -qx "$N.tar.xz"; then
+            echo "$N.tar.xz è già pubblicato: resta quello."
+          else
+            gh release upload $T $N.tar.xz $N.tar.xz.sha256
+          fi
