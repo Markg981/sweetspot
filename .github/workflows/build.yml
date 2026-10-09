@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Strumenti di verifica
-        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq
+        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign
       - name: Test degli script
         run: sh tests/run.sh
       - name: Copia di un CD simulato
@@ -72,6 +72,29 @@ jobs:
         with:
           name: registro-compilazione
           path: build.log
+      # Firma del pacchetto di aggiornamento con la chiave del progetto (segreto
+      # SWEETSPOT_FIRMA, vedi scripts/genera-chiave-firma.sh). Senza il segreto
+      # (es. PR da un fork) il pacchetto resta non firmato e gli Sweetspot con
+      # la chiave pubblica lo rifiutano.
+      - name: Firma del pacchetto di aggiornamento
+        env:
+          FIRMA: ${{ secrets.SWEETSPOT_FIRMA }}
+        run: |
+          T=$(ls output/images/sweetspot-*-aggiornamento.tar)
+          if [ -z "$FIRMA" ]; then
+            echo "::warning title=Aggiornamento non firmato::manca il segreto SWEETSPOT_FIRMA (scripts/genera-chiave-firma.sh)"
+            exit 0
+          fi
+          sudo apt-get install -y minisign > /dev/null
+          d=$(mktemp -d); chmod 700 "$d"
+          printf '%s\n' "$FIRMA" > "$d/chiave"
+          tar -xf "$T" -C "$d" SHA256SUMS versione architettura
+          minisign -S -s "$d/chiave" -m "$d/SHA256SUMS" -x "$d/SHA256SUMS.minisig" \
+            -t "Sweetspot $(cat "$d/versione") $(cat "$d/architettura")"
+          P=board/sweetspot/rootfs-overlay/etc/sweetspot/aggiornamenti.pub
+          if [ -f "$P" ]; then minisign -V -p "$P" -m "$d/SHA256SUMS" -x "$d/SHA256SUMS.minisig"; fi
+          tar -rf "$T" -C "$d" SHA256SUMS.minisig
+          rm -rf "$d"
       - name: Salva la cache
         if: always()
         uses: actions/cache/save@v4

@@ -92,6 +92,9 @@ BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
 BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
 BR2_PACKAGE_E2FSPROGS=y
 
+# Verifica della firma degli aggiornamenti
+BR2_PACKAGE_MINISIGN=y
+
 # Strumenti di sistema e diagnostica
 BR2_PACKAGE_RT_TESTS=y
 BR2_PACKAGE_HDPARM=y

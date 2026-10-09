@@ -428,6 +428,7 @@ upd() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$UPD/stick \
 		SWEETSPOT_MEDIA=$UPD/media SWEETSPOT_ARCH=x86_64 SWEETSPOT_VERSION_FILE=$UPD/version \
 		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
+		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
 }
 genv() { $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; grubenv_get \"\$1\" \"\$2\"" sh "$UPD/stick/boot/grub/grubenv" "$1"; }
@@ -489,6 +490,41 @@ EOF2
 chmod +x "$UPD/bin/curl"
 expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
 	"$(SWEETSPOT_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+
+if command -v minisign > /dev/null; then
+	echo "Aggiornamenti firmati"
+	mkdir -p "$UPD/chiavi"
+	minisign -G -W -p "$UPD/chiavi/ok.pub" -s "$UPD/chiavi/ok.key" > /dev/null 2>&1
+	minisign -G -W -p "$UPD/chiavi/altra.pub" -s "$UPD/chiavi/altra.key" > /dev/null 2>&1
+	firma() { # chiave commento
+		minisign -S -s "$UPD/chiavi/$1.key" -m "$UPD/pkg/SHA256SUMS" -x "$UPD/pkg/SHA256SUMS.minisig" -t "$2" > /dev/null 2>&1
+		tar -C "$UPD/pkg" -rf "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar" SHA256SUMS.minisig
+	}
+	echo "BOOT_IMAGE=/bzImage sweetspot.slot=a sweetspot.part=ABCD-1234" > "$UPD/proc/cmdline"
+	setenv slot=a prova= tentato=
+	PKG=$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar
+	mkpkg v2.0.0 x86_64
+	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
+	expect "pacchetto senza firma rifiutato" "errore|pacchetto non firmato: non è un aggiornamento ufficiale" "$(cat "$UPD/run/aggiornamento/stato")"
+	mkpkg v2.0.0 x86_64; firma ok "Sweetspot v2.0.0 x86_64"
+	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
+	expect "pacchetto firmato accettato" "pronto|v2.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+	mkpkg v2.0.1 x86_64; firma altra "Sweetspot v2.0.1 x86_64"
+	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
+	expect "firma con un'altra chiave rifiutata" "errore|firma non valida: il pacchetto è stato alterato o non è ufficiale" "$(cat "$UPD/run/aggiornamento/stato")"
+	mkpkg v2.0.1 x86_64; firma ok "Sweetspot v1.0.0 x86_64"
+	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
+	expect "firma di un'altra versione rifiutata" "errore|la firma appartiene a un altro pacchetto" "$(cat "$UPD/run/aggiornamento/stato")"
+	# Pacchetto firmato e poi alterato: SHA256SUMS cambiato dopo la firma.
+	mkpkg v2.0.2 x86_64
+	minisign -S -s "$UPD/chiavi/ok.key" -m "$UPD/pkg/SHA256SUMS" -x "$UPD/pkg/SHA256SUMS.minisig" -t "Sweetspot v2.0.2 x86_64" > /dev/null 2>&1
+	echo "rootfs alterato" > "$UPD/pkg/rootfs.cpio.zst"
+	(cd "$UPD/pkg" && sha256sum bzImage rootfs.cpio.zst versione architettura > SHA256SUMS)
+	tar -C "$UPD/pkg" -cf "$PKG" SHA256SUMS SHA256SUMS.minisig versione architettura bzImage rootfs.cpio.zst
+	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
+	expect "pacchetto alterato dopo la firma rifiutato" "errore|firma non valida: il pacchetto è stato alterato o non è ufficiale" "$(cat "$UPD/run/aggiornamento/stato")"
+	rm -f "$UPD/pkg/SHA256SUMS.minisig"
+fi
 
 echo "Installazione sul disco interno"
 INS=$WORK/ins
