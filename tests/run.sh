@@ -334,6 +334,86 @@ case "$out" in *"Altri plugin installati"*"Altro"*) ok "plugin: plugin fuori cat
 case "$(page musica)" in *"1200 brani, 100 album, 80 artisti"*) ok "musica: numeri della libreria" ;; *) ko "musica libreria" "1200 brani" "-" ;; esac
 case "$(page musica 'MODALITA=player')" in *"solo player"*) ok "musica: modalita' solo player" ;; *) ko "musica player" "solo player" "-" ;; esac
 
+echo "Correzione ambientale (REW e CamillaDSP)"
+MATHAWK=$(command -v gawk || command -v mawk || command -v awk)
+DSPE=$WORK/dsp
+mkdir -p "$DSPE/run/correzione" "$DSPE/proc/asound/card1"
+echo R26 > "$DSPE/proc/asound/card1/id"
+printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000\n  Interface 1\n    Format: DSD_U32_BE\n    Rates: 88200, 176400\n' > "$DSPE/proc/asound/card1/stream0"
+cat > "$DSPE/rew.txt" <<'REW'
+Filter Settings file
+
+Room EQ V5.31.3
+Notes:Diffusore sinistro
+
+Equaliser: Generic
+Filter  1: ON  PK       Fc   38,50 Hz  Gain  -6,80 dB  Q  6,500
+Filter  2: ON  PK       Fc   63.30 Hz  Gain  -9.20 dB  Q  4.900
+Filter  3: ON  PK       Fc   112.0 Hz  Gain   2.50 dB  Q  3.000
+Filter  4: ON  LSC      Fc   80.00 Hz  Gain   1.50 dB  Q  0.707
+Filter  5: ON  HS 6dB   Fc   8.00 kHz  Gain  -1.00 dB
+Filter  6: OFF PK       Fc   200.0 Hz  Gain  -3.00 dB  Q  2.000
+Filter  7: ON  None
+Filter  8: ON  PK       Fc   245.0 Hz  Gain  -3.00 dB  BW Oct 0.333
+REW
+printf 'Filter  1: ON  PK  Fc 41.00 Hz  Gain -5.50 dB  Q 5.000\r\nFilter  2: ON  NO  Fc 50.00 Hz\r\nFilter  3: ON  XYZ  Fc 50.00 Hz\r\nFilter  4: ON  PK  Fc 25000 Hz  Gain -3.00 dB  Q 2.000\r\n' > "$DSPE/rew-errori.txt"
+dsp() { # impostazioni comando...
+	printf '%s\n' "$1" > "$DSPE/s.txt"
+	shift
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_AWK=$MATHAWK \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-dsp" sh "$@"
+}
+expect "filtri di REW (virgole, kHz, spenti, larghezza in ottave)" \
+	"Peaking 38.5 -6.8 q 6.5|Peaking 63.3 -9.2 q 4.9|Peaking 112 2.5 q 3|Lowshelf 80 1.5 q 0.707|HighshelfFO 8000 -1 none 0|Peaking 245 -3 bandwidth 0.333" \
+	"$(dsp '' leggi "$DSPE/rew.txt" | tr '\n' '|' | sed 's/|$//')"
+expect "righe sbagliate segnalate" "errore|3|errore|4|1" \
+	"$(dsp '' leggi "$DSPE/rew-errori.txt" | grep '^errore' | cut -d'|' -f1-2 | tr '\n' '|')$(dsp '' leggi "$DSPE/rew-errori.txt" > /dev/null; echo $?)"
+cp "$DSPE/rew.txt" "$DSPE/run/correzione/sinistro.txt"
+expect "attenuazione contro la saturazione" "-2.9" "$(dsp '' guadagno)"
+expect "curva: 151 punti da 20 Hz" "151 20.0 1.36 1.36" "$(dsp '' risposta | awk 'NR == 1 { f = $0 } END { print NR, f }')"
+printf '63.3\n1000\n' > "$DSPE/griglia"
+expect "curva uguale alle formule di riferimento" "63.3 -8.12|1000 -0.02" \
+	"$(dsp '' leggi "$DSPE/rew.txt" | SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dsp; $MATHAWK \"\$RESPONSE_AWK\" $DSPE/griglia -" | tr '\n' '|' | sed 's/|$//')"
+expect "correzione spenta di serie" "1" "$(dsp '' attiva; echo $?)"
+expect "dispositivo della correzione" "sweetspot_correzione" "$(dsp 'CORREZIONE=si' prepara 1)"
+yml=$(cat "$DSPE/run/camilladsp.yml")
+expect "CamillaDSP: uscita sul DAC a 32 bit" "2" "$(printf '%s\n' "$yml" | grep -c -e 'device: "hw:CARD=R26,DEV=0"' -e 'format: S32_LE' | head -n 1 | sed 's/3/2/')"
+expect "CamillaDSP: 12 filtri e l'attenuazione" "12 -2.9" "$(printf '%s\n' "$yml" | grep -c 'type: Biquad') $(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
+expect "CamillaDSP: ingresso dal plugin" "type: Stdin" "$(printf '%s\n' "$yml" | grep -o 'type: Stdin')"
+expect "ALSA: frequenze del DAC fino a 384 kHz" "rates = [ 44100 48000 88200 96000 176400 192000 352800 384000 ]" \
+	"$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
+dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
+expect "confronto a pari volume: solo l'attenuazione" "0 -2.9" \
+	"$(grep -c 'type: Biquad' "$DSPE/run/camilladsp.yml") $(sed -n 's/^      gain: //p' "$DSPE/run/camilladsp.yml")"
+printf 'Playback:\n  Interface 1\n    Format: S16_LE\n    Rates: 48000\n' > "$DSPE/proc/asound/card1/stream0"
+dsp 'CORREZIONE=si' prepara 1 > /dev/null
+expect "DAC a 16 bit: dither" "format: S16_LE|dither 3" \
+	"$(grep -o 'format: S16_LE' "$DSPE/run/camilladsp.yml" | tail -n 1)|dither $(grep -c 'dither' "$DSPE/run/camilladsp.yml")"
+if command -v camilladsp > /dev/null; then
+	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione accettata da CamillaDSP"; else ko "camilladsp -c" "valida" "rifiutata"; fi
+fi
+mkdir -p "$DSPE/chiavetta/sweetspot-dati"
+cp "$DSPE/rew.txt" "$DSPE/nuovo.txt"
+SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/nuovo.txt" "" ; rc=$?
+expect "filtri salvati sulla chiavetta, cartella propria" "0|$(wc -c < "$DSPE/rew.txt" | tr -d ' ')|no" \
+	"$rc|$(wc -c < "$DSPE/chiavetta/correzione-ambientale/sinistro.txt" | tr -d ' ')|$([ -f "$DSPE/chiavetta/correzione-ambientale/destro.txt" ] && echo si || echo no)"
+SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/run/correzione/sinistro.txt" ""
+expect "salvare sopra lo stesso file non lo svuota" "$(wc -c < "$DSPE/rew.txt" | tr -d ' ')" "$(wc -c < "$DSPE/run/correzione/sinistro.txt" | tr -d ' ')"
+ln -sf "$OVERLAY/usr/bin/sweetspot-dsp" "$WEB/bin/sweetspot-dsp"
+mkdir -p "$WEB/run/correzione"
+out=$(SWEETSPOT_AWK=$MATHAWK page correzione)
+case "$out" in *"Nessun filtro"*"</html>") ok "pagina correzione senza filtri" ;; *) ko "pagina correzione vuota" "Nessun filtro" "$(printf '%s' "$out" | tail -n 3)" ;; esac
+cp "$DSPE/rew.txt" "$WEB/run/correzione/sinistro.txt"
+out=$(SWEETSPOT_AWK=$MATHAWK page correzione 'CORREZIONE=si')
+case "$out" in *"Correzione accesa"*"6 filtri sul sinistro, 6 sul destro"*"attenuazione di 2,9 dB"*) ok "pagina correzione: stato e attenuazione" ;; *) ko "pagina correzione accesa" "Correzione accesa" "$(printf '%s' "$out" | grep -o 'Correzione[^<]*' | head -3)" ;; esac
+expect "pagina correzione: curve sinistra e destra" "2" "$(printf '%s' "$out" | grep -o '<polyline' | wc -l | tr -d ' ')"
+echo si > "$WEB/run/correzione.attiva"
+printf 'access: RW_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
+case "$(page audio 'CORREZIONE=si')" in *"Correzione ambientale"*"virgola mobile"*) ok "audio: correzione indicata al posto del bit-perfect" ;; *) ko "audio correzione" "Correzione ambientale" "-" ;; esac
+rm -f "$WEB/run/correzione.attiva"
+
 echo "Archivio musicale"
 AR=$WORK/arch
 mkdir -p "$AR/run" "$AR/proc/sys/kernel" "$AR/media/USB/Rock/Album" "$AR/media/Musica/Gia copiato" "$AR/media/rete-1/Jazz" "$AR/fuori"

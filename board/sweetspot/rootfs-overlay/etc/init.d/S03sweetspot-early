@@ -52,6 +52,11 @@ case "$1" in
 			cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
 			# Impostazioni, plugin e libreria di Lyrion salvati.
 			sweetspot-dati ripristina "$STICK_MNT/$DATA_DIR_NAME"
+			# Filtri della correzione ambientale (REW).
+			if [ -d "$STICK_MNT/correzione-ambientale" ]; then
+				mkdir -p "$RUN/correzione"
+				cp "$STICK_MNT/correzione-ambientale/"*.txt "$RUN/correzione/" 2>/dev/null
+			fi
 			stick_umount
 			log "impostazioni lette dalla chiavetta"
 			echo "fatto"

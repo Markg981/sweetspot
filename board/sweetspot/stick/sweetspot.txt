@@ -68,6 +68,12 @@ DSD=auto
 RICAMPIONAMENTO=no
 FILTRO=lineare
 
+# Correzione ambientale con i filtri misurati con REW (pagina Audio >
+# Correzione ambientale). Cambia il segnale, quindi di serie e' spenta.
+# I filtri sono nella cartella correzione-ambientale (testo esportato da REW:
+# sinistro.txt e destro.txt).
+CORREZIONE=no
+
 # Frequenza massima inviata al DAC, in Hz. 0 = quella dichiarata dal DAC.
 FREQUENZA_MAX=0
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-:root { --bg:#f6f4ef; --card:#fff; --ink:#1d1b18; --muted:#6b665d; --ok:#2f7d4f; --warn:#b4541a; --line:#e4dfd5; --accent:#1d1b18; --accent-ink:#f6f4ef; }
-@media (prefers-color-scheme: dark) { :root { --bg:#14130f; --card:#1e1c18; --ink:#efebe3; --muted:#a29c90; --ok:#6fcf97; --warn:#f2994a; --line:#2f2c26; --accent:#efebe3; --accent-ink:#14130f; } }
+:root { --sx:#2563a8; --dx:#b4541a; --bg:#f6f4ef; --card:#fff; --ink:#1d1b18; --muted:#6b665d; --ok:#2f7d4f; --warn:#b4541a; --line:#e4dfd5; --accent:#1d1b18; --accent-ink:#f6f4ef; }
+@media (prefers-color-scheme: dark) { :root { --sx:#7fb3ef; --dx:#f2994a; --bg:#14130f; --card:#1e1c18; --ink:#efebe3; --muted:#a29c90; --ok:#6fcf97; --warn:#f2994a; --line:#2f2c26; --accent:#efebe3; --accent-ink:#14130f; } }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
 main { max-width:720px; margin:0 auto; padding:20px 16px 48px; }
@@ -39,3 +39,14 @@ ol.tracks { color:var(--muted); padding-left:24px; }
 label.check { display:flex; gap:8px; align-items:flex-start; font-weight:400; margin:10px 0; }
 label.check input { width:auto; padding:0; margin-top:3px; }
 pre.note { white-space:pre-wrap; font:inherit; color:var(--muted); margin:8px 0 0; max-height:16em; overflow:auto; }
+textarea { width:100%; min-height:9em; font:13px/1.4 ui-monospace, Menlo, Consolas, monospace; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); }
+svg.curva { width:100%; height:auto; display:block; margin:8px 0; }
+svg.curva text { font:11px sans-serif; fill:var(--muted); }
+svg.curva .griglia { stroke:var(--line); stroke-width:1; }
+svg.curva .zero { stroke:var(--muted); stroke-width:1; }
+svg.curva .sx { stroke:var(--sx); stroke-width:2.5; fill:none; }
+svg.curva .dx { stroke:var(--dx); stroke-width:2.5; fill:none; stroke-dasharray:6 4; }
+.legenda { display:flex; gap:16px; font-size:14px; color:var(--muted); margin-bottom:8px; }
+.legenda .sx, .legenda .dx { display:inline-block; width:22px; height:0; border-top:3px solid var(--sx); vertical-align:middle; margin-right:6px; }
+.legenda .dx { border-top:3px dashed var(--dx); }
+ol.passi li { margin:6px 0; }

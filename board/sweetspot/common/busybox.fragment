@@ -20,3 +20,5 @@ CONFIG_FEATURE_VOLUMEID_LINUXSWAP=y
 CONFIG_FEATURE_STAT_FORMAT=y
 CONFIG_FEATURE_HTTPD_ENCODE_URL_STR=y
 CONFIG_NC=y
+# Funzioni matematiche in awk: curve dei filtri della correzione ambientale.
+CONFIG_FEATURE_AWK_LIBM=y

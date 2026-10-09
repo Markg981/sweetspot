@@ -37,6 +37,14 @@ verdict() { # formato frequenza canali
 			return ;;
 	esac
 	out="$(alsa_bits "$hwfmt") bit ($hwfmt), $(awk "BEGIN {printf \"%g\", $hwrate/1000}") kHz, $hwch canali"
+	if [ -f "$RUN/correzione.attiva" ]; then
+		if [ "$(lower "$(conf CORREZIONE no)")" = confronto ]; then
+			info_row ATTENZIONE "Confronto a pari volume" "Il segnale passa per CamillaDSP con la sola attenuazione, senza i filtri. Uscita: $out."
+		else
+			info_row OK "Correzione ambientale" "I filtri della stanza sono applicati da CamillaDSP in virgola mobile a 64 bit, alla frequenza del brano. Uscita: $out."
+		fi
+		return
+	fi
 	case "$src_type" in
 		dsf|dff)
 			if [ "$src_rate" = "$((hwrate * 16))" ]; then
@@ -81,6 +89,17 @@ else
 	# shellcheck disable=SC2086
 	verdict $hw
 fi
+echo '</div>'
+
+# --- Correzione ambientale ------------------------------------------------------------
+echo '<h2>Correzione ambientale</h2><div class="card">'
+case "$(lower "$(conf CORREZIONE no)")" in
+	si) cst="accesa"; ccl=OK ;;
+	confronto) cst="esclusa a pari volume, per il confronto"; ccl=ATTENZIONE ;;
+	*) cst="spenta: percorso bit-perfect"; ccl="" ;;
+esac
+[ -s "$RUN/correzione/sinistro.txt" ] || cst="nessun filtro: si misura la stanza con REW e un microfono di misura"
+printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/correzione">Correggi i bassi della stanza</a></div><div class="v">%s</div></div></div>\n' "$ccl" "$(esc "$cst")"
 echo '</div>'
 
 # --- Impostazioni -------------------------------------------------------------------

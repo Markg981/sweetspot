@@ -198,6 +198,15 @@ check_player() {
 	if [ -n "$(conf RICAMPIONAMENTO)" ] && [ "$(lower "$(conf RICAMPIONAMENTO)")" != no ]; then
 		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta"
 	fi
+	if [ -f "$RUN/correzione.attiva" ]; then
+		if [ "$(lower "$(conf CORREZIONE no)")" = confronto ]; then
+			emit INFO "Correzione ambientale" "esclusa a pari volume: CamillaDSP applica solo l'attenuazione"
+		else
+			emit INFO "Correzione ambientale" "attiva (CamillaDSP): il percorso non e' bit-perfect per scelta"
+		fi
+	elif [ -s "$RUN/correzione.errore" ]; then
+		emit ATTENZIONE "Correzione ambientale" "non applicata: $(cat "$RUN/correzione.errore")"
+	fi
 }
 
 check_library() {

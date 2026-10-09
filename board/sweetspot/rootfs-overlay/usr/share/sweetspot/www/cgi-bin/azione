@@ -23,7 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_condiviso="" F_album="" F_artista="" F_anno="" F_disco="" F_archivio="" F_conferma="" F_file=""
+F_condiviso="" F_album="" F_artista="" F_anno="" F_disco="" F_archivio="" F_conferma="" F_file="" F_sinistro="" F_destro="" F_modo=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -312,6 +312,57 @@ case "$F_a" in
 			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalità vale dal prossimo avvio: riavvia Sweetspot.")"
 		fi
 		done_to sistema "$(saved_msg $rc "Impostazioni salvate.")" ;;
+
+	# --- Correzione ambientale -------------------------------------------------------
+	correzione_salva)
+		case "$F_modo" in si|confronto|no) ;; *) F_modo=no ;; esac
+		d=$RUN/correzione
+		mkdir -p "$d"
+		printf '%s\n' "$F_sinistro" > "$d/nuovo-sinistro.txt"
+		printf '%s\n' "$F_destro" > "$d/nuovo-destro.txt"
+		: > "$d/bozza.errori"
+		for side in sinistro destro; do
+			if [ -n "$(tr -d ' \t\r\n' < "$d/nuovo-$side.txt")" ]; then
+				sweetspot-dsp leggi "$d/nuovo-$side.txt" | grep '^errore|' | sed "s/^/$side|/" >> "$d/bozza.errori"
+				[ "$side" = sinistro ] && ! sweetspot-dsp leggi "$d/nuovo-$side.txt" | grep -qv '^errore|' &&
+					echo "sinistro|errore|-|nessun filtro attivo trovato nel testo" >> "$d/bozza.errori"
+			else
+				: > "$d/nuovo-$side.txt"
+			fi
+		done
+		if [ ! -s "$d/nuovo-sinistro.txt" ] && [ -s "$d/nuovo-destro.txt" ]; then
+			echo "sinistro|errore|-|incolla i filtri del sinistro (il destro da solo non basta)" >> "$d/bozza.errori"
+		fi
+		if [ -s "$d/bozza.errori" ]; then
+			mv "$d/nuovo-sinistro.txt" "$d/bozza-sinistro.txt"
+			mv "$d/nuovo-destro.txt" "$d/bozza-destro.txt"
+			done_to correzione "Filtri non salvati: ci sono righe da correggere."
+		fi
+		rm -f "$d/bozza-sinistro.txt" "$d/bozza-destro.txt" "$d/bozza.errori"
+		sweetspot-dsp salva "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
+		rc=$?
+		rm -f "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
+		[ ! -s "$d/sinistro.txt" ] && F_modo=no
+		sweetspot-config imposta CORREZIONE "$F_modo"
+		rc2=$?
+		[ $rc -eq 0 ] && rc=$rc2
+		restart_player
+		case "$F_modo" in
+			si) done_to correzione "$(saved_msg $rc "Filtri salvati e correzione accesa: il player si riavvia.")" ;;
+			confronto) done_to correzione "$(saved_msg $rc "Filtri salvati; correzione esclusa a pari volume.")" ;;
+			*) done_to correzione "$(saved_msg $rc "Filtri salvati; correzione spenta (bit-perfect).")" ;;
+		esac ;;
+
+	correzione_modo)
+		case "$F_modo" in si|confronto|no) ;; *) done_to correzione "Scelta non valida." ;; esac
+		sweetspot-config imposta CORREZIONE "$F_modo"
+		rc=$?
+		restart_player
+		case "$F_modo" in
+			si) done_to correzione "$(saved_msg $rc "Correzione accesa: la musica riparte tra qualche secondo.")" ;;
+			confronto) done_to correzione "$(saved_msg $rc "Correzione esclusa a pari volume: confronta con quella accesa.")" ;;
+			*) done_to correzione "$(saved_msg $rc "Correzione spenta: il percorso è di nuovo bit-perfect.")" ;;
+		esac ;;
 
 	# --- Aggiornamenti e installazione ------------------------------------------------
 	aggiorna_cerca)

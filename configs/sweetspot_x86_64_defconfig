@@ -59,6 +59,11 @@ BR2_PACKAGE_SQUEEZELITE_DSD=y
 BR2_PACKAGE_SQUEEZELITE_RESAMPLE=y
 BR2_PACKAGE_FAAD2=y
 
+# Correzione ambientale facoltativa (filtri misurati con REW): CamillaDSP,
+# avviato a ogni brano dal plugin ALSA cdsp. Spenta, non e' nel percorso.
+BR2_PACKAGE_CAMILLADSP=y
+BR2_PACKAGE_ALSA_CDSP=y
+
 # Musica da cartelle condivise in rete (SMB)
 BR2_PACKAGE_CIFS_UTILS=y
 # Archivio musicale condiviso in rete (server SMB del kernel)

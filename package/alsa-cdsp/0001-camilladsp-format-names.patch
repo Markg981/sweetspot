@@ -1,0 +1,42 @@
+From: Sweetspot <noreply@sweetspot>
+Subject: [PATCH] Use the sample format names of CamillaDSP 3 and later
+
+CamillaDSP 3 renamed the sample formats (S32LE -> S32_LE, S24LE ->
+S24_4_RJ_LE, S24LE3 -> S24_3_LE, FLOAT32LE -> F32_LE, FLOAT64LE ->
+F64_LE). With the old names CamillaDSP 4 refuses the -f argument.
+
+Signed-off-by: Sweetspot <noreply@sweetspot>
+---
+diff --git a/libasound_module_pcm_cdsp.c b/libasound_module_pcm_cdsp.c
+index a9fa6d4..d940cd6 100644
+--- a/libasound_module_pcm_cdsp.c
++++ b/libasound_module_pcm_cdsp.c
+@@ -466,22 +466,22 @@ static int start_camilla(cdsp_t *pcm) {
+   char sformat[20];
+   switch (pcm->io.format) {
+     case SND_PCM_FORMAT_S16_LE:
+-      snprintf(sformat, sizeof(sformat), "S16LE");
++      snprintf(sformat, sizeof(sformat), "S16_LE");
+       break;
+     case SND_PCM_FORMAT_S24_LE:
+-      snprintf(sformat, sizeof(sformat), "S24LE");
++      snprintf(sformat, sizeof(sformat), "S24_4_RJ_LE");
+       break;
+     case SND_PCM_FORMAT_S24_3LE:
+-      snprintf(sformat, sizeof(sformat), "S24LE3");
++      snprintf(sformat, sizeof(sformat), "S24_3_LE");
+       break;
+     case SND_PCM_FORMAT_S32_LE:
+-      snprintf(sformat, sizeof(sformat), "S32LE");
++      snprintf(sformat, sizeof(sformat), "S32_LE");
+       break;
+     case SND_PCM_FORMAT_FLOAT_LE:
+-      snprintf(sformat, sizeof(sformat), "FLOAT32LE");
++      snprintf(sformat, sizeof(sformat), "F32_LE");
+       break;
+     case SND_PCM_FORMAT_FLOAT64_LE:
+-      snprintf(sformat, sizeof(sformat), "FLOAT64LE");
++      snprintf(sformat, sizeof(sformat), "F64_LE");
+       break;
+     default:
+       // Shouldn't get here

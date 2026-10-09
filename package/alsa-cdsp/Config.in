@@ -1,0 +1,9 @@
+config BR2_PACKAGE_ALSA_CDSP
+	bool "alsa-cdsp"
+	select BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_ALSA_LIB_PCM
+	help
+	  Plugin ALSA che avvia CamillaDSP con la frequenza, il formato e
+	  i canali di ogni brano e gli passa l'audio.
+
+	  https://github.com/scripple/alsa_cdsp

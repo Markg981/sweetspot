@@ -1,0 +1,148 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Correzione ambientale": filtri misurati con REW e un
+# microfono di misura (es. UMIK-1/UMIK-2), curva della correzione, confronto
+# a pari volume, guida alla misura.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+page_start "Correzione ambientale" audio
+
+DIR=$RUN/correzione
+mode_now=$(lower "$(conf CORREZIONE no)")
+case "$mode_now" in si|confronto) ;; *) mode_now=no ;; esac
+
+# Testo di un canale: la bozza non valida appena inviata, altrimenti i filtri salvati.
+text_of() {
+	if [ -f "$DIR/bozza-$1.txt" ]; then cat "$DIR/bozza-$1.txt"; else cat "$DIR/$1.txt" 2>/dev/null; fi
+}
+
+count_filters() { # canale
+	local f=$DIR/$1.txt
+	[ "$1" = destro ] && [ ! -s "$f" ] && f=$DIR/sinistro.txt
+	[ -s "$f" ] || { echo 0; return; }
+	sweetspot-dsp leggi "$f" 2>/dev/null | grep -vc '^errore|'
+}
+
+# Curva della correzione (SVG disegnato qui, niente script nel browser).
+curve_svg() {
+	sweetspot-dsp risposta | $AWK '
+	function x(f) { return 40 + (log(f / 20) / log(1000)) * 580 }
+	function y(d) { return 10 + (top - d) / (top - bot) * 200 }
+	{ hz[NR] = $1; sx[NR] = $2; dx[NR] = ($3 == "" ? $2 : $3); n = NR
+	  if (sx[NR] > mx) mx = sx[NR]; if (dx[NR] > mx) mx = dx[NR]
+	  if (sx[NR] < mn) mn = sx[NR]; if (dx[NR] < mn) mn = dx[NR] }
+	END {
+		top = 6; bot = -15
+		while (top < mx + 1) top += 3
+		while (bot > mn - 1) bot -= 3
+		printf "<svg class=\"curva\" viewBox=\"0 0 640 240\" role=\"img\" aria-label=\"Curva della correzione: sinistro e destro, da 20 Hz a 20 kHz\">"
+		for (d = bot; d <= top; d += 3) {
+			printf "<line class=\"%s\" x1=\"40\" x2=\"620\" y1=\"%.1f\" y2=\"%.1f\"/>", (d == 0 ? "zero" : "griglia"), y(d), y(d)
+			printf "<text x=\"34\" y=\"%.1f\" text-anchor=\"end\">%+d</text>", y(d) + 4, d
+		}
+		split("20 50 100 200 500 1000 2000 5000 10000 20000", fx, " ")
+		split("20 50 100 200 500 1k 2k 5k 10k 20k", fl, " ")
+		for (i = 1; i <= 10; i++) {
+			printf "<line class=\"griglia\" x1=\"%.1f\" x2=\"%.1f\" y1=\"10\" y2=\"210\"/>", x(fx[i]), x(fx[i])
+			printf "<text x=\"%.1f\" y=\"228\" text-anchor=\"middle\">%s</text>", x(fx[i]), fl[i]
+		}
+		printf "<polyline class=\"sx\" points=\""
+		for (i = 1; i <= n; i++) printf "%.1f,%.1f ", x(hz[i]), y(sx[i])
+		printf "\"/><polyline class=\"dx\" points=\""
+		for (i = 1; i <= n; i++) printf "%.1f,%.1f ", x(hz[i]), y(dx[i])
+		printf "\"/><text x=\"620\" y=\"22\" text-anchor=\"end\">dB</text></svg>\n"
+	}'
+}
+
+cat <<'HTML'
+<p class="sub">Corregge l'effetto della stanza sui bassi, dove le risonanze (modi) fanno rimbombare alcune note e ne spengono altre:
+si misura con REW e un microfono di misura, e Sweetspot applica i filtri con CamillaDSP in virgola mobile a 64 bit.
+Quando è spenta non c'è niente in mezzo: il percorso resta bit-perfect.</p>
+HTML
+
+# --- Stato -------------------------------------------------------------------------
+nsx=$(count_filters sinistro)
+ndx=$(count_filters destro)
+echo '<h2>Stato</h2><div class="card">'
+if [ "$nsx" = 0 ]; then
+	info_row "" "Nessun filtro" "Misura la stanza con REW (guida qui sotto) e incolla i filtri: poi potrai accendere la correzione."
+else
+	# Attenuazione scritta all'italiana: "2,9 dB".
+	gain=$(sweetspot-dsp guadagno | sed 's/^-//; s/\./,/')
+	if [ -s "$RUN/correzione.errore" ]; then
+		info_row ATTENZIONE "Correzione non applicata" "$(cat "$RUN/correzione.errore"): il DAC riceve il segnale diretto."
+	fi
+	case "$mode_now" in
+		si) info_row OK "Correzione accesa" "$nsx filtri sul sinistro, $ndx sul destro; attenuazione di $gain dB per non saturare. Il segnale è elaborato: non è più bit-perfect, per scelta." ;;
+		confronto) info_row ATTENZIONE "Confronto: correzione esclusa" "Passa per CamillaDSP con la sola attenuazione di $gain dB, così il confronto con la correzione accesa è a pari volume." ;;
+		*) info_row "" "Correzione spenta" "$nsx filtri sul sinistro e $ndx sul destro pronti. Il DAC riceve il segnale diretto, bit-perfect." ;;
+	esac
+	echo '<div class="row"><div class="grow">'
+	echo '<div class="legenda"><span><span class="sx"></span>Sinistro</span><span><span class="dx"></span>Destro</span></div>'
+	curve_svg
+	echo '</div></div>'
+	echo '<div class="row"><div class="grow">'
+	[ "$mode_now" != si ] && button correzione_modo "Accendi la correzione" modo si primary
+	[ "$mode_now" != confronto ] && button correzione_modo "Escludi a pari volume" modo confronto
+	[ "$mode_now" != no ] && button correzione_modo "Spegni (bit-perfect)" modo no
+	echo '<p class="sub">Per un confronto onesto alterna "accesa" ed "esclusa a pari volume": stesso livello, cambia solo la correzione. Ogni cambio riavvia il player per qualche secondo.</p>'
+	echo '</div></div>'
+fi
+echo '</div>'
+
+# --- Filtri ------------------------------------------------------------------------
+echo '<h2>Filtri da REW</h2><div class="card formcard">'
+if [ -s "$DIR/bozza.errori" ]; then
+	echo '<p class="msg">Filtri non salvati, correggi queste righe:<br>'
+	while IFS='|' read -r side _ line msg; do
+		printf '%s, riga %s: %s<br>' "$(esc "$side")" "$(esc "$line")" "$(esc "$msg")"
+	done < "$DIR/bozza.errori"
+	echo '</p>'
+fi
+form_start correzione_salva
+cat <<HTML
+<label for="fsx">Diffusore sinistro <span>(testo di "Export filter settings as text" di REW)</span></label>
+<textarea id="fsx" name="sinistro" spellcheck="false" placeholder="Filter  1: ON  PK       Fc   63.30 Hz  Gain  -7.50 dB  Q  5.000">$(esc "$(text_of sinistro)")</textarea>
+<label for="fdx">Diffusore destro <span>(vuoto = gli stessi filtri del sinistro)</span></label>
+<textarea id="fdx" name="destro" spellcheck="false">$(esc "$(text_of destro)")</textarea>
+<label for="mod">Dopo il salvataggio</label>
+<select id="mod" name="modo">
+$(option si "Accendi la correzione" "$mode_now")
+$(option confronto "Escludila a pari volume (per confrontare)" "$mode_now")
+$(option no "Lasciala spenta (bit-perfect)" "$mode_now")
+</select>
+<button class="primary">Salva i filtri</button>
+</form>
+</div>
+HTML
+
+# --- Guida -------------------------------------------------------------------------
+cat <<'HTML'
+<h2>Come misurare</h2>
+<div class="card formcard">
+<details>
+<summary>Misura con REW e il microfono UMIK, passo per passo</summary>
+<ol class="passi">
+<li><b>Spegni la correzione</b> qui sopra: si misura il sistema così com'è.</li>
+<li>Sul computer installa <b>REW</b> (Room EQ Wizard, gratuito) e collega il microfono USB. In REW, nelle preferenze del microfono, carica il
+<b>file di calibrazione</b> del tuo esemplare (dal sito di miniDSP, con il numero di serie): quello a 90° se il microfono punta al soffitto.</li>
+<li>Metti il microfono sul treppiede <b>nel punto d'ascolto</b>, all'altezza delle orecchie.</li>
+<li>Nel generatore di segnale di REW crea un <b>Measurement Sweep</b> e salvalo come file, uno con lo sweep sul canale sinistro e uno sul destro.
+Copiali nella cartella di rete <b>Musica</b> di Sweetspot e aggiorna la libreria dalla pagina Musica.</li>
+<li>In REW apri <b>Measure</b>, come Playback scegli il file dello sweep e il riferimento temporale acustico, poi premi <b>Start</b>:
+REW aspetta. Fai partire lo stesso file da Sweetspot: REW lo registra e crea la misura. Ripeti con l'altro diffusore.</li>
+<li>Apri <b>EQ</b>, scegli l'equalizzatore <b>Generic</b> e un target. Imposta il taglio basso del target sui tuoi diffusori
+(per diffusori da stand circa 40-50 Hz) così REW non prova ad alzare frequenze che non possono riprodurre.</li>
+<li>In <b>Match response to target</b> limita la correzione ai bassi (fino a 300-500 Hz) e i guadagni positivi a pochi dB:
+i buchi della stanza non si riempiono alzando il volume, si consuma solo potenza.</li>
+<li>Esporta con <b>File &gt; Export &gt; Filter settings as text</b>, apri il file, copia tutto e incollalo qui sopra; ripeti per il destro.</li>
+<li>Salva, accendi la correzione e <b>rifai la misura</b> per controllare: la curva nel punto d'ascolto deve avvicinarsi al target.</li>
+</ol>
+<p class="sub">Filtri accettati: quelli dell'equalizzatore Generic (PK, LS/HS, LSC/HSC, HP/LP, NO, BP, AP), fino a 60 per canale.
+Valgono per tutte le frequenze di campionamento. Il DSD viene convertito in PCM mentre la correzione è attiva.</p>
+</details>
+</div>
+HTML
+
+page_end
