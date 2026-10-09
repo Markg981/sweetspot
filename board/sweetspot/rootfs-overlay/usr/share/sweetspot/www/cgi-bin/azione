@@ -172,6 +172,11 @@ case "$F_a" in
 		[ -n "$(sweetspot-dischi archivio)" ] || done_to archivio "Il disco non si può usare in scrittura: controlla che non sia protetto o danneggiato."
 		done_to archivio "Archivio pronto: $name." ;;
 
+	# Archivio nello spazio libero del disco da cui parte Sweetspot.
+	archivio_spazio)
+		out=$(sweetspot-spazio crea) || done_to archivio "Non si può: $out."
+		done_to archivio "Creazione dell'archivio avviata: richiede da qualche secondo a qualche minuto." ;;
+
 	archivio_togli)
 		a=$(sweetspot-dischi archivio)
 		[ -n "$a" ] || done_to archivio "Nessun archivio."

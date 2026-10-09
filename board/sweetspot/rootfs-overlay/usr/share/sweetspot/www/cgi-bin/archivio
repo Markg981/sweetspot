@@ -14,6 +14,7 @@ if [ "$(mode)" = player ]; then
 fi
 
 arch=$(sweetspot-dischi archivio)
+ARCHIVE_LABEL="Sweetspot Musica"
 host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 
 # --- Nessun archivio: scelta del disco --------------------------------------------
@@ -38,6 +39,34 @@ HTML
 	fi
 	[ $n -eq 0 ] && info_row "" "Nessun disco adatto" "Collega un disco USB o usa un disco interno di dati (non quello di Windows)."
 	echo '</div>'
+
+	# Spazio libero del disco da cui parte Sweetspot (scheda SD del Raspberry
+	# Pi, chiavetta grande, disco interno installato senza archivio).
+	job=$(sweetspot-spazio lavoro)
+	jstate=${job%%|*}
+	jmsg=${job#*|}
+	case "$jstate" in
+		prepara|partizione|formatta|monta)
+			echo '<h2>Spazio libero di Sweetspot</h2><div class="card">'
+			info_row ATTENZIONE "Creazione dell'archivio in corso" "$jmsg"
+			echo '</div><meta http-equiv="refresh" content="5">'
+			page_end
+			exit 0 ;;
+	esac
+	IFS='|' read -r _spdisk spgb spok _spwhy <<EOF2
+$(sweetspot-spazio stato)
+EOF2
+	if [ "$spok" = si ]; then
+		if [ "$(boot_type)" = rpi ]; then where="La scheda SD (o il disco) da cui parte Sweetspot"; else where="La chiavetta (o il disco) da cui parte Sweetspot"; fi
+		echo '<h2>Spazio libero di Sweetspot</h2><div class="card">'
+		[ "$jstate" = errore ] && info_row ATTENZIONE "Creazione non riuscita" "$jmsg"
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s GB non usati</div><div class="v">%s</div></div>' \
+			"$spgb" "$(esc "$where ha $spgb GB liberi: possono diventare l'archivio musicale (partizione ext4 \"$ARCHIVE_LABEL\"). Sistema, impostazioni e libreria non vengono toccati.")"
+		printf '<form method="post" action="/cgi-bin/azione" class="inline" onsubmit="return %s">' \
+			"$(esc "confirm(\"Creare l'archivio musicale nei $spgb GB liberi? Lo spazio libero viene formattato.\")")"
+		printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="archivio_spazio">' "$(token)"
+		echo '<button class="primary">Crea l'"'"'archivio</button></form></div></div>'
+	fi
 	page_end
 	exit 0
 fi

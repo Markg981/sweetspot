@@ -333,6 +333,12 @@ case "$out" in *"Qobuz"*"Installato"*) ok "plugin: Qobuz installato" ;; *) ko "p
 case "$out" in *"Altri plugin installati"*"Altro"*) ok "plugin: plugin fuori catalogo elencati" ;; *) ko "plugin altri" "Altro" "-" ;; esac
 case "$(page musica)" in *"1200 brani, 100 album, 80 artisti"*) ok "musica: numeri della libreria" ;; *) ko "musica libreria" "1200 brani" "-" ;; esac
 case "$(page musica 'MODALITA=player')" in *"solo player"*) ok "musica: modalita' solo player" ;; *) ko "musica player" "solo player" "-" ;; esac
+printf '#!/bin/sh\ncase "$1" in stato) echo "mmcblk0|58|si|" ;; lavoro) cat %s/spazio.lavoro 2>/dev/null ;; esac\nexit 0\n' "$WEB" > "$WEB/bin/sweetspot-spazio"
+chmod +x "$WEB/bin/sweetspot-spazio"
+case "$(page archivio)" in *"58 GB non usati"*'value="archivio_spazio"'*) ok "archivio: spazio libero del disco di Sweetspot offerto" ;; *) ko "archivio spazio libero" "58 GB non usati" "-" ;; esac
+echo "formatta|formattazione" > "$WEB/spazio.lavoro"
+case "$(page archivio)" in *"Creazione dell&#39;archivio in corso"*"formattazione"*) ok "archivio: creazione in corso mostrata" ;; *) ko "archivio creazione in corso" "in corso" "-" ;; esac
+rm -f "$WEB/bin/sweetspot-spazio" "$WEB/spazio.lavoro"
 
 echo "Correzione ambientale (REW e CamillaDSP)"
 MATHAWK=$(command -v gawk || command -v mawk || command -v awk)
@@ -788,6 +794,68 @@ if command -v sfdisk > /dev/null; then
 		"$(sfdisk -d "$INS/disco.img" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
 fi
 expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si')"
+
+echo "Archivio nello spazio libero del disco di avvio"
+SP=$WORK/spazio
+SPD=$SP/sys/devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0
+mkdir -p "$SPD/queue" "$SPD/mmcblk0p1" "$SP/sys/class/block" "$SP/sys/block" "$SP/dev" "$SP/run" "$SP/proc" "$SP/bin"
+echo "console=tty1 sweetspot.slot=a" > "$SP/proc/cmdline"
+echo 512 > "$SPD/queue/logical_block_size"
+ln -s ../devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0 "$SP/sys/block/mmcblk0"
+ln -s ../../devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0/mmcblk0p1 "$SP/sys/class/block/mmcblk0p1"
+sp() { # comando (funzioni di sweetspot-spazio)
+	SWEETSPOT_SYSFS=$SP/sys SWEETSPOT_PROCFS=$SP/proc SWEETSPOT_RUN=$SP/run SWEETSPOT_LOG=$SP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_DEV=$SP/dev \
+		SWEETSPOT_STICK_DEV=$SP/dev/mmcblk0p1 SWEETSPOT_TEST=1 SWEETSPOT_PATH="$SP/bin:$SWEETSPOT_PATH" \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-spazio; $1"
+}
+# Scheda SD come quella scritta dall'immagine del Pi: partizione FAT32 da
+# 1 GiB a 4 MiB, il resto libero.
+mkcard() { # GiB [tipo1] [voce2]
+	rm -f "$SP/dev/mmcblk0" "$SP/dev/mmcblk0p2"
+	truncate -s "$1G" "$SP/dev/mmcblk0"
+	echo $(($1 * 2097152)) > "$SPD/size"
+	head -c 440 /dev/zero | tr '\0' '\372' | dd of="$SP/dev/mmcblk0" conv=notrunc 2>/dev/null
+	if [ -n "${3:-}" ]; then e2="0 $3 3000000 1000000"; else e2="0 0 0 0"; fi
+	sp "{ mbr_entry 128 ${2:-12} 8192 2097152; mbr_entry $e2; mbr_entry 0 0 0 0; mbr_entry 0 0 0 0; printf '\\125\\252'; } |
+		dd of=$SP/dev/mmcblk0 bs=1 seek=446 conv=notrunc 2>/dev/null"
+}
+mkcard 32
+expect "tabella letta" "12 8192 2097152|0 0 0" "$(sp "mbr_read $SP/dev/mmcblk0" | sed -n '1p;2p' | tr '\n' '|' | sed 's/|$//')"
+expect "scheda da 32 GB: 30 GB liberi per l'archivio" "mmcblk0|30|si|" "$(sp examine)"
+expect "disco da 4 TB: fino al limite della tabella MBR" "2105344 4292859904 4292859904" "$(sp 'free_plan 8589934592 8192 2097152')"
+mkcard 4
+expect "scheda da 4 GB: spazio insufficiente" "mmcblk0|2|no|spazio libero insufficiente" "$(sp examine)"
+mkcard 32 238
+expect "tabella GPT non toccata" "mmcblk0|0|no|tabella delle partizioni GPT" "$(sp examine)"
+mkcard 32 12 131
+expect "disco con altre partizioni non toccato" "mmcblk0|0|no|il disco ha gia' altre partizioni" "$(sp examine)"
+# Creazione, con il kernel e la formattazione simulati
+mkcard 32
+printf '#!/bin/sh\necho "$*" > %s/partizione.args\n: > %s/dev/mmcblk0p2\n' "$SP" "$SP" > "$SP/bin/sweetspot-partizione"
+printf '#!/bin/sh\necho "$*" > %s/mkfs.args\n' "$SP" > "$SP/bin/mkfs.ext4"
+printf '#!/bin/sh\necho "$*" >> %s/config.args\n' "$SP" > "$SP/bin/sweetspot-config"
+printf '#!/bin/sh\ncase "$1" in archivio) [ -f %s/montato ] && echo "/media/Sweetspot Musica" ;; monta) : > %s/montato ;; esac\nexit 0\n' "$SP" "$SP" > "$SP/bin/sweetspot-dischi"
+printf '#!/bin/sh\nexit 0\n' > "$SP/bin/sweetspot-nas"
+printf '#!/bin/sh\nexit 0\n' > "$SP/bin/sweetspot-lms"
+chmod +x "$SP/bin"/*
+head -c 512 "$SP/dev/mmcblk0" | head -c 446 | od -An -tx1 > "$SP/prima"
+sp job
+expect "archivio creato" "finita|30 GB" "$(cat "$SP/run/spazio/stato")"
+expect "seconda voce della tabella: Linux nello spazio libero" "12 8192 2097152|131 2105344 65001472|0 0 0|0 0 0" \
+	"$(sp "mbr_read $SP/dev/mmcblk0" | tr '\n' '|' | sed 's/|$//')"
+expect "settore di avvio intatto" "$(cat "$SP/prima")" "$(head -c 446 "$SP/dev/mmcblk0" | od -An -tx1)"
+expect "partizione comunicata al kernel" "$SP/dev/mmcblk0 2 2105344 65001472" "$(cat "$SP/partizione.args")"
+expect "formattazione ext4 senza lavoro in sottofondo" "-F -q -m 0 -i 524288 -E lazy_itable_init=0,lazy_journal_init=0 -L Sweetspot Musica $SP/dev/mmcblk0p2" "$(cat "$SP/mkfs.args")"
+expect "diventa l'archivio" "imposta ARCHIVIO Sweetspot Musica" "$(cat "$SP/config.args")"
+if command -v sfdisk > /dev/null; then
+	expect "tabella letta da sfdisk" "start=8192,size=2097152,type=c,bootable start=2105344,size=65001472,type=83" \
+		"$(sfdisk -d "$SP/dev/mmcblk0" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
+fi
+expect "dopo la creazione non si offre piu'" "mmcblk0|0|no|il disco ha gia' altre partizioni" "$(sp examine)"
+expect "con un archivio gia' presente non si crea" "c'e' gia' un archivio musicale" "$(sp do_create)"
+rm -f "$SP/montato"
+expect "disco non piu' adatto: nessuna creazione" "il disco ha gia' altre partizioni" "$(sp do_create)"
 
 echo "Cache delle copertine"
 CC=$WORK/cc

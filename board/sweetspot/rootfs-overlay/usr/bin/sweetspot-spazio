@@ -1,0 +1,173 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - archivio musicale nello spazio libero del disco da cui parte
+# Sweetspot: la scheda SD (o l'SSD) del Raspberry Pi, una chiavetta grande,
+# il disco interno installato senza archivio. L'immagine usa solo la prima
+# parte del disco; il resto puo' diventare una partizione ext4 "Sweetspot
+# Musica", come l'archivio creato dall'installazione sul disco interno.
+#
+#   sweetspot-spazio stato    "disco|GB|si|"  oppure  "disco|GB|no|motivo"
+#   sweetspot-spazio crea     crea l'archivio (in secondo piano)
+#   sweetspot-spazio lavoro   "stato|messaggio" della creazione
+#
+# Si aggiunge solo la seconda voce della tabella delle partizioni (MBR),
+# quando e' vuota: la partizione di sistema, il primo settore e GRUB non si
+# toccano. Il kernel riceve la nuova partizione con BLKPG, senza rileggere
+# la tabella (la partizione di sistema puo' essere in uso).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DIR=$RUN/spazio
+PAUSABLE=$RUN/sospendibili
+DEV=${SWEETSPOT_DEV:-/dev}
+ARCHIVE_LABEL="Sweetspot Musica"
+SECT_MIB=2048                      # settori da 512 byte in 1 MiB
+FREE_MIN=$((4096 * SECT_MIB))      # almeno 4 GiB liberi
+MBR_LIMIT=4294967295               # una tabella MBR arriva a 2 TiB
+
+state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
+
+running() { [ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null; }
+
+# Spazio dopo la partizione di sistema: "inizio settori liberi" (settori = 0
+# se i liberi non bastano). Allineato al MiB; l'ultimo MiB del disco resta
+# libero.
+free_plan() { # settori_disco inizio1 settori1
+	local start end free size
+	start=$(( ($2 + $3 + SECT_MIB - 1) / SECT_MIB * SECT_MIB ))
+	end=$(($1 - SECT_MIB))
+	[ "$end" -gt "$MBR_LIMIT" ] && end=$MBR_LIMIT
+	free=$(( (end - start) / SECT_MIB * SECT_MIB ))
+	[ "$free" -gt 0 ] || free=0
+	size=$free
+	[ "$size" -ge "$FREE_MIN" ] || size=0
+	echo "$start $size $free"
+}
+
+# Esamina il disco di avvio: imposta S_DISK, S_START, S_SIZE e stampa la
+# riga di stato.
+examine() {
+	local disk total t1 st1 n1 e2 e3 e4 gb
+	S_DISK="" S_START=0 S_SIZE=0
+	disk=$(stick_disk) || { echo "||no|disco di Sweetspot non trovato"; return 1; }
+	S_DISK=$disk
+	total=$(cat "$SYS/block/$disk/size" 2>/dev/null || echo 0)
+	if [ "$(cat "$SYS/block/$disk/queue/logical_block_size" 2>/dev/null || echo 512)" != 512 ]; then
+		echo "$disk|0|no|settori del disco non da 512 byte"; return 1
+	fi
+	# shellcheck disable=SC2046
+	set -- $(mbr_read "$DEV/$disk" | tr '\n' ' ')
+	[ $# -eq 12 ] || { echo "$disk|0|no|tabella delle partizioni non leggibile"; return 1; }
+	t1=$1 st1=$2 n1=$3 e2="$4$5$6" e3="$7$8$9" e4="${10}${11}${12}"
+	case "$t1" in
+		238) echo "$disk|0|no|tabella delle partizioni GPT"; return 1 ;;
+		11|12) ;;
+		*) echo "$disk|0|no|prima partizione non FAT32"; return 1 ;;
+	esac
+	if [ "$e2" != 000 ] || [ "$e3" != 000 ] || [ "$e4" != 000 ]; then
+		echo "$disk|0|no|il disco ha gia' altre partizioni"; return 1
+	fi
+	# shellcheck disable=SC2046
+	set -- $(free_plan "$total" "$st1" "$n1")
+	S_START=$1 S_SIZE=$2
+	gb=$(($3 / 2097152))
+	[ "$S_SIZE" -gt 0 ] || { echo "$disk|$gb|no|spazio libero insufficiente"; return 1; }
+	echo "$disk|$gb|si|"
+}
+
+fail() { state "errore|$1"; log "archivio nello spazio libero: $1"; return 1; }
+
+wait_dev() {
+	local i=0
+	while [ $i -lt 20 ]; do
+		[ -b "$1" ] && return 0
+		# Nei test la partizione e' un file.
+		[ "${SWEETSPOT_TEST:-}" = 1 ] && [ -f "$1" ] && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+job() {
+	local dev p2 now
+	# Gli eventi dei dischi (udev) aspettano la fine: la nuova partizione
+	# entra nella libreria solo quando e' gia' formattata.
+	exec 9> "$RUN/dischi.lock"
+	flock 9
+	state "partizione|nuova partizione"
+	examine > /dev/null || fail "il disco non e' piu' adatto" || return 1
+	dev=$DEV/$S_DISK
+	blockdev --setrw "$dev" 2>/dev/null
+	# Prima MiB della nuova partizione azzerata: nessuna traccia di file
+	# system precedenti.
+	dd if=/dev/zero of="$dev" bs=512 seek="$S_START" count="$SECT_MIB" conv=notrunc,fsync 2>/dev/null ||
+		fail "scrittura sul disco non riuscita" || return 1
+	# Seconda voce della tabella (byte 462-477): Linux (0x83).
+	mbr_entry 0 131 "$S_START" "$S_SIZE" |
+		dd of="$dev" bs=1 seek=462 count=16 conv=notrunc,fsync 2>/dev/null ||
+		fail "scrittura della tabella delle partizioni non riuscita" || return 1
+	sync
+	now=$(mbr_read "$dev" | sed -n 2p)
+	[ "$now" = "131 $S_START $S_SIZE" ] || fail "la tabella delle partizioni non e' quella attesa ($now)" || return 1
+	p2=$DEV/$(part_name "$S_DISK" 2)
+	if [ ! -b "$p2" ]; then
+		sweetspot-partizione "$dev" 2 "$S_START" "$S_SIZE" 2>/dev/null ||
+			blockdev --rereadpt "$dev" 2>/dev/null
+	fi
+	wait_dev "$p2" || fail "il kernel non vede ancora la nuova partizione: riavvia, poi riprova da qui" || return 1
+
+	state "formatta|formattazione (da qualche secondo a qualche minuto)"
+	blockdev --setrw "$p2" 2>/dev/null
+	# shellcheck disable=SC2086
+	mkfs.ext4 $MKFS_ARCHIVIO -L "$ARCHIVE_LABEL" "$p2" > /dev/null 2>&1 ||
+		fail "formattazione non riuscita" || return 1
+
+	state "monta|apertura dell'archivio"
+	sweetspot-config imposta ARCHIVIO "$ARCHIVE_LABEL" > /dev/null 2>&1
+	sweetspot-dischi monta
+	sweetspot-nas riavvia > /dev/null 2>&1
+	sweetspot-lms aggiorna > /dev/null 2>&1
+	[ -n "$(sweetspot-dischi archivio)" ] ||
+		fail "archivio creato ma non aperto: riavvia Sweetspot" || return 1
+	state "finita|$((S_SIZE / 2097152)) GB"
+	log "archivio nello spazio libero: $p2, $((S_SIZE / 2097152)) GB"
+}
+
+do_create() {
+	running && { echo "creazione gia' in corso"; return 1; }
+	[ -n "$(sweetspot-dischi archivio)" ] && { echo "c'e' gia' un archivio musicale"; return 1; }
+	mkdir -p "$DIR" "$PAUSABLE"
+	examine > "$DIR/esame" || { cut -d'|' -f4 "$DIR/esame"; return 1; }
+	state "prepara|preparazione"
+	setsid "$0" _lavoro > /dev/null 2>&1 < /dev/null &
+	echo $! > "$DIR/pid"
+	echo $! > "$PAUSABLE/spazio"
+	log "archivio nello spazio libero: creazione avviata su $S_DISK"
+}
+
+do_job_status() {
+	[ -f "$DIR/stato" ] || return 0
+	if ! running; then
+		case "$(cat "$DIR/stato")" in
+			finita*|errore*) ;;
+			*) echo "errore|creazione interrotta"; return 0 ;;
+		esac
+	fi
+	cat "$DIR/stato"
+}
+
+# I test includono questo file per provare le singole funzioni.
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	stato) examine; exit 0 ;;
+	crea) do_create ;;
+	lavoro) do_job_status ;;
+	_lavoro)
+		job
+		rm -f "$PAUSABLE/spazio"
+		;;
+	*) echo "uso: $0 stato|crea|lavoro" >&2; exit 1 ;;
+esac
