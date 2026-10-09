@@ -36,3 +36,6 @@ details { margin-top:12px; }
 details summary { cursor:pointer; font-weight:600; }
 img.cover { width:160px; height:160px; object-fit:cover; border-radius:8px; margin:8px 0; }
 ol.tracks { color:var(--muted); padding-left:24px; }
+label.check { display:flex; gap:8px; align-items:flex-start; font-weight:400; margin:10px 0; }
+label.check input { width:auto; padding:0; margin-top:3px; }
+pre.note { white-space:pre-wrap; font:inherit; color:var(--muted); margin:8px 0 0; max-height:16em; overflow:auto; }

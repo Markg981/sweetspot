@@ -9,32 +9,46 @@ set -e
 BOARD_DIR=$(dirname "$0")
 STICK="$BINARIES_DIR/chiavetta"
 
-rm -rf "$STICK"
-mkdir -p "$STICK/boot/grub" "$STICK/EFI/BOOT"
+AVVIO="$TARGET_DIR/usr/share/sweetspot/avvio"
+VERSION=$(cut -d' ' -f1 "$TARGET_DIR/etc/sweetspot-version")
+ARCH=$(sed -n 's/^BR2_ARCH="\(.*\)"$/\1/p' "$BR2_CONFIG")
 
+rm -rf "$STICK"
+mkdir -p "$STICK/boot/grub" "$STICK/boot/versioni" "$STICK/EFI/BOOT"
+
+# Copia A del sistema (la B si crea con il primo aggiornamento).
 cp "$BINARIES_DIR/bzImage" "$STICK/bzImage"
 cp "$BINARIES_DIR/rootfs.cpio.zst" "$STICK/rootfs.cpio.zst"
+echo "$VERSION" > "$STICK/boot/versioni/a"
 
-# GRUB per UEFI a 64 e 32 bit (la configurazione incorporata trova il menu).
-cp "$BINARIES_DIR/efi-part/EFI/BOOT/bootx64.efi" "$STICK/EFI/BOOT/BOOTX64.EFI"
-cp "$BINARIES_DIR/efi-part/EFI/BOOT/bootia32.efi" "$STICK/EFI/BOOT/BOOTIA32.EFI"
-cp "$BOARD_DIR/x86/grub.cfg" "$STICK/boot/grub/grub.cfg"
+# Menu e GRUB: gli stessi file che il sistema usa per installarsi sul disco
+# interno (preparati da post-build.sh).
+cp "$AVVIO/BOOTX64.EFI" "$AVVIO/BOOTIA32.EFI" "$STICK/EFI/BOOT/"
+cp "$AVVIO/grub.cfg" "$STICK/boot/grub/grub.cfg"
+cp "$AVVIO/boot.img" "$BINARIES_DIR/boot.img"
+cp "$AVVIO/sweetspot.txt" "$AVVIO/LEGGIMI.txt" "$STICK/"
 
-# Primo stadio di GRUB per BIOS, preso dalla cartella di compilazione.
-BOOT_IMG=$(ls "$BUILD_DIR"/grub2-*/build-i386-pc/grub-core/boot.img 2>/dev/null | head -n 1)
-if [ -z "$BOOT_IMG" ]; then
-	echo "boot.img di GRUB non trovato" >&2
-	exit 1
-fi
-cp "$BOOT_IMG" "$BINARIES_DIR/boot.img"
+# Ambiente di GRUB (1024 byte): copia in uso A.
+{
+	printf '# GRUB Environment Block\nslot=a\n'
+	head -c 1024 /dev/zero | tr '\0' '#'
+} | head -c 1024 > "$STICK/boot/grub/grubenv"
 
-# File per l'utente, con a capo in stile Windows per il Blocco note.
-for f in sweetspot.txt LEGGIMI.txt; do
-	sed 's/$/\r/' "$BOARD_DIR/stick/$f" > "$STICK/$f"
-done
+# Pacchetto di aggiornamento: si installa dalla pagina Sistema (da internet
+# o da un disco) nella copia del sistema non in uso.
+UPD="$BINARIES_DIR/aggiornamento"
+rm -rf "$UPD"
+mkdir -p "$UPD"
+cp "$BINARIES_DIR/bzImage" "$BINARIES_DIR/rootfs.cpio.zst" "$UPD/"
+echo "$VERSION" > "$UPD/versione"
+echo "$ARCH" > "$UPD/architettura"
+(cd "$UPD" && sha256sum bzImage rootfs.cpio.zst versione architettura > SHA256SUMS)
+tar -C "$UPD" -cf "$BINARIES_DIR/sweetspot-$ARCH-aggiornamento.tar" \
+	SHA256SUMS versione architettura bzImage rootfs.cpio.zst
 
 support/scripts/genimage.sh -c "$BOARD_DIR/x86/genimage.cfg"
 
 xz -T0 -6 -k -f "$BINARIES_DIR/sweetspot.img"
 echo
 echo "Immagine pronta: $BINARIES_DIR/sweetspot.img.xz"
+echo "Aggiornamento: $BINARIES_DIR/sweetspot-$ARCH-aggiornamento.tar"

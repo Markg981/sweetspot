@@ -1,0 +1,383 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - aggiornamenti del sistema con ritorno automatico alla
+# versione precedente.
+#
+#   sweetspot-aggiorna stato           righe CHIAVE=VALORE per la pagina Sistema
+#   sweetspot-aggiorna cerca           chiede a GitHub l'ultima versione pubblicata
+#   sweetspot-aggiorna scarica         la scarica e la installa, in sottofondo
+#   sweetspot-aggiorna file PACCHETTO  installa un pacchetto .tar da un disco
+#   sweetspot-aggiorna pacchetti       pacchetti di aggiornamento sui dischi
+#   sweetspot-aggiorna annulla         interrompe l'aggiornamento in corso
+#   sweetspot-aggiorna altra           al prossimo avvio prova l'altra versione
+#   sweetspot-aggiorna predefinita     la versione in uso diventa quella predefinita
+#   sweetspot-aggiorna conferma        a fine avvio: questa versione funziona
+#
+# Sulla partizione SWEETSPOT ci sono due copie del sistema (vedi common.sh):
+# l'aggiornamento va sempre in quella non in uso, poi GRUB la avvia una
+# volta sola. Se il nuovo sistema arriva in fondo all'avvio e risponde dalla
+# rete, conferma se stesso e diventa la versione in uso; altrimenti (blocco,
+# errore del kernel: riavvio automatico dopo 10 secondi) riparte la
+# versione di prima, che lo segnala nella pagina Sistema.
+#
+# Pacchetto (creato da post-image.sh): un .tar con bzImage, rootfs.cpio.zst,
+# versione, architettura e SHA256SUMS, che viene controllato prima di
+# rendere avviabile la nuova copia.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DIR=$RUN/aggiornamento
+PAUSABLE=$RUN/sospendibili
+# AGGIORNAMENTI_URL in sweetspot.txt: un altro indirizzo (es. per una copia
+# del progetto su GitHub), nella forma dell'API delle release di GitHub.
+RELEASES=${SWEETSPOT_RELEASES:-$(conf AGGIORNAMENTI_URL https://api.github.com/repos/Markg981/sweetspot/releases/latest)}
+AVVIO=${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}
+ARCH=${SWEETSPOT_ARCH:-$(uname -m)}
+PKG_NAME="sweetspot-$ARCH-aggiornamento.tar"
+VERSION_FILE=${SWEETSPOT_VERSION_FILE:-/etc/sweetspot-version}
+
+current_version() { cut -d' ' -f1 "$VERSION_FILE" 2>/dev/null; }
+
+state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
+
+running() { [ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null; }
+
+# --- Stato -----------------------------------------------------------------------
+
+do_status() {
+	local slot other env def job t
+	slot=$(running_slot)
+	other=$(other_slot "$slot")
+	echo "versione=$(current_version)"
+	echo "copia=$slot"
+	if stick_mount ro; then
+		env=$STICK_MNT/boot/grub/grubenv
+		def=$(grubenv_get "$env" slot)
+		echo "predefinita=${def:-a}"
+		echo "prova=$(grubenv_get "$env" prova)"
+		if [ -f "$(slot_dir "$STICK_MNT" "$other")/bzImage" ]; then
+			echo "altra_versione=$(cat "$STICK_MNT/boot/versioni/$other" 2>/dev/null || echo sconosciuta)"
+		fi
+		stick_umount
+	fi
+	[ -f "$DIR/fallita" ] && echo "fallita=$(cat "$DIR/fallita")"
+	[ -f "$DIR/riuscita" ] && echo "riuscita=1"
+	if [ -f "$DIR/stato" ]; then
+		job=$(cat "$DIR/stato")
+		if running; then
+			# Avanzamento: KB gia' estratti sulla chiavetta e KB attesi.
+			echo "progresso=$(du -sk "$STICK_MNT/aggiornamento.tmp" 2>/dev/null | cut -f1)"
+			case "$job" in
+				scarica\|url*)
+					t=$(sed -n 's/^dimensione=//p' "$DIR/disponibile" 2>/dev/null)
+					echo "totale=$((${t:-0} / 1024))" ;;
+				scarica\|file\|*)
+					echo "totale=$(du -sk "${job#scarica|file|}" 2>/dev/null | cut -f1)" ;;
+			esac
+		else
+			case "$job" in scarica*|controlla*) job="errore|aggiornamento interrotto" ;; esac
+		fi
+		echo "lavoro=$job"
+	fi
+	[ -f "$DIR/disponibile" ] && sed 's/^/disponibile_/' "$DIR/disponibile"
+	return 0
+}
+
+# --- Ricerca ---------------------------------------------------------------------
+
+# Scrive in $DIR/disponibile: versione, url, dimensione, data (e le note
+# in $DIR/note). Esce con 1 se non si riesce a sapere.
+do_check() {
+	local json tag url size
+	mkdir -p "$DIR"
+	rm -f "$DIR/disponibile" "$DIR/note"
+	json=$(curl -fsSL --max-time 30 -H 'Accept: application/vnd.github+json' "$RELEASES" 2>/dev/null) ||
+		{ echo "errore=impossibile contattare GitHub: controlla la connessione a internet"; return 1; }
+	tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
+	url=$(printf '%s' "$json" | jq -r --arg n "$PKG_NAME" '.assets[]? | select(.name == $n) | .browser_download_url' | head -n 1)
+	size=$(printf '%s' "$json" | jq -r --arg n "$PKG_NAME" '.assets[]? | select(.name == $n) | .size' | head -n 1)
+	[ -n "$tag" ] || { echo "errore=nessuna versione pubblicata"; return 1; }
+	valid_value "$tag" || { echo "errore=risposta non valida"; return 1; }
+	[ -n "$url" ] || { echo "errore=la versione $tag non ha il pacchetto per questo computer ($ARCH)"; return 1; }
+	# Solo https, salvo un indirizzo http scelto apposta in AGGIORNAMENTI_URL.
+	case "$url" in
+		https://*) ;;
+		http://*) case "$RELEASES" in http://*) ;; *) echo "errore=indirizzo del pacchetto non valido"; return 1 ;; esac ;;
+		*) echo "errore=indirizzo del pacchetto non valido"; return 1 ;;
+	esac
+	{
+		echo "versione=$tag"
+		echo "url=$url"
+		echo "dimensione=${size:-0}"
+		echo "data=$(printf '%s' "$json" | jq -r '.published_at // empty' | cut -c1-10)"
+	} > "$DIR/disponibile"
+	printf '%s' "$json" | jq -r '.body // empty' | head -c 4000 > "$DIR/note"
+	cat "$DIR/disponibile"
+}
+
+# --- Installazione nella copia non in uso -----------------------------------------
+
+# Prepara la copia non in uso: la versione in uso diventa quella
+# predefinita (se era stata scelta a mano dal menu di avvio), la vecchia
+# copia si cancella per fare spazio. Stampa la cartella della copia.
+prepare_slot() {
+	local slot other env d
+	slot=$(running_slot)
+	other=$(other_slot "$slot")
+	env=$STICK_MNT/boot/grub/grubenv
+	grubenv_set "$env" "slot=$slot" prova= tentato= || return 1
+	d=$(slot_dir "$STICK_MNT" "$other")
+	mkdir -p "$d" "$STICK_MNT/boot/versioni" || return 1
+	rm -f "$d/bzImage" "$d/rootfs.cpio.zst" "$STICK_MNT/boot/versioni/$other"
+	rm -rf "$STICK_MNT/aggiornamento.tmp"
+	mkdir -p "$STICK_MNT/aggiornamento.tmp" || return 1
+	sync
+	echo "$d"
+}
+
+# Controlla il pacchetto estratto in $1 e lo sposta nella copia $2.
+verify_and_install() { # cartella_estratta cartella_copia copia
+	local x=$1 d=$2 other=$3 v
+	state "controlla|verifica del pacchetto"
+	[ -f "$x/SHA256SUMS" ] || { echo "pacchetto incompleto"; return 1; }
+	[ "$(cat "$x/architettura" 2>/dev/null)" = "$ARCH" ] ||
+		{ echo "pacchetto per un altro tipo di computer ($(cat "$x/architettura" 2>/dev/null))"; return 1; }
+	grep -q ' bzImage$' "$x/SHA256SUMS" && grep -q ' rootfs.cpio.zst$' "$x/SHA256SUMS" ||
+		{ echo "pacchetto incompleto"; return 1; }
+	(cd "$x" && sha256sum -c SHA256SUMS > /dev/null 2>&1) ||
+		{ echo "pacchetto rovinato (controllo SHA-256 non superato): riprova"; return 1; }
+	v=$(head -n 1 "$x/versione")
+	valid_value "$v" || { echo "versione non valida"; return 1; }
+	mv "$x/bzImage" "$d/bzImage" && mv "$x/rootfs.cpio.zst" "$d/rootfs.cpio.zst" || { echo "scrittura non riuscita"; return 1; }
+	echo "$v" > "$STICK_MNT/boot/versioni/$other"
+	sync
+	# Prova una volta sola al prossimo avvio.
+	grubenv_set "$STICK_MNT/boot/grub/grubenv" "prova=$other" || { echo "scrittura non riuscita"; return 1; }
+	echo "$v"
+}
+
+# Estrae il pacchetto (da internet o da un file) e lo installa.
+install_job() { # url|file SORGENTE
+	local kind=$1 src=$2 d x other err="" v try=1
+	other=$(other_slot "$(running_slot)")
+	rm -f "$DIR/fallita" "$DIR/riuscita"
+	if ! stick_mount rw; then
+		state "errore|chiavetta (o disco di sistema) non trovata"
+		return 1
+	fi
+	if ! d=$(prepare_slot); then
+		state "errore|impossibile scrivere sulla chiavetta"
+		stick_umount
+		return 1
+	fi
+	x=$STICK_MNT/aggiornamento.tmp
+	state "scarica|$kind|$src"
+	if [ "$kind" = url ]; then
+		# Se la modalita' ascolto sospende lo scaricamento a lungo, la
+		# connessione puo' cadere: si riprova da capo, fino a 5 volte.
+		while :; do
+			curl -fsSL --connect-timeout 30 --speed-time 120 --speed-limit 1 "$src" 2>/dev/null |
+				tar -x -C "$x" 2>/dev/null && [ -f "$x/rootfs.cpio.zst" ] && break
+			if [ $try -ge 5 ]; then
+				err="scaricamento non riuscito: controlla la connessione a internet e riprova"
+				break
+			fi
+			try=$((try + 1))
+			rm -rf "$x"
+			mkdir -p "$x"
+			sleep 10
+		done
+	elif ! tar -x -C "$x" -f "$src" 2>/dev/null || [ ! -f "$x/rootfs.cpio.zst" ]; then
+		err="pacchetto illeggibile, oppure spazio esaurito sulla chiavetta"
+	fi
+	if [ -n "$err" ]; then
+		state "errore|$err"
+	elif v=$(verify_and_install "$x" "$d" "$other"); then
+		state "pronto|$v"
+		log "aggiornamento: versione $v installata nella copia $other, si prova al prossimo avvio"
+	else
+		state "errore|$v"
+		rm -f "$d/bzImage" "$d/rootfs.cpio.zst"
+	fi
+	rm -rf "$x"
+	sync
+	stick_umount
+}
+
+start_job() { # url|file SORGENTE
+	running && { echo "c'e' gia' un aggiornamento in corso"; return 1; }
+	mkdir -p "$DIR" "$PAUSABLE"
+	state "scarica|$1|$2"
+	setsid "$0" _lavoro "$1" "$2" > /dev/null 2>&1 < /dev/null &
+	echo $! > "$DIR/pid"
+	echo $! > "$PAUSABLE/aggiornamento"
+}
+
+do_download() {
+	local url
+	[ -f "$DIR/disponibile" ] || do_check > /dev/null || { echo "nessun aggiornamento disponibile"; return 1; }
+	url=$(sed -n 's/^url=//p' "$DIR/disponibile")
+	[ -n "$url" ] || { echo "nessun aggiornamento disponibile"; return 1; }
+	start_job url "$url"
+}
+
+# Pacchetti di aggiornamento nella cartella principale dei dischi collegati
+# (es. scaricato dal computer e copiato nella cartella di rete Musica).
+do_packages() {
+	local f
+	for f in "$MEDIA_DIR"/*/sweetspot-*-aggiornamento*.tar "$MEDIA_DIR"/*/*/sweetspot-*-aggiornamento*.tar; do
+		[ -f "$f" ] && echo "$f"
+	done
+	return 0
+}
+
+do_file() {
+	local p m
+	p=$(readlink -f "$1" 2>/dev/null) || { echo "file non trovato"; return 1; }
+	m=$(readlink -f "$MEDIA_DIR")
+	case "$p" in "$m"/*.tar) ;; *) echo "file non valido"; return 1 ;; esac
+	[ -f "$p" ] || { echo "file non trovato"; return 1; }
+	start_job file "$p"
+}
+
+do_cancel() {
+	local pid
+	running || return 0
+	pid=$(cat "$DIR/pid")
+	kill -CONT "-$pid" 2>/dev/null
+	kill -TERM "-$pid" 2>/dev/null
+	rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"
+	sleep 1
+	# La copia non in uso resta vuota: si torna a usare quella attuale.
+	if stick_mount rw; then
+		rm -rf "$STICK_MNT/aggiornamento.tmp"
+		grubenv_set "$STICK_MNT/boot/grub/grubenv" prova=
+		stick_umount
+	fi
+	state "annullato|"
+	log "aggiornamento: annullato"
+}
+
+# L'altra versione installata parte una volta al prossimo avvio; se funziona
+# si conferma e resta quella in uso (come un aggiornamento).
+do_other() {
+	local other d
+	other=$(other_slot "$(running_slot)")
+	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
+	d=$(slot_dir "$STICK_MNT" "$other")
+	if [ ! -f "$d/bzImage" ] || [ ! -f "$d/rootfs.cpio.zst" ]; then
+		stick_umount
+		echo "non c'e' un'altra versione installata"
+		return 1
+	fi
+	grubenv_set "$STICK_MNT/boot/grub/grubenv" "prova=$other"
+	stick_umount
+	log "aggiornamento: al prossimo avvio si prova la copia $other"
+}
+
+# La versione in uso (avviata a mano dal menu) diventa quella predefinita.
+do_default() {
+	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
+	grubenv_set "$STICK_MNT/boot/grub/grubenv" "slot=$(running_slot)" prova= tentato=
+	stick_umount
+}
+
+# --- Conferma a fine avvio ----------------------------------------------------
+
+# Aggiorna menu e GRUB sulla chiavetta se questa versione ne porta di nuovi
+# (solo dopo che la versione si e' confermata).
+same() { cmp -s "$1" "$2"; }
+
+replace_file() { # nuovo destinazione
+	[ -f "$1" ] || return 0
+	same "$1" "$2" && return 0
+	mkdir -p "${2%/*}"
+	cp "$1" "$2.nuovo" && sync && mv "$2.nuovo" "$2" && sync && log "aggiornamento: $(basename "$2") aggiornato"
+}
+
+refresh_boot() {
+	local disk dev start n
+	[ -d "$AVVIO" ] || return 0
+	replace_file "$AVVIO/BOOTX64.EFI" "$STICK_MNT/EFI/BOOT/BOOTX64.EFI"
+	replace_file "$AVVIO/BOOTIA32.EFI" "$STICK_MNT/EFI/BOOT/BOOTIA32.EFI"
+	# GRUB per BIOS: primo stadio nel settore 0 (senza la tabella delle
+	# partizioni) e secondo stadio nei settori liberi prima della partizione.
+	dev=$(stick_device)
+	disk=$(stick_disk)
+	if [ -n "$disk" ] && [ -b "/dev/$disk" ] && [ -f "$AVVIO/grub.img" ]; then
+		start=$(cat "$SYS/class/block/${dev##*/}/start" 2>/dev/null || echo 0)
+		n=$((($(wc -c < "$AVVIO/grub.img") + 511) / 512))
+		if [ "$start" -gt $((n + 1)) ]; then
+			dd if="/dev/$disk" bs=512 skip=1 count=$n 2>/dev/null | head -c "$(wc -c < "$AVVIO/grub.img")" > "$DIR/grub.ora"
+			dd if="/dev/$disk" bs=440 count=1 2>/dev/null > "$DIR/mbr.ora"
+			head -c 440 "$AVVIO/boot.img" > "$DIR/mbr.nuovo"
+			if ! same "$DIR/grub.ora" "$AVVIO/grub.img" || ! same "$DIR/mbr.ora" "$DIR/mbr.nuovo"; then
+				blockdev --setrw "/dev/$disk" 2>/dev/null
+				dd if="$AVVIO/grub.img" of="/dev/$disk" bs=512 seek=1 conv=notrunc,fsync 2>/dev/null &&
+					dd if="$DIR/mbr.nuovo" of="/dev/$disk" bs=440 count=1 conv=notrunc,fsync 2>/dev/null &&
+					log "aggiornamento: GRUB per BIOS aggiornato su /dev/$disk"
+			fi
+			rm -f "$DIR/grub.ora" "$DIR/mbr.ora" "$DIR/mbr.nuovo"
+		fi
+	fi
+	# Il menu per ultimo: usa solo comandi presenti nel GRUB appena scritto.
+	replace_file "$AVVIO/grub.cfg" "$STICK_MNT/boot/grub/grub.cfg"
+}
+
+# Il sistema e' partito: risponde la pagina web locale.
+healthy() {
+	local i=0
+	while [ $i -lt "${SWEETSPOT_CONFERMA_ATTESA:-60}" ]; do
+		"${SWEETSPOT_WGET:-wget}" -q -T 5 -O /dev/null "http://127.0.0.1/cgi-bin/vivo" 2>/dev/null && return 0
+		sleep 2
+		i=$((i + 2))
+	done
+	return 1
+}
+
+do_confirm() {
+	local slot env def tried
+	slot=$(running_slot)
+	mkdir -p "$DIR"
+	stick_mount rw || return 0
+	env=$STICK_MNT/boot/grub/grubenv
+	[ -f "$env" ] || grubenv_set "$env" "slot=$slot"
+	def=$(grubenv_get "$env" slot)
+	tried=$(grubenv_get "$env" tentato)
+	if [ -n "$tried" ] && [ "$tried" != "$slot" ]; then
+		# La copia appena aggiornata non e' arrivata qui: si e' tornati a
+		# questa. La copia rimane, ma non si riprova da sola.
+		cat "$STICK_MNT/boot/versioni/$tried" > "$DIR/fallita" 2>/dev/null || echo "$tried" > "$DIR/fallita"
+		grubenv_set "$env" tentato=
+		log "aggiornamento: la nuova versione (copia $tried) non e' partita, si e' tornati alla precedente"
+	elif [ "$tried" = "$slot" ]; then
+		if healthy; then
+			grubenv_set "$env" "slot=$slot" tentato=
+			touch "$DIR/riuscita"
+			log "aggiornamento: la versione $(current_version) funziona ed e' ora quella in uso"
+			refresh_boot
+		else
+			log "aggiornamento: la nuova versione non risponde, al prossimo avvio riparte la precedente"
+		fi
+	elif [ -z "$def" ]; then
+		grubenv_set "$env" "slot=$slot"
+	fi
+	stick_umount
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	stato) do_status ;;
+	cerca) do_check ;;
+	scarica) do_download ;;
+	file) do_file "$2" ;;
+	pacchetti) do_packages ;;
+	annulla) do_cancel ;;
+	altra) do_other ;;
+	predefinita) do_default ;;
+	conferma) do_confirm ;;
+	_lavoro) install_job "$2" "$3"; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento" ;;
+	*) echo "uso: $0 stato|cerca|scarica|file PACCHETTO|pacchetti|annulla|altra|predefinita|conferma" >&2; exit 1 ;;
+esac

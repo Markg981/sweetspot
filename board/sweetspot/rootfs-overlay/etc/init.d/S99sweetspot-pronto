@@ -1,9 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - fine dell'avvio: da qui i dischi collegati dopo vengono
-# aggiunti alla libreria automaticamente.
+# aggiunti alla libreria automaticamente. Una versione appena aggiornata
+# conferma qui di funzionare (vedi sweetspot-aggiorna).
 
 case "$1" in
-	start) touch /run/sweetspot/avvio-completato ;;
+	start)
+		touch /run/sweetspot/avvio-completato
+		setsid /usr/bin/sweetspot-aggiorna conferma > /dev/null 2>&1 < /dev/null &
+		;;
 	stop) rm -f /run/sweetspot/avvio-completato ;;
 esac

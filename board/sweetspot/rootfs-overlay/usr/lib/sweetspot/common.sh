@@ -17,7 +17,8 @@ CONF=$RUN/sweetspot.conf
 DEFAULTS=${SWEETSPOT_DEFAULTS:-/etc/sweetspot/defaults.conf}
 LOGFILE=${SWEETSPOT_LOG:-/var/log/sweetspot.log}
 STICK_LABEL=SWEETSPOT
-STICK_MNT=$RUN/chiavetta
+# SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
+STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 
 log() {
 	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
@@ -493,21 +494,131 @@ lms_now_playing() {
 		jq -c '.result | {mode, rate: (.playlist_loop[0].samplerate // ""), bits: (.playlist_loop[0].samplesize // ""), type: (.playlist_loop[0].type // ""), title: (.playlist_loop[0].title // ""), artist: (.playlist_loop[0].artist // ""), album: (.playlist_loop[0].album // ""), bitrate: (.playlist_loop[0].bitrate // "")}' 2>/dev/null
 }
 
-# --- Chiavetta ------------------------------------------------------------------
+# --- Chiavetta (o partizione di sistema sul disco interno) --------------------------
 
-stick_device() { findfs "LABEL=$STICK_LABEL" 2>/dev/null; }
+# La partizione da cui GRUB ha avviato Sweetspot (sweetspot.part=UUID sulla
+# riga di comando): con la chiavetta ancora inserita dopo l'installazione
+# sul disco interno ci sono due partizioni SWEETSPOT, e conta quella giusta.
+stick_device() {
+	local id
+	id=$(cmdline_value sweetspot.part)
+	if [ -n "$id" ]; then
+		findfs "UUID=$id" 2>/dev/null && return 0
+	fi
+	findfs "LABEL=$STICK_LABEL" 2>/dev/null
+}
 
-stick_mount() {
-	local dev mode=${1:-ro}
+# Disco che contiene la partizione di sistema (es. sdb per sdb1).
+stick_disk() {
+	local dev
 	dev=$(stick_device) || return 1
 	[ -n "$dev" ] || return 1
-	mkdir -p "$STICK_MNT"
-	mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null
+	part_disk "${dev##*/}"
+}
+
+part_disk() { # sdb1 -> sdb, nvme0n1p1 -> nvme0n1
+	local p
+	p=$(readlink -f "$SYS/class/block/$1/.." 2>/dev/null) || return 1
+	[ -f "$p/size" ] && [ -d "$p/queue" ] || return 1
+	echo "${p##*/}"
+}
+
+# Montaggio condiviso: chi monta la chiavetta (impostazioni, salvataggio
+# dei dati, aggiornamenti) la smonta solo se nessun altro la sta usando.
+# Il primo che chiede la scrittura la rimonta scrivibile.
+STICK_USERS=$RUN/chiavetta.utenti
+
+stick_mount() { # [ro|rw]
+	local dev mode=${1:-ro} n rc=0
+	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && { [ -d "$STICK_MNT" ]; return; }
+	mkdir -p "$RUN"
+	exec 8> "$RUN/chiavetta.lock"
+	flock 8
+	n=$(cat "$STICK_USERS" 2>/dev/null)
+	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
+		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null
+	else
+		n=0
+		dev=$(stick_device)
+		if [ -n "$dev" ]; then
+			mkdir -p "$STICK_MNT"
+			mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null || rc=1
+		else
+			rc=1
+		fi
+	fi
+	[ $rc -eq 0 ] && echo $((${n:-0} + 1)) > "$STICK_USERS"
+	flock -u 8
+	exec 8>&-
+	return $rc
 }
 
 stick_umount() {
+	local n
+	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && return 0
+	exec 8> "$RUN/chiavetta.lock"
+	flock 8
+	n=$(($(cat "$STICK_USERS" 2>/dev/null || echo 1) - 1))
 	sync
-	umount "$STICK_MNT" 2>/dev/null
+	if [ $n -le 0 ]; then
+		umount "$STICK_MNT" 2>/dev/null
+		rm -f "$STICK_USERS"
+	else
+		echo $n > "$STICK_USERS"
+	fi
+	flock -u 8
+	exec 8>&-
+}
+
+# --- Due copie del sistema (aggiornamenti con ritorno automatico) ----------------
+#
+# Sulla partizione SWEETSPOT ci sono due copie del sistema: la copia A nella
+# cartella principale (bzImage, rootfs.cpio.zst), la copia B nella cartella
+# b. Un aggiornamento si scrive sempre nella copia che non e' in uso; GRUB la
+# prova una volta sola (variabile "prova" in boot/grub/grubenv) e, se il
+# nuovo sistema non arriva a confermarsi, all'accensione successiva riparte
+# la copia di prima.
+
+GRUBENV_HEAD='# GRUB Environment Block'
+
+running_slot() {
+	case "$(cmdline_value sweetspot.slot)" in b) echo b ;; *) echo a ;; esac
+}
+
+other_slot() { if [ "$1" = b ]; then echo a; else echo b; fi; }
+
+slot_dir() { # radice copia
+	if [ "$2" = b ]; then echo "$1/b"; else echo "$1"; fi
+}
+
+grubenv_get() { # file chiave
+	sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
+}
+
+# grubenv_set FILE CHIAVE=VALORE... (valore vuoto = toglie la chiave).
+# Il file resta di 1024 byte e si riscrive al suo posto, come fa GRUB.
+grubenv_set() {
+	local f=$1 kv body size
+	shift
+	body=$(sed -n '/^[A-Za-z_][A-Za-z0-9_]*=/p' "$f" 2>/dev/null)
+	for kv; do
+		body=$(printf '%s\n' "$body" | grep -v "^${kv%%=*}=")
+		[ -n "${kv#*=}" ] && body=$(printf '%s\n%s' "$body" "$kv")
+	done
+	body=$(printf '%s\n' "$GRUBENV_HEAD" "$body" | grep -v '^$')
+	size=$(printf '%s\n' "$body" | wc -c)
+	[ "$size" -le 1024 ] || return 1
+	{
+		printf '%s\n' "$body"
+		head -c $((1024 - size)) /dev/zero | tr '\0' '#'
+	} > "$f.nuovo" || return 1
+	if [ -f "$f" ] && [ "$(wc -c < "$f")" = 1024 ]; then
+		dd if="$f.nuovo" of="$f" bs=1024 count=1 conv=notrunc,fsync 2>/dev/null || return 1
+		rm -f "$f.nuovo"
+	else
+		mv "$f.nuovo" "$f" || return 1
+	fi
+	sync
 }
 
 # --- Riga di comando del kernel ---------------------------------------------------

@@ -94,6 +94,15 @@ edit_all() { # sorgente destinazione chiavi/valori...
 	mv "$dst.1" "$dst"
 }
 
+# Un altro file (es. le impostazioni copiate sul disco interno durante
+# l'installazione): si modifica solo quello.
+if [ -n "${SWEETSPOT_CONFIG_FILE:-}" ]; then
+	f=$SWEETSPOT_CONFIG_FILE
+	[ -f "$f" ] || : > "$f"
+	edit_all "$f" "$f.tmp" "$@" && mv "$f.tmp" "$f"
+	exit $?
+fi
+
 mkdir -p "$RUN"
 saved=2
 exec 9> "$RUN/config.lock"

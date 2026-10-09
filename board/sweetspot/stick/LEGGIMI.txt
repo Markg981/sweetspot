@@ -22,6 +22,17 @@ La musica
 - Funzionano anche le app per Lyrion Music Server (iPeng, Squeezer,
   Material) e gli altri player Squeezebox della casa.
 
+Installarlo sul disco del computer
+----------------------------------
+Come su Daphile: pagina Sistema > Installazione sul disco interno. Il
+disco scelto viene cancellato; il resto del disco puo' diventare
+l'archivio musicale. Poi spegni, togli la chiavetta e riaccendi.
+
+Aggiornamenti
+-------------
+Pagina Sistema > Cerca aggiornamenti. La versione in uso resta installata:
+se la nuova non parte, Sweetspot torna da solo a quella di prima.
+
 Impostazioni
 ------------
 Si cambiano dal browser. Restano salvate in questa chiavetta, nel file

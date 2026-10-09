@@ -16,7 +16,6 @@ if [ -n "$iso" ]; then
 else
 	info_row "" "Core dedicati all'audio" "nessuno (avvio sicuro o processore con un solo core): la riproduzione ha comunque la priorità real-time"
 fi
-info_row "" "Versione di Sweetspot" "$(cat /etc/sweetspot-version 2>/dev/null)"
 echo '</div>'
 
 m=$(mode)
@@ -66,10 +65,148 @@ $(option no "Spente: per provare se un problema dipende da loro" "$(conf OTTIMIZ
 <button class="primary">Salva</button>
 </form>
 </div>
+HTML
 
+# --- Versione e aggiornamenti -------------------------------------------------------
+st=$(sweetspot-aggiorna stato)
+sv() { printf '%s\n' "$st" | sed -n "s/^$1=//p" | tail -n 1; }
+ver=$(sv versione)
+slot=$(sv copia)
+upper() { printf '%s' "$1" | tr 'ab' 'AB'; }
+job=$(sv lavoro)
+jstate=${job%%|*}
+jmsg=${job#*|}
+avail=$(sv disponibile_versione)
+echo '<h2>Versione e aggiornamenti</h2><div class="card">'
+info_row OK "Sweetspot $ver" "in uso la copia $(upper "$slot") del sistema"
+if [ -n "$(sv fallita)" ]; then
+	info_row ATTENZIONE "L'aggiornamento a $(sv fallita) non è partito" "Sweetspot è tornato da solo alla versione di prima: la musica e le impostazioni sono al loro posto. Puoi riprovare più tardi."
+fi
+[ -n "$(sv riuscita)" ] && info_row OK "Aggiornamento riuscito" "Questa versione si è avviata correttamente ed è ora quella in uso."
+if [ -n "$(sv predefinita)" ] && [ "$(sv predefinita)" != "$slot" ] && [ -z "$(sv prova)" ]; then
+	printf '<div class="row ATTENZIONE"><span class="dot"></span><div class="grow"><div class="k">Stai usando l%sversione scelta dal menu di avvio</div><div class="v">Alla prossima accensione partirà l%saltra, a meno che tu non scelga questa.</div></div>' "'" "'"
+	button aggiorna_predefinita "Usa sempre questa"
+	echo '</div>'
+fi
+case "$jstate" in
+	scarica|controlla)
+		tot=$(sv totale); done_kb=$(sv progresso); pct=0
+		[ "${tot:-0}" -gt 0 ] 2>/dev/null && pct=$(( ${done_kb:-0} * 100 / tot ))
+		[ "$pct" -gt 100 ] && pct=100
+		[ "$jstate" = controlla ] && pct=100
+		echo '<div class="row ATTENZIONE"><span class="dot"></span><div class="grow">'
+		if [ "$jstate" = scarica ]; then
+			printf '<div class="k">Aggiornamento in corso</div><div class="v">%s%% - mentre la musica suona si sospende e riprende da solo</div>' "$pct"
+		else
+			echo '<div class="k">Controllo dell'"'"'aggiornamento</div><div class="v">verifica del pacchetto (SHA-256)</div>'
+		fi
+		printf '<progress max="100" value="%s"></progress>' "$pct"
+		button aggiorna_annulla "Annulla" "" "" danger
+		echo '</div></div><meta http-equiv="refresh" content="5">' ;;
+	pronto)
+		printf '<div class="row OK"><span class="dot"></span><div class="grow"><div class="k">Versione %s pronta</div><div class="v">Riavvia per usarla. Se non dovesse partire, Sweetspot torna da solo a questa versione.</div></div>' "$(esc "$jmsg")"
+		button riavvia "Riavvia ora" "" "" primary
+		echo '</div>' ;;
+	errore) info_row ATTENZIONE "Aggiornamento non riuscito" "$jmsg" ;;
+esac
+if [ "$jstate" != scarica ] && [ "$jstate" != controlla ] && [ "$jstate" != pronto ]; then
+	if [ -n "$avail" ] && [ "$avail" != "$ver" ]; then
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">Disponibile Sweetspot %s</div><div class="v">pubblicata il %s</div>' \
+			"$(esc "$avail")" "$(esc "$(sv disponibile_data)")"
+		if [ -s "$RUN/aggiornamento/note" ]; then
+			printf '<details><summary>Novità</summary><pre class="note">%s</pre></details>' "$(esc "$(cat "$RUN/aggiornamento/note")")"
+		fi
+		echo '</div>'
+		button aggiorna_scarica "Aggiorna" "" "" primary
+		echo '</div>'
+	elif [ -n "$avail" ]; then
+		info_row OK "Hai l'ultima versione" "Nessun aggiornamento disponibile."
+	fi
+	sweetspot-aggiorna pacchetti | while IFS= read -r f; do
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">Pacchetto di aggiornamento su disco</div><div class="v">%s</div></div>' "$(esc "${f#"$MEDIA_DIR"/}")"
+		button aggiorna_file "Installa" file "$f"
+		echo '</div>'
+	done
+	other=$(sv altra_versione)
+	# L'altra copia e' quella che non e' partita: non si propone.
+	if [ -n "$other" ] && [ "$other" != "$(sv fallita)" ]; then
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">Altra versione installata: %s</div><div class="v">resta pronta: puoi tornare a questa quando vuoi</div></div>' "$(esc "$other")"
+		printf '<form method="post" action="/cgi-bin/azione" class="inline" onsubmit="return %s">' \
+			"$(esc "confirm(\"Riavviare Sweetspot con la versione $other?\")")"
+		printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="aggiorna_altra">' "$(token)"
+		echo '<button>Riavvia con questa</button></form></div>'
+	fi
+	echo '<div class="row"><div class="grow">'
+	button aggiorna_cerca "Cerca aggiornamenti"
+	echo '<p class="sub">Gli aggiornamenti arrivano da GitHub e si installano accanto alla versione in uso, che resta come riserva. Senza internet: scarica il pacchetto con il computer e copialo su un disco collegato (o nella cartella di rete Musica).</p></div></div>'
+fi
+echo '</div>'
+
+# --- Installazione sul disco interno -------------------------------------------------
+ist=$(sweetspot-installa stato)
+istate=${ist%%|*}; irest=${ist#*|}
+istep=${irest%%|*}; irest=${irest#*|}
+itot=${irest%%|*}; imsg=${irest#*|}
+bootdisk=$(stick_disk)
+echo '<h2>Installazione sul disco interno</h2><div class="card formcard">'
+case "$istate" in
+	prepara|partizioni|formatta|copia|impostazioni|controllo)
+		pct=$(( ${istep:-0} * 100 / ${itot:-7} ))
+		printf '<p><b>Installazione in corso</b>: %s</p><progress max="100" value="%s"></progress>' "$(esc "$imsg")" "$pct"
+		echo '<p class="sub">Non spegnere il computer. Mentre la musica suona l'"'"'installazione si sospende.</p><meta http-equiv="refresh" content="5">'
+		echo '</div>'
+		page_end
+		exit 0 ;;
+	finita)
+		cat <<'HTML'
+<p class="msg">Sweetspot è installato sul disco interno.</p>
+<p>Ora: <b>spegni</b>, <b>togli la chiavetta</b> e riaccendi. Sweetspot partirà dal disco, con le stesse impostazioni, plugin e libreria.</p>
+<p class="sub">Se il computer non parte dal disco, all'accensione apri il menu di avvio o il BIOS/UEFI e scegli il disco come primo dispositivo
+(su UEFI tieni spento il Secure Boot, come per la chiavetta). La chiavetta resta valida: puoi conservarla come copia di riserva.</p>
+HTML
+		button spegni "Spegni" "" "" primary
+		echo '</div>'
+		page_end
+		exit 0 ;;
+	errore) printf '<p class="msg">Installazione non riuscita: %s.</p>' "$(esc "$imsg")" ;;
+esac
+installed=""
+if [ -n "$bootdisk" ] && ! readlink -f "$SYS/block/$bootdisk" 2>/dev/null | grep -q /usb; then
+	installed=1
+	printf '<p>Sweetspot è installato su questo computer e parte dal disco interno (%s).</p>\n<details><summary>Installa su un altro disco</summary>\n' "$(esc "$bootdisk")"
+fi
+cat <<'HTML'
+<p class="sub">Come su Daphile: Sweetspot si copia sul disco del computer e da lì parte da solo, senza chiavetta.
+Il sistema lavora comunque tutto in RAM: il disco si legge solo all'accensione e si scrive solo per salvare impostazioni e libreria.
+Il resto del disco può diventare l'archivio musicale, per i CD copiati e la musica copiata dal computer.
+<b>Tutto ciò che c'è ora sul disco scelto viene cancellato.</b></p>
+HTML
+n=0
+disks=$(sweetspot-installa dischi)
+while IFS='|' read -r d gb model bus contents arch; do
+	[ -n "$d" ] || continue
+	n=$((n + 1))
+	printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s, %s GB (%s) - %s</div>\n' \
+		"$(esc "$model")" "$(esc "$d")" "$gb" "$(esc "$bus")" "$(esc "${contents:-vuoto}")"
+	printf '<form method="post" action="/cgi-bin/azione" onsubmit="return %s">\n' \
+		"$(esc "confirm(\"Cancellare TUTTO il contenuto di $(printf '%s' "$model" | tr -d '"\\') ($d, $gb GB) e installare Sweetspot?\")")"
+	printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="installa"><input type="hidden" name="disco" value="%s">\n' "$(token)" "$(esc "$d")"
+	if [ "$arch" = si ]; then
+		echo '<label class="check"><input type="checkbox" name="archivio" value="si" checked> Usa il resto del disco come archivio musicale</label>'
+	fi
+	echo '<label class="check"><input type="checkbox" name="conferma" value="si" required> Ho capito: il contenuto del disco verrà cancellato</label>'
+	echo '<button class="danger">Installa su questo disco</button></form></div></div>'
+done <<EOF2
+$disks
+EOF2
+[ $n -eq 0 ] && info_row "" "Nessun disco adatto" "Serve un disco interno (o USB) di almeno 2 GB, diverso da quello da cui parte Sweetspot."
+[ -n "$installed" ] && echo '</details>'
+echo '</div>'
+
+cat <<HTML
 <h2>Accensione</h2>
 <div class="card formcard">
-<p class="sub">Spegni Sweetspot da qui prima di staccare la corrente: libreria, plugin e impostazioni vengono salvati sulla chiavetta.</p>
+<p class="sub">Spegni Sweetspot da qui prima di staccare la corrente: libreria, plugin e impostazioni vengono salvati sulla $( [ -n "$installed" ] && echo "partizione di sistema del disco" || echo chiavetta).</p>
 HTML
 button riavvia "Riavvia"
 button spegni "Spegni" "" "" danger

@@ -85,6 +85,13 @@ BR2_PACKAGE_LINUX_FIRMWARE_IWLWIFI_9XXX=y
 BR2_PACKAGE_LINUX_FIRMWARE_IWLWIFI_6E=y
 BR2_PACKAGE_LINUX_FIRMWARE_IWLWIFI_7=y
 
+# Installazione sul disco interno: partizione di sistema (FAT32) e
+# archivio musicale (ext4)
+BR2_PACKAGE_DOSFSTOOLS=y
+BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
+BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
+BR2_PACKAGE_E2FSPROGS=y
+
 # Strumenti di sistema e diagnostica
 BR2_PACKAGE_RT_TESTS=y
 BR2_PACKAGE_HDPARM=y
@@ -113,9 +120,9 @@ BR2_TARGET_GRUB2=y
 BR2_TARGET_GRUB2_I386_PC=y
 BR2_TARGET_GRUB2_I386_EFI=y
 BR2_TARGET_GRUB2_X86_64_EFI=y
-BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="boot linux fat part_msdos part_gpt normal biosdisk search search_label configfile test echo"
+BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="boot linux fat part_msdos part_gpt normal biosdisk search search_label search_fs_uuid configfile test echo loadenv probe"
 BR2_TARGET_GRUB2_BUILTIN_CONFIG_PC="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/x86/grub-early.cfg"
-BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux fat part_msdos part_gpt normal search search_label configfile test echo efi_gop efi_uga"
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux fat part_msdos part_gpt normal search search_label search_fs_uuid configfile test echo loadenv probe efi_gop efi_uga"
 BR2_TARGET_GRUB2_BUILTIN_CONFIG_EFI="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/x86/grub-early.cfg"
 
 # Strumenti per creare l'immagine

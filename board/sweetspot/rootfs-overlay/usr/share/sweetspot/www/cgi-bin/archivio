@@ -184,6 +184,7 @@ echo '<h2>Nell'"'"'archivio</h2><div class="card">'
 n=0
 for d in "$arch"/*; do
 	[ -d "$d" ] || continue
+	[ "${d##*/}" = lost+found ] && continue
 	n=$((n + 1))
 	printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div></div>' "$(esc "${d##*/}")"
 	name=$(printf '%s' "${d##*/}" | tr -d '"\\')

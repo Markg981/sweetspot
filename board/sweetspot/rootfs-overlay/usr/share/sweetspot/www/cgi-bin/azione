@@ -23,7 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_condiviso="" F_album="" F_artista="" F_anno=""
+F_condiviso="" F_album="" F_artista="" F_anno="" F_disco="" F_archivio="" F_conferma="" F_file=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -312,6 +312,45 @@ case "$F_a" in
 			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalità vale dal prossimo avvio: riavvia Sweetspot.")"
 		fi
 		done_to sistema "$(saved_msg $rc "Impostazioni salvate.")" ;;
+
+	# --- Aggiornamenti e installazione ------------------------------------------------
+	aggiorna_cerca)
+		out=$(sweetspot-aggiorna cerca)
+		case "$out" in
+			errore=*) done_to sistema "Ricerca non riuscita: ${out#errore=}." ;;
+		esac
+		v=$(printf '%s\n' "$out" | sed -n 's/^versione=//p')
+		if [ "$v" = "$(cut -d' ' -f1 /etc/sweetspot-version 2>/dev/null)" ]; then
+			done_to sistema "Hai già l'ultima versione ($v)."
+		fi
+		done_to sistema "È disponibile Sweetspot $v." ;;
+
+	aggiorna_scarica)
+		out=$(sweetspot-aggiorna scarica) || done_to sistema "Aggiornamento non avviato: $out."
+		done_to sistema "Aggiornamento avviato: Sweetspot continua a suonare, la nuova versione si usa dopo il riavvio." ;;
+
+	aggiorna_file)
+		out=$(sweetspot-aggiorna file "$F_file") || done_to sistema "Aggiornamento non avviato: $out."
+		done_to sistema "Aggiornamento dal disco avviato." ;;
+
+	aggiorna_annulla)
+		sweetspot-aggiorna annulla
+		done_to sistema "Aggiornamento annullato: resta la versione attuale." ;;
+
+	aggiorna_altra)
+		out=$(sweetspot-aggiorna altra) || done_to sistema "Non si può: $out."
+		( sleep 2; reboot ) >/dev/null 2>&1 &
+		done_to stato "Riavvio con l'altra versione: la pagina tornerà disponibile tra circa un minuto." ;;
+
+	aggiorna_predefinita)
+		sweetspot-aggiorna predefinita > /dev/null
+		done_to sistema "Questa versione è ora quella che parte all'accensione." ;;
+
+	installa)
+		[ "$F_conferma" = si ] || done_to sistema "Per installare conferma che il disco verrà cancellato."
+		[ "$F_archivio" = si ] || F_archivio=no
+		out=$(sweetspot-installa avvia "$F_disco" "$F_archivio") || done_to sistema "Installazione non avviata: $out."
+		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
 
 	riavvia)
 		( sleep 2; reboot ) >/dev/null 2>&1 &

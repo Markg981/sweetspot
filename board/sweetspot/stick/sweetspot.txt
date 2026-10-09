@@ -118,3 +118,6 @@ SSH_PASSWORD=
 # Ottimizzazioni di sistema (core dedicati, frequenza fissa, ecc.).
 # no = funzionamento normale, utile solo per confronti o problemi.
 OTTIMIZZAZIONI=si
+
+# Fonte degli aggiornamenti (vuoto = questo progetto su GitHub).
+AGGIORNAMENTI_URL=

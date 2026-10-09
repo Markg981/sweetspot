@@ -33,3 +33,24 @@ chmod 0755 "$TARGET_DIR"/etc/init.d/S*sweetspot-* \
 # Versione mostrata nella pagina di stato.
 VERSION=$(git -C "$BOARD_DIR" describe --tags --always --dirty 2>/dev/null || echo sviluppo)
 echo "$VERSION ($(date -u '+%Y-%m-%d'))" > "$TARGET_DIR/etc/sweetspot-version"
+
+# File di avvio dentro il sistema: servono per installare Sweetspot sul
+# disco interno e per aggiornare menu e GRUB insieme al sistema.
+if [ -f "$BINARIES_DIR/grub.img" ]; then
+	AVVIO="$TARGET_DIR/usr/share/sweetspot/avvio"
+	rm -rf "$AVVIO"
+	mkdir -p "$AVVIO"
+	cp "$BOARD_DIR/x86/grub.cfg" "$AVVIO/grub.cfg"
+	cp "$BINARIES_DIR/grub.img" "$AVVIO/grub.img"
+	cp "$BINARIES_DIR/efi-part/EFI/BOOT/bootx64.efi" "$AVVIO/BOOTX64.EFI"
+	cp "$BINARIES_DIR/efi-part/EFI/BOOT/bootia32.efi" "$AVVIO/BOOTIA32.EFI"
+	BOOT_IMG=$(ls "$BUILD_DIR"/grub2-*/build-i386-pc/grub-core/boot.img 2>/dev/null | head -n 1)
+	if [ -z "$BOOT_IMG" ]; then
+		echo "boot.img di GRUB non trovato" >&2
+		exit 1
+	fi
+	cp "$BOOT_IMG" "$AVVIO/boot.img"
+	for f in sweetspot.txt LEGGIMI.txt; do
+		sed 's/$/\r/' "$BOARD_DIR/stick/$f" > "$AVVIO/$f"
+	done
+fi

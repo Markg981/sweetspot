@@ -390,6 +390,139 @@ expect "disco dati: tutto il disco" "Archivio" "$(links Archivio)"
 expect "collegamenti nella libreria" "Archivio Linux - anna Win - marco" "$(ls "$DSK/musica" | tr '\n' ' ' | sed 's/ $//')"
 expect "collegamento al disco" "$DSK/media/Archivio" "$(readlink "$DSK/musica/Archivio")"
 
+echo "Aggiornamenti (due copie del sistema)"
+UPD=$WORK/upd
+mkdir -p "$UPD/proc" "$UPD/run" "$UPD/sys" "$UPD/stick/boot/grub" "$UPD/stick/boot/versioni" "$UPD/media/USB" \
+	"$UPD/avvio" "$UPD/bin" "$UPD/pkg"
+echo "BOOT_IMAGE=/bzImage sweetspot.slot=a sweetspot.part=ABCD-1234" > "$UPD/proc/cmdline"
+echo "v1.0.0 (2026-10-01)" > "$UPD/version"
+echo A-kernel > "$UPD/stick/bzImage"
+echo A-rootfs > "$UPD/stick/rootfs.cpio.zst"
+echo v1.0.0 > "$UPD/stick/boot/versioni/a"
+echo "menu vecchio" > "$UPD/stick/boot/grub/grub.cfg"
+echo "menu nuovo" > "$UPD/avvio/grub.cfg"
+printf '#!/bin/sh\nexit 0\n' > "$UPD/bin/wget-ok"
+printf '#!/bin/sh\nexit 1\n' > "$UPD/bin/wget-ko"
+chmod +x "$UPD/bin"/*
+mkpkg() { # versione architettura [rovina]
+	rm -rf "$UPD/pkg"; mkdir -p "$UPD/pkg"
+	echo "kernel $1" > "$UPD/pkg/bzImage"
+	echo "rootfs $1" > "$UPD/pkg/rootfs.cpio.zst"
+	echo "$1" > "$UPD/pkg/versione"
+	echo "$2" > "$UPD/pkg/architettura"
+	(cd "$UPD/pkg" && sha256sum bzImage rootfs.cpio.zst versione architettura > SHA256SUMS)
+	[ -n "${3:-}" ] && echo "rovinato" >> "$UPD/pkg/rootfs.cpio.zst"
+	tar -C "$UPD/pkg" -cf "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar" SHA256SUMS versione architettura bzImage rootfs.cpio.zst
+}
+upd() {
+	SWEETSPOT_SYSFS=$UPD/sys SWEETSPOT_PROCFS=$UPD/proc SWEETSPOT_RUN=$UPD/run SWEETSPOT_LOG=$UPD/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$UPD/stick \
+		SWEETSPOT_MEDIA=$UPD/media SWEETSPOT_ARCH=x86_64 SWEETSPOT_VERSION_FILE=$UPD/version \
+		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
+}
+genv() { $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; grubenv_get \"\$1\" \"\$2\"" sh "$UPD/stick/boot/grub/grubenv" "$1"; }
+setenv() { $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; f=\$1; shift; grubenv_set \"\$f\" \"\$@\"" sh "$UPD/stick/boot/grub/grubenv" "$@"; }
+setenv slot=a
+expect "ambiente di GRUB di 1024 byte" "1024" "$(wc -c < "$UPD/stick/boot/grub/grubenv" | tr -d ' ')"
+if command -v grub-editenv > /dev/null; then
+	expect "ambiente leggibile da GRUB" "slot=a" "$(grub-editenv "$UPD/stick/boot/grub/grubenv" list)"
+fi
+mkpkg v1.1.0 x86_64
+expect "pacchetto trovato sul disco" "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar" "$(upd pacchetti)"
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "aggiornamento pronto" "pronto|v1.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
+expect "nuova versione nella copia B" "kernel v1.1.0|rootfs v1.1.0|v1.1.0" \
+	"$(cat "$UPD/stick/b/bzImage")|$(cat "$UPD/stick/b/rootfs.cpio.zst")|$(cat "$UPD/stick/boot/versioni/b")"
+expect "copia A intatta" "A-kernel" "$(cat "$UPD/stick/bzImage")"
+expect "GRUB la prova una volta" "a|b" "$(genv slot)|$(genv prova)"
+expect "stato per la pagina" "v1.1.0|pronto|v1.1.0" "$(upd stato | sed -n 's/^altra_versione=//p')|$(upd stato | sed -n 's/^lavoro=//p')"
+# GRUB avvia la copia B e consuma "prova"
+setenv prova= tentato=b
+echo "BOOT_IMAGE=/b/bzImage sweetspot.slot=b sweetspot.part=ABCD-1234" > "$UPD/proc/cmdline"
+UPD_WGET=$UPD/bin/wget-ko upd conferma
+expect "senza risposta dalla rete non si conferma" "a|b" "$(genv slot)|$(genv tentato)"
+upd conferma
+expect "la nuova versione si conferma" "b|" "$(genv slot)|$(genv tentato)"
+expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riuscita=')"
+expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
+# Secondo aggiornamento (va nella copia A), che non parte: si torna a B
+rm -f "$UPD/run/aggiornamento/riuscita"
+mkpkg v1.2.0 x86_64
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "secondo aggiornamento nella copia A" "kernel v1.2.0|a" "$(cat "$UPD/stick/bzImage")|$(genv prova)"
+setenv prova= tentato=a
+upd conferma
+expect "versione non partita: si resta su B" "b|" "$(genv slot)|$(genv tentato)"
+expect "versione non partita segnalata" "fallita=v1.2.0" "$(upd stato | grep '^fallita=')"
+# Pacchetti sbagliati
+mkpkg v1.3.0 x86_64 rovina
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "pacchetto rovinato rifiutato" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+expect "nessuna prova dopo un pacchetto rovinato" "" "$(genv prova)"
+expect "pacchetto rovinato: copia vuota" "no" "$([ -f "$UPD/stick/bzImage" ] && echo si || echo no)"
+mkpkg v1.3.0 aarch64
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "pacchetto di un'altra architettura rifiutato" "errore|pacchetto per un altro tipo di computer (aarch64)" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v1.3.0 x86_64
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+upd altra
+expect "ritorno manuale all'altra versione" "a" "$(genv prova)"
+expect "file fuori dai dischi rifiutato" "file non valido" "$(upd file /etc/passwd)"
+cat > "$UPD/bin/curl" <<'EOF2'
+#!/bin/sh
+cat <<'JSON'
+{"tag_name":"v2.0.0","published_at":"2026-11-01T10:00:00Z","body":"Novità: <b>prova</b>",
+ "assets":[{"name":"sweetspot.img.xz","browser_download_url":"https://example.com/img","size":1},
+           {"name":"sweetspot-x86_64-aggiornamento.tar","browser_download_url":"https://example.com/upd.tar","size":104857600}]}
+JSON
+EOF2
+chmod +x "$UPD/bin/curl"
+expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
+	"$(SWEETSPOT_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+
+echo "Installazione sul disco interno"
+INS=$WORK/ins
+mkdir -p "$INS/sys/block/sda/queue" "$INS/sys/block/sda/device" "$INS/sys/block/sda/sda1" "$INS/sys/block/mmcblk0boot0" \
+	"$INS/sys/devices/pci0000:00/usb1/1-1/block/sdb/queue" "$INS/proc" "$INS/run" "$INS/avvio"
+echo 976773168 > "$INS/sys/block/sda/size"
+echo 512 > "$INS/sys/block/sda/queue/logical_block_size"
+printf 'ATA     \n' > "$INS/sys/block/sda/device/vendor"
+printf 'Samsung SSD 860 \n' > "$INS/sys/block/sda/device/model"
+echo 1 > "$INS/sys/block/sda/sda1/partition"
+echo 976771072 > "$INS/sys/block/sda/sda1/size"
+ln -s ../devices/pci0000:00/usb1/1-1/block/sdb "$INS/sys/block/sdb"
+echo 15728640 > "$INS/sys/devices/pci0000:00/usb1/1-1/block/sdb/size"
+echo 512 > "$INS/sys/devices/pci0000:00/usb1/1-1/block/sdb/queue/logical_block_size"
+echo 8192 > "$INS/sys/block/mmcblk0boot0/size"
+echo "BOOT_IMAGE=/bzImage" > "$INS/proc/cmdline"
+ins() {
+	SWEETSPOT_SYSFS=$INS/sys SWEETSPOT_PROCFS=$INS/proc SWEETSPOT_RUN=$INS/run SWEETSPOT_LOG=$INS/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_DEV=$INS/dev SWEETSPOT_AVVIO=$INS/avvio \
+		SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-installa; $1"
+}
+expect "dischi adatti" "sda|465|Samsung SSD 860|interno|partizione sda1 (sconosciuta, 465 GB)|si sdb|7|Disco sdb|USB||no" \
+	"$(ins do_disks | tr '\n' ' ' | sed 's/ $//')"
+expect "partizioni di un disco da 500 GB" "2048 8388608 8390656 968380416" "$(ins 'plan 976773168')"
+expect "disco piccolo: niente archivio" "2048 6287360 6289408 0" "$(ins 'plan 6291456')"
+expect "disco da 4 TB: archivio fino al limite MBR" "2048 8388608 8390656 4286574592" "$(ins 'plan 8589934592')"
+expect "nomi delle partizioni" "sda1 nvme0n1p2 mmcblk0p1" "$(ins 'echo $(part_name sda 1) $(part_name nvme0n1 2) $(part_name mmcblk0 1)')"
+head -c 512 /dev/zero | tr '\0' '\353' > "$INS/avvio/boot.img"
+head -c 3000 /dev/zero | tr '\0' '\147' > "$INS/avvio/grub.img"
+truncate -s 1G "$INS/disco.img"
+ins "write_mbr $INS/disco.img 2048 1048576 1050624 1048576"
+expect "tabella: firma e prima partizione FAT32 avviabile" "55aa 80 0c 00080000 00001000" \
+	"$(od -An -tx1 -j510 -N2 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j446 -N1 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j450 -N1 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j454 -N4 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j458 -N4 "$INS/disco.img" | tr -d ' ')"
+expect "tabella: seconda partizione Linux" "83 00081000 00001000" \
+	"$(od -An -tx1 -j466 -N1 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j470 -N4 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j474 -N4 "$INS/disco.img" | tr -d ' ')"
+expect "GRUB nel settore 0 e nei settori successivi" "ebeb 6767" \
+	"$(od -An -tx1 -j0 -N2 "$INS/disco.img" | tr -d ' ') $(od -An -tx1 -j3000 -N2 "$INS/disco.img" | tr -d ' ')"
+if command -v sfdisk > /dev/null; then
+	expect "tabella letta da sfdisk" "start=2048,size=1048576,type=c,bootable start=1050624,size=1048576,type=83" \
+		"$(sfdisk -d "$INS/disco.img" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
+fi
+expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si')"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*

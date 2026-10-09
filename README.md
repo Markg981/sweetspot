@@ -3,13 +3,15 @@
 Player e server di musica liquida bit-perfect, open source (GPLv3), pensato
 come alternativa a Daphile: stesso motore (Lyrion Music Server con i suoi
 plugin, Squeezelite come player), con un sistema costruito per far suonare il
-DAC nel modo più pulito possibile. Si avvia da una chiavetta USB, copia tutto
-in RAM e si usa dal browser del telefono o del computer.
+DAC nel modo più pulito possibile. Si avvia da una chiavetta USB (o, dopo
+l'installazione, dal disco interno), copia tutto in RAM e si usa dal browser
+del telefono o del computer.
 
 ## Cosa fa all'accensione
 
-1. GRUB trova la chiavetta dall'etichetta `SWEETSPOT` (BIOS o UEFI a 64/32 bit)
-   e carica kernel e sistema in RAM.
+1. GRUB parte dalla chiavetta o dal disco interno (BIOS o UEFI a 64/32 bit),
+   sceglie quale delle due copie del sistema avviare (vedi *Aggiornamenti*) e
+   carica kernel e sistema in RAM.
 2. Legge impostazioni, libreria e plugin salvati sulla chiavetta.
 3. Riconosce il computer e calcola i parametri di avvio: core dedicati
    all'audio (anche sulle CPU ibride Intel), Hyper-Threading spento, CPU limitata
@@ -48,13 +50,55 @@ Daphile:
 | --- | --- |
 | **Audio** | DAC riconosciuto, formato che arriva al DAC in quel momento con la **verifica bit-perfect**, volume (fisso, del DAC, software), DSD, ricampionamento facoltativo con scelta del filtro, opzioni per esperti (buffer, periodi, pause) |
 | **Musica** | stato della libreria, dischi trovati (escludi/includi), cartelle di rete (aggiunta con prova di accesso) |
+| **Archivio** | il disco dove Sweetspot scrive: copia di cartelle da altri dischi e dal NAS, cartella di rete **Musica** per copiare dal PC o dal Mac, **copia dei CD** |
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
-| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, riavvio e spegnimento |
+| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
 | **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
 anche con il Blocco note).
+
+### Archivio musicale e cartella di rete
+
+Tutti i dischi restano in sola lettura tranne uno, scelto come **archivio**
+nella pagina Archivio (dopo l'installazione sul disco interno è il resto del
+disco). Lì si copiano cartelle da chiavette, dischi o NAS (la copia si
+sospende mentre la musica suona) e lì finiscono i CD. Con *Condividi in rete*
+l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
+`smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd; password
+facoltativa).
+
+### Copia dei CD
+
+Con un lettore CD collegato, nella pagina Archivio: **Leggi il CD** cerca titoli
+e copertina su MusicBrainz (modificabili), **Copia** legge in modo sicuro
+(cd-paranoia, con la correzione del lettore trovata da sola al primo CD),
+verifica ogni traccia con il database **AccurateRip** e salva FLAC con tag e
+copertina in `Artista/Album (Anno)`, con un registro della copia
+(`sweetspot-copia.txt`).
+
+### Installazione sul disco interno
+
+*Sistema → Installazione sul disco interno*, come su Daphile: si sceglie il
+disco (viene mostrato cosa contiene, e va confermato che sarà cancellato).
+Sweetspot crea una partizione di sistema da 4 GB (FAT32, `SWEETSPOT`) e, se si
+vuole, usa il resto del disco come archivio musicale (ext4). Copia la versione
+in uso con impostazioni, plugin e libreria: si spegne, si toglie la chiavetta e
+il computer parte dal disco, con BIOS o UEFI. Il sistema continua a girare
+tutto in RAM; la chiavetta resta valida come copia di riserva.
+
+### Aggiornamenti
+
+*Sistema → Cerca aggiornamenti* controlla le release di GitHub; senza internet
+basta copiare il pacchetto `sweetspot-x86_64-aggiornamento.tar` su un disco
+collegato o nella cartella di rete Musica. Sulla partizione di sistema ci sono
+**due copie del sistema**: l'aggiornamento si scrive in quella non in uso
+(controllato con SHA-256), poi GRUB la avvia **una volta sola**. Se il nuovo
+sistema arriva in fondo all'avvio e risponde, diventa quello in uso; se non
+parte (il kernel si ferma, riavvio automatico dopo 10 secondi) riparte da solo
+quello di prima e la pagina Sistema lo segnala. La versione precedente resta
+installata: si torna indietro con un clic.
 
 ### Modalità
 
@@ -68,7 +112,8 @@ anche con il Blocco note).
   Prototipo di riferimento: Asus N550JV con 16 GB.
 - Un DAC USB.
 - Il cavo di rete (il Wi-Fi funziona, ma è un ripiego).
-- Una chiavetta USB da almeno 1 GB.
+- Una chiavetta USB da almeno 1 GB (per l'installazione: un disco interno da
+  almeno 2 GB, che viene cancellato).
 
 Secure Boot va disattivato nel BIOS/UEFI.
 
@@ -156,6 +201,9 @@ decomprimerlo. La chiavetta resta leggibile da Windows e macOS come unità
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
+| `ARCHIVIO` | nome del disco usato come archivio musicale | vuoto |
+| `ARCHIVIO_CONDIVISO`, `ARCHIVIO_PASSWORD` | cartella di rete Musica | no, vuoto |
+| `AGGIORNAMENTI_URL` | altra fonte degli aggiornamenti (API release di GitHub) | questo progetto |
 
 I profili cambiano solo la frequenza della CPU: *silenzio* la fissa alla
 minima, *bilanciato* a metà strada, *prestazioni* alla nominale tenendo i core
@@ -194,13 +242,15 @@ DAC USB emulato: i campioni sono identici a quelli del file, bit per bit.
 ```
 configs/sweetspot_x86_64_defconfig    configurazione di Buildroot
 board/sweetspot/common/               kernel PREEMPT_RT, BusyBox
-board/sweetspot/x86/                  GRUB e struttura della chiavetta
+board/sweetspot/x86/                  GRUB (due copie del sistema) e struttura della chiavetta
 board/sweetspot/stick/                sweetspot.txt e LEGGIMI.txt
 board/sweetspot/rootfs-overlay/       script di sistema, pagine di impostazione,
                                       plugin di Sweetspot per Lyrion
 package/lms, package/lms-material     Lyrion Music Server e Material Skin
+package/sweetspot-tools               firme AccurateRip per la copia dei CD
 scripts/                              compilazione locale e con Docker
 tests/run.sh                          test degli script con /sys e /proc simulati
+tests/cd-simulato.sh                  copia completa di un CD con un lettore finto
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)
 tools/genera-test-dop.py              file di prova bit-perfect
 ```

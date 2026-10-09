@@ -1,0 +1,340 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - installazione sul disco interno, come su Daphile: dopo, il
+# computer parte da solo senza chiavetta. Il disco viene cancellato.
+#
+#   sweetspot-installa dischi            righe "nome|GB|modello|tipo|contenuto|archivio"
+#                                        (archivio: si se c'e' spazio per la musica)
+#   sweetspot-installa avvia DISCO si|no installa su DISCO (es. sda); si = il resto
+#                                        del disco diventa l'archivio musicale
+#   sweetspot-installa stato             "stato|passo|passi|messaggio"
+#
+# Disco risultante (come la chiavetta, avviabile da BIOS e da UEFI):
+#   settore 0          primo stadio di GRUB e tabella delle partizioni (MBR)
+#   settori 1-2047     secondo stadio di GRUB
+#   partizione 1       FAT32 "SWEETSPOT", 4 GB: sistema (due copie), menu,
+#                      impostazioni, libreria di Lyrion
+#   partizione 2       ext4 "Sweetspot Musica": archivio musicale (facoltativo)
+#
+# Il sistema in uso e' in RAM: si copia la versione in uso con impostazioni,
+# plugin e libreria. Mentre la musica suona l'installazione si sospende.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DIR=$RUN/installa
+PAUSABLE=$RUN/sospendibili
+AVVIO=${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}
+DEV=${SWEETSPOT_DEV:-/dev}
+VERSION_FILE=${SWEETSPOT_VERSION_FILE:-/etc/sweetspot-version}
+ARCHIVE_LABEL="Sweetspot Musica"
+SECT_MIB=2048                     # settori da 512 byte in 1 MiB
+SYS_SECTORS=$((4096 * SECT_MIB))  # partizione di sistema: 4 GiB
+MIN_SECTORS=$((2048 * SECT_MIB))  # disco minimo: 2 GiB
+ARCHIVE_MIN=$((8192 * SECT_MIB))  # archivio solo se restano almeno 8 GiB
+MBR_LIMIT=4294967295              # una tabella MBR arriva a 2 TiB
+
+state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
+
+running() { [ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null; }
+
+trim() { sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+
+# --- Dischi adatti ----------------------------------------------------------------
+
+disk_bus() {
+	case "$(readlink -f "$SYS/block/$1")" in
+		*/usb*) echo USB ;;
+		*) case "$1" in nvme*) echo NVMe ;; mmcblk*) echo eMMC ;; *) echo interno ;; esac ;;
+	esac
+}
+
+disk_model() {
+	local m
+	m=$(cat "$SYS/block/$1/device/vendor" "$SYS/block/$1/device/model" 2>/dev/null | trim | tr '\n' ' ' | trim)
+	[ -n "$m" ] && [ "$m" != ATA ] && { printf '%s' "${m#ATA }"; return; }
+	printf 'Disco %s' "$1"
+}
+
+part_name() { # disco numero -> sda1, nvme0n1p1, mmcblk0p1
+	case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac
+}
+
+# Cosa c'e' sul disco ora: "Windows (ntfs, 237 GB), Dati (exfat, 700 GB)".
+disk_contents() {
+	local p n line label type gb out=""
+	for p in "$SYS/block/$1/$1"*; do
+		[ -f "$p/partition" ] || continue
+		n=${p##*/}
+		gb=$(($(cat "$p/size" 2>/dev/null || echo 0) / 2097152))
+		line=$(blkid "$DEV/$n" 2>/dev/null)
+		label=$(printf '%s' " $line" | sed -n 's/.* LABEL="\([^"]*\)".*/\1/p')
+		type=$(printf '%s' " $line" | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p')
+		[ "$gb" -gt 0 ] || [ -n "$type" ] || continue
+		out="$out, ${label:-partizione $n} (${type:-sconosciuta}, $gb GB)"
+	done
+	printf '%s' "${out#, }"
+}
+
+# Settori da 512 byte e dimensioni delle partizioni per il disco.
+plan() { # settori -> "inizio1 settori1 inizio2 settori2" (settori2 = 0: niente archivio)
+	local total=$1 sys start2 size2
+	sys=$SYS_SECTORS
+	[ $((total - SECT_MIB - SECT_MIB)) -lt "$sys" ] && sys=$(((total - 2 * SECT_MIB) / SECT_MIB * SECT_MIB))
+	start2=$((SECT_MIB + sys))
+	size2=$((total - start2 - SECT_MIB))
+	[ $((start2 + size2)) -gt $MBR_LIMIT ] && size2=$((MBR_LIMIT - start2))
+	size2=$((size2 / SECT_MIB * SECT_MIB))
+	[ "$size2" -ge "$ARCHIVE_MIN" ] || size2=0
+	echo "$SECT_MIB $sys $start2 $size2"
+}
+
+do_disks() {
+	local d n boot size gb arch
+	boot=$(stick_disk)
+	for d in "$SYS"/block/*; do
+		n=${d##*/}
+		case "$n" in
+			loop*|ram*|zram*|sr*|fd*|md*|dm-*|nbd*|mtdblock*|*boot[0-9]|*rpmb) continue ;;
+		esac
+		[ "$n" = "$boot" ] && continue
+		[ "$(cat "$d/ro" 2>/dev/null)" = 1 ] && [ "$(cat "$d/removable" 2>/dev/null)" = 1 ] && continue
+		size=$(cat "$d/size" 2>/dev/null || echo 0)
+		[ "$size" -ge "$MIN_SECTORS" ] || continue
+		[ "$(cat "$d/queue/logical_block_size" 2>/dev/null || echo 512)" = 512 ] || continue
+		gb=$((size / 2097152))
+		arch=no
+		# shellcheck disable=SC2046
+		set -- $(plan "$size")
+		[ "$4" -gt 0 ] && arch=si
+		printf '%s|%s|%s|%s|%s|%s\n' "$n" "$gb" "$(disk_model "$n")" "$(disk_bus "$n")" "$(disk_contents "$n")" "$arch"
+	done
+}
+
+# --- Tabella delle partizioni (MBR) ----------------------------------------------
+
+oct() { printf '\\%03o' "$1"; }
+
+le32() {
+	local v=$1 i=0
+	while [ $i -lt 4 ]; do
+		oct $((v & 255))
+		v=$((v >> 8))
+		i=$((i + 1))
+	done
+}
+
+# Cilindro/testina/settore per i BIOS piu' vecchi (geometria 255x63);
+# oltre i 1024 cilindri il valore convenzionale 1023/254/63.
+chs() {
+	local lba=$1 c h s
+	c=$((lba / (255 * 63)))
+	h=$((lba / 63 % 255))
+	s=$((lba % 63 + 1))
+	if [ $c -gt 1023 ]; then c=1023; h=254; s=63; fi
+	oct $h
+	oct $((s | (c >> 2 & 192)))
+	oct $((c & 255))
+}
+
+mbr_entry() { # avviabile tipo inizio settori
+	if [ "$4" -eq 0 ]; then
+		printf '%016d' 0 | tr 0 '\000'
+		return
+	fi
+	printf "$(oct "$1")$(chs "$3")$(oct "$2")$(chs $(($3 + $4 - 1)))$(le32 "$3")$(le32 "$4")"
+}
+
+# Scrive settore 0 (GRUB + tabella) e secondo stadio di GRUB su $1.
+write_mbr() { # dispositivo inizio1 settori1 inizio2 settori2
+	local dev=$1 t=$DIR/mbr
+	mkdir -p "$DIR"
+	head -c 440 "$AVVIO/boot.img" > "$t" || return 1
+	head -c 4 /dev/urandom >> "$t"                     # firma del disco
+	printf '\000\000' >> "$t"
+	{
+		mbr_entry 128 12 "$2" "$3"                     # FAT32 (LBA), avviabile
+		mbr_entry 0 131 "$4" "$5"                      # Linux
+		mbr_entry 0 0 0 0
+		mbr_entry 0 0 0 0
+		printf '\125\252'
+	} >> "$t"
+	[ "$(wc -c < "$t")" = 512 ] || return 1
+	dd if="$t" of="$dev" bs=512 count=1 conv=notrunc,fsync 2>/dev/null &&
+		dd if="$AVVIO/grub.img" of="$dev" bs=512 seek=1 conv=notrunc,fsync 2>/dev/null
+}
+
+# --- Installazione ----------------------------------------------------------------
+
+zero() { # dispositivo settore_iniziale settori
+	dd if=/dev/zero of="$1" bs=512 seek="$2" count="$3" conv=notrunc,fsync 2>/dev/null
+}
+
+wait_dev() {
+	local i=0
+	while [ $i -lt 20 ]; do
+		[ -b "$1" ] && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+
+fail() { state "errore|$1|7|$2"; log "installazione: $2"; return 1; }
+
+# Toglie dalla libreria e smonta tutto cio' che sta sul disco.
+release_disk() {
+	local disk=$1 line name dev a
+	a=$(readlink -f "$(sweetspot-dischi archivio)" 2>/dev/null)
+	if [ -f "$RUN/dischi.list" ]; then
+		while IFS='|' read -r name dev _rest; do
+			case "${dev##*/}" in
+				"$disk"|"$disk"[0-9]*|"${disk}p"[0-9]*)
+					if [ -n "$a" ] && [ "$(readlink -f "$MEDIA_DIR/$name")" = "$a" ]; then
+						sweetspot-nas ferma
+					fi
+					sweetspot-dischi smonta "$name" ;;
+			esac
+		done < "$RUN/dischi.list"
+	fi
+	sync
+	grep -q "^$DEV/$disk" "$PROC/mounts" && return 1
+	return 0
+}
+
+copy_system() { # radice_nuova archivio(si|no) etichetta_archivio_vecchio
+	local new=$1 slot src cfg
+	slot=$(running_slot)
+	src=$(slot_dir "$STICK_MNT" "$slot")
+	mkdir -p "$new/boot/grub" "$new/boot/versioni" "$new/EFI/BOOT" || return 1
+	cp "$src/bzImage" "$new/bzImage" && cp "$src/rootfs.cpio.zst" "$new/rootfs.cpio.zst" || return 1
+	cut -d' ' -f1 "$VERSION_FILE" > "$new/boot/versioni/a"
+	cp "$AVVIO/BOOTX64.EFI" "$AVVIO/BOOTIA32.EFI" "$new/EFI/BOOT/" &&
+		cp "$AVVIO/grub.cfg" "$new/boot/grub/grub.cfg" || return 1
+	grubenv_set "$new/boot/grub/grubenv" slot=a || return 1
+	[ -f "$STICK_MNT/boot/grub/auto.cfg" ] && cp "$STICK_MNT/boot/grub/auto.cfg" "$new/boot/grub/auto.cfg"
+	cp "$AVVIO/LEGGIMI.txt" "$new/LEGGIMI.txt"
+	cfg=$new/sweetspot.txt
+	if [ -f "$STICK_MNT/sweetspot.txt" ]; then cp "$STICK_MNT/sweetspot.txt" "$cfg"; else cp "$AVVIO/sweetspot.txt" "$cfg"; fi
+	if [ -d "$STICK_MNT/$DATA_DIR_NAME" ]; then
+		cp -r "$STICK_MNT/$DATA_DIR_NAME" "$new/" || return 1
+	fi
+	sync
+	# Controllo: il sistema copiato e' identico a quello in uso.
+	cmp -s "$src/bzImage" "$new/bzImage" && cmp -s "$src/rootfs.cpio.zst" "$new/rootfs.cpio.zst"
+}
+
+set_archive() { # file_impostazioni archivio(si|no) archivio_cancellato(si|no)
+	if [ "$2" = si ]; then
+		SWEETSPOT_CONFIG_FILE=$1 sweetspot-config imposta ARCHIVIO "$ARCHIVE_LABEL" > /dev/null
+	elif [ "$3" = si ]; then
+		SWEETSPOT_CONFIG_FILE=$1 sweetspot-config rimuovi ARCHIVIO > /dev/null
+	fi
+}
+
+install_job() { # disco si|no
+	local disk=$1 want=$2 dev size p1 p2 new a old_arch=no
+	dev=$DEV/$disk
+	# Gli eventi dei dischi aspettano la fine dell'installazione.
+	exec 9> "$RUN/dischi.lock"
+	flock 9
+	state "prepara|1|7|preparazione del disco"
+	size=$(cat "$SYS/block/$disk/size")
+	# shellcheck disable=SC2046
+	set -- $(plan "$size")
+	[ "$want" = si ] || set -- "$1" "$2" "$3" 0
+	[ "$want" = si ] && [ "$4" -eq 0 ] && { fail 1 "il disco è troppo piccolo per l'archivio musicale"; return 1; }
+	# L'archivio musicale attuale e' su questo disco? (verra' cancellato)
+	a=$(sweetspot-dischi archivio)
+	if [ -n "$a" ]; then
+		a=$(awk -v m="$a" '$2 == m { print $1 }' "$PROC/mounts" | head -n 1)
+		[ -n "$a" ] && [ "$(part_disk "${a##*/}")" = "$disk" ] && old_arch=si
+	fi
+	release_disk "$disk" || { fail 1 "il disco è in uso e non si può liberare"; return 1; }
+	sweetspot-dati salva > /dev/null 2>&1
+
+	state "partizioni|2|7|tabella delle partizioni"
+	blockdev --setrw "$dev" 2>/dev/null
+	zero "$dev" 0 "$SECT_MIB" &&
+		zero "$dev" $((size - SECT_MIB)) "$SECT_MIB" &&
+		zero "$dev" "$1" "$SECT_MIB" || { fail 2 "scrittura sul disco non riuscita"; return 1; }
+	[ "$4" -gt 0 ] && zero "$dev" "$3" "$SECT_MIB"
+	write_mbr "$dev" "$1" "$2" "$3" "$4" || { fail 2 "scrittura sul disco non riuscita"; return 1; }
+	sync
+	blockdev --rereadpt "$dev" 2>/dev/null || partprobe "$dev" 2>/dev/null
+	p1=$DEV/$(part_name "$disk" 1)
+	p2=$DEV/$(part_name "$disk" 2)
+	wait_dev "$p1" || { fail 2 "il disco non mostra la nuova partizione: riavvia e riprova"; return 1; }
+
+	state "formatta|3|7|formattazione"
+	blockdev --setrw "$p1" 2>/dev/null
+	mkfs.vfat -F 32 -n "$STICK_LABEL" "$p1" > /dev/null 2>&1 || { fail 3 "formattazione non riuscita"; return 1; }
+	if [ "$4" -gt 0 ]; then
+		wait_dev "$p2" || { fail 3 "il disco non mostra la partizione dell'archivio"; return 1; }
+		blockdev --setrw "$p2" 2>/dev/null
+		state "formatta|3|7|formattazione dell'archivio musicale"
+		mkfs.ext4 -F -q -m 0 -L "$ARCHIVE_LABEL" "$p2" > /dev/null 2>&1 || { fail 3 "formattazione dell'archivio non riuscita"; return 1; }
+	fi
+
+	state "copia|4|7|copia del sistema"
+	new=$DIR/nuovo
+	mkdir -p "$new"
+	mount -t vfat -o rw,noatime "$p1" "$new" || { fail 4 "la nuova partizione non si apre"; return 1; }
+	if ! stick_mount ro; then
+		umount "$new"
+		fail 4 "chiavetta non trovata"
+		return 1
+	fi
+	if ! copy_system "$new"; then
+		stick_umount
+		umount "$new"
+		fail 4 "copia del sistema non riuscita"
+		return 1
+	fi
+	stick_umount
+	state "impostazioni|5|7|impostazioni, plugin e libreria"
+	set_archive "$new/sweetspot.txt" "$want" "$old_arch"
+	state "controllo|6|7|controllo finale"
+	sync
+	umount "$new" || { fail 6 "chiusura della partizione non riuscita"; return 1; }
+	rmdir "$new" 2>/dev/null
+	state "finita|7|7|$disk"
+	log "installazione: Sweetspot installato su $dev (archivio musicale: $want)"
+}
+
+do_start() { # disco si|no
+	local d=$1 ok=""
+	running && { echo "installazione gia' in corso"; return 1; }
+	case "$2" in si|no) ;; *) echo "scelta dell'archivio non valida"; return 1 ;; esac
+	case "$d" in ''|*[!a-z0-9]*) echo "disco non valido"; return 1 ;; esac
+	do_disks | cut -d'|' -f1 | grep -qx "$d" && ok=1
+	[ -n "$ok" ] || { echo "disco non adatto"; return 1; }
+	[ -f "$AVVIO/boot.img" ] && [ -f "$AVVIO/grub.img" ] || { echo "file di avvio mancanti in questa versione"; return 1; }
+	mkdir -p "$DIR" "$PAUSABLE"
+	state "prepara|0|7|preparazione"
+	setsid "$0" _lavoro "$d" "$2" > /dev/null 2>&1 < /dev/null &
+	echo $! > "$DIR/pid"
+	echo $! > "$PAUSABLE/installa"
+	log "installazione: avviata su $d (archivio musicale: $2)"
+}
+
+do_status() {
+	[ -f "$DIR/stato" ] || return 0
+	if ! running; then
+		case "$(cat "$DIR/stato")" in
+			finita*|errore*) ;;
+			*) echo "errore|0|7|installazione interrotta"; return 0 ;;
+		esac
+	fi
+	cat "$DIR/stato"
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	dischi) do_disks ;;
+	avvia) do_start "$2" "$3" ;;
+	stato) do_status ;;
+	_lavoro) install_job "$2" "$3"; rm -f "$DIR/pid" "$PAUSABLE/installa" ;;
+	*) echo "uso: $0 dischi|avvia DISCO si|no|stato" >&2; exit 1 ;;
+esac
