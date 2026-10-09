@@ -526,6 +526,8 @@ lms_now_playing() {
 # sul disco interno ci sono due partizioni SWEETSPOT, e conta quella giusta.
 stick_device() {
 	local id
+	# (SWEETSPOT_STICK_DEV: partizione finta per i test.)
+	[ -n "${SWEETSPOT_STICK_DEV:-}" ] && { echo "$SWEETSPOT_STICK_DEV"; return 0; }
 	id=$(cmdline_value sweetspot.part)
 	if [ -n "$id" ]; then
 		findfs "UUID=$id" 2>/dev/null && return 0
@@ -539,6 +541,10 @@ stick_disk() {
 	dev=$(stick_device) || return 1
 	[ -n "$dev" ] || return 1
 	part_disk "${dev##*/}"
+}
+
+part_name() { # disco numero -> sda1, nvme0n1p1, mmcblk0p1
+	case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac
 }
 
 part_disk() { # sdb1 -> sdb, nvme0n1p1 -> nvme0n1
@@ -714,3 +720,60 @@ cmdline_value() {
 }
 
 safe_mode() { cmdline_has sweetspot.sicuro || ! is_yes "$(conf OTTIMIZZAZIONI si)"; }
+
+# --- Tabella delle partizioni MBR (installazione, archivio nello spazio libero)
+
+# Formattazione dell'archivio musicale (ext4): niente spazio riservato, un
+# inode ogni 512 KiB (bastano anche per molti file piccoli) e tabelle scritte
+# subito, cosi' dopo la formattazione il kernel non lavora sul disco in
+# sottofondo.
+# shellcheck disable=SC2034 # usata da sweetspot-installa e sweetspot-spazio
+MKFS_ARCHIVIO="-F -q -m 0 -i 524288 -E lazy_itable_init=0,lazy_journal_init=0"
+
+oct() { printf '\\%03o' "$1"; }
+
+le32() {
+	local v=$1 i=0
+	while [ $i -lt 4 ]; do
+		oct $((v & 255))
+		v=$((v >> 8))
+		i=$((i + 1))
+	done
+}
+
+# Cilindro/testina/settore per i BIOS piu' vecchi (geometria 255x63);
+# oltre i 1024 cilindri il valore convenzionale 1023/254/63.
+chs() {
+	local lba=$1 c h s
+	c=$((lba / (255 * 63)))
+	h=$((lba / 63 % 255))
+	s=$((lba % 63 + 1))
+	if [ $c -gt 1023 ]; then c=1023; h=254; s=63; fi
+	oct $h
+	oct $((s | (c >> 2 & 192)))
+	oct $((c & 255))
+}
+
+mbr_entry() { # avviabile tipo inizio settori
+	if [ "$4" -eq 0 ]; then
+		printf '%016d' 0 | tr 0 '\000'
+		return
+	fi
+	printf "$(oct "$1")$(chs "$3")$(oct "$2")$(chs $(($3 + $4 - 1)))$(le32 "$3")$(le32 "$4")"
+}
+
+# Le quattro voci della tabella MBR di $1: righe "tipo inizio settori"
+# (settori da 512 byte). Niente se manca la firma 55 AA.
+mbr_read() { # dispositivo
+	od -An -tu1 -v -j446 -N66 "$1" 2>/dev/null | tr -s ' \n' '  ' | awk '{
+		if ($65 != 85 || $66 != 170) exit 1
+		for (e = 0; e < 4; e++) {
+			o = e * 16
+			t = $(o + 5)
+			st = $(o + 9) + $(o + 10) * 256 + $(o + 11) * 65536 + $(o + 12) * 16777216
+			n = $(o + 13) + $(o + 14) * 256 + $(o + 15) * 65536 + $(o + 16) * 16777216
+			printf "%d %.0f %.0f\n", t, st, n
+		}
+	}'
+}
+

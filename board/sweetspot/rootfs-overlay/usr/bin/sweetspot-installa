@@ -56,9 +56,6 @@ disk_model() {
 	printf 'Disco %s' "$1"
 }
 
-part_name() { # disco numero -> sda1, nvme0n1p1, mmcblk0p1
-	case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac
-}
 
 # Cosa c'e' sul disco ora: "Windows (ntfs, 237 GB), Dati (exfat, 700 GB)".
 disk_contents() {
@@ -112,38 +109,6 @@ do_disks() {
 }
 
 # --- Tabella delle partizioni (MBR) ----------------------------------------------
-
-oct() { printf '\\%03o' "$1"; }
-
-le32() {
-	local v=$1 i=0
-	while [ $i -lt 4 ]; do
-		oct $((v & 255))
-		v=$((v >> 8))
-		i=$((i + 1))
-	done
-}
-
-# Cilindro/testina/settore per i BIOS piu' vecchi (geometria 255x63);
-# oltre i 1024 cilindri il valore convenzionale 1023/254/63.
-chs() {
-	local lba=$1 c h s
-	c=$((lba / (255 * 63)))
-	h=$((lba / 63 % 255))
-	s=$((lba % 63 + 1))
-	if [ $c -gt 1023 ]; then c=1023; h=254; s=63; fi
-	oct $h
-	oct $((s | (c >> 2 & 192)))
-	oct $((c & 255))
-}
-
-mbr_entry() { # avviabile tipo inizio settori
-	if [ "$4" -eq 0 ]; then
-		printf '%016d' 0 | tr 0 '\000'
-		return
-	fi
-	printf "$(oct "$1")$(chs "$3")$(oct "$2")$(chs $(($3 + $4 - 1)))$(le32 "$3")$(le32 "$4")"
-}
 
 # Scrive settore 0 (GRUB + tabella) e secondo stadio di GRUB su $1.
 write_mbr() { # dispositivo inizio1 settori1 inizio2 settori2
@@ -276,7 +241,8 @@ install_job() { # disco si|no
 		wait_dev "$p2" || { fail 3 "il disco non mostra la partizione dell'archivio"; return 1; }
 		blockdev --setrw "$p2" 2>/dev/null
 		state "formatta|3|7|formattazione dell'archivio musicale"
-		mkfs.ext4 -F -q -m 0 -L "$ARCHIVE_LABEL" "$p2" > /dev/null 2>&1 || { fail 3 "formattazione dell'archivio non riuscita"; return 1; }
+		# shellcheck disable=SC2086
+		mkfs.ext4 $MKFS_ARCHIVIO -L "$ARCHIVE_LABEL" "$p2" > /dev/null 2>&1 || { fail 3 "formattazione dell'archivio non riuscita"; return 1; }
 	fi
 
 	state "copia|4|7|copia del sistema"

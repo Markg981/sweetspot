@@ -84,8 +84,13 @@ diffusore sinistro e uno per il destro.
 ### Archivio musicale e cartella di rete
 
 Tutti i dischi restano in sola lettura tranne uno, scelto come **archivio**
-nella pagina Archivio (dopo l'installazione sul disco interno è il resto del
-disco). Lì si copiano cartelle da chiavette, dischi o NAS (la copia si
+nella pagina Archivio: un disco di dati collegato (ext4, exFAT, NTFS), il resto
+del disco interno dopo l'installazione, oppure lo **spazio libero del disco da
+cui parte Sweetspot**. L'immagine usa solo la prima parte della scheda SD del
+Raspberry Pi, della chiavetta o dell'SSD. Con *Crea l'archivio* il resto
+diventa una partizione ext4 "Sweetspot Musica". Si aggiunge solo la seconda
+voce della tabella delle partizioni: partizione di sistema e avvio non si
+toccano, e il kernel vede la nuova partizione subito, senza riavviare. Lì si copiano cartelle da chiavette, dischi o NAS (la copia si
 sospende mentre la musica suona) e lì finiscono i CD. Con *Condividi in rete*
 l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
 `smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd; password
