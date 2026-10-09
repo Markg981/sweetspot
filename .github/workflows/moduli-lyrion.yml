@@ -41,14 +41,30 @@ jobs:
           repository: LMS-Community/slimserver-vendor
           ref: ${{ env.VENDOR_REF }}
           path: vendor
+      # Su ARM update-config.sh scarica config.guess e config.sub da
+      # git.savannah.gnu.org a ogni libreria (libjpeg, ...): quando savannah
+      # risponde 502 la compilazione si ferma ("cannot guess build type").
+      # Era la causa degli errori "passeggeri". Si usano quelli di automake
+      # di Fedora, aggiornati e sempre disponibili.
       - name: Immagine Fedora con gli strumenti di compilazione
         run: |
           cd vendor/CPAN
           sed -i "s/^FROM fedora:.*/FROM fedora:${FEDORA}/" Docker/Dockerfile.fedora
+          printf '\nRUN dnf install -y automake && dnf clean all\n' >> Docker/Dockerfile.fedora
+          cat > update-config.sh <<'FINE'
+          #!/bin/sh
+          # Sweetspot: config.guess e config.sub di automake (Fedora), non da savannah.
+          if [ "`uname -m`" = "aarch64" -a "`uname`" = "Linux" ]; then
+              d=$(ls -d /usr/share/automake-* | sort -V | tail -n 1)
+              cp -vf "$d/config.guess" ./config.guess
+              cp -vf "$d/config.sub" ./config.sub
+          fi
+          FINE
           docker build --rm -f Docker/Dockerfile.fedora -t moduli .
+          docker run --rm moduli sh -c 'for f in /usr/share/automake-*/config.guess; do echo "$f: $($f)"; done'
           docker run --rm moduli perl -e 'print "Perl $^V, $^O, $Config::Config{archname}\n"; use Config'
-      # buildme.sh puo' fermarsi per un errore passeggero (e' successo una
-      # volta su main, poi e' andato): si riprova una volta da capo. Se non
+      # Se buildme.sh si ferma comunque per un errore passeggero, si riprova
+      # una volta da capo. Se non
       # riesce, le ultime righe del registro diventano annotazioni
       # dell'esecuzione, leggibili senza scaricare nulla; il registro
       # completo resta negli allegati.
