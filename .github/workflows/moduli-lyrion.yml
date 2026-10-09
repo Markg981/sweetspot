@@ -30,13 +30,13 @@ jobs:
       matrix:
         include:
           - piattaforma: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             arch: aarch64-linux-thread-multi
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           repository: LMS-Community/slimserver-vendor
           ref: ${{ env.VENDOR_REF }}
@@ -71,11 +71,11 @@ jobs:
           echo "nome=$N" >> "$GITHUB_OUTPUT"
       - name: Registro della compilazione
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: registro-moduli-${{ matrix.piattaforma }}
           path: vendor/CPAN/build.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.pacchetto.outputs.nome }}
           path: ${{ steps.pacchetto.outputs.nome }}.tar.xz*

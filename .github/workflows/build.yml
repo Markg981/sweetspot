@@ -18,9 +18,9 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Strumenti di verifica
         run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign
       - name: Test degli script
@@ -40,10 +40,10 @@ jobs:
           # Raspberry Pi 4, 400, 5, 500 e Compute Module 4/5 (scheda SD)
           - scheda: rpi
             immagine: sweetspot-rpi.img
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 330
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Il kernel del Raspberry Pi con tutti i suoi moduli occupa parecchio:
@@ -59,7 +59,7 @@ jobs:
       # Sorgenti scaricati e ccache: si salvano anche quando la compilazione
       # fallisce, cosi' il tentativo successivo riparte da dove era arrivato.
       - name: Cache di sorgenti e compilazione
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.buildroot-dl
@@ -86,7 +86,7 @@ jobs:
           done
       - name: Registro della compilazione
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: registro-compilazione-${{ matrix.scheda }}
           path: build.log
@@ -115,18 +115,19 @@ jobs:
           rm -rf "$d"
       - name: Salva la cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.buildroot-dl
             ~/.buildroot-ccache
           key: buildroot-${{ matrix.scheda }}-${{ github.run_id }}
+      # Immagine, disco per VMware e pacchetto di aggiornamento si scaricano
+      # dalla pagina dell'esecuzione come file, non dentro uno zip.
       - name: Pubblica l'immagine
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: sweetspot-${{ matrix.scheda }}
           path: output/images/${{ matrix.immagine }}.xz
-          compression-level: 0
+          archive: false
       # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
       - name: Disco per VMware
         if: matrix.scheda == 'x86_64'
@@ -136,20 +137,19 @@ jobs:
             output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
       - name: Pubblica il disco per VMware
         if: matrix.scheda == 'x86_64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: sweetspot-vmware
           path: output/images/sweetspot-vmware.vmdk
+          archive: false
       # Pacchetto per aggiornare dalla pagina Sistema (da internet o da un disco).
       - name: Pubblica il pacchetto di aggiornamento
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: sweetspot-${{ matrix.scheda }}-aggiornamento
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
-          compression-level: 0
+          archive: false
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             output/images/${{ matrix.immagine }}.xz
@@ -169,16 +169,16 @@ jobs:
       matrix:
         include:
           - scheda: x86_64
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
           - scheda: rpi
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
-          name: sweetspot-${{ matrix.scheda }}-aggiornamento
+          name: sweetspot-${{ matrix.scheda }}-aggiornamento.tar
       - name: Strumenti
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
       - name: Avvio di Lyrion nel sistema compilato

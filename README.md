@@ -161,9 +161,17 @@ Secure Boot va disattivato nel BIOS/UEFI.
 2. La compilazione parte da sola (scheda **Actions**, "Compila Sweetspot") e
    dura circa un'ora e mezza la prima volta, meno le successive grazie alla
    cache.
-3. A fine compilazione scarica `sweetspot-x86_64` dalla sezione **Artifacts**:
-   contiene `sweetspot.img.xz`. Per il Raspberry Pi scarica `sweetspot-rpi`
-   (`sweetspot-rpi.img.xz`).
+3. A fine compilazione scarica dalla sezione **Artifacts** `sweetspot.img.xz`
+   (PC) o `sweetspot-rpi.img.xz` (Raspberry Pi): si scaricano già come file
+   pronti da scrivere, non dentro uno zip.
+
+La CI usa le versioni più recenti dei server di GitHub (Ubuntu 26.04, anche
+ARM) e delle sue azioni. Ogni lunedì il workflow *Controllo versioni* confronta
+i componenti di Sweetspot con le ultime versioni pubblicate: Buildroot, kernel,
+firmware del Raspberry Pi, Lyrion, Material, CamillaDSP, azioni di GitHub e
+immagine Docker. Se qualcosa è indietro apre (o aggiorna) la segnalazione
+*Aggiornamenti disponibili*. Lo stesso controllo si fa a mano con
+`scripts/controlla-versioni.sh`.
 
 Pubblicando un tag `v0.1.0` l'immagine finisce anche nella pagina Releases.
 
@@ -201,8 +209,8 @@ Si vede il primo avvio con il riavvio di adattamento; poi l'interfaccia è su
 
 ### In VMware (Workstation Pro, Player, Fusion)
 
-Ogni compilazione produce anche `sweetspot-vmware.vmdk` (artifact
-`sweetspot-vmware`): la stessa chiavetta, come disco virtuale.
+Ogni compilazione produce anche `sweetspot-vmware.vmdk` (tra gli artifact):
+la stessa chiavetta, come disco virtuale.
 
 1. *Crea una nuova macchina virtuale* → *Personalizzata* → *Installerò il
    sistema operativo più tardi* → sistema **Linux**, versione **Altro Linux
