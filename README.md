@@ -247,8 +247,10 @@ Un'unica immagine, `sweetspot-rpi.img.xz`, per Raspberry Pi 4, 400, 5, 500 e
 Compute Module 4/5: si scrive sulla scheda SD (o su una chiavetta USB, se il Pi
 parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 
-- **Kernel**: quello della Raspberry Pi Foundation (6.12 LTS, lo stesso di
-  Raspberry Pi OS) con PREEMPT_RT e pagine da 4 KB, uguale per il Pi 4 e il Pi 5.
+- **Kernel**: quello della Raspberry Pi Foundation nella serie LTS più recente
+  (6.18, la stessa del PC e di Raspberry Pi OS) con PREEMPT_RT e pagine da 4 KB,
+  uguale per il Pi 4 e il Pi 5. Firmware dall'ultima release della Raspberry Pi
+  Foundation; gli overlay delle schede DAC li compila il kernel stesso.
   Programmi compilati per Cortex-A72, che girano identici sul Cortex-A76 del
   Pi 5. Due core su quattro dedicati a riproduzione e interruzioni USB,
   frequenza fissa, nessuno stato di risparmio della CPU (`cpuidle.off=1`).
@@ -367,8 +369,8 @@ tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per A
 tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
-Basato su Buildroot 2026.08 e sul kernel LTS 6.18.55 con PREEMPT_RT (PC) o sul
-kernel 6.12 LTS della Raspberry Pi Foundation con PREEMPT_RT (Raspberry Pi).
+Basato su Buildroot 2026.08 e sul kernel LTS 6.18 con PREEMPT_RT: 6.18.55 sul
+PC, il ramo rpi-6.18.y della Raspberry Pi Foundation sul Raspberry Pi.
 
 ## Licenza
 

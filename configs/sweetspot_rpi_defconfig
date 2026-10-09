@@ -15,8 +15,6 @@ BR2_TOOLCHAIN_EXTERNAL_BOOTLIN_AARCH64_GLIBC_BLEEDING_EDGE=y
 BR2_TOOLCHAIN_GLIBC_GCONV_LIBS_COPY=y
 BR2_TOOLCHAIN_GLIBC_GCONV_LIBS_LIST="UTF-16 UTF-32 UNICODE"
 BR2_CCACHE=y
-# Impronte SHA-256 del kernel della Raspberry Pi Foundation (da Buildroot)
-BR2_GLOBAL_PATCH_DIR="board/raspberrypi/patches"
 
 # Sistema
 BR2_TARGET_GENERIC_HOSTNAME="sweetspot"
@@ -30,13 +28,14 @@ BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/pos
 # Scheda: rpi (avvio con il firmware del Raspberry Pi)
 BR2_ROOTFS_POST_SCRIPT_ARGS="rpi"
 
-# Kernel della Raspberry Pi Foundation (6.12 LTS, lo stesso di Raspberry Pi
-# OS e del firmware qui sotto) nella sua configurazione PREEMPT_RT
-# (bcm2711_rt, la stessa del kernel8_rt.img del firmware): gira sul Pi 4 e
-# sul Pi 5.
+# Kernel della Raspberry Pi Foundation nella serie LTS piu' recente (6.18,
+# la stessa del PC e del firmware 1.20260915), nella sua configurazione
+# PREEMPT_RT (bcm2711_rt): gira sul Pi 4 e sul Pi 5. Commit fissato: l'ultimo
+# del ramo indicato qui sotto (lo controlla scripts/controlla-versioni.sh).
+# Ramo del kernel: rpi-6.18.y
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
-BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,21b410140c47ffab5668399f6f143c7d7b935c8b)/linux-21b410140c47ffab5668399f6f143c7d7b935c8b.tar.gz"
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,raspberrypi,linux,4103a989a46196239b830bd07693277e42b8f992)/linux-4103a989a46196239b830bd07693277e42b8f992.tar.gz"
 BR2_LINUX_KERNEL_USE_DEFCONFIG=y
 BR2_LINUX_KERNEL_DEFCONFIG="bcm2711_rt"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/common/linux.fragment $(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/rpi/linux.fragment"
@@ -45,12 +44,11 @@ BR2_LINUX_KERNEL_DTS_SUPPORT=y
 BR2_LINUX_KERNEL_INTREE_DTS_NAME="broadcom/bcm2711-rpi-4-b broadcom/bcm2711-rpi-400 broadcom/bcm2711-rpi-cm4 broadcom/bcm2711-rpi-cm4s broadcom/bcm2712-rpi-5-b broadcom/bcm2712d0-rpi-5-b broadcom/bcm2712-d-rpi-5-b broadcom/bcm2712-rpi-500 broadcom/bcm2712-rpi-cm5-cm5io broadcom/bcm2712-rpi-cm5-cm4io broadcom/bcm2712-rpi-cm5l-cm5io broadcom/bcm2712-rpi-cm5l-cm4io"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
-# Firmware di avvio del Pi 4 (il Pi 5 lo ha nella EEPROM) e overlay per le
-# schede DAC I2S. config.txt e cmdline.txt li scrive post-image.sh.
-BR2_PACKAGE_RPI_FIRMWARE=y
-BR2_PACKAGE_RPI_FIRMWARE_VARIANT_PI4=y
-BR2_PACKAGE_RPI_FIRMWARE_CMDLINE_FILE=""
-BR2_PACKAGE_RPI_FIRMWARE_INSTALL_DTB_OVERLAYS=y
+# Firmware di avvio del Pi 4 dall'ultima release della Raspberry Pi
+# Foundation e overlay per le schede DAC I2S compilati dal kernel in uso.
+# config.txt e cmdline.txt li scrive post-image.sh.
+BR2_LINUX_KERNEL_DTB_OVERLAY_SUPPORT=y
+BR2_PACKAGE_SWEETSPOT_RPI_FIRMWARE=y
 
 # BusyBox con le applet usate dagli script
 BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/common/busybox.fragment"
