@@ -525,15 +525,17 @@ part_disk() { # sdb1 -> sdb, nvme0n1p1 -> nvme0n1
 
 # Montaggio condiviso: chi monta la chiavetta (impostazioni, salvataggio
 # dei dati, aggiornamenti) la smonta solo se nessun altro la sta usando.
-# Il primo che chiede la scrittura la rimonta scrivibile.
+# Il primo che chiede la scrittura la rimonta scrivibile. Il blocco usa il
+# descrittore 6: 8 e 9 sono dei blocchi di sweetspot-dati, sweetspot-config
+# e dei dischi, e riaprirli li scioglierebbe.
 STICK_USERS=$RUN/chiavetta.utenti
 
 stick_mount() { # [ro|rw]
 	local dev mode=${1:-ro} n rc=0
 	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && { [ -d "$STICK_MNT" ]; return; }
 	mkdir -p "$RUN"
-	exec 8> "$RUN/chiavetta.lock"
-	flock 8
+	exec 6> "$RUN/chiavetta.lock"
+	flock 6
 	n=$(cat "$STICK_USERS" 2>/dev/null)
 	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
 		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null
@@ -548,16 +550,16 @@ stick_mount() { # [ro|rw]
 		fi
 	fi
 	[ $rc -eq 0 ] && echo $((${n:-0} + 1)) > "$STICK_USERS"
-	flock -u 8
-	exec 8>&-
+	flock -u 6
+	exec 6>&-
 	return $rc
 }
 
 stick_umount() {
 	local n
 	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && return 0
-	exec 8> "$RUN/chiavetta.lock"
-	flock 8
+	exec 6> "$RUN/chiavetta.lock"
+	flock 6
 	n=$(($(cat "$STICK_USERS" 2>/dev/null || echo 1) - 1))
 	sync
 	if [ $n -le 0 ]; then
@@ -566,8 +568,8 @@ stick_umount() {
 	else
 		echo $n > "$STICK_USERS"
 	fi
-	flock -u 8
-	exec 8>&-
+	flock -u 6
+	exec 6>&-
 }
 
 # --- Due copie del sistema (aggiornamenti con ritorno automatico) ----------------

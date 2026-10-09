@@ -390,6 +390,15 @@ expect "disco dati: tutto il disco" "Archivio" "$(links Archivio)"
 expect "collegamenti nella libreria" "Archivio Linux - anna Win - marco" "$(ls "$DSK/musica" | tr '\n' ' ' | sed 's/ $//')"
 expect "collegamento al disco" "$DSK/media/Archivio" "$(readlink "$DSK/musica/Archivio")"
 
+echo "Blocchi"
+LK=$WORK/lk
+mkdir -p "$LK/run" "$LK/proc"
+echo "BOOT_IMAGE=/bzImage" > "$LK/proc/cmdline"
+expect "montare la chiavetta non scioglie il blocco del salvataggio dei dati" "tenuto" \
+	"$(SWEETSPOT_RUN=$LK/run SWEETSPOT_PROCFS=$LK/proc SWEETSPOT_LOG=$LK/log $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh
+		exec 8> $LK/dati.lock; flock 8; stick_mount ro; stick_umount
+		if flock -n $LK/dati.lock true; then echo sciolto; else echo tenuto; fi")"
+
 echo "Aggiornamenti (due copie del sistema)"
 UPD=$WORK/upd
 mkdir -p "$UPD/proc" "$UPD/run" "$UPD/sys" "$UPD/stick/boot/grub" "$UPD/stick/boot/versioni" "$UPD/media/USB" \
