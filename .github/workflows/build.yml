@@ -182,4 +182,4 @@ jobs:
       - name: Strumenti
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
       - name: Avvio di Lyrion nel sistema compilato
-        run: sudo sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+        run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
