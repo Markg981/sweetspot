@@ -47,13 +47,41 @@ jobs:
           sed -i "s/^FROM fedora:.*/FROM fedora:${FEDORA}/" Docker/Dockerfile.fedora
           docker build --rm -f Docker/Dockerfile.fedora -t moduli .
           docker run --rm moduli perl -e 'print "Perl $^V, $^O, $Config::Config{archname}\n"; use Config'
-      # Il registro completo resta negli allegati; qui solo l'esito.
+      # buildme.sh puo' fermarsi per un errore passeggero (e' successo una
+      # volta su main, poi e' andato): si riprova una volta da capo. Se non
+      # riesce, le ultime righe del registro diventano annotazioni
+      # dell'esecuzione, leggibili senza scaricare nulla; il registro
+      # completo resta negli allegati.
       - name: Compila i moduli
         run: |
           cd vendor/CPAN
-          set -o pipefail
-          docker run --rm -v "$PWD":/cpan moduli ./buildme.sh -t 2>&1 | tee build.log | grep -E '^(Building|ERROR|Error)|cannot|failed' || true
-          ls build/arch/5.42/${{ matrix.arch }}/auto
+          coda() { # registro livello titolo
+            grep -v -E '^[[:space:]]*$' "$1" | tail -n 100 | sed 's/%/%25/g; s/\r//g' > coda.txt
+            split -l 20 coda.txt parte.
+            for f in parte.*; do
+              echo "::$2 title=$3 ($f)::$(awk 'BEGIN{ORS="%0A"} {print}' "$f")"
+            done
+            rm -f coda.txt parte.*
+          }
+          for t in 1 2; do
+            rc=0
+            docker run --rm -v "$PWD":/cpan moduli ./buildme.sh -t > build-$t.log 2>&1 || rc=$?
+            cp build-$t.log build.log
+            grep -E '^(Building|ERROR|Error)|cannot|failed' build-$t.log || true
+            # L'esito lo dice la cartella dei moduli (il codice di uscita di
+            # buildme.sh si riporta solo nei messaggi).
+            if [ -d build/arch/5.42/${{ matrix.arch }}/auto ]; then
+              ls build/arch/5.42/${{ matrix.arch }}/auto
+              exit 0
+            fi
+            if [ $t = 1 ]; then
+              coda build-1.log warning "Primo tentativo non riuscito (codice $rc), si riprova"
+              sudo rm -rf build
+            else
+              coda build-2.log error "Compilazione dei moduli non riuscita (codice $rc)"
+            fi
+          done
+          exit 1
       - name: Prova di caricamento
         run: |
           docker run --rm -v "$PWD":/w -w /w moduli \
@@ -74,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: registro-moduli-${{ matrix.piattaforma }}
-          path: vendor/CPAN/build.log
+          path: vendor/CPAN/build*.log
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.pacchetto.outputs.nome }}
