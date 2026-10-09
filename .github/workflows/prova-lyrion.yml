@@ -2,12 +2,12 @@
 # Prova di Lyrion sui pacchetti gia' compilati, senza ricompilare: utile per
 # correggere tests/prova-lyrion.sh o capire un errore in pochi minuti. Usa i
 # pacchetti di aggiornamento dell'ultima esecuzione di "Compila Sweetspot"
-# su main che li ha prodotti, oppure di quella indicata a mano.
+# su main che li ha prodotti, oppure di quella indicata a mano. Si avvia a
+# mano (Actions > Prova di Lyrion > Run workflow): nelle PR la prova vera e'
+# il job "lyrion" di Compila Sweetspot, sui pacchetti della PR stessa.
 name: Prova di Lyrion
 
 on:
-  pull_request:
-    paths: ['tests/prova-lyrion.sh', '.github/workflows/prova-lyrion.yml']
   workflow_dispatch:
     inputs:
       esecuzione:
