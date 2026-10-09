@@ -373,6 +373,11 @@ software; non misura il clock o il rumore dell'uscita analogica di un DAC reale.
 
 ### Qualità sonora e compatibilità
 
+Il [piano di parità con Daphile e dei miglioramenti](docs/daphile-parity.md)
+definisce le funzioni da conservare, le lacune ancora aperte e i criteri
+di accettazione. Le correzioni recenti sono una base, non il completamento
+dell'alternativa a Daphile.
+
 Sweetspot e Daphile condividono Lyrion/Squeezelite. RAM, kernel real-time e
 core dedicati non dimostrano da soli una superiorità sonora. Una catena
 bit-perfect preserva i campioni; il DSP li modifica intenzionalmente. Il
