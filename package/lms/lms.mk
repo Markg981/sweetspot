@@ -10,7 +10,9 @@ LMS_LICENSE = GPL-2.0
 LMS_LICENSE_FILES = License.txt
 LMS_DEPENDENCIES = perl
 
-LMS_DIR = /opt/lms
+# Cartella di Lyrion nel sistema (LMS_DIR e' riservata da Buildroot:
+# e' la cartella di compilazione del pacchetto).
+LMS_INSTALL_PATH = /opt/lms
 LMS_PERL_MAJOR = 5.$(PERL_VERSION_MAJOR)
 
 ifeq ($(BR2_x86_64),y)
@@ -30,27 +32,28 @@ endif
 # architettura: niente test, skin Classic, binari e moduli di altri sistemi,
 # dati ICU big-endian.
 define LMS_INSTALL_TARGET_CMDS
-	rm -rf $(TARGET_DIR)$(LMS_DIR)
-	mkdir -p $(TARGET_DIR)$(LMS_DIR)/Bin $(TARGET_DIR)$(LMS_DIR)/CPAN/arch
+	rm -rf $(TARGET_DIR)$(LMS_INSTALL_PATH)
+	mkdir -p $(TARGET_DIR)$(LMS_INSTALL_PATH)/Bin $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch
 	rsync -a \
 		--exclude=/.git* --exclude=/.github --exclude=/.devcontainer \
 		--exclude=/t --exclude=/Bin --exclude=/CPAN/arch \
 		--exclude=/HTML/Classic --exclude='/icudt*b.dat' \
 		--exclude='/Changelog*.html' --exclude=/DEVCONTAINERS.md \
-		$(@D)/ $(TARGET_DIR)$(LMS_DIR)/
-	cp -a $(@D)/Bin/$(LMS_BIN_ARCH) $(TARGET_DIR)$(LMS_DIR)/Bin/
-	cp -a $(@D)/CPAN/arch/$(LMS_PERL_MAJOR) $(TARGET_DIR)$(LMS_DIR)/CPAN/arch/
-	for d in $(TARGET_DIR)$(LMS_DIR)/CPAN/arch/$(LMS_PERL_MAJOR)/*-*; do \
+		$(@D)/ $(TARGET_DIR)$(LMS_INSTALL_PATH)/
+	cp -a $(@D)/Bin/$(LMS_BIN_ARCH) $(TARGET_DIR)$(LMS_INSTALL_PATH)/Bin/
+	cp -a $(@D)/CPAN/arch/$(LMS_PERL_MAJOR) $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch/
+	for d in $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch/$(LMS_PERL_MAJOR)/*-*; do \
 		[ "$${d##*/}" = "$(LMS_CPAN_ARCH)" ] || rm -rf "$$d"; \
 	done
-	test -d $(TARGET_DIR)$(LMS_DIR)/CPAN/arch/$(LMS_PERL_MAJOR)/$(LMS_CPAN_ARCH)
+	test -d $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch/$(LMS_PERL_MAJOR)/$(LMS_CPAN_ARCH)
 	# Lyrion cerca i moduli nella cartella con il nome dell'architettura
-	# di Perl: perl-cross la chiama senza "-thread-multi".
-	archname=$$(basename $$(dirname $$(ls $(TARGET_DIR)/usr/lib/perl5/$(PERL_VERSION)/*/Config.pm))); \
+	# di Perl: perl-cross la chiama senza "-thread-multi". Config_heavy.pl
+	# esiste solo li' (Config.pm anche in Net/).
+	archname=$$(basename $$(dirname $$(ls $(TARGET_DIR)/usr/lib/perl5/$(PERL_VERSION)/*/Config_heavy.pl))); \
 	if [ "$$archname" != "$(LMS_CPAN_ARCH)" ]; then \
-		ln -sfn $(LMS_CPAN_ARCH) $(TARGET_DIR)$(LMS_DIR)/CPAN/arch/$(LMS_PERL_MAJOR)/$$archname; \
+		ln -sfn $(LMS_CPAN_ARCH) $(TARGET_DIR)$(LMS_INSTALL_PATH)/CPAN/arch/$(LMS_PERL_MAJOR)/$$archname; \
 	fi
-	mkdir -p $(TARGET_DIR)$(LMS_DIR)/Plugins
+	mkdir -p $(TARGET_DIR)$(LMS_INSTALL_PATH)/Plugins
 endef
 
 $(eval $(generic-package))

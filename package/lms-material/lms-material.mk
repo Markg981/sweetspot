@@ -17,7 +17,7 @@ endef
 define LMS_MATERIAL_INSTALL_TARGET_CMDS
 	rm -rf $(TARGET_DIR)/usr/share/sweetspot/lms-plugins/MaterialSkin
 	mkdir -p $(TARGET_DIR)/usr/share/sweetspot/lms-plugins/MaterialSkin
-	cp -a $(@D)/. $(TARGET_DIR)/usr/share/sweetspot/lms-plugins/MaterialSkin/
+	rsync -a --exclude='/.*' $(@D)/ $(TARGET_DIR)/usr/share/sweetspot/lms-plugins/MaterialSkin/
 	test -f $(TARGET_DIR)/usr/share/sweetspot/lms-plugins/MaterialSkin/install.xml
 endef
 

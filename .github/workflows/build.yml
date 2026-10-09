@@ -11,6 +11,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Un nuovo invio sullo stesso ramo ferma la compilazione precedente.
+concurrency:
+  group: compila-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-24.04
@@ -35,28 +40,46 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential cpio file libelf-dev libssl-dev rsync unzip wget xz-utils
+      # Sorgenti scaricati e ccache: si salvano anche quando la compilazione
+      # fallisce, cosi' il tentativo successivo riparte da dove era arrivato.
       - name: Cache di sorgenti e compilazione
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.buildroot-dl
             ~/.buildroot-ccache
-          key: buildroot-${{ hashFiles('configs/**', 'board/sweetspot/common/**') }}
+          key: buildroot-${{ github.run_id }}
           restore-keys: buildroot-
+      # Il registro completo va in build.log (allegato all'esecuzione); qui
+      # si vedono solo le fasi (">>> pacchetto versione fase").
       - name: Compila
         run: |
           set -o pipefail
-          BR2_DL_DIR=$HOME/.buildroot-dl sh scripts/build.sh 2>&1 | tee build.log
-      # Le ultime righe del registro diventano annotazioni dell'esecuzione,
-      # leggibili anche senza accedere a GitHub.
+          BR2_DL_DIR=$HOME/.buildroot-dl sh scripts/build.sh 2>&1 | tee build.log | grep --line-buffered '^>>>'
+      # Le ultime righe utili del registro (senza l'avanzamento degli scaricamenti)
+      # diventano annotazioni dell'esecuzione, leggibili anche senza accedere a GitHub.
       - name: Motivo dell'errore
         if: failure()
         run: |
-          tail -n 160 build.log | sed 's/%/%25/g; s/\r//g' > coda.txt
+          grep -v -E '^ *[0-9]+K( \.+)+' build.log | tail -n 160 | sed 's/%/%25/g; s/\r//g' > coda.txt
           split -l 20 coda.txt parte.
           for f in parte.*; do
             echo "::error title=Compilazione ($f)::$(awk 'BEGIN{ORS="%0A"} {print}' "$f")"
           done
+      - name: Registro della compilazione
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registro-compilazione
+          path: build.log
+      - name: Salva la cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: buildroot-${{ github.run_id }}
       - name: Pubblica l'immagine
         uses: actions/upload-artifact@v4
         with:
