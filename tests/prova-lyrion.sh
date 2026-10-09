@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Sweetspot - prova di Lyrion nel sistema compilato, su un computer della
-# stessa architettura (nella CI: x86_64 su ubuntu-24.04, ARM a 64 bit su
-# ubuntu-24.04-arm). Estrae il sistema dal pacchetto di aggiornamento, ci
+# stessa architettura (nella CI: x86_64 su ubuntu-26.04, ARM a 64 bit su
+# ubuntu-26.04-arm). Estrae il sistema dal pacchetto di aggiornamento, ci
 # entra con chroot, carica i moduli compilati di Lyrion con il Perl del
 # sistema e avvia Lyrion come sul player: deve rispondere alle richieste
 # JSON-RPC. Controlla proprio cio' che non si puo' provare senza l'hardware:

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Ambiente di compilazione per Sweetspot (Buildroot).
-FROM debian:bookworm-slim
+# Debian stabile piu' recente (13, trixie): la controlla scripts/controlla-versioni.sh.
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	bash bc build-essential ca-certificates cpio file git libelf-dev \
 	libncurses-dev libssl-dev perl python3 rsync unzip wget xz-utils \

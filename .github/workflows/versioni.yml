@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Regola del progetto: sempre le ultime versioni. Ogni lunedi' si
+# confrontano i componenti di Sweetspot con le ultime versioni pubblicate
+# (scripts/controlla-versioni.sh); se qualcosa e' indietro si apre, o si
+# aggiorna, la segnalazione "Aggiornamenti disponibili", che si chiude da
+# sola quando tutto torna aggiornato. Il resoconto e' anche nel riepilogo
+# dell'esecuzione.
+name: Controllo versioni
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths: ['scripts/controlla-versioni.sh', '.github/workflows/versioni.yml']
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  versioni:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Confronto con le ultime versioni
+        id: controllo
+        run: |
+          rc=0
+          sh scripts/controlla-versioni.sh > versioni.md || rc=$?
+          cat versioni.md
+          cat versioni.md >> "$GITHUB_STEP_SUMMARY"
+          echo "esito=$rc" >> "$GITHUB_OUTPUT"
+      - name: Segnalazione
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ESITO: ${{ steps.controllo.outputs.esito }}
+        run: |
+          T="Aggiornamenti disponibili"
+          n=$(gh issue list --state open --search "$T in:title" --json number,title \
+            --jq ".[] | select(.title == \"$T\") | .number" | head -n 1)
+          if [ "$ESITO" = 1 ]; then
+            {
+              echo "Il controllo settimanale ha trovato componenti da aggiornare (regola del progetto: sempre le ultime versioni)."
+              echo
+              cat versioni.md
+              echo
+              echo "Aggiornato il $(date -u +%Y-%m-%d) dal workflow *Controllo versioni*."
+            } > corpo.md
+            if [ -n "$n" ]; then
+              gh issue edit "$n" --body-file corpo.md
+            else
+              gh issue create --title "$T" --body-file corpo.md
+            fi
+          elif [ "$ESITO" = 0 ] && [ -n "$n" ]; then
+            gh issue close "$n" --comment "Tutto aggiornato al $(date -u +%Y-%m-%d)."
+          fi

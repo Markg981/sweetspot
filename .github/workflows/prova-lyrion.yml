@@ -25,13 +25,13 @@ jobs:
       matrix:
         include:
           - scheda: x86_64
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
           - scheda: rpi
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Esecuzione con i pacchetti
         id: esecuzione
         env:
@@ -39,22 +39,37 @@ jobs:
           SCHEDA: ${{ matrix.scheda }}
           SCELTA: ${{ inputs.esecuzione }}
         run: |
+          # Nome del pacchetto: come file (dalla CI aggiornata) o, nelle
+          # esecuzioni precedenti, dentro uno zip con il nome senza .tar.
+          nome=""
+          trova() { # esecuzione
+            for n in "sweetspot-$SCHEDA-aggiornamento.tar" "sweetspot-$SCHEDA-aggiornamento"; do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1/artifacts" --jq '.artifacts[] | select(.expired | not) | .name' |
+                grep -qx "$n"; then
+                nome=$n
+                return 0
+              fi
+            done
+            return 1
+          }
           id=$SCELTA
-          if [ -z "$id" ]; then
+          if [ -n "$id" ]; then
+            trova "$id" || id=""
+          else
             for r in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&status=completed&per_page=20" --jq '.workflow_runs[].id'); do
-              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$r/artifacts" --jq '.artifacts[] | select(.expired | not) | .name' |
-                grep -qx "sweetspot-$SCHEDA-aggiornamento"; then
+              if trova "$r"; then
                 id=$r
                 break
               fi
             done
           fi
           [ -n "$id" ] || { echo "::error::nessuna esecuzione con il pacchetto sweetspot-$SCHEDA-aggiornamento"; exit 1; }
-          echo "Pacchetti dell'esecuzione $id"
+          echo "Pacchetto $nome dell'esecuzione $id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+          echo "nome=$nome" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
         with:
-          name: sweetspot-${{ matrix.scheda }}-aggiornamento
+          name: ${{ steps.esecuzione.outputs.nome }}
           run-id: ${{ steps.esecuzione.outputs.id }}
           github-token: ${{ github.token }}
       - name: Strumenti

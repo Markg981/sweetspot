@@ -1,0 +1,14 @@
+config BR2_PACKAGE_SWEETSPOT_RPI_FIRMWARE
+	bool "sweetspot-rpi-firmware"
+	depends on BR2_aarch64
+	depends on BR2_LINUX_KERNEL
+	depends on BR2_LINUX_KERNEL_DTS_SUPPORT
+	select BR2_LINUX_KERNEL_DTB_OVERLAY_SUPPORT
+	help
+	  Avvio del Raspberry Pi 4 e 5 per Sweetspot: firmware del Pi 4
+	  (start4.elf, fixup4.dat) dall'ultima release della Raspberry Pi
+	  Foundation e overlay compilati dal kernel in uso (tutti, per le
+	  schede DAC I2S scelte dalla pagina Audio). Sostituisce
+	  rpi-firmware di Buildroot, fissato a una versione meno recente.
+
+	  https://github.com/raspberrypi/firmware
