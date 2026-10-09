@@ -194,9 +194,18 @@ jobs:
         with:
           name: sweetspot-${{ matrix.scheda }}-aggiornamento.tar
       - name: Strumenti
-        run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
-      - name: Avvio di Lyrion nel sistema compilato
+        run: sudo apt-get update && sudo apt-get install -y zstd cpio curl python3
+      - name: Lyrion e verifica PCM nel sistema compilato
+        env:
+          SWEETSPOT_AUDIO_REPORT_DIR: ${{ runner.temp }}/sweetspot-audio-evidence
         run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+      - name: Evidenza della verifica audio software
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verifica-audio-${{ matrix.scheda }}
+          path: ${{ runner.temp }}/sweetspot-audio-evidence
+          if-no-files-found: warn
 
   # Una sola pubblicazione, dopo il successo di entrambe le compilazioni e
   # di entrambi i test Lyrion. Un gate fallito, saltato o annullato la blocca.

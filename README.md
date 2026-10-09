@@ -371,6 +371,11 @@ tenendo conto del contenitore ALSA. Conserva file, impostazioni e risultati
 per ogni formato e frequenza. Una prova con DAC emulato verifica quel percorso
 software; non misura il clock o il rumore dell'uscita analogica di un DAC reale.
 
+Il [comparatore PCM e la prova Lyrion/Squeezelite](docs/audio-verification.md)
+confrontano ogni campione e il passaggio fra due brani, con report JSON e
+capture conservate dalla CI. La prima copertura è del backend software stdout
+a 44,1/48/96 kHz e 16/24 bit; la certificazione di ALSA e dei DAC resta aperta.
+
 ### Qualità sonora e compatibilità
 
 Il [piano di parità con Daphile e dei miglioramenti](docs/daphile-parity.md)

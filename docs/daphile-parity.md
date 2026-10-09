@@ -74,6 +74,12 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
 | 3 — Parità funzionale | Più DAC locali, PCM→DSD opzionale, hotspot e definizione del supporto x86 a 32 bit. | Scenari di uso coperti su dispositivi compatibili, limiti visibili e nessuna modifica involontaria del percorso originale. |
 | 4 — Distribuzione | Autenticazione, chiavi, controlli A/B completi, recupero e matrice hardware pubblica. | Nuova installazione senza terminale, aggiornamento firmato verificato, recupero di fallimenti provato e test di alimentazione su hardware reale. |
 
+**Avanzamento del traguardo 1:** prima copertura del confronto PCM e dei
+confini fra due brani locali a frequenza costante, nel backend stdout del
+Squeezelite compilato. Il [protocollo di verifica](audio-verification.md)
+descrive report e limiti. Il traguardo resta parziale: DSD/DoP, ALSA e DAC reali,
+cambi frequenza, hotplug, rete e carico prolungato richiedono ancora prove.
+
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,
 livello e impostazioni equivalenti. La correzione ambientale può migliorare
 il risultato acustico; per confrontarla bisogna verificare anche le misure

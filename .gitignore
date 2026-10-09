@@ -1,3 +1,4 @@
 /buildroot/
 /output/
 /graphify-out/
+__pycache__/
