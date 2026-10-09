@@ -23,7 +23,9 @@
 #
 # Pacchetto (creato da post-image.sh): un .tar con bzImage, rootfs.cpio.zst,
 # versione, architettura e SHA256SUMS, che viene controllato prima di
-# rendere avviabile la nuova copia.
+# rendere avviabile la nuova copia. La compilazione ufficiale aggiunge
+# SHA256SUMS.minisig, la firma con la chiave del progetto: se il sistema ha la
+# chiave pubblica (/etc/sweetspot/aggiornamenti.pub) la firma e' obbligatoria.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -36,6 +38,10 @@ AVVIO=${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}
 ARCH=${SWEETSPOT_ARCH:-$(uname -m)}
 PKG_NAME="sweetspot-$ARCH-aggiornamento.tar"
 VERSION_FILE=${SWEETSPOT_VERSION_FILE:-/etc/sweetspot-version}
+# Chiave pubblica del progetto: con questa, solo i pacchetti firmati dalla
+# chiave privata (nei segreti di GitHub, la usa solo la compilazione
+# ufficiale) si possono installare.
+PUBKEY=${SWEETSPOT_CHIAVE_FIRMA:-/etc/sweetspot/aggiornamenti.pub}
 
 current_version() { cut -d' ' -f1 "$VERSION_FILE" 2>/dev/null; }
 
@@ -138,13 +144,24 @@ prepare_slot() {
 
 # Controlla il pacchetto estratto in $1 e lo sposta nella copia $2.
 verify_and_install() { # cartella_estratta cartella_copia copia
-	local x=$1 d=$2 other=$3 v
+	local x=$1 d=$2 other=$3 v tc f
 	state "controlla|verifica del pacchetto"
 	[ -f "$x/SHA256SUMS" ] || { echo "pacchetto incompleto"; return 1; }
+	# Firma dell'elenco dei file (SHA256SUMS): prima di tutto il resto. Il
+	# commento firmato lega la firma a versione e architettura del pacchetto.
+	if [ -s "$PUBKEY" ]; then
+		[ -f "$x/SHA256SUMS.minisig" ] ||
+			{ echo "pacchetto non firmato: non è un aggiornamento ufficiale"; return 1; }
+		tc=$(minisign -V -p "$PUBKEY" -m "$x/SHA256SUMS" -x "$x/SHA256SUMS.minisig" -Q 2>/dev/null) ||
+			{ echo "firma non valida: il pacchetto è stato alterato o non è ufficiale"; return 1; }
+		[ "$tc" = "Sweetspot $(head -n 1 "$x/versione" 2>/dev/null) $(cat "$x/architettura" 2>/dev/null)" ] ||
+			{ echo "la firma appartiene a un altro pacchetto"; return 1; }
+	fi
+	for f in bzImage rootfs.cpio.zst versione architettura; do
+		grep -q " \*\{0,1\}$f\$" "$x/SHA256SUMS" || { echo "pacchetto incompleto"; return 1; }
+	done
 	[ "$(cat "$x/architettura" 2>/dev/null)" = "$ARCH" ] ||
 		{ echo "pacchetto per un altro tipo di computer ($(cat "$x/architettura" 2>/dev/null))"; return 1; }
-	grep -q ' bzImage$' "$x/SHA256SUMS" && grep -q ' rootfs.cpio.zst$' "$x/SHA256SUMS" ||
-		{ echo "pacchetto incompleto"; return 1; }
 	(cd "$x" && sha256sum -c SHA256SUMS > /dev/null 2>&1) ||
 		{ echo "pacchetto rovinato (controllo SHA-256 non superato): riprova"; return 1; }
 	v=$(head -n 1 "$x/versione")

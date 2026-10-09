@@ -124,6 +124,15 @@ parte (il kernel si ferma, riavvio automatico dopo 10 secondi) riparte da solo
 quello di prima e la pagina Sistema lo segnala. La versione precedente resta
 installata: si torna indietro con un clic.
 
+Gli aggiornamenti sono **firmati**: la compilazione ufficiale firma l'elenco dei
+file del pacchetto con una chiave privata che sta solo nei segreti del
+repository su GitHub (`SWEETSPOT_FIRMA`), e Sweetspot installa solo pacchetti
+con una firma valida per la sua chiave pubblica
+(`/etc/sweetspot/aggiornamenti.pub`); la firma vale per versione e
+architettura del pacchetto. La coppia di chiavi si crea con
+`scripts/genera-chiave-firma.sh` (chi pubblica una propria copia del progetto
+crea le sue).
+
 ### Modalità
 
 - **completa** (predefinita): tutto su Sweetspot, come Daphile.
