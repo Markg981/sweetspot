@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import wave
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -38,6 +39,12 @@ CASES += [{"id": "%s-%s-dop" % (container, rate * 16), "kind": "dsd_to_dop",
            "rate": rate, "source_bits": [1, 1], "source_format": container,
            "carrier_bits": 24, "dsd_rate": rate * 16, "scope": "software_stdout"}
           for container in ("dsf", "dff") for rate in (176400, 352800)]
+CASES += [{"id": "pcm-rate-%s-%s-24-24" % (first, second),
+           "kind": "pcm_rate_transition", "rate": first, "second_rate": second,
+           "source_bits": [24, 24]}
+          for first, second in ((44100, 48000), (48000, 44100), (44100, 96000),
+                                (96000, 44100), (48000, 96000), (96000, 48000))]
+PCM_PACING_RATE = 44100
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
@@ -253,7 +260,8 @@ class PacedCapture:
     The owner enforces the wall deadline even when a pipe read is blocked,
     then terminates the owned writer before joining the reader thread.
     """
-    def __init__(self, stream, path, *, rate, max_bytes, wall_seconds):
+    def __init__(self, stream, path, *, rate, max_bytes, wall_seconds,
+                 sequence_frames=None, trailing_frames=0):
         if rate <= 0 or max_bytes <= 0 or max_bytes % 8 or wall_seconds <= 0 or not math.isfinite(wall_seconds):
             raise ValueError("capture limits require a positive rate, whole stereo s32 frames and finite wall time")
         self.stream = stream
@@ -261,6 +269,9 @@ class PacedCapture:
         self.rate = rate
         self.max_bytes = max_bytes
         self.wall_seconds = wall_seconds
+        self.sequence_frames = sequence_frames
+        self.trailing_frames = trailing_frames
+        self.target_bytes = max_bytes
         self.bytes_written = 0
         self.reason = None
         self.error = None
@@ -277,18 +288,21 @@ class PacedCapture:
         try:
             with self.path.open("wb") as capture:
                 chunk_bytes = max(8, self.rate // 50 * 8)
+                pending = b""
+                leading_frames = 0
+                found_start = False
                 while not self._stop.is_set():
                     if time.monotonic() >= self.deadline:
                         self.reason = "wall_limit"
                         return
-                    if self.bytes_written == self.max_bytes:
+                    if self.bytes_written == self.target_bytes:
                         self.reason = "byte_limit"
                         return
                     target = self.started + self.bytes_written / (self.rate * 8)
                     delay = max(0, target - time.monotonic())
                     if self._stop.wait(delay):
                         break
-                    wanted = min(chunk_bytes, self.max_bytes - self.bytes_written)
+                    wanted = min(chunk_bytes, self.target_bytes - self.bytes_written)
                     # read1/os.read avoid a buffered read waiting to fill wanted.
                     data = os.read(self.stream.fileno(), wanted)
                     if not data:
@@ -297,6 +311,20 @@ class PacedCapture:
                     if time.monotonic() >= self.deadline:
                         self.reason = "wall_limit"
                         return
+                    if self.sequence_frames is not None and not found_start:
+                        # Diagnostic sources start with a nonzero stereo frame.
+                        # Short startup must not spend its unused lead allowance
+                        # on an oversized tail. Keep all bytes, including silence.
+                        pending += data
+                        complete_bytes = len(pending) // 8 * 8
+                        for offset in range(0, complete_bytes, 8):
+                            if pending[offset:offset + 8] != bytes(8):
+                                found_start = True
+                                self.target_bytes = min(self.max_bytes,
+                                    (leading_frames + self.sequence_frames + self.trailing_frames) * 8)
+                                break
+                            leading_frames += 1
+                        pending = pending[complete_bytes:]
                     capture.write(data)
                     self.bytes_written += len(data)
                 self.reason = self.reason or "stopped"
@@ -373,19 +401,81 @@ def dsd_decoder_evidence(log, destination, source_format, rate):
     return evidence
 
 
-def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
+def output_rate_evidence(log_path, expected_rates):
+    """Read actual output track boundaries, never infer rates from stdout bytes."""
+    expected = list(expected_rates)
+    evidence = {"path": str(log_path), "sha256": None, "status": "fail",
+                "expected_rate_sequence": expected, "observed_rate_sequence": []}
+    if (len(expected) != 2 or any(type(rate) is not int or not 0 < rate <= 0xffffffff for rate in expected)):
+        evidence["reason"] = "invalid expected output rate pair"
+        return evidence
+    try:
+        data = log_path.read_bytes()
+    except OSError as error:
+        evidence["reason"] = "output log unavailable: %s" % error
+        return evidence
+    evidence["sha256"] = hashlib.sha256(data).hexdigest()
+    prefix = re.compile(r"^\[\d{2}:\d{2}:\d{2}\.\d+\] _output_frames:\d+ ")
+    message = re.compile(r"track start sample rate: ([0-9]+) replay_gain: ([0-9]+)")
+    malformed = False
+    for line in data.decode("utf-8", errors="replace").splitlines():
+        match = prefix.match(line)
+        if not match:
+            continue
+        line = line[match.end():]
+        if not line.startswith("track start"):
+            continue
+        announcement = message.fullmatch(line)
+        if not announcement or any(len(value) > 10 for value in announcement.groups()):
+            malformed = True
+            continue
+        rate, gain = map(int, announcement.groups())
+        if not 0 < rate <= 0xffffffff or gain > 0xffffffff:
+            malformed = True
+            continue
+        evidence["observed_rate_sequence"].append(rate)
+    if malformed:
+        evidence["reason"] = "malformed output track-start announcement"
+    elif evidence["observed_rate_sequence"] != expected:
+        evidence["reason"] = "output track-start rates differ from exact ordered pair"
+    else:
+        evidence["status"] = "pass"
+    return evidence
+
+
+def mixed_case_passes(case, rates):
+    """Recheck required evidence so a status-only mutation cannot open the gate."""
+    evidence = case.get("rate_evidence", {})
+    comparison = case.get("comparison", {})
+    return (evidence.get("status") == "pass" and evidence.get("expected_rate_sequence") == rates
+            and evidence.get("observed_rate_sequence") == rates
+            and isinstance(evidence.get("path"), str) and bool(evidence["path"])
+            and isinstance(evidence.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", evidence["sha256"]) is not None
+            and comparison.get("status") == "pass"
+            and all(comparison.get(field) is True for field in ("sample_match", "sequence_match", "rate_sequence_match"))
+            and comparison.get("expected_rate_sequence") == rates
+            and comparison.get("observed_rate_sequence") == rates)
+
+
+def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rate=None, dop=False,
              source_format=None, case_id=None, process_factory=subprocess.Popen):
-    from tools.audio_verification import compare_capture, generate_fixtures
+    from tools.audio_verification import compare_capture, compare_pcm_sequence, generate_fixtures
     second_bits = bits if second_bits is None else second_bits
+    mixed_rate = second_rate is not None
     identity = case_id or ("%s-%s-dop" % (source_format, rate * 16) if source_format else
                            "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits))
+    if mixed_rate and case_id is None:
+        identity = "pcm-rate-%s-%s-%s-%s" % (rate, second_rate, bits, second_bits)
     # Existing callers without an ID keep their original homogeneous PCM path.
-    directory_name = "%s-%s" % (rate, bits) if case_id is None and not dop and not source_format and bits == second_bits else identity
+    directory_name = "%s-%s" % (rate, bits) if case_id is None and not mixed_rate and not dop and not source_format and bits == second_bits else identity
     directory = output / directory_name
     directory.mkdir(parents=True, exist_ok=True)
     report = {"id": identity, "kind": "dsd_to_dop" if source_format else "dop_pcm_passthrough" if dop else "pcm",
               "rate": rate, "bits": bits, "source_bits": [bits, second_bits],
               "status": "fail", "scope": "software_stdout"}
+    if mixed_rate:
+        report.update(kind="pcm_rate_transition", source_rates=[rate, second_rate])
     if dop or source_format:
         report["dsd_rate"] = rate * 16
     if source_format:
@@ -397,11 +487,28 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
     report["player_mac"] = mac
     process = None
     capture = None
+    log_owned = False
     root_log = rootfs / "tmp" / "audio-verification.log"
     started = time.monotonic()
     journal_start = len(client.journal)
     try:
-        if source_format:
+        if mixed_rate:
+            (directory / "squeezelite.log").unlink(missing_ok=True)
+        if mixed_rate:
+            if dop or source_format or bits != 24 or second_bits != 24 or rate == second_rate:
+                raise AudioError("PCM rate transition requires different-rate WAV24 sources")
+            references = [generate_fixtures(directory / "references", rate, bits)[0],
+                          generate_fixtures(directory / "references", second_rate, second_bits)[1]]
+            native_frames = 0
+            for reference in references:
+                with wave.open(str(reference), "rb") as source:
+                    native_frames += source.getnframes()
+            edge_frames = STARTUP_SECONDS * PCM_PACING_RATE
+            max_bytes = (edge_frames + native_frames + edge_frames) * 8
+            report["limits"].update(pacing_rate=PCM_PACING_RATE, max_lead_frames=edge_frames,
+                                    max_trailing_frames=edge_frames, max_bytes=max_bytes,
+                                    wall_seconds=max_bytes / (PCM_PACING_RATE * 8) + (WALL_SECONDS - CAPTURE_SECONDS))
+        elif source_format:
             from tools.audio_verification import compare_dop_capture, generate_dsd_fixtures
             if source_format not in ("dsf", "dff") or bits != 1 or second_bits != 1:
                 raise AudioError("DSD to DoP requires two one-bit DSF or DFF sources")
@@ -428,19 +535,23 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
             sources = references
         with LocalFixtures(rootfs, sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             root_log.unlink(missing_ok=True)
+            log_owned = True
             command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", "-", "-a", "32",
-                       "-r", str(rate), "-s", "127.0.0.1", "-m", mac,
+                       "-r", "44100,48000,96000:0" if mixed_rate else str(rate), "-s", "127.0.0.1", "-m", mac,
                        "-n", "Audio-test", "-f", "/tmp/audio-verification.log"]
             if dop or source_format:
                 command.extend(["-D", "0:dop"])
             if source_format:
                 command.extend(["-d", "decode=info", "-d", "stream=info"])
+            if mixed_rate:
+                command.extend(["-d", "output=info"])
             report["command"] = command
             try:
                 process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
                                           start_new_session=os.name == "posix")
-                capture = PacedCapture(process.stdout, directory / "capture.raw", rate=rate,
-                                       max_bytes=report["limits"]["max_bytes"], wall_seconds=WALL_SECONDS)
+                capture = PacedCapture(process.stdout, directory / "capture.raw", rate=PCM_PACING_RATE if mixed_rate else rate,
+                                       max_bytes=report["limits"]["max_bytes"], wall_seconds=report["limits"]["wall_seconds"],
+                                       **({"sequence_frames": native_frames, "trailing_frames": edge_frames} if mixed_rate else {}))
                 capture.start()
                 wait_connected(client, mac, process)
                 report["settings"] = configure_player(client, mac, deadline=capture.deadline)
@@ -460,9 +571,21 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
                     stop_process(process, owned_group=os.name == "posix")
                 if capture is not None:
                     capture.join()
-            report["comparison"] = compare(references, directory / "capture.raw", capture_format="s32_le",
-                                            capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
+            if mixed_rate:
+                retained_log = directory / "squeezelite.log"
+                if root_log.exists():
+                    shutil.copyfile(root_log, retained_log)
+                report["rate_evidence"] = output_rate_evidence(retained_log, report["source_rates"])
+                report["comparison"] = compare_pcm_sequence(references, directory / "capture.raw", capture_format="s32_le",
+                    rate_sequence=report["rate_evidence"]["observed_rate_sequence"],
+                    max_lead_frames=report["limits"]["max_lead_frames"],
+                    max_trailing_frames=report["limits"]["max_trailing_frames"], pacing_rate=PCM_PACING_RATE)
+            else:
+                report["comparison"] = compare(references, directory / "capture.raw", capture_format="s32_le",
+                                                capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
             report["status"] = report["comparison"]["status"]
+            if mixed_rate and not mixed_case_passes(report, report["source_rates"]):
+                report["status"] = "fail"
             if source_format:
                 report["decoder"] = dsd_decoder_evidence(root_log, directory / "squeezelite.log", source_format, rate)
                 if report["decoder"]["status"] != "pass":
@@ -476,8 +599,12 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
         if capture is not None:
             report["capture"] = {"path": str(capture.path), "bytes": capture.bytes_written,
                                  "reason": capture.reason, "error": capture.error}
-        if root_log.exists():
+            if mixed_rate:
+                report["capture"].update(rate=None, pacing_rate=PCM_PACING_RATE)
+        if log_owned and root_log.exists():
             shutil.copyfile(root_log, directory / "squeezelite.log")
+        if mixed_rate:
+            report["rate_evidence"] = output_rate_evidence(directory / "squeezelite.log", report["source_rates"])
         write_json(directory / "report.json", report)
     return report
 
@@ -505,6 +632,7 @@ def main(argv=None):
         for case in CASES:
             first, second = case["source_bits"]
             result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
+                              second_rate=case.get("second_rate"),
                               dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
                               case_id=case["id"])
             report["cases"].append(result)
@@ -521,8 +649,12 @@ def main(argv=None):
                     missing["dsd_rate"] = case["rate"] * 16
                 report["cases"].append(missing)
         expected = {case["id"] for case in CASES}
+        mixed_rates = {case["id"]: [case["rate"], case["second_rate"]]
+                       for case in CASES if case["kind"] == "pcm_rate_transition"}
         if ("error" not in report and len(report["cases"]) == len(expected) and completed == expected
-                and all(case.get("status") == "pass" and "error" not in case for case in report["cases"])):
+                and all(case.get("status") == "pass" and "error" not in case
+                        and (case["id"] not in mixed_rates or mixed_case_passes(case, mixed_rates[case["id"]]))
+                        for case in report["cases"])):
             report["status"] = "pass"
         write_json(output / "report.json", report)
     return 0 if report["status"] == "pass" else 1

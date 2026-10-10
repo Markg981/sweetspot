@@ -3,7 +3,8 @@
 La prima parte del traguardo 1 confronta i campioni PCM e il payload DoP prodotti
 dal percorso Lyrion → Squeezelite nel backend stdout del binario compilato.
 Verifica anche la continuità fra due brani consecutivi della stessa frequenza,
-incluse le transizioni fra profondità PCM diverse.
+incluse le transizioni fra profondità PCM diverse, e le sei transizioni PCM
+fra 44,1, 48 e 96 kHz in entrambe le direzioni.
 Il report dichiara lo scope `software_stdout`: ALSA e il DAC richiedono prove
 successive sulla relativa uscita digitale.
 
@@ -26,7 +27,7 @@ la cartella completa dopo il termine della prova. Una scrittura o chiusura
 bloccata sul filesystem Windows può invalidare la capture senza indicare un
 difetto nei campioni audio.
 
-Il driver genera due sorgenti locali per ciascuno dei 18 casi e i relativi
+Il driver genera due sorgenti locali per ciascuno dei 24 casi e i relativi
 riferimenti WAV. Nei casi DSF/DFF i WAV sono soltanto l'oracle del confronto:
 la playlist contiene i due file DSD originali.
 
@@ -37,6 +38,7 @@ la playlist contiene i due file DSD originali.
 | WAV contenente DoP | 176,4/352,8 kHz | PCM24, payload DSD64/128 | 2 |
 | DSF→DoP | carrier 176,4/352,8 kHz | DSD64/128 stereo non compresso | 2 |
 | DFF→DoP | carrier 176,4/352,8 kHz | DSD64/128 stereo non compresso | 2 |
+| PCM con cambio frequenza | 44,1↔48, 44,1↔96, 48↔96 kHz | 24→24 bit, due brani | 6 |
 
 Riproduce una playlist completa con volume 100,
 controllo digitale del volume disattivato, ReplayGain e transizioni spenti;
@@ -86,6 +88,60 @@ Exit code: 0 corrispondenza completa, 1 differenza nei campioni o nella sequenza
 2 input invalido. Il report conserva hash, confini dei brani e primo errore;
 una capture troncata o un rate dichiarato diverso non costituiscono una prova
 riuscita.
+
+## Cambi di frequenza PCM
+
+Le sei prove aggiuntive riproducono WAV24 a frequenze diverse nella stessa
+playlist. Squeezelite annuncia al server le frequenze 44.100, 48.000 e 96.000 Hz
+con `-r 44100,48000,96000:0`; il ricampionamento rimane spento. La capture stdout
+non ha header né marcatori di frequenza. Il driver conserva quindi anche gli
+annunci `track start sample rate` al
+[confine delle tracce nel motore](https://github.com/ralph-irving/squeezelite/blob/72e1fd8abfa9b2f8e9636f033247526920878718/output.c#L153)
+e richiede l'esatta sequenza dei
+due rate attesi, senza annunci mancanti, aggiuntivi, duplicati o fuori ordine.
+Il report conserva percorso e hash del log.
+
+Il confronto concatena tutti i frame nativi delle due sorgenti, normalizzati
+nei bit significativi, senza ricampionare o riallineare il secondo brano.
+Perdite, duplicazioni o pause interne falliscono anche al cambio di frequenza.
+I confini nel report indicano gli indici dei frame e i rate prima e dopo il
+cambio; il primo campione errato identifica anche traccia e frame di origine.
+
+Il consumer software legge stdout a un ritmo fisso di 44.100 frame al secondo,
+registrato come `pacing_rate`: questo valore non è la frequenza delle tracce
+né una misura del clock del DAC. Il limite di capture deriva dalla somma dei
+frame dei riferimenti più dieci secondi di silenzio iniziale e dieci finali
+al ritmo del consumer. Anche il timeout deriva da questo budget, con un
+margine finito per l'arresto; non assume che i due brani abbiano lo stesso rate.
+Il primo frame non nullo delle fixture diagnostiche determina il silenzio
+iniziale effettivo: il driver termina dopo questo bordo, tutti i frame nativi
+e il bordo finale ammesso, sempre entro il limite massimo. Conserva ogni byte
+letto, senza tagliare silenzi interni o usare il budget iniziale inutilizzato
+per allungare quello finale.
+
+Il comparatore dedicato si può usare separatamente:
+
+```sh
+python3 tools/audio_verification.py compare-pcm-sequence \
+  --reference primo-44100.wav --reference secondo-48000.wav \
+  --capture uscita.raw --capture-format s32_le \
+  --observed-rate 44100 --observed-rate 48000 --pacing-rate 44100 \
+  --max-lead-frames 441000 --max-trailing-frames 441000 \
+  --report graphify-out/rate-comparison.json
+```
+
+Sostituisci i riferimenti con i due WAV effettivi e ricava i valori
+`--observed-rate` dal log dell'esecuzione. La CLI confronta i valori forniti
+con gli header: da sola non acquisisce né autentica il log. Il driver completo
+lega invece il verdetto al log conservato della singola prova. Il report
+riporta la frequenza della capture come `null` e il pacing separatamente.
+Il comando `compare` precedente continua a richiedere una frequenza unica.
+Il nuovo comando limita entrambi i bordi nulli, anche usando un offset
+esplicito; dentro la sequenza non tollera silenzio aggiunto.
+
+Queste prove riguardano il cambio di rate annunciato dal motore e i frame
+nel backend software. L'apertura ALSA e il comportamento del DAC al cambio
+di frequenza richiedono un collaudo sulla relativa uscita reale.
 
 ## Confronto DoP
 
@@ -223,7 +279,10 @@ e tutti i 18 casi nelle immagini complete x86 e ARM. I log conservano gli
 esiti di ogni caso; l'upload dei report aveva invece una destinazione errata
 e non ha prodotto gli artifact di evidenza. Il workflow passa ora la cartella
 esplicitamente al comando privilegiato e considera un archivio assente un
-errore: la pubblicazione della correzione richiede una nuova esecuzione CI.
+errore. La [CI della PR #16](https://github.com/Markg981/sweetspot/actions/runs/38056065758),
+sul commit `b423231`, ha poi superato test, compilazioni e prove Lyrion su
+x86 e ARM e pubblicato entrambi gli artifact `verifica-audio-*`.
+Quella CI copre i 18 casi precedenti; la matrice da 24 richiede una nuova prova.
 La suite Linux finale ha superato 429 controlli, inclusi 65 test del
 comparatore/fixture, 35 del driver e 10 del parser C, senza test saltati.
 
@@ -264,9 +323,9 @@ collaudo ALSA su dispositivi reali rimane da completare.
 ## Copertura ancora da completare
 
 Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
-frequenza costante e due brani consecutivi nel backend software. Restano
-aperti DSD nativo, DFF compressi DST, mono/multicanale, seek, cambi di frequenza,
-ALSA, USB/I2S/S/PDIF reali, hotplug, rete/NAS, carico prolungato e la matrice
+frequenza costante e sei cambi fra 44,1/48/96 kHz nel backend software. Restano
+aperti DSD nativo, DFF compressi DST, mono/multicanale, seek, cambi PCM/DSD,
+ALSA e cambi di frequenza sui DAC, USB/I2S/S/PDIF reali, hotplug, rete/NAS, carico prolungato e la matrice
 computer/DAC/firmware per release. Non misura jitter del clock, rumore elettrico
 USB o fedeltà dell'uscita analogica. Il traguardo 1 rimane parzialmente coperto
 finché queste prove non hanno evidenza riproducibile.
