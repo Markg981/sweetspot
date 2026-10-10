@@ -522,18 +522,15 @@ class DriverTests(unittest.TestCase):
                     total -= 8
                 raw = directory / "capture-writer.raw"
                 raw.write_bytes(payload)
-                if alsa_defect != "capture_not_running":
-                    substream = asound / "Loopback/pcm0c/sub0"
-                    (substream / "hw_params").write_text(
-                        "access: RW_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\n"
-                        "rate: %s (%s/1)\nperiod_size: 4410\nbuffer_size: 17640\n" % (rate, rate))
-                    (substream / "status").write_text("state: RUNNING\nowner_pid   : 2\n")
                 if alsa_defect == "overrun":
                     kwargs["stderr"].write(b"overrun!!! (at least 1.000 ms long)\n")
                     kwargs["stderr"].flush()
                 code = ("import sys; data=bytes(800)+open(sys.argv[1],'rb').read(); idle=bytes.fromhex(sys.argv[2]); "
                         "total=int(sys.argv[3]); data+=idle*((total-len(data))//len(idle)+1); "
                         "sys.stdout.buffer.write(data[:total])")
+                if alsa_defect == "capture_not_running":
+                    # A capture which never delivers frames before its deadline.
+                    code = "import time; time.sleep(60)"
                 process = subprocess.Popen([sys.executable, "-c", code, str(raw), idle.hex(), str(total)], **kwargs)
                 children.append(process)
                 return process

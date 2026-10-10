@@ -518,21 +518,23 @@ def wait_loopback_playback(target, rate, process, timeout=8, interval=.05):
     raise AudioError("Squeezelite did not start hw:Loopback playback before deadline")
 
 
-def wait_loopback_capture(target, capture, timeout=8, interval=.05):
-    """Wait until the capture substream runs, so no track frame precedes it.
+def wait_loopback_capture(capture, rate, timeout=8, interval=.05):
+    """Wait until captured frames reach this host, so no track frame precedes them.
 
     A remote aplay can start later than the server starts a track: playing
-    before this point would lose the first frames of the sequence.
+    before this point would lose the first frames of the sequence. Bytes in
+    the local file prove the capture already reads; /proc state over SSH did not.
     """
+    wanted = rate // 10 * capture.frame_bytes
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        size = capture.path.stat().st_size
+        if size >= wanted:
+            return {"bytes_before_playlist": size}
         if capture.finished.is_set():
             raise AudioError("ALSA capture ended before running: %s (%s)" % (capture.reason, capture.error))
-        params = loopback_state(target, "c")
-        if params is not None and params["state"] == "RUNNING":
-            return params
         time.sleep(min(interval, max(0, deadline - time.monotonic())))
-    raise AudioError("hw:Loopback capture did not start before deadline")
+    raise AudioError("hw:Loopback capture produced no data before deadline")
 
 
 class LoopbackCapture:
@@ -853,7 +855,7 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
                         capture.start()
                     finally:
                         capture_stderr.close()
-                    report["alsa"]["capture"] = wait_loopback_capture(target, capture)
+                    report["alsa"]["capture"] = wait_loopback_capture(capture, rate)
                 else:
                     process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
                                               start_new_session=os.name == "posix")
