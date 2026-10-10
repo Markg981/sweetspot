@@ -35,6 +35,8 @@ cleanup() {
 		sleep 1
 	fi
 	[ -f "$W/seriale.log" ] && cp "$W/seriale.log" "$OUT/console-seriale.log"
+	# L'evidenza si carica come artifact da un utente non root.
+	chmod -R a+rX "$OUT"
 	rm -rf "$W"
 	return "$rc"
 }
