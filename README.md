@@ -36,6 +36,13 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
    sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
    aspetta la fine dell'ascolto.
+9. **Precarico in RAM** (modalità completa): i file della coda, dal brano in
+   corso alla fine, vengono letti e bloccati in RAM (`mlock`), entro un budget
+   di memoria (per difetto metà di quella libera). Quando tutta la coda è in
+   RAM, i dischi meccanici che la contengono vanno in standby. Lo streaming non
+   si precarica, i file oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la
+   pagina Stato mostra brani caricati, memoria usata, esclusioni e dischi
+   fermi.
 
 ## Come si usa
 
@@ -313,6 +320,10 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `MODALITA` | `completa`, `player` | completa |
 | `SERVER` | solo modalità player: indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
 | `MODALITA_ASCOLTO` | `si`, `no` | si |
+| `PRECARICO` | `si`, `no`: coda di ascolto in RAM | si |
+| `PRECARICO_MB` | `auto` (metà della memoria libera) o MB | auto |
+| `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
+| `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
 | `DAC` | `auto`, nome ALSA (es. `R26`) o `VID:PID` | auto |
@@ -352,6 +363,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
 | XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
+| Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
 
 ### Prova di riconoscimento con il file DoP
 
