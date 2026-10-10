@@ -59,18 +59,34 @@ il job Lyrion; una verifica fallita blocca la pubblicazione delle release.
 
 ## Percorso ALSA con snd-aloop
 
-Se esiste la scheda `Loopback`, la prova ripete i 18 casi passando dal driver
-ALSA del kernel invece che dallo stdout. Prima della prova, sull'host:
+La prova ripete i 18 casi passando dal driver ALSA del kernel invece che
+dallo stdout, sulla scheda virtuale `hw:Loopback` di snd-aloop.
+
+**Nel kernel di Sweetspot (CI x86).** Il kernel x86 dell'immagine include
+snd-aloop come modulo, che non si carica da solo. `tests/prova-alsa-qemu.sh`
+avvia una copia dell'immagine in QEMU (KVM se disponibile). Nella copia
+attiva SSH con una password casuale, disattiva la modalità ascolto e indica un
+DAC inesistente, così il player di Sweetspot non apre la scheda. Carica poi
+snd-aloop nel sistema avviato e lancia `tests/prova-audio.py --ssh-port`:
+fixture, Squeezelite, `aplay` e `/proc/asound` sono quelli del sistema
+avviato, il server è il Lyrion dell'immagine.
 
 ```sh
-sudo modprobe snd-aloop id=Loopback pcm_substreams=1
+sudo sh tests/prova-alsa-qemu.sh sweetspot.img.xz "$(tar -xOf sweetspot-x86_64-aggiornamento.tar versione)"
 ```
 
-Su Ubuntu il modulo sta in `linux-modules-extra-$(uname -r)`.
-`SWEETSPOT_AUDIO_ALSA` controlla la prova: `auto` (predefinito) la esegue solo
-se la scheda c'è, `richiesta` fallisce se manca, `no` la salta. La CI usa
-`richiesta`, quindi un runner senza snd-aloop blocca la release invece di
-saltare la prova. Report e capture finiscono in `run.*/alsa-loopback/`.
+Servono `qemu-system-x86`, `mtools`, `xz-utils`, `sshpass`, `curl` e Python 3.
+Le porte 9000 e 2222 di `127.0.0.1` devono essere libere. Report e capture
+finiscono in `alsa-qemu.*` accanto alle cartelle `run.*`, dentro l'artifact
+`verifica-audio-x86_64`. Una prova fallita blocca la release. I kernel dei
+runner GitHub non hanno snd-aloop, e il kernel del Raspberry Pi non si avvia in
+QEMU: su ARM resta la sola prova stdout.
+
+**Sull'host con il rootfs estratto.** Se l'host ha la scheda (`sudo modprobe
+snd-aloop id=Loopback pcm_substreams=1`), anche `tests/prova-lyrion.sh` ripete
+i casi su ALSA in chroot, con il kernel dell'host e report in
+`run.*/alsa-loopback/`. `SWEETSPOT_AUDIO_ALSA` vale `auto` (predefinito: prova
+solo se la scheda c'è), `richiesta` (fallisce se manca) o `no`.
 
 Squeezelite suona su `hw:CARD=Loopback,DEV=0` con gli stessi parametri del
 player senza correzione: dispositivo `hw:`, `-a 400:4::1` (buffer di 400 ms in

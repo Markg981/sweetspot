@@ -84,7 +84,7 @@ class ReleaseGateTests(unittest.TestCase):
                         '#!/bin/sh\nset -eu\n'
                         'report=${SWEETSPOT_AUDIO_REPORT_DIR:-graphify-out/audio-evidence}\n'
                         'mkdir -p "$report/run.fixture"\n'
-                        'printf "%s %s\\n" "$1" "${SWEETSPOT_AUDIO_ALSA:-}" > "$report/run.fixture/report.txt"\n')
+                        'printf "%s\\n" "$1" > "$report/run.fixture/report.txt"\n')
                     expand = lambda value: re.sub(r"\$\{\{\s*runner\.temp\s*\}\}",
                                                  lambda _: str(runner_temp), value)
                     env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
@@ -96,17 +96,48 @@ class ReleaseGateTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     report = Path(expand(upload["with"]["path"])) / "run.fixture/report.txt"
                     self.assertTrue(report.is_file(), f"no evidence under upload path: {report}")
-                    # The ALSA loopback proof must stay mandatory behind sudo.
-                    self.assertEqual(report.read_text(), f"sweetspot-{board}-aggiornamento.tar richiesta\n")
+                    self.assertEqual(report.read_text(), f"sweetspot-{board}-aggiornamento.tar\n")
 
-    def test_alsa_loopback_card_is_loaded_before_the_audio_proof(self):
-        names = [step.get("name") for step in WORKFLOW["jobs"]["lyrion"]["steps"]]
-        load = WORKFLOW["jobs"]["lyrion"]["steps"][names.index("Scheda audio virtuale snd-aloop")]
-        self.assertLess(names.index("Scheda audio virtuale snd-aloop"),
-                        names.index("Lyrion e verifica PCM nel sistema compilato"))
-        modprobe = [line for line in load["run"].splitlines() if "modprobe" in line]
-        self.assertEqual(modprobe, ["sudo modprobe snd-aloop id=Loopback pcm_substreams=1"])
-        self.assertFalse(load.get("continue-on-error", False))
+    def test_x86_alsa_proof_boots_the_image_and_keeps_evidence(self):
+        steps = WORKFLOW["jobs"]["lyrion"]["steps"]
+        names = [step.get("name") for step in steps]
+        proof = steps[names.index("Verifica PCM/DoP sul percorso ALSA in QEMU")]
+        download = steps[names.index("Verifica PCM/DoP sul percorso ALSA in QEMU") - 1]
+        upload = steps[names.index("Evidenza della verifica audio software")]
+        self.assertEqual(download["with"]["name"], "sweetspot.img.xz")
+        for step in (download, proof):
+            self.assertIn("matrix.scheda == 'x86_64'", step["if"])
+            self.assertIn("!cancelled()", step["if"])
+            self.assertFalse(step.get("continue-on-error", False))
+        self.assertLess(names.index("Verifica PCM/DoP sul percorso ALSA in QEMU"),
+                        names.index("Evidenza della verifica audio software"))
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runner_temp = root / "runner temp"
+            tools = root / "test-bin"
+            tools.mkdir()
+            sudo = tools / "sudo"
+            sudo.write_text('#!/bin/sh\n[ "$1" = -E ] && shift\n'
+                            'exec env -u SWEETSPOT_AUDIO_REPORT_DIR "$@"\n')
+            (tools / "apt-get").write_text("#!/bin/sh\nexit 0\n")
+            for tool in tools.iterdir():
+                tool.chmod(0o755)
+            (root / "versione").write_text("v-fixture\n")
+            subprocess.run(["tar", "-cf", "sweetspot-x86_64-aggiornamento.tar", "versione"], cwd=root, check=True)
+            (root / "tests").mkdir()
+            (root / "tests" / "prova-alsa-qemu.sh").write_text(
+                '#!/bin/sh\nset -eu\n'
+                'mkdir -p "$SWEETSPOT_AUDIO_REPORT_DIR/alsa-qemu.fixture"\n'
+                'printf "%s %s\\n" "$1" "$2" > "$SWEETSPOT_AUDIO_REPORT_DIR/alsa-qemu.fixture/report.txt"\n')
+            env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"]}
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c",
+                 workflow_script("lyrion", proof["name"], "x86_64", runner_temp)],
+                cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            path = re.sub(r"\$\{\{\s*runner\.temp\s*\}\}", lambda _: str(runner_temp), upload["with"]["path"])
+            report = Path(path) / "alsa-qemu.fixture/report.txt"
+            self.assertEqual(report.read_text(), "sweetspot.img.xz v-fixture\n")
 
     def test_audio_upload_is_required_even_after_probe_failure(self):
         definition = WORKFLOW["jobs"]["lyrion"]

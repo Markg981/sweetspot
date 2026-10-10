@@ -74,10 +74,5 @@ jobs:
           github-token: ${{ github.token }}
       - name: Strumenti
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
-      # Con la scheda virtuale la prova copre anche il percorso ALSA.
-      - name: Scheda audio virtuale snd-aloop
-        run: |
-          sudo apt-get install -y "linux-modules-extra-$(uname -r)" || true
-          sudo modprobe snd-aloop id=Loopback pcm_substreams=1 || echo "snd-aloop non disponibile: solo prova software"
       - name: Avvio di Lyrion nel sistema compilato
         run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar

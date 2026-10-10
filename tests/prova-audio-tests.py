@@ -297,6 +297,32 @@ class DriverTests(unittest.TestCase):
             self.assertFalse(fixtures.directory.exists())
             self.assertEqual(unrelated.read_text(), "keep")
 
+    def test_ssh_target_copies_fixtures_fetches_logs_and_quotes_engine_commands(self):
+        # A local shell stands in for ssh: the target only appends one script.
+        target = DRIVER.SshTarget(["sh", "-c"], description="local shell")
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "a.wav").write_bytes(b"first")
+            (directory / "b.wav").write_bytes(b"second")
+            with target.fixtures([directory / "a.wav", directory / "b.wav"]) as fixtures:
+                remote = Path(fixtures.directory)
+                self.assertRegex(fixtures.directory, r"^/tmp/sweetspot-audio-")
+                self.assertEqual(fixtures.urls, ["file://%s/a.wav" % remote, "file://%s/b.wav" % remote])
+                self.assertEqual(Path(fixtures.player_path).read_text().splitlines()[1:], fixtures.urls)
+                self.assertEqual((remote / "b.wav").read_bytes(), b"second")
+                self.assertEqual(remote.stat().st_mode & 0o777, 0o755)
+                self.assertEqual((remote / "a.wav").stat().st_mode & 0o777, 0o644)
+                self.assertTrue(target.fetch(fixtures.directory + "/a.wav", directory / "copy"))
+                self.assertEqual((directory / "copy").read_bytes(), b"first")
+                self.assertFalse(target.fetch(fixtures.directory + "/absent", directory / "absent"))
+                target.remove(fixtures.directory + "/a.wav")
+                self.assertFalse((remote / "a.wav").exists())
+            self.assertFalse(remote.exists())
+        command = target.command(["/usr/bin/squeezelite", "-n", "Audio test", "-o", "hw:CARD=Loopback,DEV=0"])
+        self.assertEqual(command, ["sh", "-c", "exec /usr/bin/squeezelite -n 'Audio test' -o hw:CARD=Loopback,DEV=0"])
+        with self.assertRaises(OSError):
+            target.run("exit 7")
+
     def test_unpaced_stdout_is_paced_and_byte_limited(self):
         with tempfile.TemporaryDirectory() as temp:
             process = subprocess.Popen([sys.executable, "-u", "-c", "import os; data=b'abcdefgh'*1024\nwhile True: os.write(1,data)"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
