@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Verify isolated rootfs Lyrion/Squeezelite PCM, DoP and DSD software stdout.
+"""Verify isolated rootfs Lyrion/Squeezelite PCM, DoP and DSD output.
 
-This deliberately cannot certify ALSA, a DAC, its clock, or analog output.
-Lyrion must already be running in the isolated rootfs, on loopback.
+The software_stdout backend reads Squeezelite stdout. The alsa_loopback
+backend plays to hw:Loopback (snd-aloop) with the production ALSA access
+settings and records the paired capture substream. Neither certifies a DAC,
+its clock, or analog output. Lyrion must already be running in the isolated
+rootfs, on loopback.
 """
 import argparse
 import hashlib
@@ -41,6 +44,14 @@ CASES += [{"id": "%s-%s-dop" % (container, rate * 16), "kind": "dsd_to_dop",
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
+BACKENDS = ("software_stdout", "alsa_loopback")
+# Same device class and access as sweetspot-player without CamillaDSP: hw:
+# device, 400 ms ALSA buffer in four periods, automatic format, mmap.
+ALSA_PLAYBACK = "hw:CARD=Loopback,DEV=0"
+ALSA_CAPTURE = "hw:CARD=Loopback,DEV=1"
+ALSA_BUFFER = "400:4::1"
+ALSA_FORMATS = {"S16_LE": ("s16_le", 4), "S24_3LE": ("s24_3le", 6),
+                "S24_LE": ("s24_le", 8), "S32_LE": ("s32_le", 8)}
 PLAYER_PREFS = {
     "digitalVolumeControl": 0,
     "replayGainMode": 0,
@@ -316,6 +327,131 @@ class PacedCapture:
         self.stream.close()
 
 
+def loopback_state(asound, stream):
+    """Read hw_params and status of the paired Loopback substream 0.
+
+    Returns None while the substream is closed. Malformed or missing kernel
+    files never produce parameters.
+    """
+    directory = asound / "Loopback" / ("pcm0%s" % stream) / "sub0"
+    try:
+        text = (directory / "hw_params").read_text(encoding="ascii")
+        status = (directory / "status").read_text(encoding="ascii")
+    except (OSError, UnicodeError) as error:
+        raise AudioError("Loopback %s substream is not readable: %s" % (stream, error)) from error
+    if text.strip() == "closed":
+        return None
+    fields = {}
+    for line in text.splitlines():
+        name, separator, value = line.partition(":")
+        if separator:
+            fields[name.strip()] = value.strip()
+    state = re.search(r"^state:\s*(\S+)", status, re.M)
+    try:
+        return {"access": fields["access"], "format": fields["format"],
+                "channels": int(fields["channels"]), "rate": int(fields["rate"].split()[0]),
+                "period_size": int(fields["period_size"]), "buffer_size": int(fields["buffer_size"]),
+                "state": state.group(1) if state else None, "hw_params": text}
+    except (KeyError, ValueError, IndexError) as error:
+        raise AudioError("malformed Loopback %s hw_params: %r" % (stream, text)) from error
+
+
+def wait_loopback_playback(asound, rate, process, timeout=8, interval=.05):
+    """Wait for the player to run on hw:Loopback with the production access."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AudioError("Squeezelite exited with status %s before opening ALSA" % process.returncode)
+        params = loopback_state(asound, "p")
+        if params is not None and params["state"] == "RUNNING":
+            expected = {"access": "MMAP_INTERLEAVED", "channels": 2, "rate": rate}
+            for name, value in expected.items():
+                if params[name] != value:
+                    raise AudioError("Loopback playback %s is %r, wanted %r" % (name, params[name], value))
+            if params["format"] not in ALSA_FORMATS:
+                raise AudioError("Loopback playback format %s is not a verified container" % params["format"])
+            return params
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+    raise AudioError("Squeezelite did not start hw:Loopback playback before deadline")
+
+
+class LoopbackCapture:
+    """Record the paired snd-aloop capture substream with aplay in the rootfs.
+
+    snd-aloop paces both sides with its own timer, so the capture is bounded
+    by an exact frame count and a wall deadline rather than by read pacing.
+    """
+    def __init__(self, rootfs, path, *, params, seconds, wall_seconds, process_factory, stderr):
+        self.path = path
+        self.format, self.frame_bytes = ALSA_FORMATS[params["format"]]
+        self.max_bytes = seconds * params["rate"] * self.frame_bytes
+        self.wall_seconds = wall_seconds
+        self.command = ["chroot", str(rootfs), "/usr/bin/aplay", "-C", "-q", "-D", ALSA_CAPTURE,
+                        "-t", "raw", "-f", params["format"], "-c", "2", "-r", str(params["rate"]),
+                        "-d", str(seconds)]
+        self.process_factory = process_factory
+        self.stderr = stderr
+        self.process = None
+        self.bytes_written = 0
+        self.reason = None
+        self.error = None
+        self.finished = threading.Event()
+        self.thread = threading.Thread(target=self._wait, name="alsa-capture")
+
+    def start(self):
+        self.started = time.monotonic()
+        self.deadline = self.started + self.wall_seconds
+        with self.path.open("wb") as capture:
+            self.process = self.process_factory(self.command, stdout=capture, stderr=self.stderr,
+                                                start_new_session=os.name == "posix")
+        self.thread.start()
+
+    def _wait(self):
+        try:
+            try:
+                status = self.process.wait(max(0, self.deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                self.reason = "wall_limit"
+                return
+            self.bytes_written = self.path.stat().st_size
+            if status != 0:
+                self.reason = "exit_status_%s" % status
+            elif self.bytes_written == self.max_bytes:
+                self.reason = "byte_limit"
+            else:
+                self.reason = "eof"
+        except Exception as error:
+            self.error = str(error)
+            self.reason = "read_error"
+        finally:
+            self.finished.set()
+
+    def stop(self):
+        if self.process is not None:
+            stop_process(self.process, owned_group=os.name == "posix")
+
+    def join(self):
+        self.thread.join(3)
+        if self.thread.is_alive():
+            raise AudioError("ALSA capture did not stop after termination")
+        self.bytes_written = self.path.stat().st_size
+
+
+def alsa_output_evidence(log, destination, capture_stderr):
+    """Require an engine-logged hw:Loopback open without XRUN on either side."""
+    data = log.read_bytes() if log.exists() else b""
+    text = data.decode("utf-8", errors="replace")
+    overruns = capture_stderr.read_text(errors="replace").count("overrun") if capture_stderr.exists() else None
+    evidence = {"path": str(destination), "sha256": hashlib.sha256(data).hexdigest() if data else None,
+                "device": ALSA_PLAYBACK, "opens": text.count("open output device: %s" % ALSA_PLAYBACK),
+                "xruns": len(re.findall(r"\bXRUN\b(?! recover failed)", text)),
+                "xrun_recover_failures": text.count("XRUN recover failed"),
+                "capture_overruns": overruns}
+    evidence["status"] = ("pass" if evidence["opens"] >= 1 and evidence["xruns"] == 0
+                          and evidence["xrun_recover_failures"] == 0 and overruns == 0 else "fail")
+    return evidence
+
+
 def stop_process(process, *, owned_group=False):
     """Signal only this process, or its private group when it owns that group."""
     group = process.pid if owned_group and os.name == "posix" else None
@@ -374,8 +510,12 @@ def dsd_decoder_evidence(log, destination, source_format, rate):
 
 
 def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
-             source_format=None, case_id=None, process_factory=subprocess.Popen):
+             source_format=None, case_id=None, process_factory=subprocess.Popen,
+             backend="software_stdout", asound=Path("/proc/asound")):
     from tools.audio_verification import compare_capture, generate_fixtures
+    if backend not in BACKENDS:
+        raise ValueError("unknown audio backend %r" % backend)
+    alsa = backend == "alsa_loopback"
     second_bits = bits if second_bits is None else second_bits
     identity = case_id or ("%s-%s-dop" % (source_format, rate * 16) if source_format else
                            "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits))
@@ -385,7 +525,7 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
     directory.mkdir(parents=True, exist_ok=True)
     report = {"id": identity, "kind": "dsd_to_dop" if source_format else "dop_pcm_passthrough" if dop else "pcm",
               "rate": rate, "bits": bits, "source_bits": [bits, second_bits],
-              "status": "fail", "scope": "software_stdout"}
+              "status": "fail", "scope": backend}
     if dop or source_format:
         report["dsd_rate"] = rate * 16
     if source_format:
@@ -393,6 +533,9 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
     report["limits"] = {"capture_format": "s32_le", "channels": 2,
                         "max_lead_frames": STARTUP_SECONDS * rate,
                         "max_bytes": CAPTURE_SECONDS * rate * 8, "wall_seconds": WALL_SECONDS}
+    if alsa:
+        # The capture container follows the format the engine negotiated.
+        report["limits"].update(capture_format=None, max_bytes=None, capture_seconds=CAPTURE_SECONDS)
     mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
     report["player_mac"] = mac
     process = None
@@ -428,21 +571,49 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
             sources = references
         with LocalFixtures(rootfs, sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             root_log.unlink(missing_ok=True)
-            command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", "-", "-a", "32",
-                       "-r", str(rate), "-s", "127.0.0.1", "-m", mac,
-                       "-n", "Audio-test", "-f", "/tmp/audio-verification.log"]
+            if alsa:
+                # A single-rate range opens the device at the case rate while
+                # idle, so the capture attaches before the first track.
+                command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", ALSA_PLAYBACK,
+                           "-a", ALSA_BUFFER, "-r", "%s-%s" % (rate, rate)]
+            else:
+                command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", "-", "-a", "32",
+                           "-r", str(rate)]
+            command += ["-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", "/tmp/audio-verification.log"]
             if dop or source_format:
                 command.extend(["-D", "0:dop"])
             if source_format:
                 command.extend(["-d", "decode=info", "-d", "stream=info"])
+            if alsa:
+                command.extend(["-d", "output=info"])
             report["command"] = command
             try:
-                process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
-                                          start_new_session=os.name == "posix")
-                capture = PacedCapture(process.stdout, directory / "capture.raw", rate=rate,
-                                       max_bytes=report["limits"]["max_bytes"], wall_seconds=WALL_SECONDS)
-                capture.start()
-                wait_connected(client, mac, process)
+                if alsa:
+                    for stream in ("p", "c"):
+                        if loopback_state(asound, stream) is not None:
+                            raise AudioError("Loopback %s substream is already open by another process" % stream)
+                    process = process_factory(command, stdout=subprocess.DEVNULL, stderr=stderr,
+                                              start_new_session=os.name == "posix")
+                    wait_connected(client, mac, process)
+                    playback = wait_loopback_playback(asound, rate, process)
+                    report["alsa"] = {"playback": playback}
+                    capture_stderr = (directory / "capture-stderr.log").open("wb")
+                    try:
+                        capture = LoopbackCapture(rootfs, directory / "capture.raw", params=playback,
+                                                  seconds=CAPTURE_SECONDS, wall_seconds=WALL_SECONDS,
+                                                  process_factory=process_factory, stderr=capture_stderr)
+                        report["capture_command"] = capture.command
+                        report["limits"].update(capture_format=capture.format, max_bytes=capture.max_bytes)
+                        capture.start()
+                    finally:
+                        capture_stderr.close()
+                else:
+                    process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
+                                              start_new_session=os.name == "posix")
+                    capture = PacedCapture(process.stdout, directory / "capture.raw", rate=rate,
+                                           max_bytes=report["limits"]["max_bytes"], wall_seconds=WALL_SECONDS)
+                    capture.start()
+                    wait_connected(client, mac, process)
                 report["settings"] = configure_player(client, mac, deadline=capture.deadline)
                 client.request(mac, ["playlist", "play", fixtures.player_path], deadline=capture.deadline)
                 report["playlist"] = wait_playlist(client, mac, fixtures.urls)
@@ -460,9 +631,18 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
                     stop_process(process, owned_group=os.name == "posix")
                 if capture is not None:
                     capture.join()
-            report["comparison"] = compare(references, directory / "capture.raw", capture_format="s32_le",
-                                            capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
+            options = {}
+            if alsa and compare is not compare_capture:
+                options["scope"] = backend
+            report["comparison"] = compare(references, directory / "capture.raw",
+                                           capture_format=report["limits"]["capture_format"],
+                                           capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate, **options)
             report["status"] = report["comparison"]["status"]
+            if alsa:
+                report["alsa"]["output"] = alsa_output_evidence(root_log, directory / "squeezelite.log",
+                                                                directory / "capture-stderr.log")
+                if report["alsa"]["output"]["status"] != "pass":
+                    raise AudioError("ALSA evidence did not verify a hw:Loopback open without XRUN")
             if source_format:
                 report["decoder"] = dsd_decoder_evidence(root_log, directory / "squeezelite.log", source_format, rate)
                 if report["decoder"]["status"] != "pass":
@@ -488,11 +668,12 @@ def main(argv=None):
     parser.add_argument("--server", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--backend", choices=BACKENDS, default="software_stdout")
     args = parser.parse_args(argv)
     rootfs = args.rootfs.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    report = {"scope": "software_stdout", "version": args.version, "rootfs": str(rootfs),
+    report = {"scope": args.backend, "version": args.version, "rootfs": str(rootfs),
               "server": args.server, "status": "fail", "cases": []}
     try:
         binary = rootfs / "usr" / "bin" / "squeezelite"
@@ -506,7 +687,7 @@ def main(argv=None):
             first, second = case["source_bits"]
             result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
                               dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
-                              case_id=case["id"])
+                              case_id=case["id"], backend=args.backend)
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)
@@ -516,7 +697,8 @@ def main(argv=None):
         completed = {case.get("id") for case in report["cases"] if isinstance(case.get("id"), str)}
         for case in CASES:
             if case["id"] not in completed:
-                missing = dict(case, bits=case["source_bits"][0], status="fail", error="case was not completed")
+                missing = dict(case, bits=case["source_bits"][0], status="fail", error="case was not completed",
+                               scope=args.backend)
                 if case["kind"] == "dop_pcm_passthrough":
                     missing["dsd_rate"] = case["rate"] * 16
                 report["cases"].append(missing)

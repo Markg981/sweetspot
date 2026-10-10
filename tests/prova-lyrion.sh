@@ -182,11 +182,28 @@ if printf '%s' "$ans" | grep -q '"version"'; then
 		echo "errori di caricamento nel registro"
 		exit 1
 	fi
+	audio_rc=0
 	echo "== Verifica PCM/DoP e continuita' dei brani nel backend software"
 	python3 "$TEST_DIR/prova-audio.py" --rootfs "$R" \
 		--server "http://127.0.0.1:$PORT" --output "$SWEETSPOT_AUDIO_REPORT_DIR" \
-		--version "$(cat "$W/versione")"
-	echo "== Lyrion e verifica PCM/DoP software riusciti"
+		--version "$(cat "$W/versione")" || audio_rc=1
+	# Stessi casi sul percorso ALSA vero: hw:Loopback di snd-aloop, con le
+	# impostazioni del player (hw:, mmap, periodi). "richiesta" (nella CI)
+	# rende la scheda obbligatoria; "auto" prova solo se c'e'; "no" salta.
+	alsa=${SWEETSPOT_AUDIO_ALSA:-auto}
+	if [ "$alsa" != no ] && [ -e /proc/asound/Loopback ]; then
+		echo "== Verifica PCM/DoP sul percorso ALSA (snd-aloop)"
+		python3 "$TEST_DIR/prova-audio.py" --rootfs "$R" --backend alsa_loopback \
+			--server "http://127.0.0.1:$PORT" --output "$SWEETSPOT_AUDIO_REPORT_DIR/alsa-loopback" \
+			--version "$(cat "$W/versione")" || audio_rc=1
+	elif [ "$alsa" = richiesta ]; then
+		echo "scheda Loopback assente: serve 'modprobe snd-aloop' prima della prova"
+		audio_rc=1
+	else
+		echo "== Verifica ALSA non eseguita (SWEETSPOT_AUDIO_ALSA=$alsa; serve la scheda di 'modprobe snd-aloop')"
+	fi
+	[ "$audio_rc" -eq 0 ] || { echo "== Verifica audio non riuscita"; exit 1; }
+	echo "== Lyrion e verifica PCM/DoP riusciti"
 	exit 0
 fi
 echo "Lyrion non risponde. Registro di avvio:"

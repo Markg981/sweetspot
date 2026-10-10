@@ -195,10 +195,17 @@ jobs:
           name: sweetspot-${{ matrix.scheda }}-aggiornamento.tar
       - name: Strumenti
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl python3
+      # Scheda virtuale per provare il percorso ALSA vero (hw:Loopback):
+      # il modulo sta in linux-modules-extra del kernel del runner.
+      - name: Scheda audio virtuale snd-aloop
+        run: |
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" || echo "linux-modules-extra-$(uname -r) non disponibile"
+          sudo modprobe snd-aloop id=Loopback pcm_substreams=1
+          cat /proc/asound/cards
       - name: Lyrion e verifica PCM nel sistema compilato
         env:
           SWEETSPOT_AUDIO_REPORT_DIR: ${{ runner.temp }}/sweetspot-audio-evidence
-        run: sudo -E env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+        run: sudo -E env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" SWEETSPOT_AUDIO_ALSA=richiesta sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
       - name: Evidenza della verifica audio software
         if: always()
         uses: actions/upload-artifact@v7

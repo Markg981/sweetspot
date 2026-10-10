@@ -434,7 +434,7 @@ def compare_capture(references: list[Path], capture: Path, *, capture_format: st
 
 def compare_dop_capture(references: list[Path], capture: Path, *, capture_format: str,
                         capture_rate: int, offset_frames: int | None = None,
-                        max_lead_frames: int = 0) -> dict:
+                        max_lead_frames: int = 0, scope: str = "software_stdout") -> dict:
     """Compare full stereo DSD payload and legal continuous DoP framing.
 
     Source WAVs may independently begin with 05 or FA. The capture may begin
@@ -582,7 +582,7 @@ def compare_dop_capture(references: list[Path], capture: Path, *, capture_format
                              "capture_first": capture_first_marker,
                              "capture_first_dop_frame": capture_first_dop_frame,
                              "policy": "independent_initial_phase_continuous_capture"},
-            "scope": "software_stdout", "classification": "dop_payload_preserved_legal_framing",
+            "scope": scope, "classification": "dop_payload_preserved_legal_framing",
             "references": [_public_info(info) for info in source],
             "capture": _public_info(captured)}
 

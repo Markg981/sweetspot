@@ -4,8 +4,10 @@ La prima parte del traguardo 1 confronta i campioni PCM e il payload DoP prodott
 dal percorso Lyrion → Squeezelite nel backend stdout del binario compilato.
 Verifica anche la continuità fra due brani consecutivi della stessa frequenza,
 incluse le transizioni fra profondità PCM diverse.
-Il report dichiara lo scope `software_stdout`: ALSA e il DAC richiedono prove
-successive sulla relativa uscita digitale.
+Il report dichiara lo scope `software_stdout`. Gli stessi casi ripetuti sul
+percorso ALSA del kernel, con la scheda virtuale snd-aloop, hanno scope
+`alsa_loopback` (vedi [Percorso ALSA con snd-aloop](#percorso-alsa-con-snd-aloop)).
+Il DAC fisico richiede una prova successiva sulla sua uscita digitale.
 
 ## Prova del sistema compilato
 
@@ -54,6 +56,56 @@ confronto dei campioni era riuscito. I riferimenti, le capture e i log rimangono
 nella cartella di evidenza anche se una prova fallisce.
 In CI gli artifact `verifica-audio-x86_64` e `verifica-audio-rpi` accompagnano
 il job Lyrion; una verifica fallita blocca la pubblicazione delle release.
+
+## Percorso ALSA con snd-aloop
+
+Se esiste la scheda `Loopback`, la prova ripete i 18 casi passando dal driver
+ALSA del kernel invece che dallo stdout. Prima della prova, sull'host:
+
+```sh
+sudo modprobe snd-aloop id=Loopback pcm_substreams=1
+```
+
+Su Ubuntu il modulo sta in `linux-modules-extra-$(uname -r)`.
+`SWEETSPOT_AUDIO_ALSA` controlla la prova: `auto` (predefinito) la esegue solo
+se la scheda c'è, `richiesta` fallisce se manca, `no` la salta. La CI usa
+`richiesta`, quindi un runner senza snd-aloop blocca la release invece di
+saltare la prova. Report e capture finiscono in `run.*/alsa-loopback/`.
+
+Squeezelite suona su `hw:CARD=Loopback,DEV=0` con gli stessi parametri del
+player senza correzione: dispositivo `hw:`, `-a 400:4::1` (buffer di 400 ms in
+quattro periodi, formato scelto dal motore, mmap), ricampionamento spento.
+`-r F-F` limita le frequenze a quella del caso, così il dispositivo si apre
+già alla frequenza giusta e manda silenzio finché non parte la playlist.
+
+Prima di agganciare la capture il driver legge `hw_params` e `status` del
+substream di riproduzione in `/proc/asound`. Richiede `state: RUNNING`,
+accesso `MMAP_INTERLEAVED`, due canali, la frequenza del caso e un formato
+noto (`S16_LE`, `S24_3LE`, `S24_LE`, `S32_LE`). Se un substream della scheda
+è già aperto da un altro processo, il caso fallisce. La capture usa `aplay -C`
+della rootfs su `hw:CARD=Loopback,DEV=1`, con lo stesso formato e la stessa
+frequenza, e una durata esatta in secondi. snd-aloop scandisce i due lati con
+il proprio timer, quindi non serve il ritmo di lettura dello stdout. La
+capture deve terminare con stato 0 e il numero esatto di byte attesi.
+
+Il confronto è lo stesso del backend stdout: tutti i bit significativi per il
+PCM, payload e marker per il DoP, nel contenitore negoziato. Il caso fallisce
+anche se il registro di Squeezelite (`-d output=info`) non riporta l'apertura
+di `hw:CARD=Loopback,DEV=0`, se contiene `XRUN` o `XRUN recover failed`, o se
+`aplay` segnala un overrun in capture. Il report conserva `hw_params`, i
+comandi del player e della capture, il registro con il suo SHA-256 e lo
+stderr della capture.
+
+Il passaggio da PCM a DoP fa riaprire il dispositivo con gli stessi parametri:
+snd-aloop riempie di zeri la capture durante la riapertura, prima del primo
+brano, e il confronto lo ammette solo come silenzio iniziale.
+
+Questa prova copre driver, contenitore, mmap e periodi del percorso ALSA, ma
+non un clock USB/I2S/S/PDIF, la temporizzazione di un DAC reale o
+l'apertura con il formato preferito da un DAC specifico. Il cambio di
+frequenza su ALSA non è ancora coperto: Squeezelite chiude e riapre il
+dispositivo, quindi la capture va riaperta a ogni frequenza e verificata come
+sequenza di segmenti.
 
 ## Confronto di una capture esterna
 
@@ -264,9 +316,10 @@ collaudo ALSA su dispositivi reali rimane da completare.
 ## Copertura ancora da completare
 
 Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
-frequenza costante e due brani consecutivi nel backend software. Restano
-aperti DSD nativo, DFF compressi DST, mono/multicanale, seek, cambi di frequenza,
-ALSA, USB/I2S/S/PDIF reali, hotplug, rete/NAS, carico prolungato e la matrice
-computer/DAC/firmware per release. Non misura jitter del clock, rumore elettrico
+frequenza costante e due brani consecutivi, nel backend software e sul
+percorso ALSA di snd-aloop. Restano aperti DSD nativo, DFF compressi DST,
+mono/multicanale, seek, cambi di frequenza su ALSA, USB/I2S/S/PDIF reali
+(a partire da N550JV + R26 con registro pubblicato per release), hotplug,
+rete/NAS, carico prolungato e la matrice computer/DAC/firmware per release. Non misura jitter del clock, rumore elettrico
 USB o fedeltà dell'uscita analogica. Il traguardo 1 rimane parzialmente coperto
 finché queste prove non hanno evidenza riproducibile.

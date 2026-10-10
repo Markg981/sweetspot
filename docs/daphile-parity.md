@@ -88,8 +88,11 @@ gli stati ALSA di riproduzione, preparazione e guasto e segnala dati mancanti
 o più substream aperti. Gli eventi XRUN e i recuperi falliti sono conteggiati
 separatamente nel registro storico. Queste osservazioni aiutano a individuare
 un guasto, ma non certificano i campioni né l'uscita del DAC.
-Il traguardo resta parziale: DSD nativo, ALSA e DAC reali,
-cambi frequenza, hotplug, rete e carico prolungato richiedono ancora prove.
+Gli stessi 18 casi passano ora anche dal driver ALSA del kernel, su
+`hw:Loopback` di snd-aloop, con i parametri `hw:`, mmap e periodi del player;
+la CI richiede la scheda e fallisce in presenza di XRUN.
+Il traguardo resta parziale: DSD nativo, DAC reali, cambi frequenza su ALSA,
+hotplug, rete e carico prolungato richiedono ancora prove.
 
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,
 livello e impostazioni equivalenti. La correzione ambientale può migliorare

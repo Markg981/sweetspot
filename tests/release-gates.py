@@ -84,7 +84,7 @@ class ReleaseGateTests(unittest.TestCase):
                         '#!/bin/sh\nset -eu\n'
                         'report=${SWEETSPOT_AUDIO_REPORT_DIR:-graphify-out/audio-evidence}\n'
                         'mkdir -p "$report/run.fixture"\n'
-                        'printf "%s\\n" "$1" > "$report/run.fixture/report.txt"\n')
+                        'printf "%s %s\\n" "$1" "${SWEETSPOT_AUDIO_ALSA:-}" > "$report/run.fixture/report.txt"\n')
                     expand = lambda value: re.sub(r"\$\{\{\s*runner\.temp\s*\}\}",
                                                  lambda _: str(runner_temp), value)
                     env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
@@ -96,7 +96,17 @@ class ReleaseGateTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     report = Path(expand(upload["with"]["path"])) / "run.fixture/report.txt"
                     self.assertTrue(report.is_file(), f"no evidence under upload path: {report}")
-                    self.assertEqual(report.read_text(), f"sweetspot-{board}-aggiornamento.tar\n")
+                    # The ALSA loopback proof must stay mandatory behind sudo.
+                    self.assertEqual(report.read_text(), f"sweetspot-{board}-aggiornamento.tar richiesta\n")
+
+    def test_alsa_loopback_card_is_loaded_before_the_audio_proof(self):
+        names = [step.get("name") for step in WORKFLOW["jobs"]["lyrion"]["steps"]]
+        load = WORKFLOW["jobs"]["lyrion"]["steps"][names.index("Scheda audio virtuale snd-aloop")]
+        self.assertLess(names.index("Scheda audio virtuale snd-aloop"),
+                        names.index("Lyrion e verifica PCM nel sistema compilato"))
+        modprobe = [line for line in load["run"].splitlines() if "modprobe" in line]
+        self.assertEqual(modprobe, ["sudo modprobe snd-aloop id=Loopback pcm_substreams=1"])
+        self.assertFalse(load.get("continue-on-error", False))
 
     def test_audio_upload_is_required_even_after_probe_failure(self):
         definition = WORKFLOW["jobs"]["lyrion"]
