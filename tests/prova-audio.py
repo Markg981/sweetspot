@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Verify an isolated rootfs Lyrion/Squeezelite software stdout PCM path.
+"""Verify isolated rootfs Lyrion/Squeezelite PCM and DoP software stdout.
 
 This deliberately cannot certify ALSA, a DAC, its clock, or analog output.
 Lyrion must already be running in the isolated rootfs, on loopback.
@@ -26,7 +26,13 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-CASES = [(rate, bits) for rate in (44100, 48000, 96000) for bits in (16, 24)]
+CASES = [{"id": "pcm-%s-%s-%s" % (rate, first, second), "kind": "pcm",
+          "rate": rate, "source_bits": [first, second]}
+         for first, second in ((16, 16), (24, 24), (16, 24), (24, 16))
+         for rate in (44100, 48000, 96000)]
+CASES += [{"id": "dop-%s-24-24" % rate, "kind": "dop_pcm_passthrough",
+           "rate": rate, "source_bits": [24, 24]}
+          for rate in (176400, 352800)]
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
@@ -340,11 +346,20 @@ def stop_process(process, *, owned_group=False):
                 pass
 
 
-def run_case(rootfs, client, output, rate, bits, *, process_factory=subprocess.Popen):
+def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
+             case_id=None, process_factory=subprocess.Popen):
     from tools.audio_verification import compare_capture, generate_fixtures
-    directory = output / ("%s-%s" % (rate, bits))
+    second_bits = bits if second_bits is None else second_bits
+    identity = case_id or "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits)
+    # Existing callers without an ID keep their original homogeneous PCM path.
+    directory_name = "%s-%s" % (rate, bits) if case_id is None and not dop and bits == second_bits else identity
+    directory = output / directory_name
     directory.mkdir(parents=True, exist_ok=True)
-    report = {"rate": rate, "bits": bits, "status": "fail", "scope": "software_stdout"}
+    report = {"id": identity, "kind": "dop_pcm_passthrough" if dop else "pcm",
+              "rate": rate, "bits": bits, "source_bits": [bits, second_bits],
+              "status": "fail", "scope": "software_stdout"}
+    if dop:
+        report["dsd_rate"] = rate * 16
     report["limits"] = {"capture_format": "s32_le", "channels": 2,
                         "max_lead_frames": STARTUP_SECONDS * rate,
                         "max_bytes": CAPTURE_SECONDS * rate * 8, "wall_seconds": WALL_SECONDS}
@@ -356,12 +371,26 @@ def run_case(rootfs, client, output, rate, bits, *, process_factory=subprocess.P
     started = time.monotonic()
     journal_start = len(client.journal)
     try:
-        references = generate_fixtures(directory / "references", rate, bits)
+        if dop:
+            from tools.audio_verification import compare_dop_capture, generate_dop_fixtures
+            if bits != 24 or second_bits != 24:
+                raise AudioError("DoP passthrough requires two WAV24 sources")
+            references = generate_dop_fixtures(directory / "references", rate)
+            compare = compare_dop_capture
+        elif bits != second_bits:
+            references = [generate_fixtures(directory / "references", rate, bits)[0],
+                          generate_fixtures(directory / "references", rate, second_bits)[1]]
+            compare = compare_capture
+        else:
+            references = generate_fixtures(directory / "references", rate, bits)
+            compare = compare_capture
         with LocalFixtures(rootfs, references) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             root_log.unlink(missing_ok=True)
             command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", "-", "-a", "32",
                        "-r", str(rate), "-s", "127.0.0.1", "-m", mac,
                        "-n", "Audio-test", "-f", "/tmp/audio-verification.log"]
+            if dop:
+                command.extend(["-D", "0:dop"])
             report["command"] = command
             try:
                 process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
@@ -387,10 +416,11 @@ def run_case(rootfs, client, output, rate, bits, *, process_factory=subprocess.P
                     stop_process(process, owned_group=os.name == "posix")
                 if capture is not None:
                     capture.join()
-            report["comparison"] = compare_capture(references, directory / "capture.raw", capture_format="s32_le",
-                                                    capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
+            report["comparison"] = compare(references, directory / "capture.raw", capture_format="s32_le",
+                                            capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
             report["status"] = report["comparison"]["status"]
     except Exception as error:
+        report["status"] = "fail"
         report["error"] = str(error)
     finally:
         report["rpc"] = client.journal[journal_start:]
@@ -424,19 +454,26 @@ def main(argv=None):
                 digest.update(chunk)
         report["squeezelite_sha256"] = digest.hexdigest()
         client = LmsClient(args.server)
-        for rate, bits in CASES:
-            result = run_case(rootfs, client, output, rate, bits)
+        for case in CASES:
+            first, second = case["source_bits"]
+            result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
+                              dop=case["kind"] == "dop_pcm_passthrough", case_id=case["id"])
             report["cases"].append(result)
             write_json(output / "report.json", report)
-            print("%s Hz / %s bit: %s" % (rate, bits, result["status"]), flush=True)
+            print("%s: %s" % (case["id"], result["status"]), flush=True)
     except Exception as error:
         report["error"] = str(error)
     finally:
-        completed = {(case["rate"], case["bits"]) for case in report["cases"]}
-        for rate, bits in CASES:
-            if (rate, bits) not in completed:
-                report["cases"].append({"rate": rate, "bits": bits, "status": "fail", "error": "case was not completed"})
-        if len(report["cases"]) == 6 and all(case["status"] == "pass" for case in report["cases"]):
+        completed = {case.get("id") for case in report["cases"] if isinstance(case.get("id"), str)}
+        for case in CASES:
+            if case["id"] not in completed:
+                missing = dict(case, bits=case["source_bits"][0], status="fail", error="case was not completed")
+                if case["kind"] == "dop_pcm_passthrough":
+                    missing["dsd_rate"] = case["rate"] * 16
+                report["cases"].append(missing)
+        expected = {case["id"] for case in CASES}
+        if ("error" not in report and len(report["cases"]) == len(expected) and completed == expected
+                and all(case.get("status") == "pass" and "error" not in case for case in report["cases"])):
             report["status"] = "pass"
         write_json(output / "report.json", report)
     return 0 if report["status"] == "pass" else 1
