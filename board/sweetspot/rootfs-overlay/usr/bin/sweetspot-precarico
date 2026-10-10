@@ -1,0 +1,233 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - precarico in RAM della coda di ascolto. I buffer del player
+# coprono pochi secondi: qui i file della coda, dal brano in corso alla
+# fine, vengono letti e bloccati in RAM (sweetspot-precarica) entro un
+# budget di memoria; quando tutta la coda e' in RAM i dischi meccanici che
+# la contengono vanno in standby. Lo streaming non si precarica.
+#
+#   PRECARICO=si|no              (predefinito si)
+#   PRECARICO_MB=auto|N          memoria massima; auto: meta' di quella libera
+#   PRECARICO_FILE_MAX_MB=N      file piu' grandi esclusi (predefinito 1024)
+#   PRECARICO_STANDBY=si|no      dischi in standby a coda caricata
+#
+# Stato per la pagina Stato in $RUN/precarico.json. Solo in modalita'
+# completa: in modalita' player la musica arriva da un server in rete.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+LIST=$RUN/precarico.elenco
+STATE=$RUN/precarico.stato
+SUMMARY=$RUN/precarico.json
+HOLDER_PID=$RUN/precarico.tieni.pid
+PLAN=$RUN/precarico.piano
+SLEPT=$RUN/precarico.standby
+
+# KB che il precarico tiene gia' in RAM (non piu' contati come liberi).
+held_kb() {
+	holder_running && [ -f "$PLAN" ] || { echo 0; return; }
+	awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$PLAN"
+}
+
+# Memoria per il precarico in KB: PRECARICO_MB, mai oltre la memoria libera
+# meno 256 MB per il sistema; auto vale meta' della memoria libera. La
+# memoria gia' bloccata dal precarico conta come libera, altrimenti il budget
+# si ridurrebbe dopo ogni caricamento.
+preload_budget_kb() {
+	local avail mb max
+	avail=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo")
+	[ -n "$avail" ] || avail=0
+	avail=$((avail + $(held_kb)))
+	max=$((avail - 262144))
+	[ "$max" -gt 0 ] || max=0
+	mb=$(conf PRECARICO_MB auto)
+	case "$mb" in
+		''|auto) echo $((avail / 2)) ;;
+		*[!0-9]*) echo $((avail / 2)) ;;
+		*) [ $((mb * 1024)) -lt "$max" ] && echo $((mb * 1024)) || echo "$max" ;;
+	esac
+}
+
+# Percorso locale di un URL file:// di Lyrion (%XX decodificati); fallisce
+# per gli altri URL (streaming, servizi in rete).
+url_path() {
+	case "$1" in
+		file://*) ;;
+		*) return 1 ;;
+	esac
+	printf '%s' "${1#file://}" | LC_ALL=C awk '
+		function hex(h,  i, n) { n = 0; h = toupper(h)
+			for (i = 1; i <= 2; i++) n = n * 16 + index("0123456789ABCDEF", substr(h, i, 1)) - 1
+			return n }
+		{ s = $0; out = ""
+		  while (match(s, /%[0-9A-Fa-f][0-9A-Fa-f]/)) {
+			out = out substr(s, 1, RSTART - 1) sprintf("%c", hex(substr(s, RSTART + 1, 2)))
+			s = substr(s, RSTART + 3) }
+		  printf "%s", out s }'
+}
+
+# URL della coda dal brano in corso alla fine, uno per riga (vuoto se il
+# player e' fermo o non c'e').
+queue_urls() {
+	local mac
+	mac=$(cat "$RUN/player.mac" 2>/dev/null) || return 1
+	[ -n "$mac" ] || return 1
+	lms_json "$mac" status 0 1000 tags:u | jq -r '.result
+		| select(.mode == "play" or .mode == "pause")
+		| ((.playlist_cur_index // "0") | tonumber) as $i
+		| .playlist_loop[]? | select((."playlist index" | tonumber) >= $i) | .url // empty' 2>/dev/null
+}
+
+# Piano del precarico dagli URL su stdin, in ordine di coda:
+#   SI dimensione percorso | STREAM url | GRANDE dimensione percorso
+#   OLTRE dimensione percorso | MANCA percorso
+# Si ferma al primo file oltre il budget: i successivi aspetterebbero
+# comunque quello, e il budget resta per i brani piu' vicini.
+preload_plan() { # budget_kb file_max_kb
+	local budget=$1 max=$2 used=0 url path kb full=0
+	while IFS= read -r url; do
+		[ -n "$url" ] || continue
+		if ! path=$(url_path "$url"); then
+			echo "STREAM $url"
+			continue
+		fi
+		if [ ! -f "$path" ]; then
+			echo "MANCA $path"
+			continue
+		fi
+		kb=$(( ($(stat -c %s "$path") + 1023) / 1024 ))
+		if [ "$kb" -gt "$max" ]; then
+			echo "GRANDE $kb $path"
+		elif [ "$full" = 1 ] || [ $((used + kb)) -gt "$budget" ]; then
+			full=1
+			echo "OLTRE $kb $path"
+		else
+			used=$((used + kb))
+			echo "SI $kb $path"
+		fi
+	done
+}
+
+holder_running() {
+	local pid
+	pid=$(cat "$HOLDER_PID" 2>/dev/null) || return 1
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Tutti i file da precaricare del piano sono gia' bloccati, senza nuove
+# esclusioni (un file escluso o mancante richiede un nuovo verdetto)?
+plan_held() { # piano
+	local wanted
+	wanted=$(printf '%s\n' "$1" | sed -n 's/^SI [0-9]* //p')
+	[ -z "$wanted" ] || printf '%s\n' "$wanted" | grep -F -x -v -f "$LIST" -q && return 1
+	! printf '%s\n' "$1" | grep -q -E '^(GRANDE|OLTRE|MANCA) '
+}
+
+release() {
+	local pid
+	pid=$(cat "$HOLDER_PID" 2>/dev/null)
+	[ -n "$pid" ] && kill "$pid" 2>/dev/null
+	rm -f "$HOLDER_PID" "$LIST" "$STATE" "$PLAN" "$SLEPT"
+}
+
+# Disco intero che contiene un file: /dev/sdb1 -> sdb.
+file_disk() {
+	local dev
+	dev=$(df -P "$1" 2>/dev/null | awk 'NR == 2 { print $1 }')
+	case "$dev" in /dev/*) part_disk "${dev#/dev/}" ;; *) return 1 ;; esac
+}
+
+# Coda tutta in RAM: i dischi meccanici che la contengono vanno in standby.
+standby_disks() {
+	local disk disks sleeping=""
+	is_yes "$(conf PRECARICO_STANDBY si)" || return 0
+	[ -f "$SLEPT" ] && return 0
+	disks=$(sed -n 's/^SI [0-9]* //p' "$PLAN" | while IFS= read -r path; do file_disk "$path"; done | sort -u)
+	for disk in $disks; do
+		[ "$(cat "$SYS/block/$disk/queue/rotational" 2>/dev/null)" = 1 ] || continue
+		hdparm -y "/dev/$disk" >/dev/null 2>&1 || continue
+		sleeping="$sleeping $disk"
+		log "precarico: disco $disk in standby, coda in RAM"
+	done
+	echo "${sleeping# }" > "$SLEPT"
+}
+
+# Righe di FILE che iniziano con PREFISSO (0 se il file manca).
+count() { # prefisso file
+	local n
+	n=$(grep -c "^$1" "$2" 2>/dev/null)
+	echo "${n:-0}"
+}
+
+# File da precaricare del piano con l'esito indicato nello stato (ok|errore).
+planned_with() { # esito
+	[ -f "$PLAN" ] && [ -f "$STATE" ] || { echo 0; return; }
+	awk -F '\t' -v want="$1" 'NR == FNR { if ($1 == "file" && index($3, want) == 1) seen[$4] = 1; next }
+		/^SI / { p = $0; sub(/^SI [0-9]+ /, "", p); if (p in seen) n++ } END { print n + 0 }' "$STATE" "$PLAN"
+}
+
+write_summary() { # stato
+	local kb=0 sleeping=""
+	[ -f "$PLAN" ] && kb=$(awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$PLAN")
+	[ -f "$SLEPT" ] && sleeping=$(cat "$SLEPT")
+	jq -n --arg stato "$1" --argjson brani "$(count '' "$PLAN")" \
+		--argjson caricati "$(planned_with ok)" \
+		--argjson errori "$(planned_with errore)" --argjson mb $((kb / 1024)) \
+		--argjson budget_mb $(( $(preload_budget_kb) / 1024 )) \
+		--argjson streaming "$(count 'STREAM ' "$PLAN")" --argjson grandi "$(count 'GRANDE ' "$PLAN")" \
+		--argjson oltre "$(count 'OLTRE ' "$PLAN")" --argjson mancanti "$(count 'MANCA ' "$PLAN")" \
+		--arg standby "$sleeping" \
+		'{stato: $stato, brani: $brani, caricati: $caricati, errori: $errori, mb: $mb,
+		  budget_mb: $budget_mb, streaming: $streaming, grandi: $grandi, oltre: $oltre,
+		  mancanti: $mancanti, standby: $standby}' > "$SUMMARY.tmp" && mv "$SUMMARY.tmp" "$SUMMARY"
+}
+
+step() {
+	local urls plan
+	if [ "$(mode)" != completa ] || ! is_yes "$(conf PRECARICO si)"; then
+		release
+		write_summary spento
+		return
+	fi
+	urls=$(queue_urls) || urls=""
+	if [ -z "$urls" ]; then
+		release
+		write_summary attesa
+		return
+	fi
+	plan=$(printf '%s\n' "$urls" | preload_plan "$(preload_budget_kb)" $(( $(conf PRECARICO_FILE_MAX_MB 1024) * 1024 )))
+	if [ "$plan" != "$(cat "$PLAN" 2>/dev/null)" ] && holder_running && plan_held "$plan"; then
+		# Un brano finito esce dalla coda: gli altri sono gia' in RAM e i
+		# dischi possono restare fermi.
+		printf '%s\n' "$plan" > "$PLAN"
+	elif [ "$plan" != "$(cat "$PLAN" 2>/dev/null)" ] || ! holder_running; then
+		release
+		printf '%s\n' "$plan" > "$PLAN"
+		printf '%s\n' "$plan" | sed -n 's/^SI [0-9]* //p' > "$LIST"
+		/usr/sbin/sweetspot-precarica tieni "$LIST" "$STATE" &
+		echo $! > "$HOLDER_PID"
+		log "precarico: $(grep -c . "$LIST") file della coda in caricamento"
+	fi
+	if grep -q '^stato	pronto' "$STATE" 2>/dev/null; then
+		# Standby solo se tutta la coda locale e' in RAM: un file escluso
+		# o non caricato farebbe ripartire il disco.
+		if ! grep -q -E '^(GRANDE|OLTRE|MANCA) ' "$PLAN" && [ "$(planned_with errore)" = 0 ]; then
+			standby_disks
+			write_summary pronto
+		else
+			write_summary parziale
+		fi
+	else
+		write_summary caricamento
+	fi
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+mkdir -p "$RUN"
+trap 'release; write_summary spento; exit 0' TERM INT
+while true; do
+	step
+	sleep 5
+done

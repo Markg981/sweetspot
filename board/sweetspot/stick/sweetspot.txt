@@ -27,6 +27,17 @@ SERVER=
 # sospende e riparte quando la musica si ferma.
 MODALITA_ASCOLTO=si
 
+# Precarico in RAM (solo modalita' completa): i brani della coda, dal brano
+# in corso alla fine, vengono letti e tenuti in RAM; quando c'e' tutta la
+# coda i dischi meccanici che la contengono vanno in standby. Lo streaming
+# non si precarica. PRECARICO_MB limita la memoria usata (auto = meta' di
+# quella libera); i file piu' grandi di PRECARICO_FILE_MAX_MB si leggono dal
+# disco; PRECARICO_STANDBY=no lascia i dischi accesi.
+PRECARICO=si
+PRECARICO_MB=auto
+PRECARICO_FILE_MAX_MB=1024
+PRECARICO_STANDBY=si
+
 # --- Musica ---------------------------------------------------------------
 # Dischi interni e USB vengono trovati da soli e letti in sola lettura.
 # DISCHI=no li ignora tutti; ESCLUDI_DISCHI ignora quelli indicati per nome,
