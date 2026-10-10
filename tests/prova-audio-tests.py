@@ -522,6 +522,12 @@ class DriverTests(unittest.TestCase):
                     total -= 8
                 raw = directory / "capture-writer.raw"
                 raw.write_bytes(payload)
+                if alsa_defect != "capture_not_running":
+                    substream = asound / "Loopback/pcm0c/sub0"
+                    (substream / "hw_params").write_text(
+                        "access: RW_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\n"
+                        "rate: %s (%s/1)\nperiod_size: 4410\nbuffer_size: 17640\n" % (rate, rate))
+                    (substream / "status").write_text("state: RUNNING\nowner_pid   : 2\n")
                 if alsa_defect == "overrun":
                     kwargs["stderr"].write(b"overrun!!! (at least 1.000 ms long)\n")
                     kwargs["stderr"].flush()
@@ -833,12 +839,16 @@ class DriverTests(unittest.TestCase):
                 self.assertFalse(result["comparison"]["sequence_match"])
 
     def test_alsa_loopback_fails_closed_without_verified_device_evidence(self):
-        for defect in ("rw_access", "wrong_rate", "xrun", "overrun", "short_capture", "busy"):
+        for defect in ("rw_access", "wrong_rate", "xrun", "overrun", "short_capture", "busy",
+                       "capture_not_running"):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
                 result = self.orchestration_result(Path(temp), case_id="alsa-" + defect,
                                                    backend="alsa_loopback", alsa_defect=defect)
                 self.assertEqual(result["status"], "fail")
                 self.assertIn("error", result)
+                if defect == "capture_not_running":
+                    # The playlist must not start before the capture runs.
+                    self.assertNotIn(["playlist", "play"], [entry["command"][:2] for entry in result["rpc"]])
 
     def test_dsd_orchestration_rejects_payload_order_channels_markers_and_boundary_damage(self):
         matrix = (("dsf", 176400, "byte_order", "payload_match"),
