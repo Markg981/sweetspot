@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Verify isolated rootfs Lyrion/Squeezelite PCM, DoP and DSD software stdout.
+"""Verify isolated rootfs Lyrion/Squeezelite PCM, DoP and DSD output.
 
-This deliberately cannot certify ALSA, a DAC, its clock, or analog output.
-Lyrion must already be running in the isolated rootfs, on loopback.
+The software_stdout backend reads Squeezelite stdout. The alsa_loopback
+backend plays to hw:Loopback (snd-aloop) with the production ALSA access
+settings and records the paired capture substream. Neither certifies a DAC,
+its clock, or analog output. Lyrion must already be running in the isolated
+rootfs, on loopback.
 """
 import argparse
 import hashlib
@@ -12,6 +15,7 @@ import math
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -48,6 +52,14 @@ PCM_PACING_RATE = 44100
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
+BACKENDS = ("software_stdout", "alsa_loopback")
+# Same device class and access as sweetspot-player without CamillaDSP: hw:
+# device, 400 ms ALSA buffer in four periods, automatic format, mmap.
+ALSA_PLAYBACK = "hw:CARD=Loopback,DEV=0"
+ALSA_CAPTURE = "hw:CARD=Loopback,DEV=1"
+ALSA_BUFFER = "400:4::1"
+ALSA_FORMATS = {"S16_LE": ("s16_le", 4), "S24_3LE": ("s24_3le", 6),
+                "S24_LE": ("s24_le", 8), "S32_LE": ("s32_le", 8)}
 PLAYER_PREFS = {
     "digitalVolumeControl": 0,
     "replayGainMode": 0,
@@ -254,6 +266,120 @@ class LocalFixtures:
         shutil.rmtree(self.directory)
 
 
+class ChrootTarget:
+    """Run the engine in the extracted rootfs on this host, with its kernel."""
+    def __init__(self, rootfs, asound=Path("/proc/asound")):
+        self.rootfs = rootfs
+        self.asound_root = asound
+        self.description = str(rootfs)
+
+    def command(self, argv):
+        return ["chroot", str(self.rootfs)] + argv
+
+    def fixtures(self, sources):
+        return LocalFixtures(self.rootfs, sources)
+
+    def read_bytes(self, path):
+        return (self.rootfs / path.lstrip("/")).read_bytes()
+
+    def asound(self, relative):
+        return (self.asound_root / relative).read_text(encoding="ascii")
+
+    def remove(self, path):
+        (self.rootfs / path.lstrip("/")).unlink(missing_ok=True)
+
+    def fetch(self, path, destination):
+        """Copy a target file; False when it does not exist."""
+        source = self.rootfs / path.lstrip("/")
+        if not source.exists():
+            return False
+        shutil.copyfile(source, destination)
+        return True
+
+    def stop_engine(self):
+        """Owned process groups already stop chroot children."""
+
+
+class SshTarget:
+    """Run the engine on a booted Sweetspot system, e.g. a QEMU guest.
+
+    Commands go through an argv prefix such as sshpass/ssh. Killing the local
+    ssh client does not stop the remote engine, so stop_engine does it.
+    """
+    def __init__(self, ssh, *, description, timeout=30):
+        self.ssh = list(ssh)
+        self.description = description
+        self.timeout = timeout
+
+    def run(self, script, data=None):
+        try:
+            result = subprocess.run(self.ssh + [script], input=data, capture_output=True,
+                                    timeout=self.timeout)
+        except subprocess.TimeoutExpired as error:
+            raise OSError("remote command timed out: %s" % script) from error
+        if result.returncode != 0:
+            raise OSError("remote command failed (%s): %s: %s" % (
+                result.returncode, script, result.stderr.decode(errors="replace").strip()))
+        return result.stdout
+
+    def command(self, argv):
+        return self.ssh + ["exec " + " ".join(shlex.quote(part) for part in argv)]
+
+    def fixtures(self, sources):
+        return RemoteFixtures(self, sources)
+
+    def read_bytes(self, path):
+        return self.run("cat " + shlex.quote(path))
+
+    def asound(self, relative):
+        return self.read_bytes("/proc/asound/" + relative).decode("ascii")
+
+    def remove(self, path):
+        self.run("rm -f " + shlex.quote(path))
+
+    def fetch(self, path, destination):
+        quoted = shlex.quote(path)
+        if self.run("if [ -e %s ]; then echo yes; fi" % quoted).strip() != b"yes":
+            return False
+        destination.write_bytes(self.read_bytes(path))
+        return True
+
+    def stop_engine(self):
+        self.run("killall -q squeezelite aplay; true")
+
+
+class RemoteFixtures:
+    """Copy playback sources into a unique, LMS-readable directory on the target."""
+    def __init__(self, target, references):
+        self.target = target
+        self.references = references
+        self.directory = None
+
+    def __enter__(self):
+        self.directory = self.target.run(
+            'd=$(mktemp -d /tmp/sweetspot-audio-XXXXXX) && chmod 755 "$d" && echo "$d"').decode().strip()
+        if not re.fullmatch(r"/tmp/sweetspot-audio-[A-Za-z0-9]+", self.directory):
+            raise AudioError("unexpected remote fixture directory %r" % self.directory)
+        try:
+            self.urls = []
+            for reference in self.references:
+                remote = self.directory + "/" + reference.name
+                self.target.run("cat > %s && chmod 644 %s" % (shlex.quote(remote), shlex.quote(remote)),
+                                reference.read_bytes())
+                self.urls.append("file://" + remote)
+            self.player_path = self.directory + "/pair.m3u"
+            playlist = ("#EXTM3U\n" + "\n".join(self.urls) + "\n").encode("utf-8")
+            self.target.run("cat > %s && chmod 644 %s" % (shlex.quote(self.player_path),
+                                                           shlex.quote(self.player_path)), playlist)
+            return self
+        except BaseException:
+            self.target.run("rm -rf " + shlex.quote(self.directory))
+            raise
+
+    def __exit__(self, *_):
+        self.target.run("rm -rf " + shlex.quote(self.directory))
+
+
 class PacedCapture:
     """Consume stdout at PCM speed; stdout otherwise emits unbounded silence.
 
@@ -342,6 +468,150 @@ class PacedCapture:
         if self.thread.is_alive():
             raise AudioError("capture reader did not stop after writer termination")
         self.stream.close()
+
+
+def loopback_state(target, stream):
+    """Read hw_params and status of the paired Loopback substream 0.
+
+    Returns None while the substream is closed. Malformed or missing kernel
+    files never produce parameters.
+    """
+    directory = "Loopback/pcm0%s/sub0/" % stream
+    try:
+        text = target.asound(directory + "hw_params")
+        status = target.asound(directory + "status")
+    except (OSError, UnicodeError) as error:
+        raise AudioError("Loopback %s substream is not readable: %s" % (stream, error)) from error
+    if text.strip() == "closed":
+        return None
+    fields = {}
+    for line in text.splitlines():
+        name, separator, value = line.partition(":")
+        if separator:
+            fields[name.strip()] = value.strip()
+    state = re.search(r"^state:\s*(\S+)", status, re.M)
+    try:
+        return {"access": fields["access"], "format": fields["format"],
+                "channels": int(fields["channels"]), "rate": int(fields["rate"].split()[0]),
+                "period_size": int(fields["period_size"]), "buffer_size": int(fields["buffer_size"]),
+                "state": state.group(1) if state else None, "hw_params": text}
+    except (KeyError, ValueError, IndexError) as error:
+        raise AudioError("malformed Loopback %s hw_params: %r" % (stream, text)) from error
+
+
+def wait_loopback_playback(target, rate, process, timeout=8, interval=.05):
+    """Wait for the player to run on hw:Loopback with the production access."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AudioError("Squeezelite exited with status %s before opening ALSA" % process.returncode)
+        params = loopback_state(target, "p")
+        if params is not None and params["state"] == "RUNNING":
+            expected = {"access": "MMAP_INTERLEAVED", "channels": 2, "rate": rate}
+            for name, value in expected.items():
+                if params[name] != value:
+                    raise AudioError("Loopback playback %s is %r, wanted %r" % (name, params[name], value))
+            if params["format"] not in ALSA_FORMATS:
+                raise AudioError("Loopback playback format %s is not a verified container" % params["format"])
+            return params
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+    raise AudioError("Squeezelite did not start hw:Loopback playback before deadline")
+
+
+def wait_loopback_capture(capture, rate, timeout=8, interval=.05):
+    """Wait until captured frames reach this host, so no track frame precedes them.
+
+    A remote aplay can start later than the server starts a track: playing
+    before this point would lose the first frames of the sequence. Bytes in
+    the local file prove the capture already reads; /proc state over SSH did not.
+    """
+    wanted = rate // 10 * capture.frame_bytes
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        size = capture.path.stat().st_size
+        if size >= wanted:
+            return {"bytes_before_playlist": size}
+        if capture.finished.is_set():
+            raise AudioError("ALSA capture ended before running: %s (%s)" % (capture.reason, capture.error))
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+    raise AudioError("hw:Loopback capture produced no data before deadline")
+
+
+class LoopbackCapture:
+    """Record the paired snd-aloop capture substream with the target's aplay.
+
+    snd-aloop paces both sides with its own timer, so the capture is bounded
+    by an exact frame count and a wall deadline rather than by read pacing.
+    """
+    def __init__(self, target, path, *, params, seconds, wall_seconds, process_factory, stderr):
+        self.path = path
+        self.format, self.frame_bytes = ALSA_FORMATS[params["format"]]
+        self.max_bytes = seconds * params["rate"] * self.frame_bytes
+        self.wall_seconds = wall_seconds
+        self.command = target.command(["/usr/bin/aplay", "-C", "-q", "-D", ALSA_CAPTURE,
+                                       "-t", "raw", "-f", params["format"], "-c", "2",
+                                       "-r", str(params["rate"]), "-d", str(seconds)])
+        self.process_factory = process_factory
+        self.stderr = stderr
+        self.process = None
+        self.bytes_written = 0
+        self.reason = None
+        self.error = None
+        self.finished = threading.Event()
+        self.thread = threading.Thread(target=self._wait, name="alsa-capture")
+
+    def start(self):
+        self.started = time.monotonic()
+        self.deadline = self.started + self.wall_seconds
+        with self.path.open("wb") as capture:
+            self.process = self.process_factory(self.command, stdout=capture, stderr=self.stderr,
+                                                start_new_session=os.name == "posix")
+        self.thread.start()
+
+    def _wait(self):
+        try:
+            try:
+                status = self.process.wait(max(0, self.deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                self.reason = "wall_limit"
+                return
+            self.bytes_written = self.path.stat().st_size
+            if status != 0:
+                self.reason = "exit_status_%s" % status
+            elif self.bytes_written == self.max_bytes:
+                self.reason = "byte_limit"
+            else:
+                self.reason = "eof"
+        except Exception as error:
+            self.error = str(error)
+            self.reason = "read_error"
+        finally:
+            self.finished.set()
+
+    def stop(self):
+        if self.process is not None:
+            stop_process(self.process, owned_group=os.name == "posix")
+
+    def join(self):
+        self.thread.join(3)
+        if self.thread.is_alive():
+            raise AudioError("ALSA capture did not stop after termination")
+        self.bytes_written = self.path.stat().st_size
+
+
+def alsa_output_evidence(log, destination, capture_stderr):
+    """Require an engine-logged hw:Loopback open without XRUN on either side."""
+    data = log.read_bytes() if log.exists() else b""
+    text = data.decode("utf-8", errors="replace")
+    overruns = capture_stderr.read_text(errors="replace").count("overrun") if capture_stderr.exists() else None
+    evidence = {"path": str(destination), "sha256": hashlib.sha256(data).hexdigest() if data else None,
+                "device": ALSA_PLAYBACK, "opens": text.count("open output device: %s" % ALSA_PLAYBACK),
+                "xruns": len(re.findall(r"\bXRUN\b(?! recover failed)", text)),
+                "xrun_recover_failures": text.count("XRUN recover failed"),
+                "capture_overruns": overruns}
+    evidence["status"] = ("pass" if evidence["opens"] >= 1 and evidence["xruns"] == 0
+                          and evidence["xrun_recover_failures"] == 0 and overruns == 0 else "fail")
+    return evidence
 
 
 def stop_process(process, *, owned_group=False):
@@ -459,8 +729,13 @@ def mixed_case_passes(case, rates):
 
 
 def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rate=None, dop=False,
-             source_format=None, case_id=None, process_factory=subprocess.Popen):
+             source_format=None, case_id=None, process_factory=subprocess.Popen,
+             backend="software_stdout", asound=Path("/proc/asound"), target=None):
     from tools.audio_verification import compare_capture, compare_pcm_sequence, generate_fixtures
+    target = target or ChrootTarget(rootfs, asound)
+    if backend not in BACKENDS:
+        raise ValueError("unknown audio backend %r" % backend)
+    alsa = backend == "alsa_loopback"
     second_bits = bits if second_bits is None else second_bits
     mixed_rate = second_rate is not None
     identity = case_id or ("%s-%s-dop" % (source_format, rate * 16) if source_format else
@@ -473,7 +748,7 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
     directory.mkdir(parents=True, exist_ok=True)
     report = {"id": identity, "kind": "dsd_to_dop" if source_format else "dop_pcm_passthrough" if dop else "pcm",
               "rate": rate, "bits": bits, "source_bits": [bits, second_bits],
-              "status": "fail", "scope": "software_stdout"}
+              "status": "fail", "scope": backend}
     if mixed_rate:
         report.update(kind="pcm_rate_transition", source_rates=[rate, second_rate])
     if dop or source_format:
@@ -483,18 +758,25 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
     report["limits"] = {"capture_format": "s32_le", "channels": 2,
                         "max_lead_frames": STARTUP_SECONDS * rate,
                         "max_bytes": CAPTURE_SECONDS * rate * 8, "wall_seconds": WALL_SECONDS}
+    if alsa:
+        # The capture container follows the format the engine negotiated.
+        report["limits"].update(capture_format=None, max_bytes=None, capture_seconds=CAPTURE_SECONDS)
     mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
     report["player_mac"] = mac
     process = None
     capture = None
     log_owned = False
-    root_log = rootfs / "tmp" / "audio-verification.log"
+    engine_log = "/tmp/audio-verification.log"
+    local_log = directory / "squeezelite.log"
     started = time.monotonic()
     journal_start = len(client.journal)
     try:
+        local_log.unlink(missing_ok=True)
         if mixed_rate:
-            (directory / "squeezelite.log").unlink(missing_ok=True)
-        if mixed_rate:
+            if alsa:
+                # Squeezelite reopens the device at each rate: the capture
+                # must follow per segment, which this backend does not do yet.
+                raise AudioError("PCM rate transitions are not verified on the ALSA backend")
             if dop or source_format or bits != 24 or second_bits != 24 or rate == second_rate:
                 raise AudioError("PCM rate transition requires different-rate WAV24 sources")
             references = [generate_fixtures(directory / "references", rate, bits)[0],
@@ -533,27 +815,58 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
             compare = compare_capture
         if not source_format:
             sources = references
-        with LocalFixtures(rootfs, sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
-            root_log.unlink(missing_ok=True)
+        with target.fixtures(sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
+            target.remove(engine_log)
             log_owned = True
-            command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", "-", "-a", "32",
-                       "-r", "44100,48000,96000:0" if mixed_rate else str(rate), "-s", "127.0.0.1", "-m", mac,
-                       "-n", "Audio-test", "-f", "/tmp/audio-verification.log"]
+            if alsa:
+                # A single-rate range opens the device at the case rate while
+                # idle, so the capture attaches before the first track.
+                engine = ["/usr/bin/squeezelite", "-o", ALSA_PLAYBACK,
+                          "-a", ALSA_BUFFER, "-r", "%s-%s" % (rate, rate)]
+            else:
+                engine = ["/usr/bin/squeezelite", "-o", "-", "-a", "32",
+                          "-r", "44100,48000,96000:0" if mixed_rate else str(rate)]
+            engine += ["-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log]
             if dop or source_format:
-                command.extend(["-D", "0:dop"])
+                engine.extend(["-D", "0:dop"])
             if source_format:
-                command.extend(["-d", "decode=info", "-d", "stream=info"])
-            if mixed_rate:
-                command.extend(["-d", "output=info"])
+                engine.extend(["-d", "decode=info", "-d", "stream=info"])
+            if alsa or mixed_rate:
+                engine.extend(["-d", "output=info"])
+            command = target.command(engine)
             report["command"] = command
             try:
-                process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
-                                          start_new_session=os.name == "posix")
-                capture = PacedCapture(process.stdout, directory / "capture.raw", rate=PCM_PACING_RATE if mixed_rate else rate,
-                                       max_bytes=report["limits"]["max_bytes"], wall_seconds=report["limits"]["wall_seconds"],
-                                       **({"sequence_frames": native_frames, "trailing_frames": edge_frames} if mixed_rate else {}))
-                capture.start()
-                wait_connected(client, mac, process)
+                if alsa:
+                    for stream in ("p", "c"):
+                        if loopback_state(target, stream) is not None:
+                            raise AudioError("Loopback %s substream is already open by another process" % stream)
+                    process = process_factory(command, stdout=subprocess.DEVNULL, stderr=stderr,
+                                              start_new_session=os.name == "posix")
+                    wait_connected(client, mac, process)
+                    playback = wait_loopback_playback(target, rate, process)
+                    report["alsa"] = {"playback": playback}
+                    capture_stderr = (directory / "capture-stderr.log").open("wb")
+                    try:
+                        capture = LoopbackCapture(target, directory / "capture.raw", params=playback,
+                                                  seconds=CAPTURE_SECONDS, wall_seconds=WALL_SECONDS,
+                                                  process_factory=process_factory, stderr=capture_stderr)
+                        report["capture_command"] = capture.command
+                        report["limits"].update(capture_format=capture.format, max_bytes=capture.max_bytes)
+                        capture.start()
+                    finally:
+                        capture_stderr.close()
+                    report["alsa"]["capture"] = wait_loopback_capture(capture, rate)
+                else:
+                    process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
+                                              start_new_session=os.name == "posix")
+                    capture = PacedCapture(process.stdout, directory / "capture.raw",
+                                           rate=PCM_PACING_RATE if mixed_rate else rate,
+                                           max_bytes=report["limits"]["max_bytes"],
+                                           wall_seconds=report["limits"]["wall_seconds"],
+                                           **({"sequence_frames": native_frames, "trailing_frames": edge_frames}
+                                              if mixed_rate else {}))
+                    capture.start()
+                    wait_connected(client, mac, process)
                 report["settings"] = configure_player(client, mac, deadline=capture.deadline)
                 client.request(mac, ["playlist", "play", fixtures.player_path], deadline=capture.deadline)
                 report["playlist"] = wait_playlist(client, mac, fixtures.urls)
@@ -571,23 +884,31 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
                     stop_process(process, owned_group=os.name == "posix")
                 if capture is not None:
                     capture.join()
+                target.stop_engine()
+            target.fetch(engine_log, local_log)
             if mixed_rate:
-                retained_log = directory / "squeezelite.log"
-                if root_log.exists():
-                    shutil.copyfile(root_log, retained_log)
-                report["rate_evidence"] = output_rate_evidence(retained_log, report["source_rates"])
+                report["rate_evidence"] = output_rate_evidence(local_log, report["source_rates"])
                 report["comparison"] = compare_pcm_sequence(references, directory / "capture.raw", capture_format="s32_le",
                     rate_sequence=report["rate_evidence"]["observed_rate_sequence"],
                     max_lead_frames=report["limits"]["max_lead_frames"],
                     max_trailing_frames=report["limits"]["max_trailing_frames"], pacing_rate=PCM_PACING_RATE)
             else:
-                report["comparison"] = compare(references, directory / "capture.raw", capture_format="s32_le",
-                                                capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
+                options = {}
+                if alsa and compare is not compare_capture:
+                    options["scope"] = backend
+                report["comparison"] = compare(references, directory / "capture.raw",
+                                               capture_format=report["limits"]["capture_format"],
+                                               capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate, **options)
             report["status"] = report["comparison"]["status"]
             if mixed_rate and not mixed_case_passes(report, report["source_rates"]):
                 report["status"] = "fail"
+            if alsa:
+                report["alsa"]["output"] = alsa_output_evidence(local_log, local_log,
+                                                                directory / "capture-stderr.log")
+                if report["alsa"]["output"]["status"] != "pass":
+                    raise AudioError("ALSA evidence did not verify a hw:Loopback open without XRUN")
             if source_format:
-                report["decoder"] = dsd_decoder_evidence(root_log, directory / "squeezelite.log", source_format, rate)
+                report["decoder"] = dsd_decoder_evidence(local_log, local_log, source_format, rate)
                 if report["decoder"]["status"] != "pass":
                     raise AudioError("DSD decoder evidence did not verify both source tracks and DoP output")
     except Exception as error:
@@ -601,40 +922,56 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
                                  "reason": capture.reason, "error": capture.error}
             if mixed_rate:
                 report["capture"].update(rate=None, pacing_rate=PCM_PACING_RATE)
-        if log_owned and root_log.exists():
-            shutil.copyfile(root_log, directory / "squeezelite.log")
+        if log_owned and not local_log.exists():
+            try:
+                target.fetch(engine_log, local_log)
+            except OSError as error:
+                report["log_error"] = str(error)
         if mixed_rate:
-            report["rate_evidence"] = output_rate_evidence(directory / "squeezelite.log", report["source_rates"])
+            report["rate_evidence"] = output_rate_evidence(local_log, report["source_rates"])
         write_json(directory / "report.json", report)
     return report
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rootfs", type=Path, required=True)
+    where = parser.add_mutually_exclusive_group(required=True)
+    where.add_argument("--rootfs", type=Path, help="extracted rootfs, run with chroot on this host")
+    where.add_argument("--ssh-port", type=int,
+                       help="booted Sweetspot on --ssh-host (root password in SSHPASS), e.g. a QEMU guest")
+    parser.add_argument("--ssh-host", default="127.0.0.1")
     parser.add_argument("--server", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--backend", choices=BACKENDS, default="software_stdout")
     args = parser.parse_args(argv)
-    rootfs = args.rootfs.resolve()
+    if args.ssh_port is not None:
+        rootfs = None
+        target = SshTarget(["sshpass", "-e", "ssh", "-p", str(args.ssh_port),
+                            "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                            "-o", "LogLevel=ERROR", "-o", "ServerAliveInterval=5",
+                            "root@" + args.ssh_host],
+                           description="ssh://root@%s:%s" % (args.ssh_host, args.ssh_port))
+    else:
+        rootfs = args.rootfs.resolve()
+        target = ChrootTarget(rootfs)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    report = {"scope": "software_stdout", "version": args.version, "rootfs": str(rootfs),
+    # The ALSA backend does not follow rate changes yet: its matrix is the
+    # 18 constant-rate cases, with the same IDs as the software matrix.
+    cases = [case for case in CASES
+             if args.backend == "software_stdout" or case["kind"] != "pcm_rate_transition"]
+    report = {"scope": args.backend, "version": args.version, "rootfs": target.description,
               "server": args.server, "status": "fail", "cases": []}
     try:
-        binary = rootfs / "usr" / "bin" / "squeezelite"
-        with binary.open("rb") as executable:
-            digest = hashlib.sha256()
-            for chunk in iter(lambda: executable.read(65536), b""):
-                digest.update(chunk)
-        report["squeezelite_sha256"] = digest.hexdigest()
+        report["squeezelite_sha256"] = hashlib.sha256(target.read_bytes("/usr/bin/squeezelite")).hexdigest()
         client = LmsClient(args.server)
-        for case in CASES:
+        for case in cases:
             first, second = case["source_bits"]
             result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
                               second_rate=case.get("second_rate"),
                               dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
-                              case_id=case["id"])
+                              case_id=case["id"], backend=args.backend, target=target)
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)
@@ -642,15 +979,16 @@ def main(argv=None):
         report["error"] = str(error)
     finally:
         completed = {case.get("id") for case in report["cases"] if isinstance(case.get("id"), str)}
-        for case in CASES:
+        for case in cases:
             if case["id"] not in completed:
-                missing = dict(case, bits=case["source_bits"][0], status="fail", error="case was not completed")
+                missing = dict(case, bits=case["source_bits"][0], status="fail", error="case was not completed",
+                               scope=args.backend)
                 if case["kind"] == "dop_pcm_passthrough":
                     missing["dsd_rate"] = case["rate"] * 16
                 report["cases"].append(missing)
-        expected = {case["id"] for case in CASES}
+        expected = {case["id"] for case in cases}
         mixed_rates = {case["id"]: [case["rate"], case["second_rate"]]
-                       for case in CASES if case["kind"] == "pcm_rate_transition"}
+                       for case in cases if case["kind"] == "pcm_rate_transition"}
         if ("error" not in report and len(report["cases"]) == len(expected) and completed == expected
                 and all(case.get("status") == "pass" and "error" not in case
                         and (case["id"] not in mixed_rates or mixed_case_passes(case, mixed_rates[case["id"]]))

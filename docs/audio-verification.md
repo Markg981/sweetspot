@@ -5,8 +5,10 @@ dal percorso Lyrion → Squeezelite nel backend stdout del binario compilato.
 Verifica anche la continuità fra due brani consecutivi della stessa frequenza,
 incluse le transizioni fra profondità PCM diverse, e le sei transizioni PCM
 fra 44,1, 48 e 96 kHz in entrambe le direzioni.
-Il report dichiara lo scope `software_stdout`: ALSA e il DAC richiedono prove
-successive sulla relativa uscita digitale.
+Il report dichiara lo scope `software_stdout`. I 18 casi a frequenza costante,
+ripetuti sul percorso ALSA del kernel con la scheda virtuale snd-aloop, hanno
+scope `alsa_loopback` (vedi [Percorso ALSA con snd-aloop](#percorso-alsa-con-snd-aloop)).
+Il DAC fisico richiede una prova successiva sulla sua uscita digitale.
 
 ## Prova del sistema compilato
 
@@ -56,6 +58,72 @@ confronto dei campioni era riuscito. I riferimenti, le capture e i log rimangono
 nella cartella di evidenza anche se una prova fallisce.
 In CI gli artifact `verifica-audio-x86_64` e `verifica-audio-rpi` accompagnano
 il job Lyrion; una verifica fallita blocca la pubblicazione delle release.
+
+## Percorso ALSA con snd-aloop
+
+La prova ripete i 18 casi passando dal driver ALSA del kernel invece che
+dallo stdout, sulla scheda virtuale `hw:Loopback` di snd-aloop.
+
+**Nel kernel di Sweetspot (CI x86).** Il kernel x86 dell'immagine include
+snd-aloop come modulo, che non si carica da solo. `tests/prova-alsa-qemu.sh`
+avvia una copia dell'immagine in QEMU (KVM se disponibile). Nella copia
+attiva SSH con una password casuale, disattiva la modalità ascolto e indica un
+DAC inesistente, così il player di Sweetspot non apre la scheda. Carica poi
+snd-aloop nel sistema avviato e lancia `tests/prova-audio.py --ssh-port`:
+fixture, Squeezelite, `aplay` e `/proc/asound` sono quelli del sistema
+avviato, il server è il Lyrion dell'immagine.
+
+```sh
+sudo sh tests/prova-alsa-qemu.sh sweetspot.img.xz "$(tar -xOf sweetspot-x86_64-aggiornamento.tar versione)"
+```
+
+Servono `qemu-system-x86`, `mtools`, `xz-utils`, `sshpass`, `curl` e Python 3.
+Le porte 9000 e 2222 di `127.0.0.1` devono essere libere. Report e capture
+finiscono in `alsa-qemu.*` accanto alle cartelle `run.*`, dentro l'artifact
+`verifica-audio-x86_64`. Una prova fallita blocca la release. I kernel dei
+runner GitHub non hanno snd-aloop, e il kernel del Raspberry Pi non si avvia in
+QEMU: su ARM resta la sola prova stdout.
+
+**Sull'host con il rootfs estratto.** Se l'host ha la scheda (`sudo modprobe
+snd-aloop id=Loopback pcm_substreams=1`), anche `tests/prova-lyrion.sh` ripete
+i casi su ALSA in chroot, con il kernel dell'host e report in
+`run.*/alsa-loopback/`. `SWEETSPOT_AUDIO_ALSA` vale `auto` (predefinito: prova
+solo se la scheda c'è), `richiesta` (fallisce se manca) o `no`.
+
+Squeezelite suona su `hw:CARD=Loopback,DEV=0` con gli stessi parametri del
+player senza correzione: dispositivo `hw:`, `-a 400:4::1` (buffer di 400 ms in
+quattro periodi, formato scelto dal motore, mmap), ricampionamento spento.
+`-r F-F` limita le frequenze a quella del caso, così il dispositivo si apre
+già alla frequenza giusta e manda silenzio finché non parte la playlist.
+
+Prima di agganciare la capture il driver legge `hw_params` e `status` del
+substream di riproduzione in `/proc/asound`. Richiede `state: RUNNING`,
+accesso `MMAP_INTERLEAVED`, due canali, la frequenza del caso e un formato
+noto (`S16_LE`, `S24_3LE`, `S24_LE`, `S32_LE`). Se un substream della scheda
+è già aperto da un altro processo, il caso fallisce. La capture usa `aplay -C`
+della rootfs su `hw:CARD=Loopback,DEV=1`, con lo stesso formato e la stessa
+frequenza, e una durata esatta in secondi. snd-aloop scandisce i due lati con
+il proprio timer, quindi non serve il ritmo di lettura dello stdout. La
+capture deve terminare con stato 0 e il numero esatto di byte attesi.
+
+Il confronto è lo stesso del backend stdout: tutti i bit significativi per il
+PCM, payload e marker per il DoP, nel contenitore negoziato. Il caso fallisce
+anche se il registro di Squeezelite (`-d output=info`) non riporta l'apertura
+di `hw:CARD=Loopback,DEV=0`, se contiene `XRUN` o `XRUN recover failed`, o se
+`aplay` segnala un overrun in capture. Il report conserva `hw_params`, i
+comandi del player e della capture, il registro con il suo SHA-256 e lo
+stderr della capture.
+
+Il passaggio da PCM a DoP fa riaprire il dispositivo con gli stessi parametri:
+snd-aloop riempie di zeri la capture durante la riapertura, prima del primo
+brano, e il confronto lo ammette solo come silenzio iniziale.
+
+Questa prova copre driver, contenitore, mmap e periodi del percorso ALSA, ma
+non un clock USB/I2S/S/PDIF, la temporizzazione di un DAC reale o
+l'apertura con il formato preferito da un DAC specifico. Il cambio di
+frequenza su ALSA non è ancora coperto: Squeezelite chiude e riapre il
+dispositivo, quindi la capture va riaperta a ogni frequenza e verificata come
+sequenza di segmenti.
 
 ## Confronto di una capture esterna
 
@@ -323,9 +391,12 @@ collaudo ALSA su dispositivi reali rimane da completare.
 ## Copertura ancora da completare
 
 Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
-frequenza costante e sei cambi fra 44,1/48/96 kHz nel backend software. Restano
-aperti DSD nativo, DFF compressi DST, mono/multicanale, seek, cambi PCM/DSD,
-ALSA e cambi di frequenza sui DAC, USB/I2S/S/PDIF reali, hotplug, rete/NAS, carico prolungato e la matrice
-computer/DAC/firmware per release. Non misura jitter del clock, rumore elettrico
+frequenza costante e due brani consecutivi nel backend software e sul
+percorso ALSA di snd-aloop, più sei cambi fra 44,1/48/96 kHz nel backend
+software. Restano aperti DSD nativo, DFF compressi DST, mono/multicanale,
+seek, cambi PCM/DSD, cambi di frequenza su ALSA e sui DAC, USB/I2S/S/PDIF
+reali (a partire da N550JV + R26 con registro pubblicato per release),
+hotplug, rete/NAS, carico prolungato e la matrice computer/DAC/firmware per
+release. Non misura jitter del clock, rumore elettrico
 USB o fedeltà dell'uscita analogica. Il traguardo 1 rimane parzialmente coperto
 finché queste prove non hanno evidenza riproducibile.

@@ -14,7 +14,13 @@ case "$1" in
 			exit 0
 		fi
 		printf 'root:%s\n' "$pass" | chpasswd >/dev/null 2>&1
-		mkdir -p /etc/dropbear
+		# In Buildroot /etc/dropbear e' un collegamento a /var/run/dropbear,
+		# che dopo l'avvio non esiste: le chiavi vanno nella cartella puntata.
+		if [ -L /etc/dropbear ]; then
+			(cd /etc && mkdir -p "$(readlink dropbear)")
+		else
+			mkdir -p /etc/dropbear
+		fi
 		dropbear -R -p 22
 		log "ssh: attivo"
 		;;

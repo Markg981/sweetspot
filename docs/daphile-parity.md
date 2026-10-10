@@ -95,9 +95,13 @@ un guasto, ma non certificano i campioni né l'uscita del DAC.
 La [CI della PR #16](https://github.com/Markg981/sweetspot/actions/runs/38056065758)
 ha confermato le compilazioni e i 18 casi precedenti su x86 e ARM, pubblicando
 anche entrambi gli archivi di evidenza audio.
-Il traguardo resta parziale: DSD nativo, ALSA e DAC reali,
-cambi PCM/DSD e cambi frequenza sui DAC, hotplug, rete e carico prolungato
-richiedono ancora prove.
+I 18 casi a frequenza costante si ripetono ora sul driver ALSA del kernel x86
+di Sweetspot (PREEMPT_RT, avviato in QEMU nella CI), su `hw:Loopback` di
+snd-aloop, con i parametri `hw:`, mmap e periodi del player. Un XRUN o un
+campione diverso blocca la release. Su ARM resta la sola prova stdout.
+Il traguardo resta parziale: DSD nativo, DAC reali, cambi PCM/DSD, cambi
+frequenza su ALSA e sui DAC, hotplug, rete e carico prolungato richiedono
+ancora prove.
 
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,
 livello e impostazioni equivalenti. La correzione ambientale può migliorare

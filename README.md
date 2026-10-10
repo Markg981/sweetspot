@@ -377,7 +377,10 @@ confrontano ogni campione e il passaggio fra due brani, con report JSON e
 capture conservate dalla CI. Il backend software stdout viene controllato
 a 44,1/48/96 kHz e 16/24 bit, inclusi passaggi fra profondità diverse, e sul
 payload DoP a 176,4/352,8 kHz, anche decodificando sorgenti DSF/DFF DSD64/128.
-La certificazione di ALSA e dei DAC resta aperta.
+Sul PC i casi a frequenza costante si ripetono anche nel driver ALSA del kernel di
+Sweetspot, avviato in QEMU, su `hw:Loopback` (snd-aloop) con buffer, periodi e
+mmap del player; un XRUN fa fallire la prova.
+Restano aperti il cambio di frequenza su ALSA e la certificazione dei DAC reali.
 
 ### Qualità sonora e compatibilità
 

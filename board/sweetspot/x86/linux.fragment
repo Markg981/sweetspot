@@ -13,6 +13,9 @@ CONFIG_SENSORS_K10TEMP=m
 
 # --- Uscita audio integrata, disponibile come modulo -----------------------
 CONFIG_SND_HDA_INTEL=m
+# Scheda virtuale hw:Loopback per la verifica dei campioni sul percorso ALSA
+# (tests/prova-alsa-qemu.sh). Non si carica da sola: serve modprobe snd-aloop.
+CONFIG_SND_ALOOP=m
 
 # --- Controller USB di ogni epoca ------------------------------------------
 CONFIG_USB_XHCI_PCI=y

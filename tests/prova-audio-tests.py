@@ -297,6 +297,32 @@ class DriverTests(unittest.TestCase):
             self.assertFalse(fixtures.directory.exists())
             self.assertEqual(unrelated.read_text(), "keep")
 
+    def test_ssh_target_copies_fixtures_fetches_logs_and_quotes_engine_commands(self):
+        # A local shell stands in for ssh: the target only appends one script.
+        target = DRIVER.SshTarget(["sh", "-c"], description="local shell")
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "a.wav").write_bytes(b"first")
+            (directory / "b.wav").write_bytes(b"second")
+            with target.fixtures([directory / "a.wav", directory / "b.wav"]) as fixtures:
+                remote = Path(fixtures.directory)
+                self.assertRegex(fixtures.directory, r"^/tmp/sweetspot-audio-")
+                self.assertEqual(fixtures.urls, ["file://%s/a.wav" % remote, "file://%s/b.wav" % remote])
+                self.assertEqual(Path(fixtures.player_path).read_text().splitlines()[1:], fixtures.urls)
+                self.assertEqual((remote / "b.wav").read_bytes(), b"second")
+                self.assertEqual(remote.stat().st_mode & 0o777, 0o755)
+                self.assertEqual((remote / "a.wav").stat().st_mode & 0o777, 0o644)
+                self.assertTrue(target.fetch(fixtures.directory + "/a.wav", directory / "copy"))
+                self.assertEqual((directory / "copy").read_bytes(), b"first")
+                self.assertFalse(target.fetch(fixtures.directory + "/absent", directory / "absent"))
+                target.remove(fixtures.directory + "/a.wav")
+                self.assertFalse((remote / "a.wav").exists())
+            self.assertFalse(remote.exists())
+        command = target.command(["/usr/bin/squeezelite", "-n", "Audio test", "-o", "hw:CARD=Loopback,DEV=0"])
+        self.assertEqual(command, ["sh", "-c", "exec /usr/bin/squeezelite -n 'Audio test' -o hw:CARD=Loopback,DEV=0"])
+        with self.assertRaises(OSError):
+            target.run("exit 7")
+
     def test_unpaced_stdout_is_paced_and_byte_limited(self):
         with tempfile.TemporaryDirectory() as temp:
             process = subprocess.Popen([sys.executable, "-u", "-c", "import os; data=b'abcdefgh'*1024\nwhile True: os.write(1,data)"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -437,8 +463,12 @@ class DriverTests(unittest.TestCase):
             self.assertTrue((output / "44100-16" / "report.json").exists())
             self.assertTrue((output / "44100-16" / "squeezelite-stderr.log").exists())
 
-    def orchestration_result(self, directory, *, altered=False, rate=44100, bits=16, second_bits=None, second_rate=None, rate_log=None, short_capture=False, dop=False, source_format=None, decoder_log_defect=None, case_id=None):
-        """Run orchestration with independent container unpacking and a real pipe writer."""
+    def orchestration_result(self, directory, *, altered=False, rate=44100, bits=16, second_bits=None, second_rate=None, rate_log=None, short_capture=False, dop=False, source_format=None, decoder_log_defect=None, case_id=None, backend=None, alsa_defect=None):
+        """Run orchestration with independent container unpacking and a real pipe writer.
+
+        With the ALSA backend a simulated /proc/asound describes the playback
+        substream and a separate writer stands in for the aplay capture.
+        """
         rootfs = directory / "rootfs"
         (rootfs / "tmp").mkdir(parents=True)
         output = directory / "out"
@@ -452,11 +482,20 @@ class DriverTests(unittest.TestCase):
             (case_directory / "squeezelite.log").write_text(stale % rate + stale % second_rate)
             (rootfs / "tmp" / "audio-verification.log").write_text(stale % rate + stale % second_rate)
         commands = []
+        capture_commands = []
         source_widths = []
         source_hashes = []
         source_frames = []
         source_rates = []
         playlist_urls = []
+        asound = directory / "asound"
+        for stream in ("p", "c"):
+            substream = asound / "Loopback" / ("pcm0%s" % stream) / "sub0"
+            substream.mkdir(parents=True)
+            (substream / "hw_params").write_text("closed\n")
+            (substream / "status").write_text("closed\n")
+        if alsa_defect == "busy":
+            (asound / "Loopback/pcm0c/sub0/hw_params").write_text("access: RW_INTERLEAVED\n")
 
         def respond(request):
             _, command = request["params"]
@@ -475,13 +514,33 @@ class DriverTests(unittest.TestCase):
             return success(request, dict(state) if command[0] == "status" else {})
 
         def launch(_command, **kwargs):
+            if _command[2] == "/usr/bin/aplay":
+                capture_commands.append(_command)
+                payload, idle = writer_payload()
+                total = int(_command[_command.index("-d") + 1]) * rate * 8
+                if alsa_defect == "short_capture":
+                    total -= 8
+                raw = directory / "capture-writer.raw"
+                raw.write_bytes(payload)
+                if alsa_defect == "overrun":
+                    kwargs["stderr"].write(b"overrun!!! (at least 1.000 ms long)\n")
+                    kwargs["stderr"].flush()
+                code = ("import sys; data=bytes(800)+open(sys.argv[1],'rb').read(); idle=bytes.fromhex(sys.argv[2]); "
+                        "total=int(sys.argv[3]); data+=idle*((total-len(data))//len(idle)+1); "
+                        "sys.stdout.buffer.write(data[:total])")
+                if alsa_defect == "capture_not_running":
+                    # A capture which never delivers frames before its deadline.
+                    code = "import time; time.sleep(60)"
+                process = subprocess.Popen([sys.executable, "-c", code, str(raw), idle.hex(), str(total)], **kwargs)
+                children.append(process)
+                return process
             commands.append(_command)
             fixture_mac[0] = _command[_command.index("-m") + 1]
+            engine_log = ""
             if second_rate is not None and rate_log != "missing":
                 rates = [rate, second_rate] if rate_log is None else rate_log
-                text = rates if isinstance(rates, str) else "".join(
+                engine_log += rates if isinstance(rates, str) else "".join(
                     "[12:34:56.123456] _output_frames:153 track start sample rate: %s replay_gain: 0\n" % value for value in rates)
-                (rootfs / "tmp" / "audio-verification.log").write_text(text)
             if source_format and decoder_log_defect != "missing":
                 header = "DSF version: 1 format: 0\nlsb first: 1\nblock size: 4096\n" if source_format == "dsf" else "DSDIFF version: 1.5.0.0\n"
                 decoder_log = ("codec open: 'd'\n" + header + "channels: 2\nsample rate: %s\n" % (rate * 16) +
@@ -492,7 +551,36 @@ class DriverTests(unittest.TestCase):
                     decoder_log = decoder_log.replace("rate: %sHz" % rate, "rate: 44100Hz")
                 elif decoder_log_defect == "fallback":
                     decoder_log += "DSD sample rate too high for device - converting to PCM\nDSD to PCM output\n"
-                (rootfs / "tmp" / "audio-verification.log").write_text(decoder_log)
+                engine_log += decoder_log
+            if backend == "alsa_loopback":
+                engine_log += "output_thread:690 open output device: hw:CARD=Loopback,DEV=0\n"
+                if alsa_defect == "xrun":
+                    engine_log += "output_thread:713 XRUN\n"
+                substream = asound / "Loopback/pcm0p/sub0"
+                (substream / "hw_params").write_text(
+                    "access: %s\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: %s (%s/1)\n"
+                    "period_size: 4410\nbuffer_size: 17640\n"
+                    % ("RW_INTERLEAVED" if alsa_defect == "rw_access" else "MMAP_INTERLEAVED",
+                       rate * 2 if alsa_defect == "wrong_rate" else rate, rate))
+                (substream / "status").write_text("state: RUNNING\nowner_pid   : 1\n")
+            if engine_log:
+                (rootfs / "tmp" / "audio-verification.log").write_text(engine_log)
+            if backend == "alsa_loopback":
+                process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+                children.append(process)
+                return process
+            payload, idle = writer_payload()
+            raw = directory / "writer.raw"
+            raw.write_bytes(payload)
+            code = "import os,sys; data=open(sys.argv[1],'rb').read(); os.write(1,data); idle=bytes.fromhex(sys.argv[2])*1024\nwhile True: os.write(1,idle)"
+            if short_capture:
+                code = "import os; os.write(1,b'abcdefgh')"
+            process = subprocess.Popen([sys.executable, "-u", "-c", code, str(raw), idle.hex()], **kwargs)
+            children.append(process)
+            return process
+
+        def writer_payload():
+            """Return the engine output for the fixture playlist and its idle frame pair."""
             payload = bytearray()
             marker_index = 0
             fixture_directory = next((rootfs / "tmp").glob("sweetspot-audio-*"))
@@ -556,24 +644,19 @@ class DriverTests(unittest.TestCase):
                     # Corrupt a significant low PCM24 bit in either direction.
                     offset = 5 if bits == 24 else rate + 5
                     payload[offset * 8 + 1] ^= 1
-            raw = directory / "writer.raw"
             if second_rate is not None:
                 payload[:0] = bytes(50 * 8)
-            raw.write_bytes(payload)
             idle = bytes(8)
             if dop or source_format:
                 idle = b"".join(bytes((0, 0x69, 0x69, marker)) * 2
                                 for marker in ((0xFA, 0x05)[marker_index % 2],
                                                (0xFA, 0x05)[(marker_index + 1) % 2]))
-            code = "import os,sys; data=open(sys.argv[1],'rb').read(); os.write(1,data); idle=bytes.fromhex(sys.argv[2])*1024\nwhile True: os.write(1,idle)"
-            if short_capture:
-                code = "import os; os.write(1,b'abcdefgh')"
-            process = subprocess.Popen([sys.executable, "-u", "-c", code, str(raw), idle.hex()], **kwargs)
-            children.append(process)
-            return process
+            return payload, idle
 
         with rpc_server(respond) as url, patch.object(DRIVER, "CAPTURE_SECONDS", 3), patch.object(DRIVER, "STARTUP_SECONDS", 1), patch.object(DRIVER, "WALL_SECONDS", 4):
             kwargs = {"process_factory": launch}
+            if backend is not None:
+                kwargs.update(backend=backend, asound=asound)
             if second_bits is not None:
                 kwargs["second_bits"] = second_bits
             if second_rate is not None:
@@ -585,12 +668,14 @@ class DriverTests(unittest.TestCase):
             if case_id is not None:
                 kwargs["case_id"] = case_id
             result = DRIVER.run_case(rootfs, DRIVER.LmsClient(url), output, rate, bits, **kwargs)
-        self.assertTrue(children, result.get("error"))
-        self.assertIsNotNone(children[0].poll())
+        if alsa_defect != "busy":
+            self.assertTrue(children, result.get("error"))
+        self.assertTrue(all(child.poll() is not None for child in children))
         self.assertEqual(list((rootfs / "tmp").glob("sweetspot-audio-*")), [])
         self.assertEqual(json.loads((case_directory / "report.json").read_text())["status"], result["status"])
         result["test_source_bits"] = source_widths
-        result["test_command"] = commands[0]
+        result["test_command"] = commands[0] if commands else None
+        result["test_capture_command"] = capture_commands[0] if capture_commands else None
         result["test_source_hashes"] = source_hashes
         result["test_source_frames"] = source_frames
         result["test_source_rates"] = source_rates
@@ -709,6 +794,58 @@ class DriverTests(unittest.TestCase):
                     self.assertNotIn("-R", command)
                     self.assertIn("decode=info", command)
                     self.assertIn("stream=info", command)
+
+    def test_alsa_loopback_uses_production_access_and_compares_every_frame(self):
+        cases = ((44100, 16, 16, False, None), (96000, 24, 16, False, None),
+                 (176400, 24, 24, True, None), (352800, 1, 1, False, "dsf"))
+        for rate, bits, second, dop, container in cases:
+            with self.subTest(rate=rate, dop=dop, container=container), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), rate=rate, bits=bits, second_bits=second,
+                                                   dop=dop, source_format=container, case_id="alsa-case",
+                                                   backend="alsa_loopback")
+                self.assertEqual(result["status"], "pass", result.get("error"))
+                self.assertEqual(result["scope"], "alsa_loopback")
+                command = result["test_command"]
+                self.assertEqual(command[command.index("-o") + 1], "hw:CARD=Loopback,DEV=0")
+                self.assertEqual(command[command.index("-a") + 1], "400:4::1")
+                self.assertEqual(command[command.index("-r") + 1], "%s-%s" % (rate, rate))
+                self.assertIn("output=info", command)
+                self.assertNotIn("-R", command)
+                capture = result["test_capture_command"]
+                self.assertEqual(capture[2:4], ["/usr/bin/aplay", "-C"])
+                self.assertEqual(capture[capture.index("-D") + 1], "hw:CARD=Loopback,DEV=1")
+                self.assertEqual(capture[capture.index("-f") + 1], "S32_LE")
+                self.assertEqual(capture[capture.index("-r") + 1], str(rate))
+                self.assertEqual(result["alsa"]["playback"]["access"], "MMAP_INTERLEAVED")
+                self.assertEqual(result["alsa"]["output"]["status"], "pass")
+                self.assertEqual(result["alsa"]["output"]["xruns"], 0)
+                self.assertEqual(result["capture"]["bytes"], 3 * rate * 8)
+                self.assertTrue(result["comparison"]["sequence_match"])
+                if dop or container:
+                    self.assertEqual(result["comparison"]["scope"], "alsa_loopback")
+                    self.assertTrue(result["comparison"]["payload_match"])
+                if container:
+                    self.assertEqual(result["decoder"]["status"], "pass")
+
+    def test_alsa_loopback_rejects_sample_and_dop_damage(self):
+        for rate, bits, dop in ((48000, 24, False), (176400, 24, True)):
+            with self.subTest(dop=dop), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), altered=True, rate=rate, bits=bits, dop=dop,
+                                                   case_id="alsa-damage", backend="alsa_loopback")
+                self.assertEqual(result["status"], "fail")
+                self.assertFalse(result["comparison"]["sequence_match"])
+
+    def test_alsa_loopback_fails_closed_without_verified_device_evidence(self):
+        for defect in ("rw_access", "wrong_rate", "xrun", "overrun", "short_capture", "busy",
+                       "capture_not_running"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), case_id="alsa-" + defect,
+                                                   backend="alsa_loopback", alsa_defect=defect)
+                self.assertEqual(result["status"], "fail")
+                self.assertIn("error", result)
+                if defect == "capture_not_running":
+                    # The playlist must not start before the capture runs.
+                    self.assertNotIn(["playlist", "play"], [entry["command"][:2] for entry in result["rpc"]])
 
     def test_dsd_orchestration_rejects_payload_order_channels_markers_and_boundary_damage(self):
         matrix = (("dsf", 176400, "byte_order", "payload_match"),
@@ -861,6 +998,43 @@ class DriverTests(unittest.TestCase):
                 rc, report, _ = self.aggregate_report(Path(temp), defect=defect)
                 self.assertNotEqual(rc, 0)
                 self.assertEqual(report["status"], "fail")
+
+    def test_alsa_backend_runs_the_same_eighteen_cases_with_its_own_scope(self):
+        backends = []
+
+        def complete_case(_rootfs, _client, destination, rate, bits, **kwargs):
+            backends.append(kwargs.get("backend"))
+            return {"id": kwargs["case_id"], "status": "pass"}
+
+        with tempfile.TemporaryDirectory() as temp:
+            rootfs = Path(temp) / "rootfs"
+            (rootfs / "usr/bin").mkdir(parents=True)
+            (rootfs / "usr/bin/squeezelite").write_bytes(b"offline engine boundary")
+            output = Path(temp) / "out"
+            with patch.object(DRIVER, "run_case", side_effect=complete_case), patch("builtins.print"):
+                rc = DRIVER.main(["--rootfs", str(rootfs), "--server", "http://127.0.0.1:9000",
+                                  "--output", str(output), "--version", "v", "--backend", "alsa_loopback"])
+            report = json.loads((output / "report.json").read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["scope"], "alsa_loopback")
+        # Rate transitions are not yet verified on ALSA: the 18 constant-rate cases remain.
+        self.assertEqual([case["id"] for case in report["cases"]],
+                         [case["id"] for case in DRIVER.CASES if case["kind"] != "pcm_rate_transition"])
+        self.assertEqual(len(report["cases"]), 18)
+        self.assertEqual(backends, ["alsa_loopback"] * 18)
+
+    def test_alsa_backend_rejects_rate_transition_cases(self):
+        launched = []
+        with tempfile.TemporaryDirectory() as temp:
+            rootfs = Path(temp) / "rootfs"
+            (rootfs / "tmp").mkdir(parents=True)
+            result = DRIVER.run_case(rootfs, DRIVER.LmsClient("http://127.0.0.1:9"), Path(temp) / "out",
+                                     44100, 24, second_bits=24, second_rate=48000, case_id="alsa-rate",
+                                     backend="alsa_loopback", asound=Path(temp) / "asound",
+                                     process_factory=lambda *args, **kwargs: launched.append(args))
+        self.assertEqual(launched, [])
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("not verified on the ALSA backend", result["error"])
 
     def test_missing_rootfs_is_nonzero_and_persists_eighteen_missing_cases(self):
         with tempfile.TemporaryDirectory() as temp:
