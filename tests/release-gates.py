@@ -98,6 +98,50 @@ class ReleaseGateTests(unittest.TestCase):
                     self.assertTrue(report.is_file(), f"no evidence under upload path: {report}")
                     self.assertEqual(report.read_text(), f"sweetspot-{board}-aggiornamento.tar\n")
 
+    def test_pull_requests_rebuild_only_when_image_inputs_change(self):
+        step = next(step for step in WORKFLOW["jobs"]["modifiche"]["steps"] if step.get("id") == "file")
+        cases = (("pull_request", ["docs/audio-verification.md", "README.md"], "false"),
+                 ("pull_request", ["tests/prova-audio.py", "tools/audio_verification.py",
+                                   ".github/workflows/build.yml"], "false"),
+                 ("pull_request", ["tests/x.py", "board/sweetspot/x86/linux.fragment"], "true"),
+                 ("pull_request", ["package/lms/lms.mk"], "true"),
+                 ("pull_request", ["scripts/build.sh"], "true"),
+                 ("pull_request", ["external.mk"], "true"),
+                 ("pull_request", ["docs/configs/nota.md"], "false"),
+                 ("push", [], "true"), ("workflow_dispatch", [], "true"))
+        for event, files, expected in cases:
+            with self.subTest(event=event, files=files), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                tools = root / "bin"
+                tools.mkdir()
+                (root / "files.txt").write_text("".join(name + "\n" for name in files))
+                (tools / "git").write_text('#!/bin/sh\ncat "%s"\n' % (root / "files.txt"))
+                (tools / "git").chmod(0o755)
+                output = root / "output"
+                env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"], "EVENTO": event,
+                       "BASE": "0" * 40, "GITHUB_OUTPUT": str(output)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_text(), "compila=%s\n" % expected)
+
+    def test_reused_main_packages_feed_every_proof_and_are_recorded(self):
+        jobs = WORKFLOW["jobs"]
+        self.assertEqual(jobs["build"]["if"], "${{ needs.modifiche.outputs.compila == 'true' }}")
+        self.assertIn("modifiche", jobs["build"]["needs"])
+        self.assertEqual(jobs["lyrion"]["permissions"].get("actions"), "read")
+        downloads = [step for step in jobs["lyrion"]["steps"]
+                     if step.get("uses", "").startswith("actions/download-artifact@")]
+        self.assertEqual({step["with"]["name"] for step in downloads},
+                         {"sweetspot-${{ matrix.scheda }}-aggiornamento.tar", "sweetspot.img.xz"})
+        for step in downloads:
+            self.assertEqual(step["with"]["run-id"], "${{ steps.pacchetti.outputs.id }}")
+        choose = next(step for step in jobs["lyrion"]["steps"] if step.get("id") == "pacchetti")
+        self.assertIn("branch=main&event=push&status=success", choose["run"])
+        self.assertIn("pacchetti.txt", choose["run"])
+        # Tags never reuse packages: modifiche compiles on every non-PR event.
+        self.assertIn("needs.build.result == 'success'", jobs["release"]["if"])
+
     def test_x86_alsa_proof_boots_the_image_and_keeps_evidence(self):
         steps = WORKFLOW["jobs"]["lyrion"]["steps"]
         names = [step.get("name") for step in steps]
@@ -165,7 +209,7 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_publication_rejects_failed_skipped_cancelled_and_non_tag_runs(self):
         self.assertIn("release", WORKFLOW["jobs"], "publication needs a downstream job")
-        good = {"test": "success", "build": "success", "lyrion": "success"}
+        good = {"modifiche": "success", "test": "success", "build": "success", "lyrion": "success"}
         self.assertTrue(eligible("release", "refs/tags/v1.0.0", good))
         for job in good:
             for result in ("failure", "skipped", "cancelled"):
