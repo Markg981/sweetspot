@@ -203,7 +203,7 @@ La suite locale ha superato 405 controlli, inclusi 55 test del comparatore e
 31 del driver. La [CI della PR #14](https://github.com/Markg981/sweetspot/actions/runs/38026669051)
 ha poi superato test, compilazioni e prove Lyrion su x86 e ARM, sul commit
 `3ae1796`. Quella CI riguarda i 14 casi precedenti; la nuova estensione
-DSF/DFF richiede una propria validazione.
+DSF/DFF è stata validata nella CI della PR #15 descritta sotto.
 
 La nuova matrice ha prima ottenuto 16/18 sulla stessa rootfs: il report
 `graphify-out/dsd-source-evidence-native/run.4h9HVm/report.json` conserva
@@ -217,7 +217,13 @@ I quattro casi DSF/DFF hanno confrontato tutti i frame delle due tracce,
 con header e carrier attesi e senza fallback PCM. Questa ricompilazione
 locale sostituisce soltanto il player in un pacchetto privato di prova:
 non certifica gli altri codec né le immagini Buildroot complete.
-Queste ultime devono superare la CI della nuova PR su entrambe le architetture.
+La [CI della PR #15](https://github.com/Markg981/sweetspot/actions/runs/38051082986),
+sul commit `8ab322b`, ha poi superato test, entrambe le compilazioni Buildroot
+e tutti i 18 casi nelle immagini complete x86 e ARM. I log conservano gli
+esiti di ogni caso; l'upload dei report aveva invece una destinazione errata
+e non ha prodotto gli artifact di evidenza. Il workflow passa ora la cartella
+esplicitamente al comando privilegiato e considera un archivio assente un
+errore: la pubblicazione della correzione richiede una nuova esecuzione CI.
 La suite Linux finale ha superato 429 controlli, inclusi 65 test del
 comparatore/fixture, 35 del driver e 10 del parser C, senza test saltati.
 
@@ -227,6 +233,33 @@ non aveva ottenuto un verdetto sui loro campioni. La successiva esecuzione
 completa è riuscita. Un errore simile richiede un nuovo collaudo completo,
 conservando anche il report fallito; non si riutilizzano i casi riusciti di
 esecuzioni diverse.
+
+## Diagnostica del percorso ALSA
+
+Il riquadro **Uscita audio** e la pagina **Stato** leggono il PCM playback
+scelto dal player e indicano device e substream. Non cercano un altro PCM
+della stessa scheda quando l'uscita selezionata è chiusa. Se `sub0` è chiuso
+e un solo altro substream è aperto, osservano quest'ultimo; più substream
+aperti danno un risultato ambiguo, senza attribuire il formato al player.
+
+`RUNNING` indica l'uscita in corso; `DRAINING` lo svuotamento del buffer.
+`PREPARED`, `PAUSED`, `OPEN` e `SETUP` indicano un'uscita aperta ma senza
+riproduzione confermata. `XRUN`, `SUSPENDED` e `DISCONNECTED` richiedono
+attenzione. Parametri malformati, stato sconosciuto o file non leggibili
+non producono un verdetto positivo. Il formato eventualmente osservato
+rimane distinto dal verdetto sullo stato.
+
+I dati provengono dai file `hw_params` e `status` dello stesso substream,
+come documentato dal [kernel ALSA](https://www.kernel.org/doc/html/latest/sound/designs/procfile.html).
+Sono osservazioni del percorso aperto: non provano la corrispondenza dei
+campioni, la continuità fra brani o la qualità analogica del DAC.
+
+Gli eventi `XRUN` e i messaggi `XRUN recover failed` sono conteggiati
+separatamente. I conteggi riguardano tutto il registro Squeezelite ancora
+disponibile, anche di avvii precedenti; un registro assente è segnalato come
+non disponibile. Zero eventi registrati non certifica l'assenza di interruzioni.
+Le regressioni con `/proc` simulato verificano la diagnostica, mentre il
+collaudo ALSA su dispositivi reali rimane da completare.
 
 ## Copertura ancora da completare
 

@@ -81,6 +81,13 @@ nel backend stdout del Squeezelite compilato. Il
 [protocollo di verifica](audio-verification.md) descrive report e limiti.
 Le nuove fixture DFF hanno individuato un errore di allineamento dei chunk
 dispari nel decoder, corretto con una patch comune alle due piattaforme.
+Le immagini complete x86 e ARM hanno superato i 18 casi software nella
+[CI della PR #15](https://github.com/Markg981/sweetspot/actions/runs/38051082986).
+La diagnostica Audio e Stato osserva ora il solo PCM selezionato, distingue
+gli stati ALSA di riproduzione, preparazione e guasto e segnala dati mancanti
+o più substream aperti. Gli eventi XRUN e i recuperi falliti sono conteggiati
+separatamente nel registro storico. Queste osservazioni aiutano a individuare
+un guasto, ma non certificano i campioni né l'uscita del DAC.
 Il traguardo resta parziale: DSD nativo, ALSA e DAC reali,
 cambi frequenza, hotplug, rete e carico prolungato richiedono ancora prove.
 

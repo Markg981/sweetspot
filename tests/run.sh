@@ -305,6 +305,7 @@ chmod +x "$WEB/bin/wget"
 ln -sf "$OVERLAY/usr/bin/sweetspot-lms" "$WEB/bin/sweetspot-lms"
 mkdir -p "$WEB/proc/asound/card1/pcm0p/sub0"
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
+printf "state: RUNNING\n" > "$WEB/proc/asound/card1/pcm0p/sub0/status"
 echo "00:11:22:33:44:55" > "$WEB/run/player.mac"
 page() { # pagina [impostazioni]
 	printf '%s\n' "${2:-}" > "$WEB/s.txt"
@@ -326,7 +327,8 @@ case "$out" in *"Percorso originale configurato"*"integrità dei campioni non ve
 case "$out" in *"esattamente i campioni"*) ko "audio: nessuna prova campioni inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "audio: nessuna prova campioni inventata" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
-case "$(page audio 'VOLUME=software')" in *"Non bit-perfect"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect" "-" ;; esac
+printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
+case "$(page audio 'VOLUME=software')" in *"Non bit-perfect"*"regolato dal software"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: DSD_U32_BE\nsubformat: STD\nchannels: 2\nrate: 88200 (88200/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"DSD nativo"*"DSD64"*) ok "audio: DSD64 nativo riconosciuto" ;; *) ko "audio DSD nativo" "DSD64" "-" ;; esac
 out=$(page plugin)
@@ -390,6 +392,95 @@ diag=$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/ru
 	$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati)
 case "$diag" in *"XRUN ALSA registrati|0"*) ok "diagnostica: conta gli XRUN senza certificare la continuita'" ;; *) ko "diagnostica XRUN" "XRUN ALSA registrati|0" "-" ;; esac
 case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita' inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "diagnostica: nessuna continuita' inventata" ;; esac
+
+
+# Stato e parametri devono provenire dal medesimo PCM selezionato.
+check_page_diag() {
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati
+}
+audio_params() { # substream frequenza
+	mkdir -p "$1"
+	printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: %s (%s/1)\nbuffer_size: 4096\nperiod_size: 1024\n' "$2" "$2" > "$1/hw_params"
+}
+no_active() { # scenario HTML|CLI
+	case "$2" in *'<h2>In riproduzione</h2>'*|*'Uscita in corso'*|*'Percorso originale configurato'*|*'Uscita diretta'*) ko "$1" "nessuna uscita attiva" "presente" ;; *) ok "$1" ;; esac
+}
+PCM=$WEB/proc/asound/card1/pcm1p
+mkdir -p "$PCM/sub0"
+printf '01-01: Selected : playback 1\n' > "$WEB/proc/asound/pcm"
+audio_params "$PCM/sub0" 48000
+printf 'state: RUNNING\n' > "$PCM/sub0/status"
+audio_params "$WEB/proc/asound/card1/pcm0p/sub0" 192000
+out=$(page audio); diag=$(check_page_diag)
+case "$out" in *'Buffer ALSA'*'DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "audio: buffer del PCM selezionato" ;; *) ko "audio buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
+case "$diag" in *'Buffer ALSA|DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "diagnostica: buffer del PCM selezionato" ;; *) ko "diagnostica buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
+case "$out" in *'Uscita in corso'*'DEV=1/sub0'*'S32_LE, 48000 Hz, 2 canali'*) ok "audio: PCM selezionato, decoy ignorato" ;; *) ko "audio PCM selezionato" "DEV=1/sub0 48000" "-" ;; esac
+case "$diag" in *'OK|Uscita in corso|DEV=1/sub0: S32_LE, 48000 Hz, 2 canali, RUNNING'*) ok "diagnostica: stesso endpoint e parametri della pagina" ;; *) ko "diagnostica PCM selezionato" "DEV=1/sub0 48000" "-" ;; esac
+printf 'closed\n' > "$PCM/sub0/hw_params"
+printf 'closed\n' > "$PCM/sub0/status"
+no_active "audio: PCM selezionato chiuso, decoy aperto" "$(page audio)"
+no_active "diagnostica: PCM selezionato chiuso, decoy aperto" "$(check_page_diag)"
+audio_params "$PCM/sub1" 44100
+printf 'state: RUNNING\n' > "$PCM/sub1/status"
+case "$(page audio)" in *'Uscita in corso'*'DEV=1/sub1'*'44100 Hz'*) ok "audio: sub1 attivo con sub0 chiuso" ;; *) ko "audio sub1" "DEV=1/sub1 44100" "-" ;; esac
+case "$(check_page_diag)" in *'OK|Uscita in corso|DEV=1/sub1: S32_LE, 44100 Hz'*) ok "diagnostica: sub1 attivo" ;; *) ko "diagnostica sub1" "DEV=1/sub1 44100" "-" ;; esac
+audio_params "$PCM/sub0" 48000
+printf 'state: RUNNING\n' > "$PCM/sub0/status"
+no_active "audio: substream multipli ambigui" "$(page audio)"
+case "$(check_page_diag)" in *'ATTENZIONE|Uscita audio|'*'AMBIGUOUS'*) ok "diagnostica: ambiguita' segnalata" ;; *) ko "diagnostica ambigua" "ATTENZIONE AMBIGUOUS" "-" ;; esac
+rm -rf "$PCM/sub1"
+for pcm_state in PREPARED PAUSED OPEN SETUP XRUN SUSPENDED DISCONNECTED DRAINING; do
+	printf 'state: %s\n' "$pcm_state" > "$PCM/sub0/status"
+	out=$(page audio); diag=$(check_page_diag)
+	no_active "audio: $pcm_state non e' riproduzione attiva" "$out"
+	no_active "diagnostica: $pcm_state non e' riproduzione attiva" "$diag"
+	case "$pcm_state" in XRUN|SUSPENDED|DISCONNECTED) severity=ATTENZIONE ;; *) severity=INFO ;; esac
+	case "$diag" in *"$severity|Uscita audio|"*"$pcm_state"*) ok "diagnostica: severita' $pcm_state" ;; *) ko "diagnostica severita' $pcm_state" "$severity" "-" ;; esac
+	case "$out" in *"row $severity"*"$pcm_state"*) ok "audio: severita' $pcm_state" ;; *) ko "audio severita' $pcm_state" "$severity" "-" ;; esac
+	case "$out" in *'Parametri aperti'*'DEV=1/sub0: S32_LE, 48000 Hz, 2 canali'*) ok "audio: parametri aperti separati in $pcm_state" ;; *) ko "audio parametri $pcm_state" "Parametri aperti 48000" "-" ;; esac
+done
+rm -f "$PCM/sub0/status"
+out=$(page audio); diag=$(check_page_diag)
+no_active "audio: stato assente non verificabile" "$out"
+case "$diag" in *'ATTENZIONE|Uscita audio|'*'UNVERIFIED'*) ok "diagnostica: stato assente non verificabile" ;; *) ko "diagnostica stato assente" "ATTENZIONE UNVERIFIED" "-" ;; esac
+printf 'state: MYSTERY\n' > "$PCM/sub0/status"
+out=$(page audio)
+no_active "audio: stato sconosciuto non attivo" "$out"
+case "$out" in *'row ATTENZIONE'*'UNVERIFIED'*) ok "audio: stato sconosciuto richiede attenzione" ;; *) ko "audio stato sconosciuto" "ATTENZIONE UNVERIFIED" "-" ;; esac
+diag=$(check_page_diag)
+no_active "diagnostica: stato sconosciuto non attivo" "$diag"
+case "$diag" in *'ATTENZIONE|Uscita audio|'*'UNVERIFIED'*) ok "diagnostica: stato sconosciuto richiede attenzione" ;; *) ko "diagnostica stato sconosciuto" "ATTENZIONE UNVERIFIED" "-" ;; esac
+printf 'state: RUNNING\n' > "$PCM/sub0/status"
+printf 'format: S32_LE\nrate: nonsense\nchannels: 2\nbuffer_size: bad\nperiod_size: 1024\n' > "$PCM/sub0/hw_params"
+no_active "audio: parametri malformati non attivi" "$(page audio)"
+no_active "diagnostica: parametri malformati non attivi" "$(check_page_diag)"
+case "$(page audio)" in *'<div class="k">Buffer ALSA</div>'*) ko "audio: buffer malformato omesso" "assente" "presente" ;; *) ok "audio: buffer malformato omesso" ;; esac
+rm -rf "$PCM/sub0"
+case "$(page audio)" in *'row ATTENZIONE'*'UNAVAILABLE'*) ok "audio: PCM senza substream non verificabile" ;; *) ko "audio indisponibile" "ATTENZIONE UNAVAILABLE" "-" ;; esac
+case "$(check_page_diag)" in *'ATTENZIONE|Uscita audio|'*'UNAVAILABLE'*) ok "diagnostica: PCM senza substream non verificabile" ;; *) ko "diagnostica indisponibile" "ATTENZIONE UNAVAILABLE" "-" ;; esac
+rm -rf "$PCM"
+rm -f "$WEB/proc/asound/pcm"
+audio_params "$WEB/proc/asound/card1/pcm0p/sub0" 96000
+printf 'state: RUNNING\n' > "$WEB/proc/asound/card1/pcm0p/sub0/status"
+# Il registro e' storico: gli eventi e i recuperi falliti sono righe distinte.
+printf '[12:00:00.123456] _output_frames:123 XRUN\n' > "$WEB/squeezelite.log"
+case "$(check_page_diag)" in *'ATTENZIONE|XRUN ALSA registrati|1 nel registro'*) ok "XRUN: un evento esatto" ;; *) ko "XRUN evento" "1" "-" ;; esac
+printf '[12:00:00] output_thread:123 XRUN recover failed: Broken pipe\n' >> "$WEB/squeezelite.log"
+diag=$(check_page_diag)
+case "$diag" in *'XRUN ALSA registrati|1 nel registro'*) ok "XRUN: recupero fallito non raddoppia evento" ;; *) ko "XRUN doppio conto" "1" "-" ;; esac
+case "$diag" in *'ATTENZIONE|Recuperi XRUN falliti|1 nel registro'*) ok "XRUN: recupero fallito contato a parte" ;; *) ko "XRUN recupero" "1" "-" ;; esac
+printf '[12:00:00] output_thread:123 XRUN recover failed: Broken pipe\n' > "$WEB/squeezelite.log"
+diag=$(check_page_diag)
+case "$diag" in *'XRUN ALSA registrati|0 nel registro'*) ok "XRUN: solo recupero non inventa evento" ;; *) ko "XRUN solo recupero evento" "0" "-" ;; esac
+case "$diag" in *'ATTENZIONE|Recuperi XRUN falliti|1 nel registro'*) ok "XRUN: solo recupero richiede attenzione" ;; *) ko "XRUN solo recupero attenzione" "ATTENZIONE 1" "-" ;; esac
+printf 'NOTXRUN\nDescrizione XRUN\nXRUN nei commenti\n[12:00:00] other:1 descriptive XRUN\n' > "$WEB/squeezelite.log"
+case "$(check_page_diag)" in *'XRUN ALSA registrati|0 nel registro'*) ok "XRUN: sottostringhe incidentali ignorate" ;; *) ko "XRUN incidentale" "0" "-" ;; esac
+rm -f "$WEB/squeezelite.log"
+diag=$(check_page_diag)
+case "$diag" in *'XRUN ALSA registrati|registro non disponibile'*) ok "XRUN: registro assente dichiarato" ;; *) ko "XRUN registro assente" "non disponibile" "-" ;; esac
+case "$diag" in *'Recuperi XRUN falliti|registro non disponibile'*) ok "XRUN: recuperi non disponibili senza registro" ;; *) ko "XRUN recuperi assenti" "non disponibile" "-" ;; esac
 
 echo "Correzione ambientale (REW e CamillaDSP)"
 MATHAWK=$(command -v gawk || command -v mawk || command -v awk)
