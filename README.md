@@ -373,8 +373,9 @@ software; non misura il clock o il rumore dell'uscita analogica di un DAC reale.
 
 Il [comparatore PCM e la prova Lyrion/Squeezelite](docs/audio-verification.md)
 confrontano ogni campione e il passaggio fra due brani, con report JSON e
-capture conservate dalla CI. La prima copertura è del backend software stdout
-a 44,1/48/96 kHz e 16/24 bit; la certificazione di ALSA e dei DAC resta aperta.
+capture conservate dalla CI. Il backend software stdout viene controllato
+a 44,1/48/96 kHz e 16/24 bit, inclusi passaggi fra profondità diverse, e sul
+payload DoP a 176,4/352,8 kHz. La certificazione di ALSA e dei DAC resta aperta.
 
 ### Qualità sonora e compatibilità
 

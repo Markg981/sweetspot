@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Bounded, complete stereo integer PCM comparison (software evidence only).
+"""Bounded, complete stereo PCM and DoP comparison (software evidence only).
 
 WAV references use RIFF PCM (format tag 1), 16/24/32 significant bits.
 ALSA S24_LE stores its significant signed bits in the low three bytes;
@@ -19,6 +19,8 @@ import wave
 FORMATS = {"s16_le": (16, 2), "s24_3le": (24, 3),
            "s24_le": (24, 4), "s32_le": (32, 4)}
 CHUNK_FRAMES = 4096
+DOP_RATES = (176400, 352800)
+DOP_IDLE = (0x6969, 0x6969)
 
 
 def _integer(value, label, minimum=0):
@@ -202,6 +204,92 @@ def generate_fixtures(directory: Path, rate: int, bits: int,
     return paths
 
 
+def generate_dop_fixtures(directory: Path, rate: int,
+                          frames: int | None = None) -> list[Path]:
+    """Emit two deterministic WAV24 DoP diagnostic tracks, not listening audio."""
+    _integer(rate, "rate", 1)
+    if rate not in DOP_RATES:
+        raise ValueError("DoP rate must be 176400 or 352800")
+    frames = rate if frames is None else _integer(frames, "frames", 1)
+    if frames * 6 > 0xFFFFFFFF - 36:
+        raise ValueError("Fixture exceeds RIFF PCM limits")
+    directory = Path(directory)
+    paths = []
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        for track in (1, 2):
+            path = directory / f"dop-{rate}-24-track-{track}.wav"
+            state = 0xD509AB31 ^ (track * 0x42311F)
+            with wave.open(str(path), "wb") as stream:
+                stream.setnchannels(2)
+                stream.setsampwidth(3)
+                stream.setframerate(rate)
+                for start in range(0, frames, CHUNK_FRAMES):
+                    block = bytearray()
+                    for index in range(start, min(start + CHUNK_FRAMES, frames)):
+                        pair = []
+                        for channel in (0, 1):
+                            state ^= (state << 13) & 0xFFFFFFFF
+                            state ^= state >> 17
+                            state ^= (state << 5) & 0xFFFFFFFF
+                            payload = state & 0xFFFF
+                            pair.append(payload if payload != 0x6969 else 0x6968)
+                        if pair[0] == pair[1]:
+                            pair[1] ^= 0xFFFF
+                        marker = 0x05 if index % 2 == 0 else 0xFA
+                        for payload in pair:
+                            block.extend(payload.to_bytes(2, "little"))
+                            block.append(marker)
+                    stream.writeframesraw(block)
+            paths.append(path)
+    except (OSError, wave.Error, struct.error) as error:
+        raise ValueError(f"Cannot generate DoP fixtures: {error}") from error
+    return paths
+
+
+def _dop_frames(info):
+    """Reuse bounded PCM reads; keep both payload bytes and S32 low padding."""
+    frames = _frames(info)
+    try:
+        for pair in frames:
+            yield (tuple((value >> 8) & 0xFFFF for value in pair),
+                   tuple((value >> 24) & 0xFF for value in pair),
+                   tuple(value & 0xFF for value in pair))
+    finally:
+        frames.close()
+
+
+def _dop_reference_frames(references):
+    for reference in references:
+        yield from _dop_frames(reference)
+
+
+def _dop_leading(frames, *, startup_pcm=False):
+    count = 0
+    try:
+        for payload, markers, padding in frames:
+            zero = payload == (0, 0) and markers == (0, 0) and padding == (0, 0)
+            if payload != DOP_IDLE and not (startup_pcm and zero):
+                return count, False
+            count += 1
+        return count, True
+    finally:
+        frames.close()
+
+
+def _validate_dop_reference(info):
+    first_marker = None
+    previous = None
+    for index, (_, markers, _) in enumerate(_dop_frames(info)):
+        if (markers[0] not in (0x05, 0xFA) or markers[0] != markers[1]
+                or (previous is not None and markers[0] != previous ^ 0xFF)):
+            raise ValueError(f"Invalid DoP source markers at frame {index}: {info['path']}")
+        if first_marker is None:
+            first_marker = markers[0]
+        previous = markers[0]
+    return first_marker
+
+
 def compare_capture(references: list[Path], capture: Path, *, capture_format: str,
                     capture_rate: int, offset_frames: int | None = None,
                     max_lead_frames: int = 0) -> dict:
@@ -289,6 +377,161 @@ def compare_capture(references: list[Path], capture: Path, *, capture_format: st
             "capture": _public_info(captured)}
 
 
+def compare_dop_capture(references: list[Path], capture: Path, *, capture_format: str,
+                        capture_rate: int, offset_frames: int | None = None,
+                        max_lead_frames: int = 0) -> dict:
+    """Compare full stereo DSD payload and legal continuous DoP framing.
+
+    Source WAVs may independently begin with 05 or FA. The capture may begin
+    with either phase but must alternate continuously, including border idle.
+    Only startup PCM zeros before the first DoP frame and stereo 6969 DoP idle
+    may precede the source. Only DoP idle may follow it. Automatic alignment
+    subtracts source idle from capture idle; an explicit offset declares the
+    leading allowance itself. Neither path searches or drops internal frames.
+    """
+    if not references:
+        raise ValueError("At least one WAV reference is required")
+    _integer(capture_rate, "capture_rate", 1)
+    _integer(max_lead_frames, "max_lead_frames")
+    if offset_frames is not None:
+        _integer(offset_frames, "offset_frames")
+    if capture_rate not in DOP_RATES:
+        raise ValueError("DoP capture rate must be 176400 or 352800")
+    if capture_format not in ("s24_3le", "s24_le", "s32_le"):
+        raise ValueError("DoP capture requires s24_3le, s24_le or s32_le")
+    source = [_wav_info(path) for path in references]
+    if any(info["bits"] != 24 for info in source):
+        raise ValueError("DoP references must be stereo WAV24")
+    if any(info["rate"] != capture_rate for info in source):
+        raise ValueError("Reference and capture sample rates must match")
+    reference_phases = [_validate_dop_reference(info) for info in source]
+    captured = _raw_info(capture, capture_format, capture_rate)
+    expected_frames = sum(info["frames"] for info in source)
+    alignment = "explicit" if offset_frames is not None else "automatic"
+    first_mismatch = None
+
+    def record(error):
+        nonlocal first_mismatch
+        if first_mismatch is None or error["capture_frame"] < first_mismatch["capture_frame"]:
+            first_mismatch = error
+
+    if offset_frames is None:
+        source_lead, silent = _dop_leading(_dop_reference_frames(source))
+        if silent:
+            raise ValueError("All-idle DoP references require an explicit offset_frames")
+        capture_lead, _ = _dop_leading(_dop_frames(captured), startup_pcm=True)
+        offset_frames = max(0, capture_lead - source_lead)
+        if offset_frames > max_lead_frames:
+            record({"reason": "leading_silence_limit", "expected_frame": 0,
+                    "capture_frame": offset_frames, "allowed_frames": max_lead_frames})
+    elif offset_frames > captured["frames"]:
+        raise ValueError("offset_frames exceeds the capture length")
+    boundaries = []
+    boundary_checks = {}
+    position = 0
+    for info in source[:-1]:
+        position += info["frames"]
+        boundary = {"after_reference": info["path"], "expected_frame": position,
+                    "capture_frame": position + offset_frames, "match": True}
+        boundaries.append(boundary)
+        for adjacent in (position - 1, position):
+            boundary_checks.setdefault(adjacent, []).append(boundary)
+
+    markers_match = True
+    padding_match = True
+    capture_first_marker = None
+    capture_first_dop_frame = None
+    previous_marker = None
+
+    def inspect(frame, capture_index, expected_index=None, *, allow_startup_pcm=False):
+        nonlocal markers_match, padding_match, previous_marker
+        nonlocal capture_first_marker, capture_first_dop_frame
+        payload, markers, padding = frame
+        good = True
+        if padding != (0, 0):
+            padding_match = False
+            good = False
+            channel = 0 if padding[0] else 1
+            record({"reason": "nonzero_s32_padding", "expected_frame": expected_index,
+                    "capture_frame": capture_index, "channel": channel,
+                    "expected": 0, "actual": padding[channel]})
+        startup_zero = (allow_startup_pcm and payload == (0, 0) and markers == (0, 0)
+                        and padding == (0, 0) and capture_first_dop_frame is None)
+        if not startup_zero:
+            if capture_first_dop_frame is None:
+                capture_first_dop_frame = capture_index
+                capture_first_marker = markers[0]
+            reason = None
+            if markers[0] not in (0x05, 0xFA) or markers[1] not in (0x05, 0xFA):
+                reason = "illegal_dop_marker"
+            elif markers[0] != markers[1]:
+                reason = "dop_channel_marker_mismatch"
+            elif previous_marker is not None and markers[0] != previous_marker ^ 0xFF:
+                reason = "dop_marker_not_alternating"
+            if reason:
+                markers_match = False
+                good = False
+                record({"reason": reason, "expected_frame": expected_index,
+                        "capture_frame": capture_index, "actual": list(markers),
+                        "expected": None if previous_marker is None else previous_marker ^ 0xFF})
+            previous_marker = markers[0]
+        return good, startup_zero
+
+    capture_frames = _dop_frames(captured)
+    try:
+        for index in range(offset_frames):
+            actual = next(capture_frames)
+            _, startup_zero = inspect(actual, index, allow_startup_pcm=True)
+            if actual[0] != DOP_IDLE and not startup_zero:
+                record({"reason": "nonidle_leading_frame", "expected_frame": None,
+                        "capture_frame": index, "actual": list(actual[0])})
+        payload_match = True
+        compared_frames = 0
+        for index, expected in enumerate(_dop_reference_frames(source)):
+            actual = next(capture_frames, None)
+            good = False
+            if actual is not None:
+                compared_frames += 1
+                good, _ = inspect(actual, index + offset_frames, index)
+            if actual is None or actual[0] != expected[0]:
+                payload_match = False
+                good = False
+                channel = next((channel for channel in (0, 1)
+                                if actual is None or actual[0][channel] != expected[0][channel]), 0)
+                record({"reason": "missing_frame" if actual is None else "payload_mismatch",
+                        "expected_frame": index, "capture_frame": index + offset_frames,
+                        "channel": channel, "expected": expected[0][channel],
+                        "actual": None if actual is None else actual[0][channel]})
+            if not good:
+                for boundary in boundary_checks.get(index, ()):
+                    boundary["match"] = False
+        trailing_frames = 0
+        for actual in capture_frames:
+            capture_index = expected_frames + offset_frames + trailing_frames
+            inspect(actual, capture_index)
+            if actual[0] != DOP_IDLE:
+                record({"reason": "nonidle_trailing_frame", "expected_frame": None,
+                        "capture_frame": capture_index, "actual": list(actual[0])})
+            trailing_frames += 1
+    finally:
+        capture_frames.close()
+    sequence_match = payload_match and markers_match and padding_match and first_mismatch is None
+    return {"status": "pass" if sequence_match else "fail", "payload_match": payload_match,
+            "markers_match": markers_match, "padding_match": padding_match,
+            "sequence_match": sequence_match, "expected_frames": expected_frames,
+            "compared_frames": compared_frames, "leading_frames": offset_frames,
+            "trailing_frames": trailing_frames, "alignment": alignment,
+            "max_lead_frames": max_lead_frames, "boundaries": boundaries,
+            "first_mismatch": first_mismatch,
+            "marker_phase": {"reference_first": reference_phases,
+                             "capture_first": capture_first_marker,
+                             "capture_first_dop_frame": capture_first_dop_frame,
+                             "policy": "independent_initial_phase_continuous_capture"},
+            "scope": "software_stdout", "classification": "dop_payload_preserved_legal_framing",
+            "references": [_public_info(info) for info in source],
+            "capture": _public_info(captured)}
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError(message)
@@ -314,30 +557,38 @@ def main(argv=None):
     generate.add_argument("--output", type=Path, required=True)
     generate.add_argument("--rate", type=int, required=True)
     generate.add_argument("--bits", type=int, required=True)
-    compare = commands.add_parser("compare")
-    compare.add_argument("--reference", type=Path, action="append", required=True)
-    compare.add_argument("--capture", type=Path, required=True)
-    compare.add_argument("--capture-format", required=True)
-    compare.add_argument("--capture-rate", type=int, required=True)
-    compare.add_argument("--offset-frames", type=int)
-    compare.add_argument("--max-lead-frames", type=int, default=0)
-    compare.add_argument("--report", type=Path)
+    generate_dop = commands.add_parser("generate-dop")
+    generate_dop.add_argument("--output", type=Path, required=True)
+    generate_dop.add_argument("--rate", type=int, required=True)
+    for command in ("compare", "compare-dop"):
+        compare = commands.add_parser(command)
+        compare.add_argument("--reference", type=Path, action="append", required=True)
+        compare.add_argument("--capture", type=Path, required=True)
+        compare.add_argument("--capture-format", required=True)
+        compare.add_argument("--capture-rate", type=int, required=True)
+        compare.add_argument("--offset-frames", type=int)
+        compare.add_argument("--max-lead-frames", type=int, default=0)
+        compare.add_argument("--report", type=Path)
     report_path = None
     input_paths = []
     try:
         args = parser.parse_args(argv)
-        if args.command == "generate":
-            paths = generate_fixtures(args.output, args.rate, args.bits)
+        if args.command in ("generate", "generate-dop"):
+            paths = (generate_fixtures(args.output, args.rate, args.bits) if args.command == "generate"
+                     else generate_dop_fixtures(args.output, args.rate))
             report = {"status": "pass", "references": [_public_info(_wav_info(path)) for path in paths]}
+            if args.command == "generate-dop":
+                report["data_kind"] = "dop_diagnostic_payload_not_listening_audio"
         else:
             input_paths = [args.capture, *args.reference]
             if args.report is not None:
                 # Assign only after validation: even an error report must never
                 # be written onto the capture or any reference.
                 report_path = _report_output_path(args.report, input_paths)
-            report = compare_capture(args.reference, args.capture, capture_format=args.capture_format,
-                                     capture_rate=args.capture_rate, offset_frames=args.offset_frames,
-                                     max_lead_frames=args.max_lead_frames)
+            comparator = compare_capture if args.command == "compare" else compare_dop_capture
+            report = comparator(args.reference, args.capture, capture_format=args.capture_format,
+                                capture_rate=args.capture_rate, offset_frames=args.offset_frames,
+                                max_lead_frames=args.max_lead_frames)
         exit_code = 0 if report["status"] == "pass" else 1
     except (ValueError, OSError) as error:
         report = {"status": "error", "error": str(error)}

@@ -338,14 +338,17 @@ class DriverTests(unittest.TestCase):
             self.assertTrue((output / "44100-16" / "report.json").exists())
             self.assertTrue((output / "44100-16" / "squeezelite-stderr.log").exists())
 
-    def orchestration_result(self, directory, *, altered):
-        """Run orchestration against a protocol stand-in and real PCM writer."""
+    def orchestration_result(self, directory, *, altered=False, rate=44100, bits=16, second_bits=None, dop=False, case_id=None):
+        """Run orchestration with independent WAV unpacking and a real pipe writer."""
         rootfs = directory / "rootfs"
         (rootfs / "tmp").mkdir(parents=True)
         output = directory / "out"
         state = {}
         children = []
         fixture_mac = [None]
+        case_directory = output / (case_id or "%s-%s" % (rate, bits))
+        commands = []
+        source_widths = []
 
         def respond(request):
             _, command = request["params"]
@@ -364,27 +367,65 @@ class DriverTests(unittest.TestCase):
             return success(request, dict(state) if command[0] == "status" else {})
 
         def launch(_command, **kwargs):
+            commands.append(_command)
             fixture_mac[0] = _command[_command.index("-m") + 1]
             payload = bytearray()
-            for reference in sorted((output / "44100-16" / "references").glob("*.wav")):
+            marker_index = 0
+            fixture_directory = next((rootfs / "tmp").glob("sweetspot-audio-*"))
+            references = [rootfs / url.removeprefix("file://").lstrip("/")
+                          for url in (fixture_directory / "pair.m3u").read_text().splitlines()[1:]]
+            for reference in references:
                 with wave.open(str(reference), "rb") as source:
+                    width = source.getsampwidth()
+                    source_widths.append(width * 8)
                     samples = source.readframes(source.getnframes())
-                for (sample,) in struct.iter_unpack("<h", samples):
-                    payload.extend(struct.pack("<i", sample << 16))
+                for position in range(0, len(samples), width * 2):
+                    for channel in (0, 1):
+                        sample_bytes = samples[position + channel * width:position + (channel + 1) * width]
+                        if dop:
+                            # Squeezelite regenerates a continuous marker phase.
+                            marker = (0xFA, 0x05)[marker_index % 2]
+                            payload.extend(bytes((0, sample_bytes[0], sample_bytes[1], marker)))
+                        else:
+                            sample = int.from_bytes(sample_bytes, "little", signed=True)
+                            payload.extend(struct.pack("<i", sample << (32 - 8 * width)))
+                    marker_index += 1
             if altered:
-                payload[5 * 8] ^= 1
+                if altered == "marker":
+                    payload[5 * 8 + 3] = 0x06
+                elif dop:
+                    payload[5 * 8 + 1] ^= 1
+                else:
+                    # Corrupt a significant low PCM24 bit in either direction.
+                    offset = 5 if bits == 24 else rate + 5
+                    payload[offset * 8 + 1] ^= 1
             raw = directory / "writer.raw"
             raw.write_bytes(payload)
-            code = "import os,sys; data=open(sys.argv[1],'rb').read(); os.write(1,data)\nwhile True: os.write(1,b'\\0'*8192)"
-            process = subprocess.Popen([sys.executable, "-u", "-c", code, str(raw)], **kwargs)
+            idle = bytes(8)
+            if dop:
+                idle = b"".join(bytes((0, 0x69, 0x69, marker)) * 2
+                                for marker in ((0xFA, 0x05)[marker_index % 2],
+                                               (0xFA, 0x05)[(marker_index + 1) % 2]))
+            code = "import os,sys; data=open(sys.argv[1],'rb').read(); os.write(1,data); idle=bytes.fromhex(sys.argv[2])*1024\nwhile True: os.write(1,idle)"
+            process = subprocess.Popen([sys.executable, "-u", "-c", code, str(raw), idle.hex()], **kwargs)
             children.append(process)
             return process
 
         with rpc_server(respond) as url, patch.object(DRIVER, "CAPTURE_SECONDS", 3), patch.object(DRIVER, "STARTUP_SECONDS", 1), patch.object(DRIVER, "WALL_SECONDS", 4):
-            result = DRIVER.run_case(rootfs, DRIVER.LmsClient(url), output, 44100, 16, process_factory=launch)
+            kwargs = {"process_factory": launch}
+            if second_bits is not None:
+                kwargs["second_bits"] = second_bits
+            if dop:
+                kwargs["dop"] = True
+            if case_id is not None:
+                kwargs["case_id"] = case_id
+            result = DRIVER.run_case(rootfs, DRIVER.LmsClient(url), output, rate, bits, **kwargs)
+        self.assertTrue(children, result.get("error"))
         self.assertIsNotNone(children[0].poll())
         self.assertEqual(list((rootfs / "tmp").glob("sweetspot-audio-*")), [])
-        self.assertEqual(json.loads((output / "44100-16" / "report.json").read_text())["status"], result["status"])
+        self.assertEqual(json.loads((case_directory / "report.json").read_text())["status"], result["status"])
+        result["test_source_bits"] = source_widths
+        result["test_command"] = commands[0]
         return result
 
     def test_complete_orchestration_compares_every_pcm_frame(self):
@@ -402,7 +443,127 @@ class DriverTests(unittest.TestCase):
         self.assertFalse(result["comparison"]["sample_match"])
         self.assertIsNotNone(result["comparison"]["first_mismatch"])
 
-    def test_missing_rootfs_is_nonzero_and_persists_six_missing_cases(self):
+    def test_case_cleanup_failure_revokes_successful_audio_comparison(self):
+        original_cleanup = DRIVER.LocalFixtures.__exit__
+
+        def failed_cleanup(fixtures, *exception):
+            original_cleanup(fixtures, *exception)
+            raise OSError("fixture cleanup failed")
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(DRIVER.LocalFixtures, "__exit__", failed_cleanup):
+            result = self.orchestration_result(Path(temp), altered=False)
+        self.assertEqual(result["comparison"]["status"], "pass")
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["error"], "fixture cleanup failed")
+
+    def test_mixed_depth_orchestration_preserves_both_wav_depths_and_every_frame(self):
+        for first, second in ((16, 24), (24, 16)):
+            with self.subTest(first=first), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), bits=first, second_bits=second,
+                                                    case_id="mixed-%s-%s" % (first, second))
+                self.assertEqual(result["status"], "pass", result.get("error"))
+                self.assertEqual(result["source_bits"], [first, second])
+                self.assertEqual(result["test_source_bits"], [first, second])
+                self.assertEqual(result["comparison"]["expected_frames"], 88200)
+                self.assertTrue(result["comparison"]["sample_match"])
+
+    def test_mixed_depth_orchestration_rejects_one_low_pcm24_bit_in_either_track(self):
+        for first, second in ((16, 24), (24, 16)):
+            with self.subTest(first=first), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), altered=True, bits=first, second_bits=second,
+                                                    case_id="mixed-%s-%s" % (first, second))
+                self.assertEqual(result["status"], "fail")
+                self.assertFalse(result["comparison"]["sample_match"])
+                self.assertIsNotNone(result["comparison"]["first_mismatch"])
+
+    def test_dop_orchestration_checks_payload_and_regenerated_markers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = self.orchestration_result(Path(temp), rate=176400, bits=24, dop=True, case_id="dop-positive")
+        self.assertEqual(result["status"], "pass", result.get("error"))
+        self.assertEqual(result["kind"], "dop_pcm_passthrough")
+        self.assertEqual(result["source_bits"], [24, 24])
+        self.assertTrue(result["comparison"]["payload_match"])
+        self.assertTrue(result["comparison"]["markers_match"])
+        self.assertTrue(result["comparison"]["sequence_match"])
+        command = result["test_command"]
+        self.assertEqual(command[command.index("-D") + 1], "0:dop")
+        self.assertEqual(command[command.index("-a") + 1], "32")
+        self.assertNotIn("-R", command)
+        self.assertNotIn("dop24", command)
+
+    def test_dop_orchestration_rejects_payload_and_illegal_marker(self):
+        for defect, field in (("payload", "payload_match"), ("marker", "markers_match")):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), rate=176400, bits=24, dop=True, altered=defect,
+                                                    case_id="dop-" + defect)
+                self.assertEqual(result["status"], "fail")
+                self.assertFalse(result["comparison"][field])
+
+    def aggregate_report(self, directory, *, defect=None):
+        """Keep main's aggregation real, replacing only the external player run."""
+        rootfs = directory / "rootfs"
+        (rootfs / "usr/bin").mkdir(parents=True)
+        (rootfs / "usr/bin/squeezelite").write_bytes(b"offline engine boundary")
+        output = directory / "out"
+        count = [0]
+        first_id = [None]
+
+        def complete_case(_rootfs, _client, destination, rate, bits, **kwargs):
+            count[0] += 1
+            case_id = kwargs.get("case_id", "legacy-%s-%s" % (rate, bits))
+            first_id[0] = first_id[0] or case_id
+            second = kwargs.get("second_bits") or bits
+            result = {"id": case_id, "rate": rate, "source_bits": [bits, second],
+                      "bits": bits, "kind": "dop_pcm_passthrough" if kwargs.get("dop") else "pcm",
+                      "status": "pass"}
+            (destination / case_id).mkdir()
+            if kwargs.get("dop"):
+                result["dsd_rate"] = rate * 16
+            if count[0] == 2:
+                if defect == "duplicate":
+                    result["id"] = first_id[0]
+                elif defect == "unexpected":
+                    result["id"] = "not-a-required-case"
+                elif defect == "missing_id":
+                    del result["id"]
+                elif defect == "incomplete":
+                    raise DRIVER.AudioError("engine did not complete")
+                elif defect == "failed":
+                    result["status"] = "fail"
+                elif defect == "case_error":
+                    result["error"] = "fixture cleanup failed"
+            return result
+
+        with patch.object(DRIVER, "run_case", side_effect=complete_case), patch("builtins.print"):
+            rc = DRIVER.main(["--rootfs", str(rootfs), "--server", "http://127.0.0.1:9000",
+                              "--output", str(output), "--version", "offline-version"])
+        return rc, json.loads((output / "report.json").read_text()), [entry.name for entry in output.iterdir() if entry.is_dir()]
+
+    def test_main_runs_fourteen_unique_cases_with_explicit_transport_depths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            rc, report, entries = self.aggregate_report(Path(temp))
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(len(report["cases"]), 14)
+        self.assertEqual(len({case["id"] for case in report["cases"]}), 14)
+        self.assertEqual({(case["rate"], tuple(case["source_bits"])) for case in report["cases"]
+                          if case["kind"] == "pcm"},
+                         {(44100, (16, 16)), (44100, (24, 24)), (48000, (16, 16)), (48000, (24, 24)),
+                          (96000, (16, 16)), (96000, (24, 24)), (44100, (16, 24)), (44100, (24, 16)),
+                          (48000, (16, 24)), (48000, (24, 16)), (96000, (16, 24)), (96000, (24, 16))})
+        self.assertEqual({(case["rate"], case["dsd_rate"], tuple(case["source_bits"]))
+                          for case in report["cases"] if case["kind"] == "dop_pcm_passthrough"},
+                         {(176400, 2822400, (24, 24)), (352800, 5644800, (24, 24))})
+        self.assertEqual(set(entries), {case["id"] for case in report["cases"]})
+
+    def test_aggregate_fails_closed_for_missing_duplicate_unexpected_or_incomplete_case(self):
+        for defect in ("duplicate", "unexpected", "missing_id", "incomplete", "failed", "case_error"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
+                rc, report, _ = self.aggregate_report(Path(temp), defect=defect)
+                self.assertNotEqual(rc, 0)
+                self.assertEqual(report["status"], "fail")
+
+    def test_missing_rootfs_is_nonzero_and_persists_fourteen_missing_cases(self):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "out"
             rc = DRIVER.main(["--rootfs", str(Path(temp) / "absent"), "--server", "http://127.0.0.1:9000", "--output", str(output), "--version", "fixture-version"])
@@ -410,7 +571,8 @@ class DriverTests(unittest.TestCase):
             self.assertNotEqual(rc, 0)
             self.assertEqual(report["scope"], "software_stdout")
             self.assertEqual(report["version"], "fixture-version")
-            self.assertEqual(len(report["cases"]), 6)
+            self.assertEqual(len(report["cases"]), 14)
+            self.assertEqual(len({case["id"] for case in report["cases"]}), 14)
             self.assertTrue(all(case["status"] == "fail" for case in report["cases"]))
 
 

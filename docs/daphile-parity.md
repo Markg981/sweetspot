@@ -75,9 +75,10 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
 | 4 — Distribuzione | Autenticazione, chiavi, controlli A/B completi, recupero e matrice hardware pubblica. | Nuova installazione senza terminale, aggiornamento firmato verificato, recupero di fallimenti provato e test di alimentazione su hardware reale. |
 
 **Avanzamento del traguardo 1:** prima copertura del confronto PCM e dei
-confini fra due brani locali a frequenza costante, nel backend stdout del
-Squeezelite compilato. Il [protocollo di verifica](audio-verification.md)
-descrive report e limiti. Il traguardo resta parziale: DSD/DoP, ALSA e DAC reali,
+confini fra due brani locali a frequenza costante, incluse profondità PCM
+miste, e del payload WAV DoP a 176,4/352,8 kHz nel backend stdout del Squeezelite
+compilato. Il [protocollo di verifica](audio-verification.md) descrive report e
+limiti. Il traguardo resta parziale: DSD nativo, DSF/DFF→DoP, ALSA e DAC reali,
 cambi frequenza, hotplug, rete e carico prolungato richiedono ancora prove.
 
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Offline, independent PCM fixtures for the audio verification contract."""
+"""Offline, independent PCM/DoP fixtures for the audio verification contract."""
 
 import hashlib
 import importlib.util
@@ -153,6 +153,44 @@ class PCMVerificationTests(unittest.TestCase):
                                               capture_format="s24_le"))
         normalized = [(256, -256), (-2147483648, 2147483392), (16777216, -16777216)]
         self.assert_pass(self.compare(self.capture(normalized, bits=32), capture_format="s32_le"))
+
+    def test_mixed_pcm16_pcm24_preserves_signed_values_and_pcm24_lsb(self):
+        pcm16 = [(1, -2), (-32768, 32767), (-7, 11)]
+        pcm24 = [(1, -1), (-8388608, 8388607), (65537, -65537)]
+        for order in ((16, 24), (24, 16)):
+            with self.subTest(order=order):
+                by_bits = {16: pcm16, 24: pcm24}
+                references = [write_wav(self.directory / f"mixed-{index}.wav", by_bits[bits], bits)
+                              for index, bits in enumerate(order)]
+                normalized = [tuple(value << (32 - bits) for value in pair)
+                              for bits in order for pair in by_bits[bits]]
+                self.assert_pass(self.compare(self.capture(normalized, bits=32), references,
+                                              capture_format="s32_le"))
+                index = 0 if order[0] == 24 else len(pcm16)
+                damaged = normalized.copy()
+                left, right = damaged[index]
+                damaged[index] = (left ^ 256, right)
+                report = self.compare(self.capture(damaged, bits=32), references,
+                                      capture_format="s32_le")
+                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["first_mismatch"]["expected_frame"], index)
+
+    def test_mixed_pcm_boundaries_reject_gap_drop_and_duplicate_in_both_directions(self):
+        by_bits = {16: [(1, -2), (-32768, 32767)],
+                   24: [(-8388608, 8388607), (17, -31)]}
+        for order in ((16, 24), (24, 16)):
+            references = [write_wav(self.directory / f"mixed-boundary-{index}.wav", by_bits[bits], bits)
+                          for index, bits in enumerate(order)]
+            first, second = [[tuple(value << (32 - bits) for value in pair) for pair in by_bits[bits]]
+                             for bits in order]
+            for defect, captured in (("gap", first + [(0, 0)] + second),
+                                     ("drop", first[:-1] + second),
+                                     ("duplicate", first + [first[-1]] + second)):
+                with self.subTest(order=order, defect=defect):
+                    report = self.compare(self.capture(captured, bits=32), references,
+                                          capture_format="s32_le")
+                    self.assertEqual(report["status"], "fail")
+                    self.assertFalse(report["boundaries"][0]["match"])
 
     def test_pcm32_preserves_full_signed_precision(self):
         frames = [(1, -1), (-2147483648, 2147483647), (8388609, -8388609)]
@@ -384,6 +422,380 @@ class PCMVerificationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(list((self.directory / "cli").glob("*.wav"))), 2)
         self.assertEqual(json.loads(result.stdout)["status"], "pass")
+
+
+def dop_bytes(payloads, capture_format="s24_3le", phase=0x05):
+    """Independent DoP encoder: complete low/high payload bytes, then marker."""
+    data = bytearray()
+    for index, pair in enumerate(payloads):
+        marker = phase if index % 2 == 0 else phase ^ 0xFF
+        for payload in pair:
+            packed = payload.to_bytes(2, "little") + bytes([marker])
+            if capture_format == "s32_le":
+                packed = b"\0" + packed
+            elif capture_format == "s24_le":
+                packed += b"\0"
+            data.extend(packed)
+    return bytes(data)
+
+
+def write_dop_wav(path, payloads, rate=176400, phase=0x05):
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(2)
+        stream.setsampwidth(3)
+        stream.setframerate(rate)
+        stream.writeframes(dop_bytes(payloads, phase=phase))
+    return path
+
+
+class DoPVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.assertTrue(callable(getattr(verifier, "compare_dop_capture", None)),
+                        "DoP comparator has not been implemented")
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+        self.first = [(0x0001, 0xFF02), (0x8033, 0x7F44), (0x1234, 0xABCD)]
+        self.second = [(0x5678, 0x9012), (0xFEDC, 0xBA98)]
+        self.references = [write_dop_wav(self.directory / "first.wav", self.first),
+                           write_dop_wav(self.directory / "second.wav", self.second, phase=0xFA)]
+
+    def capture(self, payloads=None, capture_format="s32_le", phase=0xFA, data=None):
+        path = self.directory / "capture.raw"
+        path.write_bytes(dop_bytes(self.first + self.second if payloads is None else payloads,
+                                   capture_format, phase) if data is None else data)
+        return path
+
+    def compare(self, capture=None, references=None, **kwargs):
+        options = {"capture_format": "s32_le", "capture_rate": 176400}
+        options.update(kwargs)
+        return verifier.compare_dop_capture(self.references if references is None else references,
+                                           capture or self.capture(), **options)
+
+    def assert_pass(self, report):
+        self.assertEqual(report["status"], "pass", report)
+        for field in ("payload_match", "markers_match", "sequence_match"):
+            self.assertTrue(report[field], field)
+        self.assertIsNone(report["first_mismatch"])
+
+    def test_full_payload_and_legal_independent_marker_phase_pass_for_all_packings(self):
+        for capture_format in ("s24_3le", "s24_le", "s32_le"):
+            for phase in (0x05, 0xFA):
+                with self.subTest(capture_format=capture_format, phase=phase):
+                    capture = self.capture(capture_format=capture_format, phase=phase)
+                    report = self.compare(capture, capture_format=capture_format)
+                    self.assert_pass(report)
+                    self.assertEqual(report["expected_frames"], 5)
+                    self.assertEqual(report["compared_frames"], 5)
+                    self.assertEqual(report["leading_frames"], 0)
+                    self.assertEqual(report["trailing_frames"], 0)
+                    self.assertEqual(report["boundaries"][0]["expected_frame"], 3)
+                    self.assertTrue(report["boundaries"][0]["match"])
+                    self.assertEqual(report["capture"]["sha256"], hashlib.sha256(capture.read_bytes()).hexdigest())
+                    self.assertEqual(report["references"][0]["sha256"],
+                                     hashlib.sha256(self.references[0].read_bytes()).hexdigest())
+                    self.assertEqual(report["marker_phase"]["capture_first"], phase)
+                    self.assertEqual(report["marker_phase"]["reference_first"], [0x05, 0xFA])
+                    self.assertEqual(report["scope"], "software_stdout")
+
+    def test_either_payload_byte_and_channel_swap_fail(self):
+        for bit in (0, 8, 15):
+            for channel in (0, 1):
+                with self.subTest(bit=bit, channel=channel):
+                    damaged = self.first + self.second
+                    pair = list(damaged[3])
+                    pair[channel] ^= 1 << bit
+                    damaged[3] = tuple(pair)
+                    report = self.compare(self.capture(damaged))
+                    self.assertEqual(report["status"], "fail")
+                    self.assertFalse(report["payload_match"])
+                    self.assertTrue(report["markers_match"])
+                    self.assertEqual(report["first_mismatch"]["expected_frame"], 3)
+                    self.assertEqual(report["first_mismatch"]["channel"], channel)
+        report = self.compare(self.capture([(right, left) for left, right in self.first + self.second]))
+        self.assertEqual(report["status"], "fail")
+        self.assertFalse(report["payload_match"])
+
+    def test_pcm_zero_cannot_replace_dop_zero_payload_in_compared_sequence(self):
+        payloads = [(0, 0), (0x1234, 0x5678)]
+        reference = write_dop_wav(self.directory / "zero-payload.wav", payloads)
+        for capture_format in ("s24_3le", "s24_le", "s32_le"):
+            frame_size = 6 if capture_format == "s24_3le" else 8
+            encoded = dop_bytes(payloads, capture_format, phase=0x05)
+            for prefix_frames in (0, 2):
+                with self.subTest(capture_format=capture_format, prefix_frames=prefix_frames):
+                    prefix = b"\0" * (frame_size * prefix_frames)
+                    valid = self.capture(data=prefix + encoded)
+                    self.assert_pass(self.compare(valid, references=[reference],
+                                                  capture_format=capture_format,
+                                                  offset_frames=prefix_frames))
+                    damaged = self.capture(data=prefix + b"\0" * frame_size + encoded[frame_size:])
+                    report = self.compare(damaged, references=[reference],
+                                          capture_format=capture_format,
+                                          offset_frames=prefix_frames)
+                    self.assertEqual(report["status"], "fail", report)
+                    self.assertTrue(report["payload_match"])
+                    self.assertFalse(report["markers_match"])
+                    self.assertEqual(report["first_mismatch"]["capture_frame"], prefix_frames)
+
+    def test_internal_gap_drop_duplicate_and_track_swap_fail_at_boundary(self):
+        for name, payloads in (("gap", self.first + [(0x6969, 0x6969)] + self.second),
+                               ("drop", self.first[:-1] + self.second),
+                               ("duplicate", self.first + [self.first[-1]] + self.second),
+                               ("track_swap", self.second + self.first)):
+            with self.subTest(name=name):
+                report = self.compare(self.capture(payloads), max_lead_frames=100)
+                self.assertEqual(report["status"], "fail")
+                self.assertFalse(report["payload_match"])
+                self.assertFalse(report["boundaries"][0]["match"])
+
+    def test_capture_marker_illegal_repeated_or_different_channels_fails(self):
+        for name, changes in (("illegal", ((19, 0x04), (23, 0x04))),
+                              ("repeated", ((19, 0x05), (23, 0x05))),
+                              ("channels", ((23, 0x05),))):
+            with self.subTest(name=name):
+                data = bytearray(dop_bytes(self.first + self.second, "s32_le", 0xFA))
+                for index, value in changes:
+                    data[index] = value
+                report = self.compare(self.capture(data=data))
+                self.assertEqual(report["status"], "fail")
+                self.assertTrue(report["payload_match"])
+                self.assertFalse(report["markers_match"])
+                self.assertEqual(report["first_mismatch"]["capture_frame"], 2)
+
+    def test_marker_phase_must_continue_across_track_boundary(self):
+        data = dop_bytes(self.first, "s32_le", 0xFA) + dop_bytes(self.second, "s32_le", 0xFA)
+        report = self.compare(self.capture(data=data))
+        self.assertEqual(report["status"], "fail")
+        self.assertTrue(report["payload_match"])
+        self.assertFalse(report["markers_match"])
+        self.assertFalse(report["boundaries"][0]["match"])
+        self.assertEqual(report["first_mismatch"]["capture_frame"], 3)
+
+    def test_s32_low_padding_corruption_fails_without_dropping_payload_bits(self):
+        for channel in (0, 1):
+            with self.subTest(channel=channel):
+                data = bytearray(dop_bytes(self.first + self.second, "s32_le", 0xFA))
+                data[8 + channel * 4] = 1
+                report = self.compare(self.capture(data=data))
+                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["first_mismatch"]["reason"], "nonzero_s32_padding")
+                self.assertEqual(report["first_mismatch"]["capture_frame"], 1)
+                self.assertTrue(report["payload_match"])
+
+    def test_startup_pcm_zeros_and_dop_idle_at_edges_pass_with_declared_limit(self):
+        payloads = [(0x6969, 0x6969)] * 3 + self.first + self.second + [(0x6969, 0x6969)] * 4
+        data = b"\0" * 16 + dop_bytes(payloads, "s32_le", 0xFA)
+        report = self.compare(self.capture(data=data), max_lead_frames=5)
+        self.assert_pass(report)
+        self.assertEqual(report["leading_frames"], 5)
+        self.assertEqual(report["trailing_frames"], 4)
+        self.assertEqual(report["boundaries"][0]["capture_frame"], 8)
+        self.assertEqual(report["marker_phase"]["capture_first_dop_frame"], 2)
+        self.assertEqual(self.compare(self.capture(data=data), max_lead_frames=4)["status"], "fail")
+
+    def test_reference_leading_dop_idle_is_preserved_during_alignment(self):
+        payloads = [(0x6969, 0x6969)] * 2 + self.first
+        reference = write_dop_wav(self.references[0], payloads)
+        capture = self.capture([(0x6969, 0x6969)] * 4 + self.first)
+        report = self.compare(capture, [reference], max_lead_frames=2)
+        self.assert_pass(report)
+        self.assertEqual(report["leading_frames"], 2)
+        self.assertEqual(report["compared_frames"], 5)
+        self.assertEqual(self.compare(self.capture(payloads[1:]), [reference], max_lead_frames=10)["status"], "fail")
+
+    def test_pcm_zero_after_first_dop_frame_fails_in_prefix_sequence_and_tail(self):
+        source = dop_bytes(self.first + self.second, "s32_le", 0xFA)
+        cases = (dop_bytes([(0x6969, 0x6969)], "s32_le", 0x05) + b"\0" * 8 + source,
+                 source[:24] + b"\0" * 8 + source[24:], source + b"\0" * 8)
+        for index, data in enumerate(cases):
+            with self.subTest(index=index):
+                report = self.compare(self.capture(data=data), max_lead_frames=10)
+                self.assertEqual(report["status"], "fail")
+                self.assertFalse(report["markers_match"])
+
+    def test_edge_payload_must_be_stereo_dop_idle_and_cannot_be_discarded_explicitly(self):
+        for extra in ((0x6969, 0x6968), (1, 2)):
+            with self.subTest(extra=extra):
+                report = self.compare(self.capture([extra] + self.first + self.second), offset_frames=1)
+                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["first_mismatch"]["reason"], "nonidle_leading_frame")
+                report = self.compare(self.capture(self.first + self.second + [extra]))
+                self.assertEqual(report["status"], "fail")
+                self.assertTrue(report["payload_match"])
+                self.assertEqual(report["first_mismatch"]["reason"], "nonidle_trailing_frame")
+
+    def test_all_idle_reference_requires_explicit_offset(self):
+        reference = write_dop_wav(self.references[0], [(0x6969, 0x6969)] * 3)
+        capture = self.capture([(0x6969, 0x6969)] * 6)
+        with self.assertRaises(ValueError):
+            self.compare(capture, [reference], max_lead_frames=10)
+        report = self.compare(capture, [reference], offset_frames=2)
+        self.assert_pass(report)
+        self.assertEqual(report["leading_frames"], 2)
+        self.assertEqual(report["trailing_frames"], 1)
+
+    def test_short_capture_reports_missing_payload_frame(self):
+        report = self.compare(self.capture(self.first + self.second[:-1]))
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["compared_frames"], 4)
+        self.assertEqual(report["first_mismatch"]["reason"], "missing_frame")
+        self.assertEqual(report["first_mismatch"]["expected_frame"], 4)
+
+    def test_all_markers_in_lead_and_long_tail_are_checked(self):
+        payloads = [(0x6969, 0x6969)] * 2 + self.first + self.second + [(0x6969, 0x6969)] * 5000
+        original = dop_bytes(payloads, "s32_le", 0x05)
+        for frame in (0, 5006):
+            with self.subTest(frame=frame):
+                data = bytearray(original)
+                data[frame * 8 + 3] = 0x44
+                report = self.compare(self.capture(data=data), max_lead_frames=2)
+                self.assertEqual(report["status"], "fail")
+                self.assertFalse(report["markers_match"])
+                self.assertEqual(report["first_mismatch"]["capture_frame"], frame)
+
+    def test_every_dop_frame_is_compared_with_bounded_memory(self):
+        payloads = [(0x1234, 0xABCD)] * 120000
+        reference = write_dop_wav(self.references[0], payloads)
+        capture = self.capture(payloads)
+        tracemalloc.start()
+        try:
+            report = self.compare(capture, [reference])
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assert_pass(report)
+        self.assertEqual(report["compared_frames"], 120000)
+        self.assertLess(peak, 2 * 1024 * 1024)
+
+    def test_invalid_source_markers_are_input_errors(self):
+        original = self.references[0].read_bytes()
+        for indexes, values in (((46, 49), (4, 4)), ((52, 55), (5, 5)), ((49,), (250,))):
+            with self.subTest(indexes=indexes):
+                data = bytearray(original)
+                for index, value in zip(indexes, values):
+                    data[index] = value
+                self.references[0].write_bytes(data)
+                with self.assertRaises(ValueError):
+                    self.compare()
+        self.references[0].write_bytes(original[:-1])
+        with self.assertRaises(ValueError):
+            self.compare()
+
+    def test_wrong_metadata_partial_frames_and_invalid_options_are_input_errors(self):
+        for options in ({"capture_rate": 352800}, {"capture_format": "s16_le"},
+                        {"capture_format": "float32"}, {"capture_rate": True},
+                        {"offset_frames": -1}, {"offset_frames": 6},
+                        {"max_lead_frames": -1}, {"max_lead_frames": 1.5}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.compare(**options)
+        with self.assertRaises(ValueError):
+            self.compare(references=[])
+        for capture_format, width in (("s24_3le", 6), ("s24_le", 8), ("s32_le", 8)):
+            with self.subTest(capture_format=capture_format), self.assertRaises(ValueError):
+                self.compare(self.capture(data=b"\0" * (width - 1)), capture_format=capture_format)
+        pcm16 = write_wav(self.directory / "pcm16.wav", [(1, -2)], rate=176400)
+        with self.assertRaises(ValueError):
+            self.compare(references=[pcm16])
+
+    def test_generated_dop_tracks_are_deterministic_distinct_stereo_wav24(self):
+        self.assertTrue(callable(getattr(verifier, "generate_dop_fixtures", None)))
+        for rate in (176400, 352800):
+            with self.subTest(rate=rate):
+                directory = self.directory / str(rate)
+                paths = verifier.generate_dop_fixtures(directory, rate, frames=257)
+                self.assertEqual(len(paths), 2)
+                original = [path.read_bytes() for path in paths]
+                self.assertNotEqual(original[0], original[1])
+                for path in paths:
+                    with wave.open(str(path), "rb") as stream:
+                        self.assertEqual((stream.getnchannels(), stream.getsampwidth(),
+                                          stream.getframerate(), stream.getnframes()), (2, 3, rate, 257))
+                        data = stream.readframes(257)
+                    channels = [[], []]
+                    for index in range(257):
+                        frame = data[index * 6:index * 6 + 6]
+                        self.assertEqual(frame[2], 5 if index % 2 == 0 else 250)
+                        self.assertEqual(frame[5], frame[2])
+                        channels[0].append(frame[:2])
+                        channels[1].append(frame[3:5])
+                    self.assertNotEqual(channels[0], channels[1])
+                    self.assertGreater(len(set(channels[0])), 200)
+                    self.assertNotEqual(channels[0][0], b"\x69\x69")
+                verifier.generate_dop_fixtures(directory, rate, frames=257)
+                self.assertEqual(original, [path.read_bytes() for path in paths])
+
+    def test_fixture_default_duration_and_invalid_arguments(self):
+        paths = verifier.generate_dop_fixtures(self.directory / "default", 176400)
+        for path in paths:
+            with wave.open(str(path), "rb") as stream:
+                self.assertEqual(stream.getnframes(), 176400)
+        for rate, frames in ((48000, 5), (0, 5), (True, 5), (176400.0, 5),
+                             (176400, 0), (176400, True), (176400, -1), (176400, 1.5),
+                             (176400, 0xFFFFFFFF)):
+            with self.subTest(rate=rate, frames=frames), self.assertRaises(ValueError):
+                verifier.generate_dop_fixtures(self.directory, rate, frames)
+
+    def test_cli_generate_dop_and_compare_dop_preserve_exit_codes_and_report(self):
+        output = self.directory / "cli"
+        result = subprocess.run([sys.executable, str(TOOL), "generate-dop", "--output", str(output),
+                                 "--rate", "352800"], text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(len(list(output.glob("*.wav"))), 2)
+        report_path = self.directory / "report.json"
+        capture = self.capture()
+        command = [sys.executable, str(TOOL), "compare-dop"]
+        for reference in self.references:
+            command += ["--reference", str(reference)]
+        command += ["--capture", str(capture), "--capture-format", "s32_le",
+                    "--capture-rate", "176400", "--report", str(report_path)]
+        original = dop_bytes(self.first + self.second, "s32_le", 0xFA)
+        damaged = bytearray(original)
+        damaged[1] ^= 1
+        for data, exit_code, status in ((original, 0, "pass"), (damaged, 1, "fail"), (b"\0", 2, "error")):
+            with self.subTest(status=status):
+                capture.write_bytes(data)
+                result = subprocess.run(command, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, exit_code, result.stdout)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["status"], status)
+                self.assertEqual(json.loads(report_path.read_text()), report)
+
+    def test_cli_report_cannot_alias_either_input_even_on_error(self):
+        capture = self.capture()
+        originals = {path: path.read_bytes() for path in [capture, *self.references]}
+        for target in (capture, *self.references):
+            for alias_kind in ("direct", "resolved", "hardlink", "symlink"):
+                with self.subTest(target=target.name, alias_kind=alias_kind):
+                    alias = target
+                    if alias_kind == "resolved":
+                        (self.directory / "child").mkdir(exist_ok=True)
+                        alias = self.directory / "child" / ".." / target.name
+                    elif alias_kind in ("hardlink", "symlink"):
+                        alias = self.directory / f"{alias_kind}-{target.name}.json"
+                        try:
+                            if alias_kind == "hardlink":
+                                alias.hardlink_to(target)
+                            else:
+                                alias.symlink_to(target)
+                        except (OSError, NotImplementedError):
+                            continue
+                    result = subprocess.run([sys.executable, str(TOOL), "compare-dop",
+                                             "--reference", str(self.references[0]),
+                                             "--reference", str(self.references[1]),
+                                             "--capture", str(capture), "--capture-format", "s32_le",
+                                             "--capture-rate", "176400", "--report", str(alias)],
+                                            text=True, capture_output=True, check=False)
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertEqual(json.loads(result.stdout)["status"], "error")
+                    for path, original in originals.items():
+                        self.assertEqual(path.read_bytes(), original)
+        capture.write_bytes(b"\0")
+        result = subprocess.run([sys.executable, str(TOOL), "compare-dop", "--reference", str(self.references[0]),
+                                 "--capture", str(capture), "--capture-format", "s32_le", "--capture-rate", "176400",
+                                 "--report", str(capture)], text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(capture.read_bytes(), b"\0")
 
 
 if __name__ == "__main__":
