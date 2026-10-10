@@ -76,9 +76,12 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
 
 **Avanzamento del traguardo 1:** prima copertura del confronto PCM e dei
 confini fra due brani locali a frequenza costante, incluse profondità PCM
-miste, e del payload WAV DoP a 176,4/352,8 kHz nel backend stdout del Squeezelite
-compilato. Il [protocollo di verifica](audio-verification.md) descrive report e
-limiti. Il traguardo resta parziale: DSD nativo, DSF/DFF→DoP, ALSA e DAC reali,
+miste, del payload WAV DoP a 176,4/352,8 kHz e delle sorgenti DSF/DFF DSD64/128
+nel backend stdout del Squeezelite compilato. Il
+[protocollo di verifica](audio-verification.md) descrive report e limiti.
+Le nuove fixture DFF hanno individuato un errore di allineamento dei chunk
+dispari nel decoder, corretto con una patch comune alle due piattaforme.
+Il traguardo resta parziale: DSD nativo, ALSA e DAC reali,
 cambi frequenza, hotplug, rete e carico prolungato richiedono ancora prove.
 
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,

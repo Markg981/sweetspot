@@ -950,4 +950,5 @@ sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
+python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

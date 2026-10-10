@@ -247,6 +247,61 @@ def generate_dop_fixtures(directory: Path, rate: int,
     return paths
 
 
+def generate_dsd_fixtures(directory: Path, rate: int, *, container: str,
+                          frames: int | None = None) -> tuple[list[Path], list[Path]]:
+    """Wrap the diagnostic DoP payload in stereo DSF or uncompressed DFF.
+
+    One carrier frame represents 16 DSD samples per channel. The references
+    retain exactly those frames; final DSF block padding is container data only.
+    """
+    if container not in ("dsf", "dff"):
+        raise ValueError("DSD container must be dsf or dff")
+    frames = rate if frames is None else _integer(frames, "frames", 1)
+    references = generate_dop_fixtures(directory, rate, frames)
+    dsd_rate = rate * 16
+    if container == "dsf":
+        payload_size = ((frames * 2 + 4095) // 4096) * 8192
+        header = (struct.pack("<4sQQQ", b"DSD ", 28, 92 + payload_size, 0)
+                  + struct.pack("<4sQIIIIIIQII", b"fmt ", 52, 1, 0, 2, 2,
+                                dsd_rate, 1, frames * 16, 4096, 0)
+                  + struct.pack("<4sQ", b"data", 12 + payload_size))
+        reversed_bits = bytes(int(f"{byte:08b}"[::-1], 2) for byte in range(256))
+    else:
+        def chunk(name, payload):
+            return struct.pack(">4sQ", name, len(payload)) + payload + b"\0" * (len(payload) & 1)
+
+        properties = (b"SND " + chunk(b"FS  ", struct.pack(">I", dsd_rate))
+                      + chunk(b"CHNL", b"\0\x02SLFTSRGT")
+                      + chunk(b"CMPR", b"DSD \x0enot compressed"))
+        prefix = b"DSD " + chunk(b"FVER", b"\x01\x05\0\0") + chunk(b"PROP", properties)
+        header = (struct.pack(">4sQ", b"FRM8", len(prefix) + 12 + frames * 4)
+                  + prefix + struct.pack(">4sQ", b"DSD ", frames * 4))
+    sources = []
+    try:
+        for track, reference in enumerate(references, 1):
+            path = Path(directory) / f"dsd-{dsd_rate}-track-{track}.{container}"
+            with wave.open(str(reference), "rb") as oracle, path.open("wb") as stream:
+                stream.write(header)
+                for start in range(0, frames, 2048):
+                    data = oracle.readframes(min(2048, frames - start))
+                    # Little-endian WAV24 is [newer, older, marker]. Emit the
+                    # temporal order [older, newer] before changing bit order.
+                    if container == "dsf":
+                        for channel in (0, 1):
+                            payload = bytes(byte for index in range(channel * 3, len(data), 6)
+                                            for byte in (data[index + 1], data[index]))
+                            stream.write(payload.translate(reversed_bits))
+                            stream.write(b"\0" * (4096 - len(payload)))
+                    else:
+                        stream.write(bytes(byte for index in range(0, len(data), 6)
+                                           for byte in (data[index + 1], data[index + 4],
+                                                        data[index], data[index + 3])))
+            sources.append(path)
+    except (OSError, wave.Error, struct.error) as error:
+        raise ValueError(f"Cannot generate DSD fixtures: {error}") from error
+    return sources, references
+
+
 def _dop_frames(info):
     """Reuse bounded PCM reads; keep both payload bytes and S32 low padding."""
     frames = _frames(info)
@@ -560,6 +615,10 @@ def main(argv=None):
     generate_dop = commands.add_parser("generate-dop")
     generate_dop.add_argument("--output", type=Path, required=True)
     generate_dop.add_argument("--rate", type=int, required=True)
+    generate_dsd = commands.add_parser("generate-dsd")
+    generate_dsd.add_argument("--output", type=Path, required=True)
+    generate_dsd.add_argument("--rate", type=int, required=True)
+    generate_dsd.add_argument("--container", choices=("dsf", "dff"), required=True)
     for command in ("compare", "compare-dop"):
         compare = commands.add_parser(command)
         compare.add_argument("--reference", type=Path, action="append", required=True)
@@ -579,6 +638,14 @@ def main(argv=None):
             report = {"status": "pass", "references": [_public_info(_wav_info(path)) for path in paths]}
             if args.command == "generate-dop":
                 report["data_kind"] = "dop_diagnostic_payload_not_listening_audio"
+        elif args.command == "generate-dsd":
+            sources, references = generate_dsd_fixtures(args.output, args.rate, container=args.container)
+            reference_info = [_public_info(_wav_info(path)) for path in references]
+            report = {"status": "pass", "data_kind": "dsd_diagnostic_payload_not_listening_audio",
+                      "references": reference_info,
+                      "sources": [{"path": str(path), "format": args.container, "rate": args.rate * 16,
+                                   "channels": 2, "sample_count": info["frames"] * 16,
+                                   "sha256": _sha256(path)} for path, info in zip(sources, reference_info)]}
         else:
             input_paths = [args.capture, *args.reference]
             if args.report is not None:

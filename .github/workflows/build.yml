@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Strumenti di verifica
-        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign python3-yaml cpio zstd sqlite3
+        run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign python3-yaml cpio zstd sqlite3 gcc
       - name: Test degli script
         run: sh tests/run.sh
       - name: Copia di un CD simulato

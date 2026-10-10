@@ -20,18 +20,28 @@ Occorrono Python 3, zstd, cpio e curl. La prova avvia un Lyrion isolato usando
 la rootfs del pacchetto; le porte 9000 e 3483 devono essere libere. Non eseguirla
 sull'istanza che stai usando per ascoltare musica.
 
-Il driver genera due WAV locali per ciascuno dei 14 casi:
+Su WSL è preferibile acquisire su un filesystem Linux nativo, impostando
+`SWEETSPOT_AUDIO_REPORT_DIR` per esempio sotto `/tmp`, e copiare su Windows
+la cartella completa dopo il termine della prova. Una scrittura o chiusura
+bloccata sul filesystem Windows può invalidare la capture senza indicare un
+difetto nei campioni audio.
+
+Il driver genera due sorgenti locali per ciascuno dei 18 casi e i relativi
+riferimenti WAV. Nei casi DSF/DFF i WAV sono soltanto l'oracle del confronto:
+la playlist contiene i due file DSD originali.
 
 | Tipo di prova | Frequenza | Profondità/carrier | Casi |
 | --- | --- | --- | --- |
 | PCM omogeneo | 44,1/48/96 kHz | 16→16 e 24→24 bit | 6 |
 | PCM misto | 44,1/48/96 kHz | 16→24 e 24→16 bit | 6 |
 | WAV contenente DoP | 176,4/352,8 kHz | PCM24, payload DSD64/128 | 2 |
+| DSF→DoP | carrier 176,4/352,8 kHz | DSD64/128 stereo non compresso | 2 |
+| DFF→DoP | carrier 176,4/352,8 kHz | DSD64/128 stereo non compresso | 2 |
 
 Riproduce una playlist completa con volume 100,
 controllo digitale del volume disattivato, ReplayGain e transizioni spenti;
 verifica le preferenze tramite RPC. Non attiva il ricampionamento. Acquisisce
-stdout PCM stereo a 32 bit little endian con limiti di tempo e spazio,
+stdout stereo a 32 bit little endian con limiti di tempo e spazio,
 confrontando l'intera sequenza con i riferimenti normalizzati.
 
 Ogni esecuzione usa una nuova cartella `run.*`, così una prova interrotta non
@@ -110,12 +120,73 @@ Il report distingue `payload_match`, `markers_match` e `sequence_match`.
 Il guardrail che impedisce di sovrascrivere riferimenti o capture con il report
 vale anche per `compare-dop`.
 
-La prova è classificata `dop_pcm_passthrough`: copre WAV contenenti DoP nel
-decoder PCM e nel backend stdout. La conversione DSF/DFF→DoP e il trasporto
-DSD nativo richiedono protocolli aggiuntivi. Per il comportamento dei marker:
+La prova dei WAV è classificata `dop_pcm_passthrough`: copre WAV contenenti
+DoP nel decoder PCM e nel backend stdout. I casi DSF/DFF descritti sotto
+attraversano invece il decoder DSD; il trasporto DSD nativo richiede altre
+prove. Per il comportamento dei marker:
 [Squeezelite stdout](https://github.com/ralph-irving/squeezelite/blob/72e1fd8abfa9b2f8e9636f033247526920878718/output_stdout.c#L66),
 [framing DoP](https://github.com/ralph-irving/squeezelite/blob/72e1fd8abfa9b2f8e9636f033247526920878718/dop.c#L64)
 e [DoP Open Standard](https://dsd-guide.com/dop-open-standard).
+
+## Sorgenti DSF e DFF
+
+```sh
+python3 tools/audio_verification.py generate-dsd \
+  --container dsf --output graphify-out/dsf-reference --rate 176400
+```
+
+`--container dff` genera l'altro formato. L'output identifica le due sorgenti
+e i due riferimenti WAV DoP; questi ultimi si confrontano con `compare-dop`.
+Anche queste fixture contengono dati diagnostici per capture digitale e non
+brani da ascoltare.
+
+Il driver riproduce due DSF o due DFF consecutivi a DSD64 (2.822.400 bit/s per
+canale) oppure DSD128 (5.644.800 bit/s), con `-D 0:dop` e carrier a 176,4 o
+352,8 kHz. Le sorgenti sono stereo non compresse. Il report usa
+`kind: dsd_to_dop` e conserva formato, bitrate e hash delle sorgenti separati
+dai WAV di riferimento. I log del decoder e dello stream accompagnano la
+capture: il gate richiede le aperture DSD, gli header del formato originale
+e l'annuncio del carrier DoP atteso per entrambe le tracce. Un fallback a
+PCM o un'evidenza del decoder incompleta invalida il caso.
+
+Il DSF usa blocchi di 4096 byte per canale e bit LSB-first; il DFF usa byte
+stereo interleaved e bit MSB-first. Le fixture DSF durano un secondo e hanno
+l'ultimo blocco parziale: il padding del container non appartiene al payload
+audio atteso. Il confronto conserva il conteggio esatto dei frame e verifica
+il confine fra brani senza rimuovere padding emesso dal decoder o
+riallinearsi. Il test dell'encoder controlla separatamente header, ordine dei
+bit/byte e dimensioni contro vettori noti.
+
+Riferimenti del formato: [Sony DSF v1.01](https://dsd-guide.com/sites/default/files/white-papers/DSFFileFormatSpec_E.pdf)
+e [Philips DSDIFF 1.5](https://www.sonicstudio.com/pdf/dsd/DSDIFF_1.5_Spec.pdf).
+Il [decoder Squeezelite](https://github.com/ralph-irving/squeezelite/blob/72e1fd8abfa9b2f8e9636f033247526920878718/dsd.c#L495)
+limita il payload DSF al sample count; la prova reale verifica anche questo
+comportamento alla transizione fra tracce. Il
+[passthrough Lyrion](https://github.com/LMS-Community/slimserver/blob/9.1.1/convert.conf#L389)
+mantiene DSF/DFF nel formato originale quando il player annuncia il decoder DSD.
+
+### Correzione del parser DFF
+
+La prima prova delle sorgenti originali ha superato i 14 casi precedenti e i
+due DSF, ma ha fallito entrambi i DFF. Il decoder del pin Squeezelite
+`72e1fd8` saltava `lunghezza + 12` byte per un chunk DSDIFF: con una lunghezza
+dispari lasciava il byte di padding davanti all'header successivo. Il chunk
+`CMPR` valido da 19 byte delle fixture riproduce il guasto prima dei dati audio.
+La [specifica DSDIFF 1.5, sezione 2.3](https://www.sonicstudio.com/pdf/dsd/DSDIFF_1.5_Spec.pdf)
+richiede quel padding e lo esclude dalla lunghezza dichiarata.
+
+La [patch del motore](../patches/squeezelite/0001-dsdiff-even-chunk-padding.patch)
+include il byte di padding nel salto dei chunk DSDIFF. Entrambe le
+configurazioni Buildroot la applicano tramite `BR2_GLOBAL_PATCH_DIR`.
+Il [test sul parser C](../tests/squeezelite-dff-padding.py) applica la patch
+reale a un estratto invariato del sorgente fissato, poi lo compila e controlla
+chunk pari e dispari, contenitori annidati, ricezione frammentata e DSF.
+Richiede Python 3, Git e un compilatore C (`cc`, oppure `CC=gcc`);
+`--unpatched` è il controllo negativo e deve fallire sui casi DFF dispari.
+Se si riusa una cartella di compilazione Buildroot già popolata, occorre
+`make -C buildroot O="$PWD/output" squeezelite-dirclean` prima di rieseguire
+`scripts/build.sh` con la configurazione della propria piattaforma,
+per riapplicare la patch. La CI costruisce in una cartella nuova.
 
 ## Evidenza di sviluppo
 
@@ -129,9 +200,26 @@ versione `dipendenze-lyrion-27-gf1dafae-dirty`, con Lyrion 9.1.1 e lo stesso
 SHA-256 di Squeezelite. Il report locale è
 `graphify-out/audio-evidence/run.STLgVR/report.json`, scope `software_stdout`.
 La suite locale ha superato 405 controlli, inclusi 55 test del comparatore e
-31 del driver. La CI del branch deve validare le proprie rootfs x86 e ARM;
-la compilazione collegata identifica l'artifact usato, non certifica il nuovo
-commit con la matrice estesa.
+31 del driver. La [CI della PR #14](https://github.com/Markg981/sweetspot/actions/runs/38026669051)
+ha poi superato test, compilazioni e prove Lyrion su x86 e ARM, sul commit
+`3ae1796`. Quella CI riguarda i 14 casi precedenti; la nuova estensione
+DSF/DFF richiede una propria validazione.
+
+La nuova matrice ha prima ottenuto 16/18 sulla stessa rootfs: il report
+`graphify-out/dsd-source-evidence-native/run.4h9HVm/report.json` conserva
+entrambi i guasti DFF. Dopo la patch, un'unica esecuzione completa ha
+superato 18/18 con Lyrion 9.1.1 e il Squeezelite del pin ricompilato in WSL
+con `-DDSD -DNO_FAAD -DNO_MAD -DNO_MPG123` e suffisso di sviluppo.
+Il runtime è `dipendenze-lyrion-27-gf1dafae-dff-padding-dev`, Squeezelite SHA-256
+`1878b3e6c5696c3c4a3fae6621f9e63310b94f426a886945f9c2b8efbfa94305`;
+report `graphify-out/dff-fixed-evidence-native/run.ieQJvb/report.json`.
+I quattro casi DSF/DFF hanno confrontato tutti i frame delle due tracce,
+con header e carrier attesi e senza fallback PCM. Questa ricompilazione
+locale sostituisce soltanto il player in un pacchetto privato di prova:
+non certifica gli altri codec né le immagini Buildroot complete.
+Queste ultime devono superare la CI della nuova PR su entrambe le architetture.
+La suite Linux finale ha superato 429 controlli, inclusi 65 test del
+comparatore/fixture, 35 del driver e 10 del parser C, senza test saltati.
 
 Una prima esecuzione della matrice estesa aveva invalidato due casi per
 timeout di chiusura della capture su WSL con output nel filesystem Windows;
@@ -142,9 +230,9 @@ esecuzioni diverse.
 
 ## Copertura ancora da completare
 
-Questo gate copre PCM locale, profondità PCM miste e payload DoP, frequenza
-costante e due brani consecutivi nel backend software. Restano aperti DSD
-nativo, DSF/DFF→DoP, cambi di frequenza,
+Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
+frequenza costante e due brani consecutivi nel backend software. Restano
+aperti DSD nativo, DFF compressi DST, mono/multicanale, seek, cambi di frequenza,
 ALSA, USB/I2S/S/PDIF reali, hotplug, rete/NAS, carico prolungato e la matrice
 computer/DAC/firmware per release. Non misura jitter del clock, rumore elettrico
 USB o fedeltà dell'uscita analogica. Il traguardo 1 rimane parzialmente coperto

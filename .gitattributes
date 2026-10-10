@@ -1,2 +1,4 @@
 # Script e configurazioni girano su Linux (Buildroot, Docker, target): sempre LF
 * text=auto eol=lf
+# Il prefisso di contesto dei diff precede i tab del codice originale.
+*.patch whitespace=-space-before-tab

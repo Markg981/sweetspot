@@ -347,12 +347,13 @@ sempre svegli. Il Turbo è sempre spento.
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
-| Bit-perfect | `tools/genera-test-dop.py`: vedi sotto |
+| Campioni e continuità nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF; [protocollo](docs/audio-verification.md) |
+| Riconoscimento DoP del DAC | `tools/genera-test-dop.py`: vedi sotto |
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
 | XRUN ALSA registrati | pagina di stato; zero XRUN nel log non esclude carenza di dati, errori DSP o altre interruzioni |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 
-### Prova bit-perfect con il file DoP
+### Prova di riconoscimento con il file DoP
 
 ```sh
 python3 tools/genera-test-dop.py
@@ -375,7 +376,8 @@ Il [comparatore PCM e la prova Lyrion/Squeezelite](docs/audio-verification.md)
 confrontano ogni campione e il passaggio fra due brani, con report JSON e
 capture conservate dalla CI. Il backend software stdout viene controllato
 a 44,1/48/96 kHz e 16/24 bit, inclusi passaggi fra profondità diverse, e sul
-payload DoP a 176,4/352,8 kHz. La certificazione di ALSA e dei DAC resta aperta.
+payload DoP a 176,4/352,8 kHz, anche decodificando sorgenti DSF/DFF DSD64/128.
+La certificazione di ALSA e dei DAC resta aperta.
 
 ### Qualità sonora e compatibilità
 
