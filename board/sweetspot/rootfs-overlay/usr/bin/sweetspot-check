@@ -109,7 +109,7 @@ check_usb() {
 }
 
 check_dac() {
-	local card name usbid fmts rates nat bdf irqs irq aff tid policy prio cpus hw st dev
+	local card name usbid fmts rates nat bdf irqs irq aff tid policy prio cpus snapshot st dev sub fmt rate ch buffer period label severity description
 	card=$(dac_find)
 	if [ -z "$card" ]; then
 		emit ATTENZIONE "DAC" "nessun DAC USB trovato: e' acceso e collegato?"
@@ -161,21 +161,49 @@ check_dac() {
 			emit ATTENZIONE "Thread di riproduzione" "non real-time"
 		fi
 	fi
-	dev=$(dac_playback_dev "$card")
-	hw=$PROC/asound/card$card/pcm${dev:-0}p/sub0/hw_params
-	st=$(sed -n 's/^state: //p' "$PROC/asound/card$card/pcm${dev:-0}p/sub0/status" 2>/dev/null)
-	if [ -f "$hw" ] && ! grep -q closed "$hw"; then
-		emit OK "Uscita in corso" "$(sed -n 's/^format: //p' "$hw"), $(sed -n 's/^rate: \([0-9]*\).*/\1/p' "$hw") Hz, $(sed -n 's/^channels: //p' "$hw") canali, ${st:-?}"
-		emit INFO "Buffer ALSA" "$(sed -n 's/^buffer_size: //p' "$hw") campioni, periodo $(sed -n 's/^period_size: //p' "$hw")"
+	snapshot=$(dac_pcm_snapshot "$card")
+	IFS='|' read -r dev sub st fmt rate ch buffer period <<EOF
+$snapshot
+EOF
+	label="Uscita audio"; severity=INFO
+	case "$st" in
+		RUNNING) label="Uscita in corso"; severity=OK; description="riproduzione attiva" ;;
+		DRAINING) description="Uscita in svuotamento: i buffer stanno terminando" ;;
+		PREPARED) description="uscita preparata, riproduzione non avviata" ;;
+		PAUSED) description="uscita in pausa" ;;
+		OPEN|SETUP) description="uscita aperta, riproduzione non avviata" ;;
+		XRUN) severity=ATTENZIONE; description="interruzione ALSA (buffer esaurito)" ;;
+		SUSPENDED) severity=ATTENZIONE; description="uscita sospesa dal sistema" ;;
+		DISCONNECTED) severity=ATTENZIONE; description="dispositivo scollegato" ;;
+		CLOSED) description="uscita chiusa (nessuna riproduzione)" ;;
+		UNAVAILABLE) severity=ATTENZIONE; description="PCM selezionato non disponibile" ;;
+		AMBIGUOUS) severity=ATTENZIONE; description="piu' substream aperti: uscita non verificabile" ;;
+		*) severity=ATTENZIONE; description="stato o parametri non verificabili" ;;
+	esac
+	if [ "$st" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$ch" ]; then
+		emit "$severity" "$label" "DEV=$dev/sub$sub: $fmt, $rate Hz, $ch canali, $st"
 	else
-		emit INFO "Uscita" "chiusa (nessuna riproduzione)"
+		emit "$severity" "$label" "DEV=$dev/sub$sub: $description ($st)"
+		[ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$ch" ] &&
+			emit INFO "Parametri aperti" "DEV=$dev/sub$sub: $fmt, $rate Hz, $ch canali; non provano la riproduzione"
 	fi
+	[ -n "$buffer" ] && [ -n "$period" ] &&
+		emit INFO "Buffer ALSA" "DEV=$dev/sub$sub: $buffer campioni, periodo $period"
+
 }
 
 check_player() {
-	local pid xr bufs state vol
+	local pid xr recovery counts bufs state vol
 	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
-	xr=$(grep -c XRUN "$SQLOG" 2>/dev/null)
+	# Il messaggio di output_alsa.c segue il prefisso del logger oppure e' nudo.
+	# Confrontare il messaggio intero evita sottostringhe e doppi conteggi.
+	counts=$(awk '
+		{ message=$0; sub(/^\[[^]]*\][[:space:]]+[[:alnum:]_]+:[0-9]+[[:space:]]+/, "", message) }
+		message == "XRUN" { events++ }
+		message ~ /^XRUN recover failed: / { recovery++ }
+		END { printf "%d %d", events, recovery }
+	' "$SQLOG" 2>/dev/null) || counts=""
+	xr=${counts% *}; recovery=${counts#* }
 	state=$(cat "$RUN/player.stato" 2>/dev/null)
 	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 		emit OK "Player" "$state"
@@ -185,12 +213,19 @@ check_player() {
 		emit ATTENZIONE "Player" "${state:-non avviato}"
 	fi
 	xr=${xr:-0}
-	if [ ! -f "$SQLOG" ]; then
+	if [ ! -f "$SQLOG" ] || [ -z "$counts" ]; then
 		emit INFO "XRUN ALSA registrati" "registro non disponibile"
 	elif [ "$xr" = 0 ]; then
-		emit INFO "XRUN ALSA registrati" "0 nel registro; non esclude interruzioni dello stream o del DSP e non misura il jitter del clock"
+		emit INFO "XRUN ALSA registrati" "0 nel registro storico; non esclude interruzioni dello stream o del DSP e non misura il jitter del clock"
 	else
-		emit ATTENZIONE "XRUN ALSA registrati" "$xr nel registro"
+		emit ATTENZIONE "XRUN ALSA registrati" "$xr nel registro storico; non misura il jitter del clock"
+	fi
+	if [ ! -f "$SQLOG" ] || [ -z "$counts" ]; then
+		emit INFO "Recuperi XRUN falliti" "registro non disponibile"
+	elif [ "${recovery:-0}" = 0 ]; then
+		emit INFO "Recuperi XRUN falliti" "0 nel registro storico"
+	else
+		emit ATTENZIONE "Recuperi XRUN falliti" "$recovery nel registro storico"
 	fi
 	bufs=$(player_buffers)
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"

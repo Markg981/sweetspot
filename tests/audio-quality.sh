@@ -84,6 +84,94 @@ common "config_build '$E/settings'"
 expect "microfono richiesto esplicitamente: nessun DAC" '' "$(common dac_find)"
 printf 'DAC=auto\nCORREZIONE=si\nMODALITA=player\n' > "$E/settings"
 common "config_build '$E/settings'"
+# Snapshot: DEV0 is a decoy; the player-selected endpoint is DEV1.
+echo "Snapshot del PCM selezionato"
+P=$E/proc/asound/card1/pcm1p
+mkdir -p "$P/sub0" "$E/proc/asound/card1/pcm0p/sub0"
+params() {
+	printf 'access: RW_INTERLEAVED\nformat: %s\nchannels: 2\nrate: 96000 (96000/1)\nbuffer_size: 4096\nperiod_size: 1024\n' "${2:-S32_LE}" > "$1/hw_params"
+}
+params "$E/proc/asound/card1/pcm0p/sub0" S16_LE
+printf 'state: RUNNING\n' > "$E/proc/asound/card1/pcm0p/sub0/status"
+mkdir -p "$E/proc/asound/card1/pcm1c/sub0"
+params "$E/proc/asound/card1/pcm1c/sub0" S16_LE
+printf 'state: RUNNING\n' > "$E/proc/asound/card1/pcm1c/sub0/status"
+params "$P/sub0"
+printf 'state: RUNNING\n' > "$P/sub0/status"
+expect "hw_now ignora PCM0 configurato" 'S32_LE 96000 2' "$(common 'dac_hw_now 1')"
+expect "snapshot DEV1 con buffer" '1|0|RUNNING|S32_LE|96000|2|4096|1024' "$(common 'dac_pcm_snapshot 1')"
+for state in OPEN SETUP PREPARED RUNNING PAUSED XRUN SUSPENDED DRAINING DISCONNECTED; do
+	printf 'state: %s\n' "$state" > "$P/sub0/status"
+	expect "stato $state non alterato" "1|0|$state|S32_LE|96000|2|4096|1024" "$(common 'dac_pcm_snapshot 1')"
+done
+printf 'closed\n' > "$P/sub0/hw_params"
+expect "selezionato chiuso, decoy RUNNING" '1|0|CLOSED|||||' "$(common 'dac_pcm_snapshot 1')"
+expect "hw_now non ripiega sul decoy" '' "$(common 'dac_hw_now 1')"
+mkdir -p "$P/sub1"
+params "$P/sub1"
+printf 'state: RUNNING\n' > "$P/sub1/status"
+expect "sub0 chiuso, sub1 aperto" '1|1|RUNNING|S32_LE|96000|2|4096|1024' "$(common 'dac_pcm_snapshot 1')"
+params "$P/sub0"
+expect "due substream aperti: ownership ambigua" '1|-|AMBIGUOUS|||||' "$(common 'dac_pcm_snapshot 1')"
+expect "hw_now rifiuta ownership ambigua" '' "$(common 'dac_hw_now 1')"
+rm -r "$P/sub1"
+rm "$P/sub0/hw_params"
+expect "hw_params mancante" '1|0|UNAVAILABLE|||||' "$(common 'dac_pcm_snapshot 1')"
+rm -r "$P/sub0"
+expect "substream mancante" '1|-|UNAVAILABLE|||||' "$(common 'dac_pcm_snapshot 1')"
+mkdir -p "$P/sub0"
+params "$P/sub0"
+expect "status assente conserva parametri osservati" '1|0|UNVERIFIED|S32_LE|96000|2|4096|1024' "$(common 'dac_pcm_snapshot 1')"
+printf 'state: SOMETHING\n' > "$P/sub0/status"
+expect "stato sconosciuto non diventa RUNNING" '1|0|UNVERIFIED|S32_LE|96000|2|4096|1024' "$(common 'dac_pcm_snapshot 1')"
+printf 'state: RUNNING\nstate: PAUSED\n' > "$P/sub0/status"
+expect "status duplicato non verificato" '1|0|UNVERIFIED|S32_LE|96000|2|4096|1024' "$(common 'dac_pcm_snapshot 1')"
+printf 'state: RUNNING\n' > "$P/sub0/status"
+for field in format rate channels buffer_size period_size; do
+	params "$P/sub0"
+	printf '%s: 2\n' "$field" >> "$P/sub0/hw_params"
+	expect "$field duplicato invalida parametri" '1|0|UNVERIFIED|||||' "$(common 'dac_pcm_snapshot 1')"
+	expect "hw_now rifiuta $field duplicato" '' "$(common 'dac_hw_now 1')"
+done
+for field in format rate channels; do
+	params "$P/sub0"
+	sed "/^$field:/d" "$P/sub0/hw_params" > "$E/params.tmp"
+	cat "$E/params.tmp" > "$P/sub0/hw_params"
+	expect "$field mancante invalida parametri" '1|0|UNVERIFIED|||||' "$(common 'dac_pcm_snapshot 1')"
+done
+for pair in 'format: BAD_FORMAT' 'format: S32_LE garbage' 'rate: 0' 'rate: 1+2' 'rate: 9999999999999999999999999999' 'channels: -2' 'channels: 0' 'channels: 2 garbage' 'channels: 999999999999999999999999' 'buffer_size: nope' 'period_size: 0'; do
+	params "$P/sub0"
+	field=${pair%%:*}
+	sed "/^$field:/d" "$P/sub0/hw_params" > "$E/params.tmp"
+	cat "$E/params.tmp" > "$P/sub0/hw_params"
+	printf '%s\n' "$pair" >> "$P/sub0/hw_params"
+	expect "$pair invalida parametri" '1|0|UNVERIFIED|||||' "$(common 'dac_pcm_snapshot 1')"
+done
+for annotation in '(96000/0)' '(0/1)' '(4294967296/1)' '(96000/4294967296)' '(96000/999999999999999999999999)' '(96000//1)' '(96000/)' '(96000/1'; do
+	params "$P/sub0"
+	sed '/^rate:/d' "$P/sub0/hw_params" > "$E/params.tmp"
+	cat "$E/params.tmp" > "$P/sub0/hw_params"
+	printf 'rate: 96000 %s\n' "$annotation" >> "$P/sub0/hw_params"
+	expect "annotazione rate $annotation invalida parametri" '1|0|UNVERIFIED|||||' "$(common 'dac_pcm_snapshot 1')"
+	expect "hw_now rifiuta annotazione rate $annotation" '' "$(common 'dac_hw_now 1')"
+done
+params "$P/sub0"
+sed 's@96000 (96000/1)@96000 (192001/2)@' "$P/sub0/hw_params" > "$E/params.tmp"
+cat "$E/params.tmp" > "$P/sub0/hw_params"
+expect "annotazione razionale positiva non impone uguaglianza esatta" '1|0|RUNNING|S32_LE|96000|2|4096|1024' "$(common 'dac_pcm_snapshot 1')"
+for format in DSD_U8 DSD_U16_LE DSD_U16_BE DSD_U32_LE DSD_U32_BE; do
+	params "$P/sub0" "$format"
+	expect "DSD nativo $format" "1|0|RUNNING|$format|96000|2|4096|1024" "$(common 'dac_pcm_snapshot 1')"
+done
+params "$P/sub0"
+sed '/^buffer_size:/d; /^period_size:/d' "$P/sub0/hw_params" > "$E/params.tmp"
+cat "$E/params.tmp" > "$P/sub0/hw_params"
+expect "buffer e periodo opzionali" '1|0|RUNNING|S32_LE|96000|2||' "$(common 'dac_pcm_snapshot 1')"
+expect "endpoint non risolto" '-|-|UNAVAILABLE|||||' "$(common 'dac_pcm_snapshot 99')"
+mv "$P" "$E/pcm1p-absent"
+expect "endpoint selezionato assente non ripiega" '1|-|UNAVAILABLE|||||' "$(common 'dac_pcm_snapshot 1')"
+mv "$E/pcm1p-absent" "$P"
+rm -r "$P/sub0" "$E/proc/asound/card1/pcm0p" "$E/proc/asound/card1/pcm1c"
 # Solo il lancio del processo e' sostituito; gli argomenti e il file sono reali.
 printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
 chmod +x "$E/bin/sweetspot-dsp"

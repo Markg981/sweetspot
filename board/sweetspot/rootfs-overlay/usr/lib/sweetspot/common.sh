@@ -597,17 +597,78 @@ lms_scanning() { [ "$(lms_get '.rescan' '' rescan '?')" = 1 ]; }
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
 dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
-# Formato che arriva davvero al DAC adesso: "FORMATO FREQUENZA CANALI"
-# (es. "S32_LE 96000 2"), niente se l'uscita e' chiusa.
-dac_hw_now() {
-	local f
-	for f in "$PROC"/asound/card"$1"/pcm*p/sub*/hw_params; do
-		[ -f "$f" ] || continue
-		grep -q '^format:' "$f" || continue
-		awk '/^format:/ {f=$2} /^rate:/ {r=$2} /^channels:/ {c=$2} END {print f, r, c}' "$f"
-		return 0
+# Osservazione /proc del solo PCM scelto dal player, non certificazione del DAC.
+# DEV|SUB|STATE|FORMAT|RATE|CHANNELS|BUFFER_SIZE|PERIOD_SIZE
+# Parametri e stato vengono letti dallo stesso substream; piu' substream
+# aperti non provano quale appartenga al player e sono AMBIGUOUS.
+dac_pcm_snapshot() {
+	local dev sub=- p n selected='' closed='' unreadable='' count=0 state params
+	dev=$(dac_playback_dev "$1") || dev='-'
+	case "$dev" in ''|*[!0-9]*) printf '%s\n' '-|-|UNAVAILABLE|||||'; return 0 ;; esac
+	for p in "$PROC/asound/card$1/pcm${dev}p"/sub*; do
+		[ -d "$p" ] || continue
+		n=${p##*/sub}
+		case "$n" in ''|*[!0-9]*) continue ;; esac
+		if [ ! -r "$p/hw_params" ]; then
+			unreadable=$n
+		elif [ "$(cat "$p/hw_params" 2>/dev/null)" = closed ]; then
+			[ -n "$closed" ] || closed=$n
+		else
+			count=$((count + 1)); selected=$p; sub=$n
+		fi
 	done
-	return 1
+	if [ "$count" -gt 1 ]; then
+		printf '%s|-|AMBIGUOUS|||||\n' "$dev"; return 0
+	fi
+	if [ -n "$unreadable" ]; then
+		printf '%s|%s|UNAVAILABLE|||||\n' "$dev" "$unreadable"; return 0
+	fi
+	if [ "$count" -eq 0 ]; then
+		if [ -n "$closed" ]; then state=CLOSED; sub=$closed; else state=UNAVAILABLE; fi
+		printf '%s|%s|%s|||||\n' "$dev" "$sub" "$state"; return 0
+	fi
+	# Numeric validation is lexical then bounded in awk, never shell arithmetic.
+	# hw_params rates may include the kernel's rational annotation (96000/1).
+	params=$(awk '
+		function positive(v) { return v ~ /^[0-9]+$/ && length(v)<=10 && v+0>0 && v+0<=4294967295 }
+		/^format:/ { nf++; f=$2; if(NF!=2) bad=1 }
+		/^rate:/ {
+			nr++; r=$2
+			if(NF==3 && $3 ~ /^\([0-9]+\/[0-9]+\)$/) {
+				annotation=$3; gsub(/[()]/,"",annotation); split(annotation,ratio,"/")
+				if(!positive(ratio[1]) || !positive(ratio[2])) bad=1
+			} else if(NF!=2) bad=1
+		}
+		/^channels:/ { nc++; c=$2; if(NF!=2) bad=1 }
+		/^buffer_size:/ { nb++; b=$2; if(NF!=2 || !positive(b)) bad=1 }
+		/^period_size:/ { np++; p=$2; if(NF!=2 || !positive(p)) bad=1 }
+		END {
+			formats=" S8 U8 S16_LE S16_BE U16_LE U16_BE S24_LE S24_BE U24_LE U24_BE S32_LE S32_BE U32_LE U32_BE FLOAT_LE FLOAT_BE FLOAT64_LE FLOAT64_BE IEC958_SUBFRAME_LE IEC958_SUBFRAME_BE MU_LAW A_LAW IMA_ADPCM MPEG GSM S20_LE S20_BE U20_LE U20_BE SPECIAL S24_3LE S24_3BE U24_3LE U24_3BE S20_3LE S20_3BE U20_3LE U20_3BE S18_3LE S18_3BE U18_3LE U18_3BE G723_24 G723_24_1B G723_40 G723_40_1B DSD_U8 DSD_U16_LE DSD_U32_LE DSD_U16_BE DSD_U32_BE "
+			if(bad || nf!=1 || nr!=1 || nc!=1 || nb>1 || np>1 ||
+				f !~ /^[A-Z0-9_]+$/ || !index(formats," " f " ") || !positive(r) || !positive(c)) exit 1
+			printf "%s|%s|%s|%s|%s", f,r,c,b,p
+		}' "$selected/hw_params" 2>/dev/null) || params=''
+	state=$(awk '/^state:/ { n++; s=$2; if(NF!=2) bad=1 }
+		END { if(n==1 && !bad) print s }' "$selected/status" 2>/dev/null)
+	case "$state" in
+		OPEN|SETUP|PREPARED|RUNNING|PAUSED|DRAINING|XRUN|SUSPENDED|DISCONNECTED) ;;
+		*) state=UNVERIFIED ;;
+	esac
+	if [ -z "$params" ]; then state=UNVERIFIED; params='||||'; fi
+	printf '%s|%s|%s|%s\n' "$dev" "$sub" "$state" "$params"
+}
+
+# Parametri hardware aperti osservati: "FORMATO FREQUENZA CANALI".
+# Compatibilita': questi parametri non sono un verdetto di riproduzione.
+dac_hw_now() {
+	local snapshot _dev _sub state fmt rate channels _buffer _period
+	snapshot=$(dac_pcm_snapshot "$1")
+	IFS='|' read -r _dev _sub state fmt rate channels _buffer _period <<EOF
+$snapshot
+EOF
+	case "$state" in CLOSED|UNAVAILABLE|AMBIGUOUS) return 1 ;; esac
+	[ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$channels" ] || return 1
+	printf '%s %s %s\n' "$fmt" "$rate" "$channels"
 }
 
 # Bit utili di un formato ALSA (contenitore): S16_LE 16, S24_3LE 24, S32_LE 32.

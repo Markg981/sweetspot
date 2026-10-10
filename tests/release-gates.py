@@ -45,16 +45,70 @@ def eligible(job, ref, results):
     return eval(expression, {"__builtins__": {}}, {})
 
 
-def workflow_script(job, name, board="x86_64"):
+def workflow_script(job, name, board="x86_64", runner_temp=None):
     if job not in WORKFLOW["jobs"]:
         raise AssertionError(f"missing workflow job: {job}")
     for step in WORKFLOW["jobs"][job]["steps"]:
         if step.get("name") == name:
-            return step["run"].replace("${{ matrix.scheda }}", board)
+            script = step["run"].replace("${{ matrix.scheda }}", board)
+            if runner_temp is not None:
+                script = re.sub(r"\$\{\{\s*runner\.temp\s*\}\}",
+                                lambda _: str(runner_temp), script)
+            return script
     raise AssertionError(f"missing workflow check: {job}/{name}")
 
 
 class ReleaseGateTests(unittest.TestCase):
+    def test_audio_evidence_survives_sudo_environment_filtering(self):
+        steps = WORKFLOW["jobs"]["lyrion"]["steps"]
+        run_step = next(step for step in steps
+                        if step.get("name") == "Lyrion e verifica PCM nel sistema compilato")
+        upload = next(step for step in steps
+                      if step.get("name") == "Evidenza della verifica audio software")
+        for board in ("x86_64", "rpi"):
+            for dirname in ("runner-temp", "runner temp with spaces"):
+                with self.subTest(board=board, dirname=dirname), tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    runner_temp = root / dirname
+                    tools = root / "test-bin"
+                    tools.mkdir()
+                    # Model a sudo policy that drops the caller's report variable,
+                    # even with -E. The real env applet must receive the assignment.
+                    sudo = tools / "sudo"
+                    sudo.write_text('#!/bin/sh\n[ "$1" = -E ] && shift\n'
+                                    'exec env -u SWEETSPOT_AUDIO_REPORT_DIR "$@"\n')
+                    sudo.chmod(0o755)
+                    tests = root / "tests"
+                    tests.mkdir()
+                    (tests / "prova-lyrion.sh").write_text(
+                        '#!/bin/sh\nset -eu\n'
+                        'report=${SWEETSPOT_AUDIO_REPORT_DIR:-graphify-out/audio-evidence}\n'
+                        'mkdir -p "$report/run.fixture"\n'
+                        'printf "%s\\n" "$1" > "$report/run.fixture/report.txt"\n')
+                    expand = lambda value: re.sub(r"\$\{\{\s*runner\.temp\s*\}\}",
+                                                 lambda _: str(runner_temp), value)
+                    env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
+                           **{key: expand(value) for key, value in run_step.get("env", {}).items()}}
+                    result = subprocess.run(
+                        ["bash", "-e", "-o", "pipefail", "-c",
+                         workflow_script("lyrion", run_step["name"], board, runner_temp)],
+                        cwd=root, env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = Path(expand(upload["with"]["path"])) / "run.fixture/report.txt"
+                    self.assertTrue(report.is_file(), f"no evidence under upload path: {report}")
+                    self.assertEqual(report.read_text(), f"sweetspot-{board}-aggiornamento.tar\n")
+
+    def test_audio_upload_is_required_even_after_probe_failure(self):
+        definition = WORKFLOW["jobs"]["lyrion"]
+        upload = next(step for step in definition["steps"]
+                      if step.get("name") == "Evidenza della verifica audio software")
+        self.assertTrue(upload.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(upload.get("if"), "always()")
+        self.assertEqual(upload["with"].get("if-no-files-found"), "error")
+        self.assertFalse(upload.get("continue-on-error", False))
+        self.assertFalse(definition.get("continue-on-error", False))
+        self.assertIn("lyrion", ancestors("release"))
+
     def test_publication_waits_for_every_required_job(self):
         publishers = [(job, step) for job, definition in WORKFLOW["jobs"].items()
                       for step in definition["steps"]

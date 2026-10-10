@@ -77,22 +77,45 @@ verdict() { # formato frequenza canali
 	fi
 }
 
-echo '<h2>In riproduzione</h2><div class="card">'
-hw=""
-[ -n "$card" ] && hw=$(dac_hw_now "$card")
+echo '<h2>Uscita audio</h2><div class="card">'
+snapshot="-|-|UNAVAILABLE|||||"
+[ -n "$card" ] && snapshot=$(dac_pcm_snapshot "$card")
+IFS='|' read -r dev sub pcm_state fmt rate channels buffer period <<EOF
+$snapshot
+EOF
 np=""
 [ "$(mode)" = completa ] && [ -n "$mac" ] && np=$(lms_now_playing "$mac")
 src_rate=$(printf '%s' "$np" | jq -r '.rate // empty' 2>/dev/null)
 src_bits=$(printf '%s' "$np" | jq -r '.bits // empty' 2>/dev/null)
 src_type=$(printf '%s' "$np" | jq -r '.type // empty' 2>/dev/null)
-if [ -z "$hw" ]; then
-	info_row "" "Uscita ferma" "Durante la riproduzione qui compare il formato aperto sul DAC. Il confronto dei campioni richiede una prova dedicata."
-else
+label="Uscita audio"; severity=INFO
+case "$pcm_state" in
+	RUNNING) label="Uscita in corso"; severity=OK; description="riproduzione attiva" ;;
+	DRAINING) description="Uscita in svuotamento: i buffer stanno terminando" ;;
+	PREPARED) description="uscita preparata, riproduzione non avviata" ;;
+	PAUSED) description="uscita in pausa" ;;
+	OPEN|SETUP) description="uscita aperta, riproduzione non avviata" ;;
+	XRUN) severity=ATTENZIONE; description="interruzione ALSA (buffer esaurito)" ;;
+	SUSPENDED) severity=ATTENZIONE; description="uscita sospesa dal sistema" ;;
+	DISCONNECTED) severity=ATTENZIONE; description="dispositivo scollegato" ;;
+	CLOSED) description="uscita chiusa (nessuna riproduzione)" ;;
+	UNAVAILABLE) severity=ATTENZIONE; description="PCM selezionato non disponibile" ;;
+	AMBIGUOUS) severity=ATTENZIONE; description="più substream aperti: uscita non verificabile" ;;
+	*) severity=ATTENZIONE; description="stato o parametri non verificabili" ;;
+esac
+if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$channels" ]; then
+	info_row "$severity" "$label" "DEV=$dev/sub$sub: $fmt, $rate Hz, $channels canali, $pcm_state"
 	title=$(printf '%s' "$np" | jq -r '[.artist, .title] | map(select(. != "")) | join(" - ")' 2>/dev/null)
 	[ -n "$title" ] && info_row "" "Brano" "$title"
-	# shellcheck disable=SC2086
-	verdict $hw
+	verdict "$fmt" "$rate" "$channels"
+else
+	info_row "$severity" "$label" "DEV=$dev/sub$sub: $description ($pcm_state)"
+	[ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$channels" ] &&
+		info_row INFO "Parametri aperti" "DEV=$dev/sub$sub: $fmt, $rate Hz, $channels canali; non provano la riproduzione. Integrità dei campioni non verificata."
 fi
+[ -n "$buffer" ] && [ -n "$period" ] &&
+	info_row INFO "Buffer ALSA" "DEV=$dev/sub$sub: $buffer campioni, periodo $period"
+
 echo '</div>'
 
 # --- Correzione ambientale ------------------------------------------------------------

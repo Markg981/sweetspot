@@ -343,14 +343,14 @@ sempre svegli. Il Turbo è sempre spento.
 
 | Verifica | Come |
 | --- | --- |
-| Formato e percorso configurato | *Impostazioni Sweetspot → Audio*, riquadro "In riproduzione"; non confronta i campioni |
+| Stato ALSA, formato e percorso configurato | *Impostazioni Sweetspot → Audio*, riquadro "Uscita audio": endpoint selezionato, substream e stato osservato; non confronta i campioni |
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
 | Campioni e continuità nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF; [protocollo](docs/audio-verification.md) |
 | Riconoscimento DoP del DAC | `tools/genera-test-dop.py`: vedi sotto |
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
-| XRUN ALSA registrati | pagina di stato; zero XRUN nel log non esclude carenza di dati, errori DSP o altre interruzioni |
+| XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 
 ### Prova di riconoscimento con il file DoP
