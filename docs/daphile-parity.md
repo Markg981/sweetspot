@@ -79,6 +79,10 @@ confini fra due brani locali a frequenza costante, incluse profondità PCM
 miste, del payload WAV DoP a 176,4/352,8 kHz e delle sorgenti DSF/DFF DSD64/128
 nel backend stdout del Squeezelite compilato. Il
 [protocollo di verifica](audio-verification.md) descrive report e limiti.
+La matrice aggiunge sei transizioni WAV24 fra 44,1, 48 e 96 kHz, confrontando
+la sequenza completa dei frame e gli annunci di rate del motore. Il pacing
+del consumer stdout resta distinto dalla frequenza delle tracce e dal clock
+del DAC; la nuova estensione richiede la propria evidenza di esecuzione.
 Le nuove fixture DFF hanno individuato un errore di allineamento dei chunk
 dispari nel decoder, corretto con una patch comune alle due piattaforme.
 Le immagini complete x86 e ARM hanno superato i 18 casi software nella
@@ -88,12 +92,16 @@ gli stati ALSA di riproduzione, preparazione e guasto e segnala dati mancanti
 o più substream aperti. Gli eventi XRUN e i recuperi falliti sono conteggiati
 separatamente nel registro storico. Queste osservazioni aiutano a individuare
 un guasto, ma non certificano i campioni né l'uscita del DAC.
-Gli stessi 18 casi si ripetono ora sul driver ALSA del kernel x86 di
-Sweetspot (PREEMPT_RT, avviato in QEMU nella CI), su `hw:Loopback` di
+La [CI della PR #16](https://github.com/Markg981/sweetspot/actions/runs/38056065758)
+ha confermato le compilazioni e i 18 casi precedenti su x86 e ARM, pubblicando
+anche entrambi gli archivi di evidenza audio.
+I 18 casi a frequenza costante si ripetono ora sul driver ALSA del kernel x86
+di Sweetspot (PREEMPT_RT, avviato in QEMU nella CI), su `hw:Loopback` di
 snd-aloop, con i parametri `hw:`, mmap e periodi del player. Un XRUN o un
 campione diverso blocca la release. Su ARM resta la sola prova stdout.
-Il traguardo resta parziale: DSD nativo, DAC reali, cambi frequenza su ALSA,
-hotplug, rete e carico prolungato richiedono ancora prove.
+Il traguardo resta parziale: DSD nativo, DAC reali, cambi PCM/DSD, cambi
+frequenza su ALSA e sui DAC, hotplug, rete e carico prolungato richiedono
+ancora prove.
 
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,
 livello e impostazioni equivalenti. La correzione ambientale può migliorare

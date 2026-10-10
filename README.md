@@ -347,7 +347,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
-| Campioni e continuità nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF; [protocollo](docs/audio-verification.md) |
+| Campioni, continuità e cambi di frequenza nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF e sei transizioni PCM fra 44,1/48/96 kHz; [protocollo](docs/audio-verification.md) |
 | Riconoscimento DoP del DAC | `tools/genera-test-dop.py`: vedi sotto |
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
 | XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
@@ -377,7 +377,7 @@ confrontano ogni campione e il passaggio fra due brani, con report JSON e
 capture conservate dalla CI. Il backend software stdout viene controllato
 a 44,1/48/96 kHz e 16/24 bit, inclusi passaggi fra profondità diverse, e sul
 payload DoP a 176,4/352,8 kHz, anche decodificando sorgenti DSF/DFF DSD64/128.
-Sul PC gli stessi casi si ripetono anche nel driver ALSA del kernel di
+Sul PC i casi a frequenza costante si ripetono anche nel driver ALSA del kernel di
 Sweetspot, avviato in QEMU, su `hw:Loopback` (snd-aloop) con buffer, periodi e
 mmap del player; un XRUN fa fallire la prova.
 Restano aperti il cambio di frequenza su ALSA e la certificazione dei DAC reali.

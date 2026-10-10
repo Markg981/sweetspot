@@ -373,6 +373,51 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(capture.reason, "eof")
             self.assertEqual(capture.path.read_bytes(), b"abcdefgh")
 
+    def test_adaptive_capture_preserves_frames_across_fragmented_pipe_reads(self):
+        # A real pipe supplies independently authored frames. Force read sizes
+        # that split zero frames and the first nonzero frame's last byte.
+        source = (struct.pack("<ii", 0, 0x01000000) + bytes(8) +
+                  struct.pack("<ii", -1, 7) + bytes(16) + struct.pack("<ii", 19, -23))
+        expected = bytes(3 * 8) + source + bytes(2 * 8)
+        maximum = (10 + 6 + 2) * 8
+        read_fd, write_fd = os.pipe()
+        stream = os.fdopen(read_fd, "rb", buffering=0)
+        os.write(write_fd, bytes(3 * 8) + source + bytes(maximum))
+        os.close(write_fd)
+        actual_read = os.read
+        fragments = []
+
+        def fragmented_read(fd, wanted):
+            if fd != read_fd:
+                return actual_read(fd, wanted)
+            size = (1, 3, 7)[len(fragments) % 3]
+            data = actual_read(fd, min(size, wanted))
+            fragments.append(len(data))
+            return data
+
+        with tempfile.TemporaryDirectory() as temp:
+            capture = DRIVER.PacedCapture(stream, Path(temp) / "fragmented.raw", rate=1000,
+                max_bytes=maximum, wall_seconds=2, sequence_frames=6, trailing_frames=2)
+            try:
+                with patch.object(DRIVER.os, "read", side_effect=fragmented_read):
+                    capture.start()
+                    self.assertTrue(capture.finished.wait(2))
+            finally:
+                capture.stop()
+                capture.join()
+            raw = capture.path.read_bytes()
+        self.assertEqual(raw, expected)
+        self.assertEqual(set(fragments), {1, 3, 7})
+        self.assertEqual(capture.reason, "byte_limit")
+        self.assertIsNone(capture.error)
+        self.assertEqual(capture.bytes_written, len(expected))
+        self.assertEqual(capture.target_bytes, len(expected))
+        self.assertLess(capture.bytes_written, capture.max_bytes)
+        frames = list(struct.iter_unpack("<ii", raw))
+        self.assertEqual(next(index for index, frame in enumerate(frames) if frame != (0, 0)), 3)
+        self.assertEqual(frames[3:9], list(struct.iter_unpack("<ii", source)))
+        self.assertEqual(frames[9:], [(0, 0), (0, 0)])
+
     @unittest.skipUnless(os.name == "posix", "private process groups require POSIX")
     def test_owned_descendant_is_stopped_even_if_group_leader_already_exited(self):
         process = subprocess.Popen([sys.executable, "-u", "-c", "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print(p.pid)"], stdout=subprocess.PIPE, start_new_session=True)
@@ -418,7 +463,7 @@ class DriverTests(unittest.TestCase):
             self.assertTrue((output / "44100-16" / "report.json").exists())
             self.assertTrue((output / "44100-16" / "squeezelite-stderr.log").exists())
 
-    def orchestration_result(self, directory, *, altered=False, rate=44100, bits=16, second_bits=None, dop=False, source_format=None, decoder_log_defect=None, case_id=None, backend=None, alsa_defect=None):
+    def orchestration_result(self, directory, *, altered=False, rate=44100, bits=16, second_bits=None, second_rate=None, rate_log=None, short_capture=False, dop=False, source_format=None, decoder_log_defect=None, case_id=None, backend=None, alsa_defect=None):
         """Run orchestration with independent container unpacking and a real pipe writer.
 
         With the ALSA backend a simulated /proc/asound describes the playback
@@ -431,11 +476,17 @@ class DriverTests(unittest.TestCase):
         children = []
         fixture_mac = [None]
         case_directory = output / (case_id or "%s-%s" % (rate, bits))
+        if second_rate is not None:
+            case_directory.mkdir(parents=True)
+            stale = "[12:34:56.123456] _output_frames:153 track start sample rate: %s replay_gain: 0\n"
+            (case_directory / "squeezelite.log").write_text(stale % rate + stale % second_rate)
+            (rootfs / "tmp" / "audio-verification.log").write_text(stale % rate + stale % second_rate)
         commands = []
         capture_commands = []
         source_widths = []
         source_hashes = []
         source_frames = []
+        source_rates = []
         playlist_urls = []
         asound = directory / "asound"
         for stream in ("p", "c"):
@@ -483,6 +534,10 @@ class DriverTests(unittest.TestCase):
             commands.append(_command)
             fixture_mac[0] = _command[_command.index("-m") + 1]
             engine_log = ""
+            if second_rate is not None and rate_log != "missing":
+                rates = [rate, second_rate] if rate_log is None else rate_log
+                engine_log += rates if isinstance(rates, str) else "".join(
+                    "[12:34:56.123456] _output_frames:153 track start sample rate: %s replay_gain: 0\n" % value for value in rates)
             if source_format and decoder_log_defect != "missing":
                 header = "DSF version: 1 format: 0\nlsb first: 1\nblock size: 4096\n" if source_format == "dsf" else "DSDIFF version: 1.5.0.0\n"
                 decoder_log = ("codec open: 'd'\n" + header + "channels: 2\nsample rate: %s\n" % (rate * 16) +
@@ -515,6 +570,8 @@ class DriverTests(unittest.TestCase):
             raw = directory / "writer.raw"
             raw.write_bytes(payload)
             code = "import os,sys; data=open(sys.argv[1],'rb').read(); os.write(1,data); idle=bytes.fromhex(sys.argv[2])*1024\nwhile True: os.write(1,idle)"
+            if short_capture:
+                code = "import os; os.write(1,b'abcdefgh')"
             process = subprocess.Popen([sys.executable, "-u", "-c", code, str(raw), idle.hex()], **kwargs)
             children.append(process)
             return process
@@ -551,6 +608,8 @@ class DriverTests(unittest.TestCase):
                 with wave.open(str(reference), "rb") as source:
                     width = source.getsampwidth()
                     source_widths.append(width * 8)
+                    source_frames.append(source.getnframes())
+                    source_rates.append(source.getframerate())
                     samples = source.readframes(source.getnframes())
                 for position in range(0, len(samples), width * 2):
                     for channel in (0, 1):
@@ -570,6 +629,10 @@ class DriverTests(unittest.TestCase):
                     del payload[rate * 8:rate * 8 + 8]
                 elif altered == "boundary_duplicated":
                     payload[rate * 8:rate * 8] = payload[rate * 8 - 8:rate * 8]
+                elif altered == "boundary_zero":
+                    payload[rate * 8:rate * 8] = bytes(8)
+                elif altered in ("first", "second"):
+                    payload[(5 if altered == "first" else source_frames[0] + 5) * 8 + 1] ^= 1
                 elif source_format and altered in ("byte_order", "bit_order", "channels"):
                     pass
                 elif dop or source_format:
@@ -578,6 +641,8 @@ class DriverTests(unittest.TestCase):
                     # Corrupt a significant low PCM24 bit in either direction.
                     offset = 5 if bits == 24 else rate + 5
                     payload[offset * 8 + 1] ^= 1
+            if second_rate is not None:
+                payload[:0] = bytes(50 * 8)
             idle = bytes(8)
             if dop or source_format:
                 idle = b"".join(bytes((0, 0x69, 0x69, marker)) * 2
@@ -591,6 +656,8 @@ class DriverTests(unittest.TestCase):
                 kwargs.update(backend=backend, asound=asound)
             if second_bits is not None:
                 kwargs["second_bits"] = second_bits
+            if second_rate is not None:
+                kwargs["second_rate"] = second_rate
             if dop:
                 kwargs["dop"] = True
             if source_format:
@@ -608,6 +675,7 @@ class DriverTests(unittest.TestCase):
         result["test_capture_command"] = capture_commands[0] if capture_commands else None
         result["test_source_hashes"] = source_hashes
         result["test_source_frames"] = source_frames
+        result["test_source_rates"] = source_rates
         result["test_playlist_urls"] = playlist_urls
         decoder_log = case_directory / "squeezelite.log"
         result["test_decoder_hash"] = hashlib.sha256(decoder_log.read_bytes()).hexdigest() if decoder_log.exists() else None
@@ -848,6 +916,22 @@ class DriverTests(unittest.TestCase):
             if container:
                 result["source_format"] = container
                 result["carrier_bits"] = 24
+            if kwargs.get("second_rate") is not None:
+                rates = [rate, kwargs["second_rate"]]
+                result.update(kind="pcm_rate_transition", source_rates=rates,
+                              rate_evidence={"status": "pass", "expected_rate_sequence": rates,
+                                             "observed_rate_sequence": rates, "path": "run.log", "sha256": "a" * 64},
+                              comparison={"status": "pass", "sequence_match": True,
+                                          "sample_match": True, "rate_sequence_match": True,
+                                          "expected_rate_sequence": rates, "observed_rate_sequence": rates})
+                if defect == "missing_rates":
+                    del result["rate_evidence"]
+                elif defect == "failed_rates":
+                    result["rate_evidence"]["status"] = "fail"
+                elif defect == "reversed_rates":
+                    result["rate_evidence"]["observed_rate_sequence"] = rates[::-1]
+                elif defect == "failed_samples":
+                    result["comparison"]["sample_match"] = False
             if count[0] == 2:
                 if defect == "duplicate":
                     result["id"] = first_id[0]
@@ -873,8 +957,11 @@ class DriverTests(unittest.TestCase):
             rc, report, entries = self.aggregate_report(Path(temp))
         self.assertEqual(rc, 0)
         self.assertEqual(report["status"], "pass")
-        self.assertEqual(len(report["cases"]), 18)
-        self.assertEqual(len({case["id"] for case in report["cases"]}), 18)
+        self.assertEqual(len(report["cases"]), 24)
+        self.assertEqual(len({case["id"] for case in report["cases"]}), 24)
+        self.assertEqual({tuple(case["source_rates"]) for case in report["cases"][18:]},
+                         {(44100, 48000), (48000, 44100), (44100, 96000),
+                          (96000, 44100), (48000, 96000), (96000, 48000)})
         self.assertEqual([case["id"] for case in report["cases"][:14]],
                          ["pcm-%s-%s-%s" % (rate, first, second)
                           for first, second in ((16, 16), (24, 24), (16, 24), (24, 16))
@@ -898,7 +985,8 @@ class DriverTests(unittest.TestCase):
                           ("dff-5644800-dop", "dff", 352800, 5644800, (1, 1), 24)})
 
     def test_aggregate_fails_closed_for_missing_duplicate_unexpected_or_incomplete_case(self):
-        for defect in ("duplicate", "unexpected", "missing_id", "incomplete", "failed", "case_error"):
+        for defect in ("duplicate", "unexpected", "missing_id", "incomplete", "failed", "case_error",
+                       "missing_rates", "failed_rates", "reversed_rates", "failed_samples"):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
                 rc, report, _ = self.aggregate_report(Path(temp), defect=defect)
                 self.assertNotEqual(rc, 0)
@@ -922,8 +1010,24 @@ class DriverTests(unittest.TestCase):
             report = json.loads((output / "report.json").read_text())
         self.assertEqual(rc, 0)
         self.assertEqual(report["scope"], "alsa_loopback")
-        self.assertEqual([case["id"] for case in report["cases"]], [case["id"] for case in DRIVER.CASES])
+        # Rate transitions are not yet verified on ALSA: the 18 constant-rate cases remain.
+        self.assertEqual([case["id"] for case in report["cases"]],
+                         [case["id"] for case in DRIVER.CASES if case["kind"] != "pcm_rate_transition"])
+        self.assertEqual(len(report["cases"]), 18)
         self.assertEqual(backends, ["alsa_loopback"] * 18)
+
+    def test_alsa_backend_rejects_rate_transition_cases(self):
+        launched = []
+        with tempfile.TemporaryDirectory() as temp:
+            rootfs = Path(temp) / "rootfs"
+            (rootfs / "tmp").mkdir(parents=True)
+            result = DRIVER.run_case(rootfs, DRIVER.LmsClient("http://127.0.0.1:9"), Path(temp) / "out",
+                                     44100, 24, second_bits=24, second_rate=48000, case_id="alsa-rate",
+                                     backend="alsa_loopback", asound=Path(temp) / "asound",
+                                     process_factory=lambda *args, **kwargs: launched.append(args))
+        self.assertEqual(launched, [])
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("not verified on the ALSA backend", result["error"])
 
     def test_missing_rootfs_is_nonzero_and_persists_eighteen_missing_cases(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -933,10 +1037,93 @@ class DriverTests(unittest.TestCase):
             self.assertNotEqual(rc, 0)
             self.assertEqual(report["scope"], "software_stdout")
             self.assertEqual(report["version"], "fixture-version")
-            self.assertEqual(len(report["cases"]), 18)
-            self.assertEqual(len({case["id"] for case in report["cases"]}), 18)
+            self.assertEqual(len(report["cases"]), 24)
+            self.assertEqual(len({case["id"] for case in report["cases"]}), 24)
             self.assertTrue(all(case["status"] == "fail" for case in report["cases"]))
 
+
+    def test_rate_parser_fails_closed_and_hashes_complete_log(self):
+        prefix = "[12:34:56.123456] _output_frames:153 "
+        good = prefix + "track start sample rate: 44100 replay_gain: 0\n" + prefix + "track start sample rate: 48000 replay_gain: 65536\n"
+        defects = ["", good.splitlines()[0], good.replace("48000", "96000"),
+                   "\n".join(good.splitlines()[::-1]), good + good.splitlines()[1],
+                   good + prefix + "track start sample rate: nope replay_gain: 0\n",
+                   good.replace("44100", "0"), good.replace("44100", "4294967296"),
+                   good.replace("replay_gain: 0", "replay_gain: invalid"),
+                   "incidental track start sample rate: 44100 replay_gain: 0\n"]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "engine.log"
+            self.assertEqual(DRIVER.output_rate_evidence(path, [44100, 48000])["status"], "fail")
+            with patch.object(Path, "read_bytes", side_effect=PermissionError("unreadable")):
+                self.assertEqual(DRIVER.output_rate_evidence(path, [44100, 48000])["status"], "fail")
+            for text in [good] + defects:
+                path.write_text(text)
+                evidence = DRIVER.output_rate_evidence(path, [44100, 48000])
+                self.assertEqual(evidence["status"], "pass" if text == good else "fail", text)
+                self.assertEqual(evidence["path"], str(path))
+                self.assertEqual(evidence["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_all_six_mixed_rate_orchestrations_use_native_frames_and_pacing(self):
+        for first, second in ((44100,48000), (48000,44100), (44100,96000),
+                              (96000,44100), (48000,96000), (96000,48000)):
+            with self.subTest(pair=(first, second)), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), rate=first, second_rate=second, bits=24, case_id="mixed")
+                self.assertEqual(result["status"], "pass", result.get("error"))
+                self.assertEqual(result["test_source_rates"], [first, second])
+                self.assertEqual(result["source_rates"], [first, second])
+                self.assertEqual(result["comparison"]["expected_frames"], first + second)
+                self.assertEqual(result["comparison"]["leading_frames"], 50)
+                self.assertEqual(result["comparison"]["trailing_frames"], 44100)
+                self.assertIsNone(result["comparison"]["capture"]["rate"])
+                self.assertEqual(result["comparison"]["capture"]["pacing_rate"], 44100)
+                self.assertEqual(result["capture"]["pacing_rate"], 44100)
+                self.assertEqual(result["rate_evidence"]["observed_rate_sequence"], [first, second])
+                self.assertEqual(result["rate_evidence"]["sha256"], result["test_decoder_hash"])
+                limits = result["limits"]
+                self.assertEqual(limits["max_bytes"], (2 * 44100 + first + second) * 8)
+                self.assertEqual(limits["max_trailing_frames"], 44100)
+                self.assertAlmostEqual(limits["wall_seconds"], limits["max_bytes"] / (44100 * 8) + 1)
+                command = result["command"]
+                self.assertEqual(command[command.index("-r") + 1], "44100,48000,96000:0")
+                self.assertEqual(command[command.index("-d") + 1], "output=info")
+                self.assertFalse(set(("-R", "-u", "-D")) & set(command))
+
+    def test_mixed_orchestration_rejects_rate_defects_despite_exact_samples(self):
+        prefix = "[12:34:56.123456] _output_frames:153 "
+        for events in ("missing", [], [44100], [44100,96000], [48000,44100],
+                       [44100,44100], [44100,48000,48000],
+                       prefix + "track start sample rate: broken replay_gain: 0\n"):
+            with self.subTest(events=events), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), rate=44100, second_rate=48000, bits=24,
+                                                   rate_log=events, case_id="mixed")
+                self.assertEqual(result["status"], "fail")
+                self.assertTrue(result["comparison"]["sample_match"])
+                self.assertEqual(result["rate_evidence"]["status"], "fail")
+
+    def test_mixed_orchestration_rejects_track_and_boundary_damage(self):
+        for defect in ("first", "second", "boundary_lost", "boundary_duplicated", "boundary_zero"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temp:
+                result = self.orchestration_result(Path(temp), rate=44100, second_rate=48000,
+                                                   bits=24, altered=defect, case_id="mixed")
+                self.assertEqual(result["status"], "fail")
+                self.assertEqual(result["rate_evidence"]["status"], "pass")
+                self.assertFalse(result["comparison"]["sequence_match"])
+
+    def test_mixed_capture_and_cleanup_faults_keep_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = self.orchestration_result(Path(temp), rate=44100, second_rate=48000,
+                                               bits=24, short_capture=True, case_id="mixed")
+            self.assertEqual(result["status"], "fail")
+            self.assertIn("capture", result)
+            self.assertTrue(result["rpc"])
+        original = DRIVER.LocalFixtures.__exit__
+        def cleanup(fixtures, *args):
+            original(fixtures, *args)
+            raise OSError("cleanup fault")
+        with tempfile.TemporaryDirectory() as temp, patch.object(DRIVER.LocalFixtures, "__exit__", cleanup):
+            result = self.orchestration_result(Path(temp), rate=44100, second_rate=48000, bits=24, case_id="mixed")
+            self.assertEqual(result["comparison"]["status"], "pass")
+            self.assertEqual(result["status"], "fail")
 
 if __name__ == "__main__":
     unittest.main()
