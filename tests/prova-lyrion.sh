@@ -182,11 +182,11 @@ if printf '%s' "$ans" | grep -q '"version"'; then
 		echo "errori di caricamento nel registro"
 		exit 1
 	fi
-	echo "== Verifica PCM e continuita' dei brani nel backend software"
+	echo "== Verifica PCM/DoP e continuita' dei brani nel backend software"
 	python3 "$TEST_DIR/prova-audio.py" --rootfs "$R" \
 		--server "http://127.0.0.1:$PORT" --output "$SWEETSPOT_AUDIO_REPORT_DIR" \
 		--version "$(cat "$W/versione")"
-	echo "== Lyrion e verifica PCM software riusciti"
+	echo "== Lyrion e verifica PCM/DoP software riusciti"
 	exit 0
 fi
 echo "Lyrion non risponde. Registro di avvio:"

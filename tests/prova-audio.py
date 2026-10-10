@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Verify isolated rootfs Lyrion/Squeezelite PCM and DoP software stdout.
+"""Verify isolated rootfs Lyrion/Squeezelite PCM, DoP and DSD software stdout.
 
 This deliberately cannot certify ALSA, a DAC, its clock, or analog output.
 Lyrion must already be running in the isolated rootfs, on loopback.
@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -33,6 +34,10 @@ CASES = [{"id": "pcm-%s-%s-%s" % (rate, first, second), "kind": "pcm",
 CASES += [{"id": "dop-%s-24-24" % rate, "kind": "dop_pcm_passthrough",
            "rate": rate, "source_bits": [24, 24]}
           for rate in (176400, 352800)]
+CASES += [{"id": "%s-%s-dop" % (container, rate * 16), "kind": "dsd_to_dop",
+           "rate": rate, "source_bits": [1, 1], "source_format": container,
+           "carrier_bits": 24, "dsd_rate": rate * 16, "scope": "software_stdout"}
+          for container in ("dsf", "dff") for rate in (176400, 352800)]
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
@@ -212,7 +217,7 @@ def wait_playlist(client, mac, urls, timeout=3, interval=.1):
 
 
 class LocalFixtures:
-    """Copy references into a unique, LMS-readable directory inside the rootfs."""
+    """Copy playback sources into a unique, LMS-readable rootfs directory."""
     def __init__(self, rootfs, references):
         self.rootfs = rootfs
         self.references = references
@@ -346,20 +351,45 @@ def stop_process(process, *, owned_group=False):
                 pass
 
 
+def dsd_decoder_evidence(log, destination, source_format, rate):
+    """Require both source decodes and DoP output from the pinned engine log."""
+    data = log.read_bytes() if log.exists() else b""
+    text = data.decode("utf-8", errors="replace")
+    header = "DSF version: 1 format: 0" if source_format == "dsf" else "DSDIFF version: 1.5.0.0"
+    output = "DSD%s stream, format: DOP, rate: %sHz" % (64 if rate == 176400 else 128, rate)
+    evidence = {"path": str(destination), "sha256": hashlib.sha256(data).hexdigest() if data else None,
+                "dsd_codec_opens": text.count("codec open: 'd'"), "source_headers": text.count(header),
+                "source_rates": len(re.findall(r"sample rate: %s(?!\d)" % (rate * 16), text)),
+                "stereo_headers": len(re.findall(r"channels: 2(?!\d)", text)),
+                "dop_outputs": text.count(output),
+                "pcm_fallback": "DSD sample rate too high for device - converting to PCM" in text
+                                or "DSD to PCM output" in text}
+    required = ("dsd_codec_opens", "source_headers", "source_rates", "stereo_headers", "dop_outputs")
+    if source_format == "dsf":
+        evidence["lsb_first"] = len(re.findall(r"lsb first: 1(?!\d)", text))
+        evidence["block_sizes"] = len(re.findall(r"block size: 4096(?!\d)", text))
+        required += ("lsb_first", "block_sizes")
+    evidence["status"] = "pass" if not evidence["pcm_fallback"] and all(evidence[name] >= 2 for name in required) else "fail"
+    return evidence
+
+
 def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
-             case_id=None, process_factory=subprocess.Popen):
+             source_format=None, case_id=None, process_factory=subprocess.Popen):
     from tools.audio_verification import compare_capture, generate_fixtures
     second_bits = bits if second_bits is None else second_bits
-    identity = case_id or "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits)
+    identity = case_id or ("%s-%s-dop" % (source_format, rate * 16) if source_format else
+                           "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits))
     # Existing callers without an ID keep their original homogeneous PCM path.
-    directory_name = "%s-%s" % (rate, bits) if case_id is None and not dop and bits == second_bits else identity
+    directory_name = "%s-%s" % (rate, bits) if case_id is None and not dop and not source_format and bits == second_bits else identity
     directory = output / directory_name
     directory.mkdir(parents=True, exist_ok=True)
-    report = {"id": identity, "kind": "dop_pcm_passthrough" if dop else "pcm",
+    report = {"id": identity, "kind": "dsd_to_dop" if source_format else "dop_pcm_passthrough" if dop else "pcm",
               "rate": rate, "bits": bits, "source_bits": [bits, second_bits],
               "status": "fail", "scope": "software_stdout"}
-    if dop:
+    if dop or source_format:
         report["dsd_rate"] = rate * 16
+    if source_format:
+        report.update(source_format=source_format, carrier_bits=24)
     report["limits"] = {"capture_format": "s32_le", "channels": 2,
                         "max_lead_frames": STARTUP_SECONDS * rate,
                         "max_bytes": CAPTURE_SECONDS * rate * 8, "wall_seconds": WALL_SECONDS}
@@ -371,7 +401,17 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
     started = time.monotonic()
     journal_start = len(client.journal)
     try:
-        if dop:
+        if source_format:
+            from tools.audio_verification import compare_dop_capture, generate_dsd_fixtures
+            if source_format not in ("dsf", "dff") or bits != 1 or second_bits != 1:
+                raise AudioError("DSD to DoP requires two one-bit DSF or DFF sources")
+            sources, references = generate_dsd_fixtures(directory / "references", rate,
+                                                         container=source_format)
+            report["sources"] = [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                                  "format": source_format, "bits": 1, "rate": rate * 16, "channels": 2}
+                                 for source in sources]
+            compare = compare_dop_capture
+        elif dop:
             from tools.audio_verification import compare_dop_capture, generate_dop_fixtures
             if bits != 24 or second_bits != 24:
                 raise AudioError("DoP passthrough requires two WAV24 sources")
@@ -384,13 +424,17 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
         else:
             references = generate_fixtures(directory / "references", rate, bits)
             compare = compare_capture
-        with LocalFixtures(rootfs, references) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
+        if not source_format:
+            sources = references
+        with LocalFixtures(rootfs, sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             root_log.unlink(missing_ok=True)
             command = ["chroot", str(rootfs), "/usr/bin/squeezelite", "-o", "-", "-a", "32",
                        "-r", str(rate), "-s", "127.0.0.1", "-m", mac,
                        "-n", "Audio-test", "-f", "/tmp/audio-verification.log"]
-            if dop:
+            if dop or source_format:
                 command.extend(["-D", "0:dop"])
+            if source_format:
+                command.extend(["-d", "decode=info", "-d", "stream=info"])
             report["command"] = command
             try:
                 process = process_factory(command, stdout=subprocess.PIPE, stderr=stderr,
@@ -419,6 +463,10 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, dop=False,
             report["comparison"] = compare(references, directory / "capture.raw", capture_format="s32_le",
                                             capture_rate=rate, max_lead_frames=STARTUP_SECONDS * rate)
             report["status"] = report["comparison"]["status"]
+            if source_format:
+                report["decoder"] = dsd_decoder_evidence(root_log, directory / "squeezelite.log", source_format, rate)
+                if report["decoder"]["status"] != "pass":
+                    raise AudioError("DSD decoder evidence did not verify both source tracks and DoP output")
     except Exception as error:
         report["status"] = "fail"
         report["error"] = str(error)
@@ -457,7 +505,8 @@ def main(argv=None):
         for case in CASES:
             first, second = case["source_bits"]
             result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
-                              dop=case["kind"] == "dop_pcm_passthrough", case_id=case["id"])
+                              dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
+                              case_id=case["id"])
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)

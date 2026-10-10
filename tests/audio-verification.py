@@ -12,6 +12,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+from unittest.mock import patch
 import wave
 
 
@@ -796,6 +797,193 @@ class DoPVerificationTests(unittest.TestCase):
                                  "--report", str(capture)], text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertEqual(capture.read_bytes(), b"\0")
+
+
+class DSDFixtureTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+
+    def generate(self, container, rate=176400, frames=2051, directory=None):
+        self.assertTrue(callable(getattr(verifier, "generate_dsd_fixtures", None)),
+                        "DSF/DFF source generation has not been implemented")
+        return verifier.generate_dsd_fixtures(directory or self.directory, rate,
+                                              container=container, frames=frames)
+
+    def wav_channels(self, path):
+        with wave.open(str(path), "rb") as stream:
+            self.assertEqual((stream.getnchannels(), stream.getsampwidth()), (2, 3))
+            data = stream.readframes(stream.getnframes())
+        # In a little-endian DoP word the older DSD byte is the middle byte.
+        return [bytes(byte for index in range(channel * 3, len(data), 6)
+                      for byte in (data[index + 1], data[index])) for channel in (0, 1)]
+
+    def dff_chunks(self, data):
+        result = {}
+        position = 0
+        while position < len(data):
+            self.assertGreaterEqual(len(data) - position, 12)
+            name, size = struct.unpack_from(">4sQ", data, position)
+            self.assertNotIn(name, result)
+            end = position + 12 + size
+            self.assertLessEqual(end + (size & 1), len(data))
+            result[name] = data[position + 12:end]
+            if size & 1:
+                self.assertEqual(data[end], 0)
+            position = end + (size & 1)
+        self.assertEqual(position, len(data))
+        return result
+
+    def test_dsf_headers_describe_stereo_lsb_dsd_and_exact_sample_count(self):
+        for rate in (176400, 352800):
+            with self.subTest(rate=rate):
+                sources, references = self.generate("dsf", rate)
+                self.assertEqual((len(sources), len(references)), (2, 2))
+                for source in sources:
+                    data = source.read_bytes()
+                    self.assertEqual(struct.unpack_from("<4sQQQ", data),
+                                     (b"DSD ", 28, len(data), 0))
+                    self.assertEqual(struct.unpack_from("<4sQIIIIIIQII", data, 28),
+                                     (b"fmt ", 52, 1, 0, 2, 2, rate * 16, 1, 2051 * 16, 4096, 0))
+                    self.assertEqual(struct.unpack_from("<4sQ", data, 80),
+                                     (b"data", 12 + 16384))
+                    self.assertEqual(len(data), 92 + 16384)
+
+    def test_dsf_channel_blocks_reverse_bits_and_pad_only_after_last_samples(self):
+        sources, references = self.generate("dsf")
+        for source, reference in zip(sources, references):
+            data = source.read_bytes()[92:]
+            channels = self.wav_channels(reference)
+            for channel in (0, 1):
+                expected = bytes(int(f"{value:08b}"[::-1], 2) for value in channels[channel])
+                self.assertEqual(data[channel * 4096:(channel + 1) * 4096], expected[:4096])
+                final_start = 8192 + channel * 4096
+                self.assertEqual(data[final_start:final_start + 6], expected[4096:])
+                self.assertEqual(data[final_start + 6:final_start + 4096], b"\0" * 4090)
+            with wave.open(str(reference), "rb") as stream:
+                self.assertEqual(stream.getnframes(), 2051)
+
+    def test_dff_headers_chunks_and_interleaving_describe_uncompressed_msb_dsd(self):
+        for rate in (176400, 352800):
+            with self.subTest(rate=rate):
+                sources, references = self.generate("dff", rate, frames=7)
+                for source, reference in zip(sources, references):
+                    data = source.read_bytes()
+                    self.assertEqual(struct.unpack_from(">4sQ4s", data),
+                                     (b"FRM8", len(data) - 12, b"DSD "))
+                    chunks = self.dff_chunks(data[16:])
+                    self.assertEqual(list(chunks), [b"FVER", b"PROP", b"DSD "])
+                    self.assertEqual(chunks[b"FVER"], b"\x01\x05\0\0")
+                    self.assertEqual(chunks[b"PROP"][:4], b"SND ")
+                    properties = self.dff_chunks(chunks[b"PROP"][4:])
+                    self.assertEqual(list(properties), [b"FS  ", b"CHNL", b"CMPR"])
+                    self.assertEqual(properties[b"FS  "], struct.pack(">I", rate * 16))
+                    self.assertEqual(properties[b"CHNL"], b"\0\x02SLFTSRGT")
+                    self.assertEqual(properties[b"CMPR"], b"DSD \x0enot compressed")
+                    left, right = self.wav_channels(reference)
+                    self.assertEqual(chunks[b"DSD "], bytes(byte for pair in zip(left, right) for byte in pair))
+                    self.assertEqual(len(chunks[b"DSD "]), 28)
+
+    def test_known_non_palindromic_bytes_keep_temporal_and_bit_order(self):
+        references = [write_dop_wav(self.directory / f"known-{track}.wav",
+                                    [(0x0196, 0x8069), (0x8069, 0x0196)]) for track in (1, 2)]
+        with patch.object(verifier, "generate_dop_fixtures", return_value=references):
+            for container in ("dsf", "dff"):
+                with self.subTest(container=container):
+                    sources, generated_references = self.generate(container, frames=2)
+                    self.assertEqual(generated_references, references)
+                    data = sources[0].read_bytes()
+                    if container == "dsf":
+                        self.assertEqual(data[92:96], b"\x80\x69\x01\x96")
+                        self.assertEqual(data[92 + 4096:96 + 4096], b"\x01\x96\x80\x69")
+                    else:
+                        chunks = self.dff_chunks(data[16:])
+                        self.assertEqual(chunks[b"DSD "], b"\x01\x80\x96\x69\x80\x01\x69\x96")
+
+    def test_sources_and_oracles_are_deterministic_and_tracks_and_channels_distinct(self):
+        for container in ("dsf", "dff"):
+            with self.subTest(container=container):
+                sources, references = self.generate(container, frames=257)
+                originals = [path.read_bytes() for path in sources + references]
+                self.assertNotEqual(originals[0], originals[1])
+                self.assertNotEqual(originals[2], originals[3])
+                for reference in references:
+                    left, right = self.wav_channels(reference)
+                    self.assertNotEqual(left, right)
+                    self.assertGreater(len(set(left)), 200)
+                self.generate(container, frames=257)
+                self.assertEqual(originals, [path.read_bytes() for path in sources + references])
+
+    def test_default_dsf_second_contains_real_partial_block_but_oracle_has_no_padding(self):
+        sources, references = self.generate("dsf", frames=None)
+        for source, reference in zip(sources, references):
+            data = source.read_bytes()
+            self.assertEqual(struct.unpack_from("<Q", data, 64)[0], 2822400)
+            self.assertEqual(len(data), 92 + 87 * 8192)
+            for channel in (0, 1):
+                final_start = 92 + 86 * 8192 + channel * 4096
+                self.assertNotEqual(data[final_start:final_start + 544], b"\0" * 544)
+                self.assertEqual(data[final_start + 544:final_start + 4096], b"\0" * 3552)
+            with wave.open(str(reference), "rb") as stream:
+                self.assertEqual((stream.getframerate(), stream.getnframes()), (176400, 176400))
+
+    def test_invalid_container_rate_or_frames_fail_before_creating_files(self):
+        for container, rate, frames in (("wav", 176400, 1), ("DSF", 176400, 1),
+                                        (None, 176400, 1), ("dsf", 48000, 1),
+                                        ("dff", 0, 1), ("dsf", True, 1),
+                                        ("dff", 176400.0, 1), ("dsf", 176400, 0),
+                                        ("dff", 176400, -1), ("dsf", 176400, True),
+                                        ("dff", 176400, 1.5), ("dsf", 176400, 0xFFFFFFFF)):
+            with self.subTest(container=container, rate=rate, frames=frames):
+                with self.assertRaises(ValueError):
+                    self.generate(container, rate, frames)
+                self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_cli_generate_dsf_reports_source_and_oracle_hashes_and_sample_metadata(self):
+        output = self.directory / "cli-dsf"
+        result = subprocess.run([sys.executable, str(TOOL), "generate-dsd", "--container", "dsf",
+                                 "--output", str(output), "--rate", "176400"],
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["data_kind"], "dsd_diagnostic_payload_not_listening_audio")
+        self.assertEqual((len(report["sources"]), len(report["references"])), (2, 2))
+        for info in report["sources"]:
+            path = Path(info["path"])
+            self.assertEqual(path.suffix, ".dsf")
+            self.assertEqual((info["format"], info["rate"], info["channels"], info["sample_count"]),
+                             ("dsf", 2822400, 2, 2822400))
+            self.assertEqual(info["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+        for info in report["references"]:
+            self.assertEqual((info["format"], info["rate"], info["frames"]),
+                             ("wav_pcm_s24_le", 176400, 176400))
+            self.assertEqual(info["sha256"], hashlib.sha256(Path(info["path"]).read_bytes()).hexdigest())
+
+    def test_cli_generate_dff_accepts_dsd128(self):
+        output = self.directory / "cli-dff"
+        result = subprocess.run([sys.executable, str(TOOL), "generate-dsd", "--container", "dff",
+                                 "--output", str(output), "--rate", "352800"],
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        report = json.loads(result.stdout)
+        for info in report["sources"]:
+            self.assertEqual((info["format"], info["rate"], info["sample_count"]),
+                             ("dff", 5644800, 5644800))
+            self.assertEqual(Path(info["path"]).suffix, ".dff")
+
+    def test_cli_invalid_dsd_options_are_json_errors_without_output_files(self):
+        output = self.directory / "invalid"
+        for options in (["--container", "wav", "--rate", "176400"],
+                        ["--container", "dsf", "--rate", "48000"],
+                        ["--container", "dff", "--rate", "invalid"], ["--rate", "176400"]):
+            with self.subTest(options=options):
+                result = subprocess.run([sys.executable, str(TOOL), "generate-dsd", "--output",
+                                         str(output), *options], text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(json.loads(result.stdout)["status"], "error")
+                self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

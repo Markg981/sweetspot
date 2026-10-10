@@ -1,0 +1,24 @@
+Subject: [PATCH] dsd: skip the padding byte of odd DSDIFF chunks
+
+DSDIFF 1.5 section 2.3 requires a padding byte after an odd-sized
+chunk body. The chunk's declared size excludes both the 12-byte header
+and that padding byte. Skipping only len + 12 leaves the pad in front of
+the next chunk ID; for example a valid 19-byte CMPR chunk prevents the
+following DSD audio chunk from being recognized.
+
+Include the optional padding when skipping a whole DSDIFF chunk. Keep
+DSF chunk sizes and the 16-byte FRM8/PROP container entry unchanged.
+
+Reference: https://www.sonicstudio.com/pdf/dsd/DSDIFF_1.5_Spec.pdf
+Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+Upstream: Not submitted (local correction)
+
+diff --git a/dsd.c b/dsd.c
+--- a/dsd.c
++++ b/dsd.c
+@@ -187,3 +187,4 @@ static int _read_header(void) {
+ 		if (!consume) {
+-			consume = (s32_t)((d->type == DSDIFF) ? len + 12 : len);
++			// DSDIFF chunk sizes exclude the padding byte after an odd-sized body.
++			consume = (s32_t)((d->type == DSDIFF) ? len + 12 + (len & 1) : len);
+ 		}

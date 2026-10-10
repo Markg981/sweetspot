@@ -65,7 +65,7 @@ compare_dop_capture(references: list[Path], capture: Path, *,
 - [x] Eseguire i 14 casi nella rootfs x86 disponibile, registrando versione/hash esatti; la nuova CI resta distinta da questa prova di sviluppo.
 - [x] Eseguire suite completa, diff-check e revisione indipendente del branch.
 - [x] Aggiornare README, protocollo e stato del traguardo 1: copertura PCM misto e DoP nel backend software, DSD nativo/hardware/rate switching ancora aperti.
-- [ ] Commit e push sul nuovo branch, PR verso main con risultati e limiti, attach della PR alla chat e avvio/verifica dello stato CI sul commit pubblicato.
+- [x] Commit e push sul nuovo branch, PR verso main con risultati e limiti, attach della PR alla chat e avvio/verifica dello stato CI sul commit pubblicato.
 
 La base è `origin/main` commit `6ee1e6e`, che contiene la PR precedente #13.
 
@@ -76,4 +76,6 @@ SHA-256 Squeezelite:
 `2a4c847aa51a2172947c4b378deeea53d263d275bd22aadf1bd112868b8badb8`.
 Le due revisioni indipendenti hanno confermato le correzioni dei falsi positivi
 per PCM nullo dentro il DoP e per errori di pulizia dopo un confronto riuscito.
-La pubblicazione del branch è il passaggio successivo a questo checkpoint.
+Pubblicato come PR #14, commit `3ae1796`, con CI 38026669051 superata su x86 e
+ARM. Il merge in main è `9e53ed2`; la successiva estensione DSF/DFF conserva
+questa baseline di 14 casi.
