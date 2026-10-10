@@ -799,6 +799,213 @@ class DoPVerificationTests(unittest.TestCase):
         self.assertEqual(capture.read_bytes(), b"\0")
 
 
+class PCMSequenceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+        self.first = [(1, -2), (-8388608, 8388607), (31, -17)]
+        self.second = [(-9, 7), (65537, -65537)]
+        self.references = [write_wav(self.directory / "a.wav", self.first, 24, 44100),
+                           write_wav(self.directory / "b.wav", self.second, 24, 48000)]
+        self.native = [(a << 8, b << 8) for a, b in self.first + self.second]
+
+    def compare(self, frames=None, **options):
+        capture = self.directory / "capture.raw"
+        capture.write_bytes(raw_samples(self.native if frames is None else frames, 32))
+        kwargs = {"capture_format": "s32_le", "rate_sequence": [44100, 48000]}
+        kwargs.update(options)
+        return verifier.compare_pcm_sequence(self.references, capture, **kwargs)
+
+    def test_all_six_directed_pairs_keep_native_frames_and_rate_metadata(self):
+        for first in (44100, 48000, 96000):
+            for second in (44100, 48000, 96000):
+                if first == second:
+                    continue
+                with self.subTest(rates=(first, second)):
+                    write_wav(self.references[0], self.first, 24, first)
+                    write_wav(self.references[1], self.second, 24, second)
+                    result = self.compare(rate_sequence=[first, second], pacing_rate=44100)
+                    self.assertEqual(result["status"], "pass")
+                    self.assertEqual(result["expected_rate_sequence"], [first, second])
+                    self.assertEqual(result["observed_rate_sequence"], [first, second])
+                    self.assertTrue(result["rate_sequence_match"])
+                    self.assertIsNone(result["capture"]["rate"])
+                    self.assertEqual(result["capture"]["pacing_rate"], 44100)
+                    self.assertEqual(result["boundaries"][0]["from_rate"], first)
+                    self.assertEqual(result["boundaries"][0]["to_rate"], second)
+                    self.assertEqual(result["references"][1]["expected_start_frame"], 3)
+                    self.assertEqual(result["references"][1]["expected_end_frame"], 5)
+
+    def test_rate_evidence_fails_even_with_exact_audio(self):
+        for rates in ([], [44100], [48000, 44100], [44100, 96000],
+                      [44100, 48000, 96000], [44100, 44100, 48000]):
+            with self.subTest(rates=rates):
+                result = self.compare(rate_sequence=rates)
+                self.assertEqual(result["status"], "fail")
+                self.assertTrue(result["sample_match"])
+                self.assertTrue(result["sequence_match"])
+                self.assertFalse(result["rate_sequence_match"])
+
+    def test_source_damage_and_boundary_drop_duplicate_pause(self):
+        for index, source_index, source_frame in ((1, 0, 1), (4, 1, 1)):
+            frames = self.native.copy()
+            frames[index] = (frames[index][0] ^ 256, frames[index][1])
+            result = self.compare(frames)
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["first_mismatch"]["reference_index"], source_index)
+            self.assertEqual(result["first_mismatch"]["reference_frame"], source_frame)
+        for frames in (self.native[:2] + self.native[3:],
+                       self.native[:3] + [self.native[2]] + self.native[3:],
+                       self.native[:3] + [(0, 0)] + self.native[3:]):
+            result = self.compare(frames)
+            self.assertEqual(result["status"], "fail")
+            self.assertFalse(result["boundaries"][0]["match"])
+
+    def test_bounded_zero_edges_and_explicit_offset(self):
+        frames = [(0, 0)] * 3 + self.native + [(0, 0)] * 2
+        for offset in (None, 3):
+            self.assertEqual(self.compare(frames, offset_frames=offset,
+                                         max_lead_frames=3, max_trailing_frames=2)["status"], "pass")
+            result = self.compare(frames, offset_frames=offset, max_lead_frames=2,
+                                  max_trailing_frames=2)
+            self.assertEqual(result["first_mismatch"]["reason"], "leading_silence_limit")
+        result = self.compare(self.native + [(0, 0)] * 3, max_trailing_frames=2)
+        self.assertEqual(result["first_mismatch"]["reason"], "trailing_silence_limit")
+        self.assertEqual(self.compare(self.native + [(256, 0)], max_trailing_frames=1)["status"], "fail")
+        self.assertEqual(self.compare([(256, 0)] + self.native, offset_frames=1,
+                                     max_lead_frames=1)["status"], "fail")
+
+    def test_reference_silence_preserved_and_silent_sources_need_offset(self):
+        self.first = [(0, 0), (0, 0), (1, -2)]
+        write_wav(self.references[0], self.first, 24, 44100)
+        self.native = [(a << 8, b << 8) for a, b in self.first + self.second]
+        result = self.compare([(0, 0)] + self.native, max_lead_frames=1)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["leading_frames"], 1)
+        self.assertEqual(self.compare(self.native[1:])["status"], "fail")
+        for reference, rate in zip(self.references, (44100, 48000)):
+            write_wav(reference, [(0, 0)], 24, rate)
+        with self.assertRaises(ValueError):
+            self.compare([(0, 0)] * 2)
+        self.assertEqual(self.compare([(0, 0)] * 2, offset_frames=0)["status"], "pass")
+
+    def test_mixed_depths_and_legacy_behavior(self):
+        for bits in ((16, 24), (24, 16)):
+            frames = [[(1, -2), (-7, 11)], [(17, -31)]]
+            for path, data, depth, rate in zip(self.references, frames, bits, (44100, 48000)):
+                write_wav(path, data, depth, rate)
+            native = [tuple(v << (32 - depth) for v in pair)
+                      for data, depth in zip(frames, bits) for pair in data]
+            self.assertEqual(self.compare(native)["status"], "pass")
+        with self.assertRaises(ValueError):
+            verifier.compare_capture(self.references, self.directory / "capture.raw",
+                                     capture_format="s32_le", capture_rate=44100)
+        write_wav(self.references[1], [(17, -31)], 16, 44100)
+        capture = self.directory / "capture.raw"
+        capture.write_bytes(raw_samples([(0, 0)] * 3 + native + [(0, 0)] * 10, 32))
+        result = verifier.compare_capture(self.references, capture, capture_format="s32_le",
+                                          capture_rate=44100, offset_frames=3)
+        self.assertEqual(result["status"], "pass")
+
+    def test_invalid_numeric_format_and_partial_frames(self):
+        for name in ("max_lead_frames", "max_trailing_frames", "offset_frames", "pacing_rate"):
+            for value in (-1, 1.5, True):
+                with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                    self.compare(**{name: value})
+        for rates in ([True, 48000], [44100.0, 48000], [0], [-1], ["44100"], None):
+            with self.subTest(rates=rates), self.assertRaises(ValueError):
+                self.compare(rate_sequence=rates)
+        for options in ({"capture_format": "float32"}, {"pacing_rate": 0}, {"offset_frames": 6}):
+            with self.assertRaises(ValueError):
+                self.compare(**options)
+        capture = self.directory / "capture.raw"
+        capture.write_bytes(b"\0" * 7)
+        with self.assertRaises(ValueError):
+            verifier.compare_pcm_sequence(self.references, capture, capture_format="s32_le",
+                                          rate_sequence=[44100, 48000])
+        self.references = []
+        with self.assertRaises(ValueError):
+            self.compare()
+
+    def test_full_multi_chunk_sequence_is_streamed_with_bounded_memory(self):
+        first = [(17, -29)] * 60000
+        second = [(-31, 43)] * 60000
+        write_wav(self.references[0], first, 24, 44100)
+        write_wav(self.references[1], second, 24, 48000)
+        capture = self.directory / "capture.raw"
+        normalized = [(17 << 8, -29 << 8)] * 60000 + [(-31 << 8, 43 << 8)] * 60000
+        capture.write_bytes(raw_samples(normalized, 32))
+        tracemalloc.start()
+        try:
+            result = verifier.compare_pcm_sequence(self.references, capture, capture_format="s32_le",
+                                                  rate_sequence=[44100, 48000])
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["compared_frames"], 120000)
+        self.assertLess(peak, 2 * 1024 * 1024)
+        normalized[100001] = (-30 << 8, 43 << 8)
+        capture.write_bytes(raw_samples(normalized, 32))
+        result = verifier.compare_pcm_sequence(self.references, capture, capture_format="s32_le",
+                                              rate_sequence=[44100, 48000])
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["compared_frames"], 120000)
+        self.assertEqual(result["first_mismatch"]["reference_index"], 1)
+        self.assertEqual(result["first_mismatch"]["reference_frame"], 40001)
+
+    def test_cli_exit_codes_json_and_input_aliases(self):
+        capture = self.directory / "capture.raw"
+        capture.write_bytes(raw_samples(self.native, 32))
+        report = self.directory / "report.json"
+        command = [sys.executable, str(TOOL), "compare-pcm-sequence",
+                   "--capture", str(capture), "--capture-format", "s32_le"]
+        for path in self.references:
+            command += ["--reference", str(path)]
+        for rates, code in (([44100, 48000], 0), ([48000, 44100], 1), ([], 1)):
+            args = [arg for rate in rates for arg in ("--observed-rate", str(rate))]
+            result = subprocess.run(command + args + ["--report", str(report), "--pacing-rate", "44100"],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, code, result.stdout)
+            self.assertEqual(json.loads(result.stdout), json.loads(report.read_text()))
+        for options in (["--observed-rate", "bad"], ["--max-trailing-frames", "-1"]):
+            result = subprocess.run(command + options, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(json.loads(result.stdout)["status"], "error")
+        good_rates = ["--observed-rate", "44100", "--observed-rate", "48000"]
+        for data, code in ((raw_samples(self.native[:-1], 32), 1), (b"\0", 2)):
+            capture.write_bytes(data)
+            result = subprocess.run(command + good_rates, text=True, capture_output=True)
+            self.assertEqual(result.returncode, code, result.stdout)
+        capture.write_bytes(raw_samples(self.native, 32))
+        originals = {path: path.read_bytes() for path in [capture, *self.references]}
+        for target in originals:
+            aliases = [target, self.directory / "child" / ".." / target.name]
+            (self.directory / "child").mkdir(exist_ok=True)
+            for kind in ("hardlink", "symlink"):
+                alias = self.directory / f"{kind}-{target.name}.json"
+                try:
+                    if kind == "hardlink":
+                        alias.hardlink_to(target)
+                    else:
+                        alias.symlink_to(target)
+                    aliases.append(alias)
+                except (OSError, NotImplementedError):
+                    pass
+            for alias in aliases:
+                result = subprocess.run(command + ["--report", str(alias)], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(json.loads(result.stdout)["status"], "error")
+                for path, original in originals.items():
+                    self.assertEqual(path.read_bytes(), original)
+        capture.write_bytes(b"\0")
+        result = subprocess.run(command + good_rates + ["--report", str(capture)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(capture.read_bytes(), b"\0")
+
+
 class DSDFixtureTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

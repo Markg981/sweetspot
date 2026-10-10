@@ -364,6 +364,60 @@ def compare_capture(references: list[Path], capture: Path, *, capture_format: st
     if any(info["rate"] != capture_rate for info in source):
         raise ValueError("Reference and capture sample rates must match")
     captured = _raw_info(capture, capture_format, capture_rate)
+    return _compare_pcm_frames(source, captured, offset_frames=offset_frames,
+                               max_lead_frames=max_lead_frames)
+
+
+def compare_pcm_sequence(references, capture, *, capture_format, rate_sequence,
+                         offset_frames=None, max_lead_frames=0,
+                         max_trailing_frames=0, pacing_rate=None):
+    """Compare native PCM frames and independently require ordered engine rates.
+
+    Headerless capture has no sample rate. Consumer pacing describes how the
+    stdout bytes were drained; it never changes source samples or expectations.
+    Reference and capture frame ranges are half-open, with no boundary alignment.
+    """
+    if not references:
+        raise ValueError("At least one WAV reference is required")
+    _integer(max_lead_frames, "max_lead_frames")
+    _integer(max_trailing_frames, "max_trailing_frames")
+    if offset_frames is not None:
+        _integer(offset_frames, "offset_frames")
+    if pacing_rate is not None:
+        _integer(pacing_rate, "pacing_rate", 1)
+    if not isinstance(rate_sequence, (list, tuple)):
+        raise ValueError("rate_sequence must be a list or tuple of integer rates")
+    observed = [_integer(rate, "rate_sequence entry", 1) for rate in rate_sequence]
+    source = [_wav_info(path) for path in references]
+    captured = _raw_info(capture, capture_format, None)
+    report = _compare_pcm_frames(source, captured, offset_frames=offset_frames,
+                                 max_lead_frames=max_lead_frames,
+                                 max_trailing_frames=max_trailing_frames)
+    expected = [info["rate"] for info in source]
+    report.update(expected_rate_sequence=expected, observed_rate_sequence=observed,
+                  rate_sequence_match=observed == expected)
+    report["capture"]["pacing_rate"] = pacing_rate
+    start = 0
+    mismatch = report["first_mismatch"]
+    for index, info in enumerate(report["references"]):
+        end = start + info["frames"]
+        info.update(expected_start_frame=start, expected_end_frame=end,
+                    capture_start_frame=start + report["leading_frames"],
+                    capture_end_frame=end + report["leading_frames"])
+        if mismatch is not None and mismatch["expected_frame"] is not None:
+            frame = mismatch["expected_frame"]
+            if start <= frame < end:
+                mismatch.update(reference_index=index, reference_frame=frame - start)
+        start = end
+    for index, boundary in enumerate(report["boundaries"]):
+        boundary.update(from_rate=expected[index], to_rate=expected[index + 1])
+    report["status"] = "pass" if report["sequence_match"] and report["rate_sequence_match"] else "fail"
+    return report
+
+
+def _compare_pcm_frames(source, captured, *, offset_frames, max_lead_frames,
+                        max_trailing_frames=None):
+    """Shared streaming frame gate; None keeps legacy unbounded edge behavior."""
     expected_frames = sum(info["frames"] for info in source)
     alignment = "explicit" if offset_frames is not None else "automatic"
     first_mismatch = None
@@ -378,6 +432,9 @@ def compare_capture(references: list[Path], capture: Path, *, capture_format: st
                               "capture_frame": offset_frames, "allowed_frames": max_lead_frames}
     elif offset_frames > captured["frames"]:
         raise ValueError("offset_frames exceeds the capture length")
+    if max_trailing_frames is not None and offset_frames > max_lead_frames:
+        first_mismatch = {"reason": "leading_silence_limit", "expected_frame": 0,
+                          "capture_frame": offset_frames, "allowed_frames": max_lead_frames}
     boundaries = []
     boundary_checks = {}
     position = 0
@@ -419,10 +476,15 @@ def compare_capture(references: list[Path], capture: Path, *, capture_format: st
                                   "capture_frame": expected_frames + offset_frames + trailing_frames,
                                   "actual": list(actual)}
             trailing_frames += 1
+        if (max_trailing_frames is not None and trailing_frames > max_trailing_frames
+                and first_mismatch is None):
+            first_mismatch = {"reason": "trailing_silence_limit", "expected_frame": None,
+                              "capture_frame": expected_frames + offset_frames + max_trailing_frames,
+                              "allowed_frames": max_trailing_frames}
     finally:
         capture_frames.close()
     sequence_match = sample_match and first_mismatch is None
-    return {"status": "pass" if sequence_match else "fail", "sample_match": sample_match,
+    report = {"status": "pass" if sequence_match else "fail", "sample_match": sample_match,
             "sequence_match": sequence_match, "expected_frames": expected_frames,
             "compared_frames": compared_frames, "leading_frames": offset_frames,
             "trailing_frames": trailing_frames, "alignment": alignment,
@@ -430,6 +492,9 @@ def compare_capture(references: list[Path], capture: Path, *, capture_format: st
             "first_mismatch": first_mismatch,
             "references": [_public_info(info) for info in source],
             "capture": _public_info(captured)}
+    if max_trailing_frames is not None:
+        report["max_trailing_frames"] = max_trailing_frames
+    return report
 
 
 def compare_dop_capture(references: list[Path], capture: Path, *, capture_format: str,
@@ -619,12 +684,17 @@ def main(argv=None):
     generate_dsd.add_argument("--output", type=Path, required=True)
     generate_dsd.add_argument("--rate", type=int, required=True)
     generate_dsd.add_argument("--container", choices=("dsf", "dff"), required=True)
-    for command in ("compare", "compare-dop"):
+    for command in ("compare", "compare-dop", "compare-pcm-sequence"):
         compare = commands.add_parser(command)
         compare.add_argument("--reference", type=Path, action="append", required=True)
         compare.add_argument("--capture", type=Path, required=True)
         compare.add_argument("--capture-format", required=True)
-        compare.add_argument("--capture-rate", type=int, required=True)
+        if command == "compare-pcm-sequence":
+            compare.add_argument("--observed-rate", type=int, action="append", default=[])
+            compare.add_argument("--max-trailing-frames", type=int, default=0)
+            compare.add_argument("--pacing-rate", type=int)
+        else:
+            compare.add_argument("--capture-rate", type=int, required=True)
         compare.add_argument("--offset-frames", type=int)
         compare.add_argument("--max-lead-frames", type=int, default=0)
         compare.add_argument("--report", type=Path)
@@ -652,10 +722,17 @@ def main(argv=None):
                 # Assign only after validation: even an error report must never
                 # be written onto the capture or any reference.
                 report_path = _report_output_path(args.report, input_paths)
-            comparator = compare_capture if args.command == "compare" else compare_dop_capture
-            report = comparator(args.reference, args.capture, capture_format=args.capture_format,
-                                capture_rate=args.capture_rate, offset_frames=args.offset_frames,
-                                max_lead_frames=args.max_lead_frames)
+            options = {"capture_format": args.capture_format, "offset_frames": args.offset_frames,
+                       "max_lead_frames": args.max_lead_frames}
+            if args.command == "compare-pcm-sequence":
+                report = compare_pcm_sequence(args.reference, args.capture, **options,
+                                              rate_sequence=args.observed_rate,
+                                              max_trailing_frames=args.max_trailing_frames,
+                                              pacing_rate=args.pacing_rate)
+            else:
+                comparator = compare_capture if args.command == "compare" else compare_dop_capture
+                report = comparator(args.reference, args.capture, **options,
+                                    capture_rate=args.capture_rate)
         exit_code = 0 if report["status"] == "pass" else 1
     except (ValueError, OSError) as error:
         report = {"status": "error", "error": str(error)}

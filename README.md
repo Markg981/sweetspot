@@ -347,7 +347,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
-| Campioni e continuità nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF; [protocollo](docs/audio-verification.md) |
+| Campioni, continuità e cambi di frequenza nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF e sei transizioni PCM fra 44,1/48/96 kHz; [protocollo](docs/audio-verification.md) |
 | Riconoscimento DoP del DAC | `tools/genera-test-dop.py`: vedi sotto |
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
 | XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
