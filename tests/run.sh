@@ -399,6 +399,53 @@ archive_action > /dev/null
 expect "archivio web: identita' ambigua non salvata" "no" "$([ -e "$WEB/run/config.call" ] && echo si || echo no)"
 rm -f "$WEB/run/dischi.list"
 
+echo "Prova DoP guidata"
+mkdac "$WEB" no
+out=$(page audio)
+case "$out" in *"Automatico: il DAC non dichiara il DSD nativo, quindi Lyrion converte i file DSD in PCM sul server, senza provare il DoP"*) ok "audio: DSD automatico senza nativo spiegato" ;; *) ko "audio DSD automatico" "conversione sul server, senza DoP" "-" ;; esac
+case "$out" in *"<h2>Prova DoP</h2>"*"Avvia la prova (6 secondi)"*) ok "audio: prova DoP proposta" ;; *) ko "audio prova DoP" "pulsante della prova" "-" ;; esac
+case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la prova" "nessun esito" "esito presente" ;; *) ok "audio: esito chiesto solo dopo la prova" ;; esac
+case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
+case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP scelto segnalato" ;; *) ko "audio DoP scelto" "Tramite DoP" "-" ;; esac
+cat > "$WEB/actionbin/sweetspot-prova-dop" <<'FINTO'
+#!/bin/sh
+printf '%s\n' "$*" > "$SWEETSPOT_RUN/prova-dop.call"
+echo RIFF > "$1"
+FINTO
+chmod +x "$WEB/actionbin/sweetspot-prova-dop"
+dop_action() { # azione [esito]
+	local body
+	body="t=$(cat "$WEB/run/web.token")&a=$1${2:+&esito=$2}"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" SWEETSPOT_WGET=$WEB/bin/wget \
+		SWEETSPOT_PROVA_DOP_DIR=$WEB/prova-dop REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
+}
+printf 'VOLUME=fisso\n' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+out=$(dop_action prova_dop)
+expect "prova DoP: tono di 6 secondi generato sul player" "$WEB/prova-dop/prova-dop.wav 6" "$(cat "$WEB/run/prova-dop.call" 2>/dev/null)"
+expect "prova DoP: esito atteso dopo l'avvio" "si" "$([ -f "$WEB/run/prova-dop.avviata" ] && echo si || echo no)"
+case "$out" in *"%50%72%6f%76%61%20%44%6f%50%20%61%76%76%69%61%74%61"*) ok "prova DoP: pagina con le istruzioni" ;; *) ko "prova DoP messaggio" "Prova DoP avviata" "$(printf '%s' "$out" | head -c 200)" ;; esac
+case "$(page audio)" in *"usa DoP"*"lascia la conversione"*) ok "audio: dopo la prova si sceglie l'esito" ;; *) ko "audio esito prova DoP" "due pulsanti" "-" ;; esac
+rm -f "$WEB/run/config.call"
+dop_action prova_dop_esito no > /dev/null
+expect "esito negativo: nessuna impostazione cambiata" "no|no" \
+	"$([ -e "$WEB/run/config.call" ] && echo si || echo no)|$([ -f "$WEB/run/prova-dop.avviata" ] && echo si || echo no)"
+touch "$WEB/run/prova-dop.avviata"
+dop_action prova_dop_esito si > /dev/null
+expect "esito positivo: DSD tramite DoP" "imposta DSD dop" "$(cat "$WEB/run/config.call" 2>/dev/null)"
+printf 'VOLUME=software\n' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+rm -f "$WEB/run/prova-dop.call"
+dop_action prova_dop > /dev/null
+expect "prova DoP rifiutata con il volume software" "no" "$([ -e "$WEB/run/prova-dop.call" ] && echo si || echo no)"
+mkdac "$WEB" si
+case "$(page audio)" in *"<h2>Prova DoP</h2>"*) ko "audio: nessuna prova con DSD nativo" "nessuna prova" "prova presente" ;; *) ok "audio: nessuna prova con DSD nativo" ;; esac
+rm -f "$WEB/s.txt" "$WEB/run/config.call" "$WEB/run/prova-dop.avviata" "$WEB/run/prova-dop.call"
+rm -rf "$WEB/prova-dop"
+
 echo "Diagnostica del percorso"
 printf 'buffering\n' > "$WEB/squeezelite.log"
 : > "$WEB/proc/mounts"
@@ -1162,4 +1209,5 @@ python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
+python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

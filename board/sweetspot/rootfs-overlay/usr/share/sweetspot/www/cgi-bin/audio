@@ -7,6 +7,36 @@
 
 page_start "Audio" audio
 
+# DAC USB senza DSD nativo dichiarato: cosa succede davvero ai file DSD.
+dsd_without_native_row() {
+	case "$(lower "$(conf DSD auto)")" in
+		dop) info_row OK "DSD" "Tramite DoP, come scelto: i file DSD arrivano al DAC dentro il PCM." ;;
+		no) info_row INFO "DSD" "Convertito in PCM, come scelto." ;;
+		*) info_row INFO "DSD" "Automatico: il DAC non dichiara il DSD nativo, quindi Lyrion converte i file DSD in PCM sul server, senza provare il DoP. Se il DAC supporta il DoP, verificalo con la prova qui sotto." ;;
+	esac
+}
+
+# Prova DoP guidata: un tono DSD64 in DoP generato sul player e suonato da
+# Lyrion. Il DAC mostra DSD/DoP solo se lo riconosce e i campioni arrivano
+# intatti; l'utente sceglie poi DoP o la conversione in PCM.
+dop_test_card() {
+	local blocker
+	echo '<h2>Prova DoP</h2><div class="card formcard">'
+	echo '<p class="sub">Molti DAC accettano il DSD dentro il PCM (DoP) senza dichiararlo. La prova suona per 6 secondi un tono a 1 kHz in DSD64 via DoP. <b>Abbassa prima il volume dell&#39;amplificatore.</b> Se il DAC mostra DSD o DoP e senti il tono, il DoP funziona; se mostra PCM 176,4 kHz o senti un fruscio forte, no.</p>'
+	blocker=$(dop_test_blocker "$(dac_rates "$card")")
+	if [ -n "$blocker" ]; then
+		info_row ATTENZIONE "Prova non disponibile" "Adesso $blocker."
+	else
+		button prova_dop "Avvia la prova (6 secondi)" "" "" primary
+		if [ -f "$RUN/prova-dop.avviata" ]; then
+			echo '<p class="sub">Com&#39;è andata?</p>'
+			button prova_dop_esito "Il DAC ha mostrato DSD/DoP e ho sentito il tono: usa DoP" esito si primary
+			button prova_dop_esito "Il DAC ha mostrato PCM o ho sentito fruscio: lascia la conversione" esito no
+		fi
+	fi
+	echo '</div>'
+}
+
 card=$(dac_find)
 mac=$(cat "$RUN/player.mac" 2>/dev/null)
 
@@ -22,11 +52,13 @@ else
 	rates=$(dac_rates "$card")
 	maxr=$(last_word "$rates")
 	dsd=$(dac_native_dsd "$card")
-	if [ -n "$dsd" ]; then dsdtxt="DSD nativo ($dsd)"; else dsdtxt="DSD nativo non dichiarato (DoP o conversione in PCM)"; fi
+	if [ -n "$dsd" ]; then dsdtxt="DSD nativo ($dsd)"; else dsdtxt="DSD nativo non dichiarato"; fi
 	info_row OK "$(dac_name "$card")" "USB $(dac_usbid "$card")${maxr:+ - fino a $((maxr / 1000)) kHz} - $dsdtxt"
 	[ -n "$rates" ] && info_row "" "Frequenze supportate" "$(printf '%s' "$rates" | tr ' ' '\n' | awk '{printf "%s%g", sep, $1/1000; sep=", "} END {print " kHz"}')"
+	[ -z "$dsd" ] && dsd_without_native_row
 fi
 echo '</div>'
+[ -n "$card" ] && [ -n "$(dac_usbid "$card")" ] && [ -z "$dsd" ] && dop_test_card
 
 # --- Cosa arriva al DAC adesso --------------------------------------------------------
 # Confronto tra il brano (dati di Lyrion) e il formato aperto sul DAC (ALSA):
@@ -173,7 +205,7 @@ $(volume_note "$vol")
 
 <label for="dsd">DSD</label>
 <select id="dsd" name="dsd">
-$(option auto "Automatico: nativo se il DAC lo supporta (consigliato)" "$(conf DSD auto)")
+$(option auto "Automatico: nativo se il DAC lo dichiara, altrimenti convertito in PCM dal server (consigliato)" "$(conf DSD auto)")
 $(option nativo "Nativo forzato: per DAC che lo supportano senza dichiararlo" "$(conf DSD auto)")
 $(option dop "DoP: solo se il DAC lo supporta, altrimenti forte fruscio" "$(conf DSD auto)")
 $(option no "Convertito in PCM" "$(conf DSD auto)")

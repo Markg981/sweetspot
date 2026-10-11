@@ -24,7 +24,7 @@ F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
-F_sinistro="" F_destro="" F_modo=""
+F_sinistro="" F_destro="" F_modo="" F_esito=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -95,6 +95,39 @@ case "$F_a" in
 		[ $rc -eq 1 ] && done_to audio "$(saved_msg 1)"
 		restart_player
 		done_to audio "$(saved_msg $rc "Impostazioni salvate: il player si sta riavviando.")" ;;
+
+	# Prova DoP guidata: genera il tono DSD64 in DoP e lo fa suonare a Lyrion.
+	prova_dop)
+		card=$(dac_find)
+		[ -n "$card" ] || done_to audio "Nessun DAC collegato: la prova DoP richiede il DAC acceso."
+		blocker=$(dop_test_blocker "$(dac_rates "$card")")
+		[ -z "$blocker" ] || done_to audio "Prova DoP non disponibile: $blocker."
+		mac=$(cat "$RUN/player.mac" 2>/dev/null)
+		[ -n "$mac" ] || done_to audio "Il player non è ancora avviato: riprova tra qualche secondo."
+		dir=${SWEETSPOT_PROVA_DOP_DIR:-/tmp/sweetspot-prova-dop}
+		mkdir -p "$dir" && chmod 755 "$dir" &&
+			sweetspot-prova-dop "$dir/prova-dop.wav" 6 && chmod 644 "$dir/prova-dop.wav" ||
+			done_to audio "Impossibile preparare il file di prova DoP."
+		lms_json "$mac" playlist play "file://$dir/prova-dop.wav" > /dev/null ||
+			done_to audio "Lyrion non ha avviato la prova DoP: riprova tra qualche secondo."
+		touch "$RUN/prova-dop.avviata"
+		log "audio: prova DoP avviata"
+		done_to audio "Prova DoP avviata: guarda il display del DAC e ascolta, poi indica qui sotto com'è andata." ;;
+
+	prova_dop_esito)
+		rm -f "$RUN/prova-dop.avviata"
+		case "$F_esito" in
+			si)
+				sweetspot-config imposta DSD dop
+				rc=$?
+				[ $rc -eq 1 ] && done_to audio "$(saved_msg 1)"
+				log "audio: prova DoP riuscita, DSD tramite DoP"
+				restart_player
+				done_to audio "$(saved_msg $rc "DSD tramite DoP: il player si sta riavviando.")" ;;
+			*)
+				log "audio: prova DoP non riuscita, DSD convertito in PCM"
+				done_to audio "Nessuna modifica: i file DSD restano convertiti in PCM dal server." ;;
+		esac ;;
 
 	# --- Musica ------------------------------------------------------------------
 	aggiorna)
