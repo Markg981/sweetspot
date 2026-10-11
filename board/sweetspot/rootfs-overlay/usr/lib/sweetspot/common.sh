@@ -611,6 +611,19 @@ lms_ready() { [ -n "$(LMS_TIMEOUT=5 lms_get '._version' '' version '?')" ]; }
 # Lyrion sta leggendo la libreria?
 lms_scanning() { [ "$(lms_get '.rescan' '' rescan '?')" = 1 ]; }
 
+# Modalita' ascolto scelta nella pagina Sistema: puro (lavori sospesi,
+# coda in RAM, dischi fermi), si (solo lavori sospesi) o no. Il precarico
+# esiste solo nella modalita' completa (Lyrion su Sweetspot).
+listening_choice() {
+	if ! is_yes "$(conf MODALITA_ASCOLTO si)"; then
+		echo no
+	elif [ "$(mode)" = completa ] && is_yes "$(conf PRECARICO si)"; then
+		echo puro
+	else
+		echo si
+	fi
+}
+
 # CamillaDSP e' nel percorso con i filtri della stanza, non solo per il
 # volume a 64 bit (lo decide il player, vedi sweetspot-player).
 correction_running() {

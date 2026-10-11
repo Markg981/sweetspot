@@ -393,6 +393,23 @@ expect "archivio web: PARTUUID stabile" "imposta ARCHIVIO PARTUUID=partizione" "
 rm -f "$WEB/run/dischi.call"
 archive_action 2 > /dev/null
 expect "archivio web: salvataggio fallito non rimonta" "no" "$([ -e "$WEB/run/dischi.call" ] && echo si || echo no)"
+system_action() { # ascolto
+	local body
+	body="t=$(cat "$WEB/run/web.token")&a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=$1&ssh=no&ottimizzazioni=si"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione" > /dev/null
+	grep -o 'MODALITA_ASCOLTO [a-z]* PRECARICO [a-z]*' "$WEB/run/config.call"
+}
+expect "sistema: ascolto puro = lavori sospesi + precarico" "MODALITA_ASCOLTO si PRECARICO si" "$(system_action puro)"
+expect "sistema: solo lavori sospesi" "MODALITA_ASCOLTO si PRECARICO no" "$(system_action si)"
+expect "sistema: modalita' ascolto spenta" "MODALITA_ASCOLTO no PRECARICO no" "$(system_action no)"
+expect "sistema: valore sconosciuto = solo lavori sospesi" "MODALITA_ASCOLTO si PRECARICO no" "$(system_action xyz)"
+case "$(page sistema)" in *'<option value="puro" selected'*) ok "sistema: ascolto puro di serie" ;; *) ko "sistema ascolto puro" "puro selezionato" "-" ;; esac
+case "$(page sistema 'PRECARICO=no')" in *'<option value="si" selected'*) ok "sistema: senza precarico solo lavori sospesi" ;; *) ko "sistema ascolto si" "si selezionato" "-" ;; esac
+case "$(page sistema "$(printf 'MODALITA_ASCOLTO=no\nPRECARICO=si')")" in *'<option value="no" selected'*) ok "sistema: ascolto spento" ;; *) ko "sistema ascolto no" "no selezionato" "-" ;; esac
+
 
 echo "Password delle pagine e impostazioni iniziali"
 acc() { # impostazioni
@@ -1549,6 +1566,20 @@ printf 'state: XRUN\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
 durata && rc=0 || rc=$?
 expect "durata: uscita ferma, prova non riuscita" "1|Prova di durata: NON RIUSCITA|uscita in riproduzione: 0% delle misure (minimo 95%)" \
 	"$rc|$(head -n 1 "$Q/run/durata.txt")|$(grep '^uscita' "$Q/run/durata.txt")"
+
+echo "Modalita' ascolto"
+expect "stato: ascolto puro in attesa della musica" \
+	"OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): si attiva quando la musica suona" "$(qcheck Ascolto)"
+printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
+printf -- '-123\n-456\n' > "$Q/run/ascolto.fermi"
+expect "stato: lavori sospesi durante la musica" \
+	"OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): ora 2 lavori sospesi" "$(qcheck Ascolto)"
+echo PRECARICO=no > "$Q/run/sweetspot.conf"
+expect "stato: solo lavori sospesi" "OK|Ascolto|lavori di fondo sospesi durante la musica: ora 2 lavori sospesi" "$(qcheck Ascolto)"
+echo MODALITA_ASCOLTO=no > "$Q/run/sweetspot.conf"
+expect "stato: modalita' ascolto spenta" \
+	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
 
 echo "Rapporto e matrice di compatibilita'"
 mkdir -p "$Q/sys/class/dmi/id" "$Q/repbin" "$Q/sys/class/net/eth0/device" "$Q/drivers/r8169"

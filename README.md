@@ -324,7 +324,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `NOME_PLAYER` | testo | Sweetspot |
 | `MODALITA` | `completa`, `player` | completa |
 | `SERVER` | solo modalità player: indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
-| `MODALITA_ASCOLTO` | `si`, `no` | si |
+| `MODALITA_ASCOLTO` | `si`, `no`: mentre la musica suona lettura della libreria, copie e ripping restano sospesi. Nella pagina Sistema un'unica scelta, che vale subito: *ascolto puro* (questa più `PRECARICO=si`: coda in RAM e dischi fermi), *lavori sospesi* (`PRECARICO=no`) o *spenta*; la pagina Stato, voce "Ascolto", dice quale è attiva e quanti lavori sono sospesi ora | si |
 | `PRECARICO` | `si`, `no`: coda di ascolto in RAM | si |
 | `PRECARICO_MB` | `auto` (metà della memoria libera) o MB | auto |
 | `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
