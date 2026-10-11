@@ -443,11 +443,17 @@ refresh_boot_grub() {
 	replace_file "$AVVIO/grub.cfg" "$STICK_MNT/boot/grub/grub.cfg"
 }
 
-# Il sistema e' partito: risponde la pagina web locale.
+# Il sistema e' partito: risponde la pagina web locale. Con la password
+# delle pagine (PASSWORD_WEB) la pagina vivo accetta l'utente "sweetspot" con
+# la chiave di questo avvio, scritta da sweetspot-accesso; senza, un 401
+# annullerebbe ogni aggiornamento.
 healthy() {
-	local i=0
+	local i=0 url key
+	url="http://127.0.0.1/cgi-bin/vivo"
+	key=$(cat "$RUN/vivo.chiave" 2>/dev/null)
+	[ -n "$key" ] && url="http://sweetspot:$key@127.0.0.1/cgi-bin/vivo"
 	while [ $i -lt "${SWEETSPOT_CONFERMA_ATTESA:-60}" ]; do
-		"${SWEETSPOT_WGET:-wget}" -q -T 5 -O /dev/null "http://127.0.0.1/cgi-bin/vivo" 2>/dev/null && return 0
+		"${SWEETSPOT_WGET:-wget}" -q -T 5 -O /dev/null "$url" 2>/dev/null && return 0
 		sleep 2
 		i=$((i + 2))
 	done
