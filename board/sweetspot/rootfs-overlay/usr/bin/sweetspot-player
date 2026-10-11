@@ -122,6 +122,44 @@ pin_dsp() {
 	done
 }
 
+# Inizio della sessione del player: da qui si contano XRUN, interruzioni
+# sul core della riproduzione, campioni tagliati da CamillaDSP e latenza.
+session_start() {
+	local size=0
+	[ -f "$SQLOG" ] && size=$(wc -c < "$SQLOG" | tr -d ' ')
+	printf 'inizio=%s\nsqlog=%s\ncore=%s\n' "$(date +%s)" "${size:-0}" "$LAYOUT_AUDIO" > "$RUN/sessione"
+	irq_cpu_counts "$LAYOUT_AUDIO" > "$RUN/sessione.irq"
+	rm -f "$RUN/dsp.clip" "$RUN/latenza.ascolto"
+}
+
+# Campioni tagliati da CamillaDSP nella sessione. Il suo contatore riparte
+# con ogni processo (il plugin cdsp lo riavvia quando cambia il formato):
+# a ogni giro di sorveglianza si somma la crescita. Riga: PID ULTIMO TOTALE.
+dsp_clip_poll() {
+	local p v old="" last=0 total=0
+	[ -f "$RUN/correzione.attiva" ] || return 0
+	p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
+	[ -n "$p" ] || return 0
+	v=$(sweetspot-camilla "$DSP_PORTA" GetClippedSamples 2>/dev/null | sed -n 's/.*"value":\([0-9]*\).*/\1/p')
+	[ -n "$v" ] || return 0
+	[ -s "$RUN/dsp.clip" ] && read -r old last total < "$RUN/dsp.clip"
+	if [ "$old" = "$p" ] && [ "$v" -ge "$last" ]; then
+		total=$((total + v - last))
+	else
+		total=$((total + v))
+	fi
+	echo "$p $v $total" > "$RUN/dsp.clip"
+}
+
+# Latenza durante l'ascolto (facoltativa, LATENZA_ASCOLTO=si): una misura
+# leggera sul core della riproduzione per tutta la sessione.
+start_latency_watch() {
+	LATPID=""
+	[ "$(lower "$(conf LATENZA_ASCOLTO no)")" = si ] || return 0
+	taskset -c "$HK" sweetspot-latenza --ascolto "$LAYOUT_AUDIO" &
+	LATPID=$!
+}
+
 # Indirizzo del player (MAC) fisso: quello della prima scheda di rete, cosi'
 # Lyrion lo riconosce sempre e ne conserva le impostazioni.
 player_mac() {
@@ -278,6 +316,7 @@ run_player() {
 	esac
 
 	printf '%s ' "$@" > "$RUN/player.args"
+	session_start
 	taskset -c "$HK" squeezelite "$@" &
 	PID=$!
 	echo "$PID" > "$RUN/squeezelite.pid"
@@ -318,12 +357,14 @@ player_loop() {
 		[ "$(lower "$(conf VOLUME fisso)")" = dac ] || dac_unity_gain "$card"
 		run_player "$card" || { sleep 2; continue; }
 		say "attivo su $(dac_name "$card")"
+		start_latency_watch
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"
 		while kill -0 "$PID" 2>/dev/null; do
 			if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
 			pin_output_thread "$PID"
 			pin_dsp
+			dsp_clip_poll
 			apply_player_prefs
 			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
 				log "player: DAC scollegato"
@@ -331,6 +372,7 @@ player_loop() {
 			fi
 		done
 		wait "$PID" 2>/dev/null
+		[ -n "$LATPID" ] && kill "$LATPID" 2>/dev/null
 		say "riavvio del player"
 		rm -f "$RUN/audio.tid"
 		sleep 2

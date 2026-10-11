@@ -20,6 +20,9 @@ LOGFILE=${SWEETSPOT_LOG:-/var/log/sweetspot.log}
 # shellcheck disable=SC2034
 AWK=${SWEETSPOT_AWK:-awk}
 STICK_LABEL=SWEETSPOT
+# Server websocket di CamillaDSP, solo locale: ne leggiamo i contatori.
+# shellcheck disable=SC2034
+DSP_PORTA=${SWEETSPOT_DSP_PORTA:-1234}
 # SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
 STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 
@@ -274,6 +277,20 @@ cpu_layout() {
 		LAYOUT_IRQ=$LAYOUT_AUDIO
 	fi
 	LAYOUT_HK=$(subtract "$prim" "$LAYOUT_ISO")
+}
+
+# Interruzioni ricevute da un core da /proc/interrupts, una per riga:
+# "ETICHETTA CONTEGGIO NOME" (per i dispositivi il nome e' il driver,
+# per le interruzioni di sistema come LOC il nome e' vuoto).
+irq_cpu_counts() { # core
+	awk -v c="CPU$1" '
+		NR == 1 { for (i = 1; i <= NF; i++) if ($i == c) col = i + 1; n = NF; next }
+		col && $1 ~ /:$/ && NF > n && $col ~ /^[0-9]+$/ {
+			l = $1; sub(/:$/, "", l)
+			name = (l ~ /^[0-9]+$/) ? $NF : ""
+			print l, $col, name
+		}
+	' "$PROC/interrupts" 2>/dev/null
 }
 
 cpu_has_flag() { grep -q "^flags.*[[:space:]]$1\([[:space:]]\|$\)" "$PROC/cpuinfo" 2>/dev/null; }

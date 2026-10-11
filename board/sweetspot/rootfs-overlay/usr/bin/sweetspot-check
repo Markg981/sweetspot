@@ -192,18 +192,120 @@ EOF
 
 }
 
-check_player() {
-	local pid xr recovery counts bufs state vol
-	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
-	# Il messaggio di output_alsa.c segue il prefisso del logger oppure e' nudo.
-	# Confrontare il messaggio intero evita sottostringhe e doppi conteggi.
-	counts=$(awk '
+# XRUN e recuperi falliti nel registro di Squeezelite: "EVENTI RECUPERI".
+# Il messaggio di output_alsa.c segue il prefisso del logger oppure e' nudo.
+# Confrontare il messaggio intero evita sottostringhe e doppi conteggi.
+xrun_counts() { # [file], altrimenti lo standard input
+	awk '
 		{ message=$0; sub(/^\[[^]]*\][[:space:]]+[[:alnum:]_]+:[0-9]+[[:space:]]+/, "", message) }
 		message == "XRUN" { events++ }
 		message ~ /^XRUN recover failed: / { recovery++ }
 		END { printf "%d %d", events, recovery }
-	' "$SQLOG" 2>/dev/null) || counts=""
+	' "$@"
+}
+
+# Valore di una riga CHIAVE=VALORE del file della sessione del player.
+session_value() { sed -n "s/^$1=//p" "$RUN/sessione" 2>/dev/null; }
+
+# Minuti trascorsi dall'inizio della sessione (almeno 1).
+session_minutes() {
+	local m
+	m=$(( ($(date +%s) - $(session_value inizio)) / 60 ))
+	[ "$m" -ge 1 ] || m=1
+	echo "$m"
+}
+
+# Contatori live della sessione del player (dall'ultimo avvio di Squeezelite).
+check_session() {
+	local off size counts xr rec mins
+	[ -s "$RUN/sessione" ] || return 0
+	mins=$(session_minutes)
+	off=$(session_value sqlog)
+	if [ -f "$SQLOG" ]; then
+		size=$(wc -c < "$SQLOG" | tr -d ' ')
+		# Registro ricominciato da capo: conta tutto.
+		[ "${off:-0}" -le "$size" ] || off=0
+		counts=$(tail -c +"$((${off:-0} + 1))" "$SQLOG" | xrun_counts)
+		xr=${counts% *}; rec=${counts#* }
+		if [ "$xr" = 0 ] && [ "$rec" = 0 ]; then
+			emit OK "XRUN nella sessione" "nessuno in $mins minuti"
+		else
+			emit ATTENZIONE "XRUN nella sessione" "$xr in $mins minuti (recuperi falliti: $rec)"
+		fi
+	else
+		emit INFO "XRUN nella sessione" "registro non disponibile"
+	fi
+	check_audio_irqs "$mins"
+	check_listening_latency
+}
+
+# Interruzioni arrivate sul core della riproduzione durante la sessione:
+# quelle dei dispositivi una per una, quelle di sistema (timer, IPI) come
+# frequenza media.
+check_audio_irqs() { # minuti
+	local core res dev sys
+	core=$(session_value core)
+	[ -n "$core" ] && [ -f "$RUN/sessione.irq" ] || return 0
+	res=$(irq_cpu_counts "$core" | awk -v secs="$(( $1 * 60 ))" '
+		NR == FNR { old[$1] = $2; next }
+		{
+			d = $2 - old[$1]
+			if (d <= 0) next
+			if ($1 ~ /^[0-9]+$/) { dev = dev sep "IRQ " $1 " (" $3 ") " d; sep = ", " }
+			else sys += d
+		}
+		END { printf "%s|%d", dev, sys / secs }
+	' "$RUN/sessione.irq" -)
+	dev=${res%|*}; sys=${res##*|}
+	if [ -z "$dev" ]; then
+		emit OK "Interruzioni sul core audio" "nessuna da dispositivi in $1 minuti sul core $core"
+	elif [ "$core" = "$LAYOUT_IRQ" ]; then
+		emit INFO "Interruzioni sul core audio" "$dev in $1 minuti (un solo core: USB e riproduzione lo condividono)"
+	else
+		emit ATTENZIONE "Interruzioni sul core audio" "$dev in $1 minuti sul core $core, che dovrebbe restare libero"
+	fi
+	emit INFO "Interruzioni di sistema sul core audio" "${sys:-0} al secondo (timer e chiamate fra core)"
+}
+
+# Latenza misurata durante l'ascolto da sweetspot-latenza --ascolto.
+check_listening_latency() {
+	local max n last
+	if [ -s "$RUN/latenza.ascolto" ]; then
+		read -r max n last < "$RUN/latenza.ascolto"
+		if [ "$max" -le 150 ]; then
+			emit OK "Latenza durante l'ascolto" "massima $max us in $n finestre di 30 s (ultima $last us)"
+		else
+			emit ATTENZIONE "Latenza durante l'ascolto" "massima $max us in $n finestre di 30 s (ultima $last us): prova il profilo 'prestazioni' e le impostazioni del BIOS"
+		fi
+	elif [ "$(lower "$(conf LATENZA_ASCOLTO no)")" = si ]; then
+		emit INFO "Latenza durante l'ascolto" "nessuna misura ancora: servono 30 secondi di riproduzione"
+	else
+		emit INFO "Latenza durante l'ascolto" "non misurata: LATENZA_ASCOLTO=si la misura, sweetspot-latenza a riproduzione ferma"
+	fi
+}
+
+# Campioni tagliati da CamillaDSP nella sessione (li somma il player).
+check_dsp_clipping() {
+	local total
+	if [ -s "$RUN/dsp.clip" ]; then
+		total=$(cut -d' ' -f3 "$RUN/dsp.clip")
+		if [ "${total:-0}" = 0 ]; then
+			emit OK "Clipping di CamillaDSP" "nessun campione tagliato nella sessione"
+		else
+			emit ATTENZIONE "Clipping di CamillaDSP" "$total campioni tagliati nella sessione: l'attenuazione automatica non basta, riduci in REW i filtri che alzano il livello"
+		fi
+	else
+		emit INFO "Clipping di CamillaDSP" "non ancora letto: si conta durante la riproduzione"
+	fi
+}
+
+check_player() {
+	local pid xr recovery counts bufs state vol hist=ATTENZIONE
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	counts=$(xrun_counts "$SQLOG" 2>/dev/null) || counts=""
 	xr=${counts% *}; recovery=${counts#* }
+	# Con i contatori della sessione lo storico e' solo un'informazione.
+	[ -s "$RUN/sessione" ] && hist=INFO
 	state=$(cat "$RUN/player.stato" 2>/dev/null)
 	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 		emit OK "Player" "$state"
@@ -218,15 +320,16 @@ check_player() {
 	elif [ "$xr" = 0 ]; then
 		emit INFO "XRUN ALSA registrati" "0 nel registro storico; non esclude interruzioni dello stream o del DSP e non misura il jitter del clock"
 	else
-		emit ATTENZIONE "XRUN ALSA registrati" "$xr nel registro storico; non misura il jitter del clock"
+		emit "$hist" "XRUN ALSA registrati" "$xr nel registro storico; non misura il jitter del clock"
 	fi
 	if [ ! -f "$SQLOG" ] || [ -z "$counts" ]; then
 		emit INFO "Recuperi XRUN falliti" "registro non disponibile"
 	elif [ "${recovery:-0}" = 0 ]; then
 		emit INFO "Recuperi XRUN falliti" "0 nel registro storico"
 	else
-		emit ATTENZIONE "Recuperi XRUN falliti" "$recovery nel registro storico"
+		emit "$hist" "Recuperi XRUN falliti" "$recovery nel registro storico"
 	fi
+	check_session
 	bufs=$(player_buffers)
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
 	vol=$(lower "$(conf VOLUME fisso)")
@@ -251,7 +354,10 @@ check_player() {
 	elif [ -s "$RUN/correzione.errore" ]; then
 		emit ATTENZIONE "Correzione ambientale" "non applicata: $(cat "$RUN/correzione.errore")"
 	fi
-	[ -f "$RUN/correzione.attiva" ] && check_dsp_threads
+	if [ -f "$RUN/correzione.attiva" ]; then
+		check_dsp_threads
+		check_dsp_clipping
+	fi
 }
 
 # Thread di CamillaDSP: tutti in real-time (SCHED_FIFO), come il player.

@@ -351,7 +351,8 @@ write_asound() { # scheda
 		echo "	config_cdsp 1"
 		echo "	channels 2"
 		echo "	rates = [ $rates ]"
-		echo "	cargs [ -l \"warn\" -o \"/var/log/camilladsp.log\" ]"
+		# Websocket solo locale: il player ne legge i campioni tagliati.
+		echo "	cargs [ -l \"warn\" -o \"/var/log/camilladsp.log\" -p \"$DSP_PORTA\" -a \"127.0.0.1\" ]"
 		echo "}"
 	} > "$ASOUND.nuovo" && mv "$ASOUND.nuovo" "$ASOUND"
 }

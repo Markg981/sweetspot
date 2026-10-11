@@ -86,7 +86,10 @@ diffusore sinistro e uno per il destro.
   dal massimo guadagno dei singoli filtri, comprese le risonanze: i picchi
   stretti non dipendono dalla griglia usata per disegnare la curva. Il margine
   copre il guadagno in frequenza; i picchi della forma d'onda possono richiedere
-  ulteriore attenuazione, da verificare sul segnale elaborato.
+  ulteriore attenuazione, da verificare sul segnale elaborato: la pagina Stato,
+  voce "Clipping di CamillaDSP", somma i campioni tagliati nella sessione
+  (letti ogni pochi secondi dal websocket di CamillaDSP, aperto solo su
+  127.0.0.1:1234).
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.
@@ -362,8 +365,11 @@ sempre svegli. Il Turbo è sempre spento.
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
 | Campioni, continuità e cambi di frequenza nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF e sei transizioni PCM fra 44,1/48/96 kHz; [protocollo](docs/audio-verification.md) |
 | Riconoscimento DoP del DAC | pagina Audio, "Prova DoP" (DAC senza DSD nativo), oppure `tools/genera-test-dop.py`: vedi sotto |
-| Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
-| XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
+| Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH) a riproduzione ferma, obiettivo sotto 50 µs |
+| Latenza durante l'ascolto | `LATENZA_ASCOLTO=si` in `sweetspot.txt`: finestre di 30 s a 100 risvegli al secondo sul core della riproduzione, solo mentre l'uscita suona; pagina di stato, massima e ultima finestra. Spenta in modo predefinito: il thread di misura (priorità 85) toglie pochi µs ogni 10 ms al player |
+| XRUN della sessione | pagina di stato, "XRUN nella sessione": eventi e recuperi falliti dall'ultimo avvio del player; lo storico del registro resta come informazione. Zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
+| Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
+| Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 | Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
 
