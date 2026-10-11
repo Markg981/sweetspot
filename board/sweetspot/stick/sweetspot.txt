@@ -57,6 +57,10 @@ ESCLUDI_DISCHI=
 # Puoi anche scrivere il nome, per esempio DAC=R26.
 DAC=auto
 
+# Altri DAC USB: no = suona solo il DAC qui sopra; si = ogni altro DAC
+# collegato diventa un player separato in Lyrion (zone da raggruppare li').
+ALTRI_DAC=no
+
 # Volume:
 #   fisso    = 100%, si regola dall'amplificatore (bit-perfect, consigliato)
 #   dac      = usa il controllo di volume del DAC (bit-perfect)

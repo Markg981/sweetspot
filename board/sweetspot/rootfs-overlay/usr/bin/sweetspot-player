@@ -160,6 +160,75 @@ start_volume_watch() {
 	VOLPID=$!
 }
 
+# --- Altri DAC (zone) ---------------------------------------------------------------
+#
+# ALTRI_DAC=si: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioe'
+# un player separato in Lyrion ("Sweetspot - nome del DAC"); le zone si
+# raggruppano e si sincronizzano da Lyrion. Il DAC principale resta com'e'
+# (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di
+# sistema, con priorita' real-time un po' piu' bassa, uscita diretta e
+# volume regolabile da Lyrion. Si avviano e si fermano da soli quando un DAC
+# viene collegato o staccato.
+ZONE_DIR=$RUN/zone
+
+other_dacs() { # scheda del DAC principale
+	local d idx
+	for d in "$PROC"/asound/card[0-9]*; do
+		[ -d "$d" ] || continue
+		idx=${d##*card}
+		[ "$idx" = "$1" ] && continue
+		[ -f "$d/usbid" ] || continue
+		[ -n "$(dac_playback_dev "$idx")" ] || continue
+		echo "$idx"
+	done
+}
+
+# MAC stabile per ogni DAC (indirizzo locale, 02:...): Lyrion ricorda il
+# player e le sue impostazioni anche se la porta USB cambia.
+zone_mac() { # id usbid
+	printf '%s %s' "$1" "$2" | md5sum | awk '{ s = $1; printf "02:%s:%s:%s:%s:%s", substr(s, 1, 2), substr(s, 3, 2), substr(s, 5, 2), substr(s, 7, 2), substr(s, 9, 2) }'
+}
+
+zone_start() { # scheda
+	local card=$1 id dev name server fmt prio
+	id=$(dac_id "$card")
+	dev=$(dac_playback_dev "$card") || return 1
+	name="$(conf NOME_PLAYER Sweetspot) - $(dac_name "$card")"
+	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
+	prio=$(( $(num_conf PRIORITA_AUDIO 80) - 5 ))
+	set -- -o "hw:CARD=$id,DEV=$dev" -a "$(num_conf BUFFER_ALSA_MS 400):$(num_conf PERIODI_ALSA 4)::1" \
+		-n "$name" -M Sweetspot -m "$(zone_mac "$id" "$(dac_usbid "$card")")" -C 30 -p "$prio" \
+		-d output=info -f "/var/log/squeezelite-$id.log"
+	[ -n "$server" ] && set -- "$@" -s "$server"
+	fmt=$(dac_native_dsd "$card")
+	[ -n "$fmt" ] && set -- "$@" -D "$(num_conf PAUSA_DSD_MS 500):$fmt"
+	mkdir -p "$ZONE_DIR"
+	taskset -c "$HK" squeezelite "$@" &
+	echo "$! $id" > "$ZONE_DIR/$card"
+	log "player: zona \"$name\" sul DAC $id"
+}
+
+# Allinea le zone ai DAC collegati: ferma quelle di DAC staccati (o diventati
+# il principale, o con ALTRI_DAC=no), riavvia quelle cadute, avvia le nuove.
+zones_sync() { # scheda del DAC principale
+	local f card pid id want=0
+	is_yes "$(conf ALTRI_DAC no)" && want=1
+	for f in "$ZONE_DIR"/*; do
+		[ -f "$f" ] || continue
+		card=${f##*/}
+		read -r pid id < "$f"
+		if [ "$want" = 0 ] || [ "$card" = "$1" ] || [ "$(dac_id "$card")" != "$id" ] || ! kill -0 "$pid" 2>/dev/null; then
+			kill "$pid" 2>/dev/null
+			rm -f "$f"
+			log "player: zona sul DAC $id fermata"
+		fi
+	done
+	[ "$want" = 1 ] || return 0
+	for card in $(other_dacs "$1"); do
+		[ -f "$ZONE_DIR/$card" ] || zone_start "$card"
+	done
+}
+
 start_latency_watch() {
 	LATPID=""
 	[ "$(lower "$(conf LATENZA_ASCOLTO no)")" = si ] || return 0
@@ -396,6 +465,7 @@ player_loop() {
 			pin_output_thread "$PID"
 			pin_dsp
 			dsp_clip_poll
+			zones_sync "$card"
 			apply_player_prefs
 			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
 				log "player: DAC scollegato"
