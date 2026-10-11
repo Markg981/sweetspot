@@ -324,6 +324,8 @@ for p in audio musica archivio plugin rete sistema; do
 done
 out=$(page audio)
 case "$out" in *"Percorso originale configurato"*"integrità dei campioni non verificata"*) ok "audio: formato compatibile non certifica i campioni" ;; *) ko "audio integrita'" "Percorso originale configurato, integrita' non verificata" "-" ;; esac
+case "$out" in *'name="dac"'*'<option value="auto" selected>'*'<option value="292b:0a26">GUSTARD R26 (USB 292b:0a26)</option>'*) ok "audio: scelta del DAC principale tra i DAC USB collegati" ;; *) ko "audio DAC principale" "auto selezionato e R26 per identificativo USB" "-" ;; esac
+case "$(page audio 'DAC=R26')" in *'<option value="r26" selected>r26 (da sweetspot.txt)</option>'*) ok "audio: DAC scritto a mano in sweetspot.txt resta scelto" ;; *) ko "audio DAC da sweetspot.txt" "opzione r26 selezionata" "-" ;; esac
 case "$out" in *"esattamente i campioni"*) ko "audio: nessuna prova campioni inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "audio: nessuna prova campioni inventata" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
@@ -419,9 +421,18 @@ acc() { # impostazioni
 	cat "$WEB/run/httpd.conf"
 }
 expect "pagine aperte senza password" "" "$(acc '')"
-expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh')"
-case "$(acc 'PASSWORD_WEB=segreta')" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | tail -n 1)"
+case "$(acc 'PASSWORD_WEB=segreta' | tail -n 1)" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
 expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
+# La pagina vivo resta raggiungibile dall'aggiornamento: utente sweetspot
+# con la chiave casuale dell'avvio, regola prima di quella generale.
+vivo_key=$(cat "$WEB/run/vivo.chiave")
+expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#vivo_key}|$(stat -c %a "$WEB/run/vivo.chiave")"
+case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
+expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
+expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
+acc '' > /dev/null
+expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
 printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
@@ -432,6 +443,13 @@ web_action() { # corpo senza gettone
 		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
 		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
 }
+rm -f "$WEB/run/config.call"
+web_action "a=audio&volume=fisso&dsd=auto&altri_dac=si&dac=292B:0A26&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500" > /dev/null
+case "$(cat "$WEB/run/config.call")" in *"ALTRI_DAC si DAC 292b:0a26"*) ok "audio: DAC principale salvato per identificativo USB" ;; *) ko "audio DAC salvato" "DAC 292b:0a26" "$(cat "$WEB/run/config.call")" ;; esac
+rm -f "$WEB/run/config.call"
+out=$(web_action "a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=R26;reboot&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500")
+case "$out" in *"Location: /cgi-bin/audio?msg=%44%41%43%20%70%72%69%6e%63%69%70%61%6c%65%20%6e%6f%6e%20%76%61%6c%69%64%6f"*) ok "audio: DAC principale non valido rifiutato" ;; *) ko "audio DAC non valido" "rifiutato (DAC principale non valido)" "$out" ;; esac
+expect "audio: DAC non valido, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
 rm -f "$WEB/run/config.call"
 web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
 expect "sistema: si salva l'impronta, non la password" '1|0' \
@@ -634,6 +652,12 @@ dsp() { # impostazioni comando...
 		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-dsp" sh "$@"
 }
+dspf() { # funzione...
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_AWK=$MATHAWK \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dsp; $1"
+}
 expect "filtri di REW (virgole, kHz, spenti, larghezza in ottave)" \
 	"Peaking 38.5 -6.8 q 6.5|Peaking 63.3 -9.2 q 4.9|Peaking 112 2.5 q 3|Lowshelf 80 1.5 q 0.707|HighshelfFO 8000 -1 none 0|Peaking 245 -3 bandwidth 0.333" \
 	"$(dsp '' leggi "$DSPE/rew.txt" | tr '\n' '|' | sed 's/|$//')"
@@ -651,6 +675,7 @@ yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "CamillaDSP: uscita sul DAC a 32 bit" "2" "$(printf '%s\n' "$yml" | grep -c -e 'device: "hw:CARD=R26,DEV=0"' -e 'format: S32_LE' | head -n 1 | sed 's/3/2/')"
 expect "CamillaDSP: 12 filtri e l'attenuazione" "12 -4.5" "$(printf '%s\n' "$yml" | grep -c 'type: Biquad') $(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
 expect "CamillaDSP: ingresso dal plugin" "type: Stdin" "$(printf '%s\n' "$yml" | grep -o 'type: Stdin')"
+expect "CamillaDSP: coda del brano di due blocchi per i filtri di REW" "extra_samples: 8192" "$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 expect "ALSA: frequenze del DAC fino a 384 kHz" "rates = [ 44100 48000 88200 96000 176400 192000 352800 384000 ]" \
 	"$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
 dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
@@ -731,6 +756,10 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 	expect "FIR: due convoluzioni dal file del sinistro, canale 0, dopo i filtri di REW" \
 		"2|2|- fir_sinistro|- fir_destro|-7.5" \
 		"$(printf '%s\n' "$yml" | grep -c "filename: \"$DSPE/run/correzione/fir-sinistro.wav\"")|$(printf '%s\n' "$yml" | grep -c 'channel: 0')|$(printf '%s\n' "$yml" | grep -o -- '- fir_sinistro')|$(printf '%s\n' "$yml" | grep -o -- '- fir_destro')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
+	# Coda del brano: con i FIR CamillaDSP legge, dopo la fine dello stream,
+	# tanti campioni di silenzio quanti i tap (512) piu' due blocchi.
+	expect "FIR: coda del brano non tagliata (extra_samples = tap + 2 blocchi)" "512|extra_samples: 8704" \
+		"$(dspf fir_taps)|$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 	if command -v camilladsp > /dev/null; then
 		if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione FIR accettata da CamillaDSP"; else ko "camilladsp -c FIR" "valida" "rifiutata"; fi
 	fi
@@ -743,6 +772,9 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 		"$(grep -o 'channel: [01]' "$DSPE/run/camilladsp.yml" | tr '\n' '|' | sed 's/|$//')"
 	mkwav 48000 1 > "$DSPE/run/correzione/fir-destro.wav"
 	expect "FIR con frequenze diverse sui due canali: rifiutati" "1" "$(dsp 'CORREZIONE=si' fir > /dev/null; echo $?)"
+	rm -f "$DSPE/run/correzione/fir-destro.wav"
+	mkwav 96000 1 | head -c 1068 > "$DSPE/run/correzione/fir-destro.wav"
+	expect "FIR: la coda e' quella del canale piu' lungo (512 a sinistra, 256 a destra)" "512|256" "$(dspf fir_taps)|$(dspf "wav_frames $DSPE/run/correzione/fir-destro.wav")"
 	rm -f "$DSPE/run/correzione/fir-destro.wav"
 	mkwav 192000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
 	expect "FIR a una frequenza che il DAC non accetta: correzione non applicata" "1" "$(dsp 'CORREZIONE=si' prepara 1 > /dev/null; echo $?)"
@@ -893,6 +925,17 @@ upd conferma
 expect "la nuova versione si conferma" "b|" "$(genv slot)|$(genv tentato)"
 expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riuscita=')"
 expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
+# Con la password delle pagine l'httpd risponde 401 a chi non si presenta:
+# la conferma usa l'utente sweetspot con la chiave di questo avvio.
+printf '#!/bin/sh\nfor a; do case "$a" in http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
+chmod +x "$UPD/bin/wget-401"
+setenv prova= tentato=b
+UPD_WGET=$UPD/bin/wget-401 upd conferma
+expect "con la password e senza chiave la conferma non passa (401)" "b" "$(genv tentato)"
+echo 0123456789abcdef0123456789abcdef > "$UPD/run/vivo.chiave"
+UPD_WGET=$UPD/bin/wget-401 upd conferma
+expect "con la password la conferma passa con la chiave della pagina vivo" "b|" "$(genv slot)|$(genv tentato)"
+rm -f "$UPD/run/vivo.chiave"
 # Secondo aggiornamento (va nella copia A), che non parte: si torna a B
 rm -f "$UPD/run/aggiornamento/riuscita"
 mkpkg v1.2.0 x86_64
@@ -1339,7 +1382,7 @@ taskset() { echo \"\$*\" >> '$DSP/run/taskset.call'; }"
 DSP_PID=4242
 export DSP_PID
 dspfn() { # PIN funzione
-	SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+	SWEETSPOT_SYSFS=$DSP/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
 		$TEST_SH -c "$DSPSTUB
 . $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; PIN=$1; LAYOUT_AUDIO=3; $2"
@@ -1396,7 +1439,7 @@ case "$zcall" in "-c 0 squeezelite -o hw:CARD=Zona,DEV=0 "*"-n Sweetspot - Zona 
 case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "solo Zona" "$zcall" ;; *) ok "zona: niente microfono ne' DAC principale" ;; esac
 expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
 expect "zona: MAC stabile e locale" "1|02" \
-	"$([ "$(dspfn 1 'zone_mac Zona 1234:5678')" = "$(dspfn 1 'zone_mac Zona 1234:5678')" ] && echo 1)|$(dspfn 1 'zone_mac Zona 1234:5678' | cut -c1-2)"
+	"$([ "$(dspfn 1 'zone_mac 2')" = "$(dspfn 1 'zone_mac 2')" ] && echo 1)|$(dspfn 1 'zone_mac 2' | cut -c1-2)"
 sleep 300 & zpid=$!
 echo "$zpid Zona" > "$DSP/run/zone/2"
 expect "stato: zona attiva" "OK|Altri DAC (zone)|un player in Lyrion per Zona; si raggruppano da Lyrion" \
@@ -1408,7 +1451,46 @@ rm -rf "$DSP/proc/asound/card2"
 dspfn 1 "HK=0; zones_sync 1"
 expect "DAC della zona staccato: player fermato" "no|no" \
 	"$([ -f "$DSP/run/zone/2" ] && echo si || echo no)|$(kill -0 "$zpid" 2>/dev/null && echo si || echo no)"
-rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card3" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone"
+# DAC principale staccato con una zona attiva: il player principale lo
+# aspetta, non passa alla zona (che continua), e al ritorno riprende lui.
+mkdir -p "$DSP/proc/asound/card2"; echo Zona > "$DSP/proc/asound/card2/id"; echo 1234:5678 > "$DSP/proc/asound/card2/usbid"
+rm -f "$DSP/run/dac.principale"
+expect "DAC=auto senza zone: il primo DAC USB" "1" "$(dspfn 1 'dac_find')"
+dspfn 1 'remember_main_dac 1'
+expect "DAC principale annotato: identificativo USB e numero di serie" "292b:0a26 " "$(cat "$DSP/run/dac.principale")"
+sleep 300 & zpid=$!
+echo "$zpid Zona" > "$DSP/run/zone/2"
+expect "con il DAC principale la zona non e' mai il principale" "1" "$(dspfn 1 'dac_find')"
+mv "$DSP/proc/asound/card1" "$DSP/proc/asound/card1.via"
+expect "DAC principale staccato: il player lo aspetta, non passa alla zona" "" "$(dspfn 1 'dac_find')"
+dspfn 1 "HK=0; zones_sync ''"
+expect "senza DAC principale la zona continua" "si|Zona" "$(kill -0 "$zpid" 2>/dev/null && echo si || echo no)|$(cut -d' ' -f2 "$DSP/run/zone/2")"
+mv "$DSP/proc/asound/card1.via" "$DSP/proc/asound/card1"
+rm -f "$DSP/run/taskset.call"
+dspfn 1 "HK=0; zones_sync ''"
+expect "il DAC principale tornato non diventa una zona" "no|" "$([ -f "$DSP/run/zone/1" ] && echo si || echo no)|$(calls taskset)"
+expect "DAC principale tornato: riprende lui" "1" "$(dspfn 1 'dac_find')"
+# Con ALTRI_DAC=no il DAC principale resta il primo trovato, come prima.
+echo ALTRI_DAC=no > "$DSP/run/sweetspot.conf"
+mv "$DSP/proc/asound/card1" "$DSP/proc/asound/card1.via"
+expect "senza zone, DAC staccato: si passa all'altro DAC" "2" "$(dspfn 1 'dac_find')"
+mv "$DSP/proc/asound/card1.via" "$DSP/proc/asound/card1"
+echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
+# Due DAC uguali: il numero di serie USB li distingue (identita' e MAC).
+mkdir -p "$DSP/proc/asound/card4" "$DSP/sys/class/sound/card1" "$DSP/sys/class/sound/card4" \
+	"$DSP/sys/devices/usb1/1-2/1-2:1.0" "$DSP/sys/devices/usb1/1-3/1-3:1.0"
+echo R26_1 > "$DSP/proc/asound/card4/id"; echo 292b:0a26 > "$DSP/proc/asound/card4/usbid"
+printf '01-00: USB Audio : USB Audio : playback 1\n02-00: USB Audio : USB Audio : playback 1\n03-00: USB Audio : USB Audio : capture 1\n04-00: USB Audio : USB Audio : playback 1\n' > "$DSP/proc/asound/pcm"
+printf ' 1 [R26            ]: USB-Audio - R26\n 2 [Zona           ]: USB-Audio - Zona DAC\n 3 [UMIK           ]: USB-Audio - UMIK-1\n 4 [R26_1          ]: USB-Audio - R26\n' > "$DSP/proc/asound/cards"
+ln -sfn "../../../devices/usb1/1-2/1-2:1.0" "$DSP/sys/class/sound/card1/device"
+ln -sfn "../../../devices/usb1/1-3/1-3:1.0" "$DSP/sys/class/sound/card4/device"
+echo AAA111 > "$DSP/sys/devices/usb1/1-2/serial"; echo BBB222 > "$DSP/sys/devices/usb1/1-3/serial"
+dspfn 1 'remember_main_dac 1'
+expect "due DAC uguali: il principale e' quello con il suo numero di serie" "292b:0a26 AAA111|2 4" \
+	"$(cat "$DSP/run/dac.principale")|$(dspfn 1 'other_dacs 1' | tr '\n' ' ' | sed 's/ $//')"
+expect "due DAC uguali: MAC diversi per le zone" "diversi" "$([ "$(dspfn 1 'zone_mac 1')" != "$(dspfn 1 'zone_mac 4')" ] && echo diversi)"
+kill "$zpid" 2>/dev/null
+rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3" "$DSP/proc/asound/card4" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone" "$DSP/sys" "$DSP/run/dac.principale"
 rm -f "$DSP/run/sweetspot.conf"
 
 echo "Contatori live della sessione"

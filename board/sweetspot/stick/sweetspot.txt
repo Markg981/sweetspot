@@ -53,8 +53,10 @@ ESCLUDI_DISCHI=
 # Senza utente si accede come ospite.
 
 # --- Audio ----------------------------------------------------------------
-# Quale DAC usare: auto = il primo DAC USB collegato (consigliato).
-# Puoi anche scrivere il nome, per esempio DAC=R26.
+# Quale DAC usare: auto = il primo DAC USB collegato (consigliato; con le
+# zone qui sotto resta lui per tutto l'avvio). Puoi anche scrivere il nome,
+# per esempio DAC=R26, o l'identificativo USB (292b:0a26): nella pagina
+# Audio si sceglie tra i DAC collegati.
 DAC=auto
 
 # Altri DAC USB: no = suona solo il DAC qui sopra; si = ogni altro DAC
