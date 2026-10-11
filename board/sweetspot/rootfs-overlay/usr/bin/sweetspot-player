@@ -86,16 +86,39 @@ pin_output_thread() {
 	return 1
 }
 
-# CamillaDSP (correzione ambientale) sul core della riproduzione, tutti i
-# suoi thread: lo avvia il plugin ALSA a ogni brano, si controlla a ogni giro.
+# Priorita' real-time di CamillaDSP: sotto quella del player (che lo
+# alimenta) e delle interruzioni USB, mai fuori da 1..98.
+dsp_priority() {
+	local p
+	p=$(num_conf PRIORITA_DSP 70)
+	[ "$p" -ge 1 ] || p=1
+	[ "$p" -le 98 ] || p=98
+	printf '%s' "$p"
+}
+
+# CamillaDSP (correzione ambientale), tutti i suoi thread, in real-time
+# (SCHED_FIFO, PRIORITA_DSP) e, con i core isolati, sul core della
+# riproduzione: lo avvia il plugin ALSA a ogni brano, si controlla a ogni
+# giro. Un thread gia' a posto non si tocca.
 pin_dsp() {
-	local p t
-	[ "$PIN" = 1 ] || return 0
+	local p t prio sched
 	[ -f "$RUN/correzione.attiva" ] || return 0
+	prio=$(dsp_priority)
 	for p in $(pidof camilladsp 2>/dev/null); do
 		for t in "$PROC/$p"/task/*; do
-			taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
+			[ -d "$t" ] || continue
+			[ "$PIN" = 1 ] && taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
+			sched=$(sed 's/.*) //' "$t/stat" 2>/dev/null | cut -d' ' -f38,39)
+			[ "$sched" = "$prio 1" ] || chrt -f -p "$prio" "${t##*/}" >/dev/null 2>&1
 		done
+		if [ "$(cat "$RUN/dsp.pid" 2>/dev/null)" != "$p" ]; then
+			echo "$p" > "$RUN/dsp.pid"
+			if [ "$PIN" = 1 ]; then
+				log "player: CamillaDSP $p in real-time (priorita' $prio) sul core $LAYOUT_AUDIO"
+			else
+				log "player: CamillaDSP $p in real-time (priorita' $prio)"
+			fi
+		fi
 	done
 }
 
