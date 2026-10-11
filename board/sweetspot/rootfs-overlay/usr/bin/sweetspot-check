@@ -490,8 +490,16 @@ check_preload() {
 }
 
 check_system() {
-	local srv ip disks b t st
+	local srv ip disks b t st wd
 	emit INFO "Classe del computer" "$(machine_class) - $(cpu_model) - $(( $(mem_total_kb) / 1024 )) MB di RAM"
+	wd=$SYS/class/watchdog/watchdog0
+	if ! is_yes "$(conf WATCHDOG si)"; then
+		emit INFO "Watchdog" "spento (WATCHDOG=no): un blocco totale richiede di spegnere a mano"
+	elif [ "$(cat "$wd/state" 2>/dev/null)" = active ] && pidof watchdog >/dev/null 2>&1; then
+		emit OK "Watchdog" "$(cat "$wd/identity" 2>/dev/null): riavvio dopo $(cat "$wd/timeout" 2>/dev/null) secondi di blocco totale"
+	else
+		emit ATTENZIONE "Watchdog" "non attivo: un blocco totale richiede di spegnere a mano"
+	fi
 	ip=$(net_ipv4)
 	if [ -n "$ip" ]; then emit OK "Rete" "indirizzo $ip"; else emit ATTENZIONE "Rete" "nessun indirizzo: il cavo e' collegato?"; fi
 	if [ "$(mode)" = player ]; then

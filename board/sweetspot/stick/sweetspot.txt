@@ -149,5 +149,9 @@ SSH_PASSWORD=
 # no = funzionamento normale, utile solo per confronti o problemi.
 OTTIMIZZAZIONI=si
 
+# Watchdog: se il sistema si blocca del tutto il computer riparte da solo
+# (dopo un aggiornamento che si blocca, con la versione precedente).
+WATCHDOG=si
+
 # Fonte degli aggiornamenti (vuoto = questo progetto su GitHub).
 AGGIORNAMENTI_URL=

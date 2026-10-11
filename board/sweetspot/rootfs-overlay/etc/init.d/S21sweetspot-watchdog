@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - watchdog: se il sistema si blocca del tutto e smette di
+# alimentarlo, il computer riparte da solo. Dopo un aggiornamento che si
+# blocca riparte cosi' la versione precedente (vedi sweetspot-aggiorna).
+# Usa il watchdog hardware del chipset (Intel iTCO, AMD SP5100, Raspberry
+# Pi, i6300ESB in QEMU) e, se manca, softdog del kernel. WATCHDOG=no lo
+# lascia spento.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+# Il watchdog del Raspberry Pi arriva al massimo a 15 secondi: si alimenta
+# ogni 5, cosi' basta su ogni scheda.
+TIMEOUT=60
+PERIOD=5
+
+case "$1" in
+	start)
+		is_yes "$(conf WATCHDOG si)" || exit 0
+		mkdir -p "$RUN"
+		if [ ! -c /dev/watchdog ]; then
+			modprobe softdog soft_margin=$TIMEOUT 2>/dev/null
+			udevadm settle --timeout=5 2>/dev/null
+		fi
+		if [ ! -c /dev/watchdog ]; then
+			log "watchdog: nessun dispositivo disponibile"
+			exit 0
+		fi
+		# Sul core di sistema, sopra i processi normali e sotto l'audio.
+		taskset -c 0 chrt -f 5 watchdog -T $TIMEOUT -t $PERIOD /dev/watchdog &&
+			log "watchdog: $(cat "$SYS/class/watchdog/watchdog0/identity" 2>/dev/null), riavvio dopo $(cat "$SYS/class/watchdog/watchdog0/timeout" 2>/dev/null) secondi di blocco"
+		;;
+	stop)
+		# Alla chiusura BusyBox disattiva il watchdog (carattere magico V).
+		killall watchdog 2>/dev/null
+		;;
+	*) echo "uso: $0 start|stop" ;;
+esac

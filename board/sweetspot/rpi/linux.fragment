@@ -23,3 +23,6 @@ CONFIG_SND_DESIGNWARE_I2S=m
 # Niente fotocamere, codec video e Bluetooth: un player non li usa.
 # CONFIG_MEDIA_SUPPORT is not set
 # CONFIG_BT is not set
+
+# Watchdog del SoC (Pi 4 e Pi 5).
+CONFIG_BCM2835_WDT=y

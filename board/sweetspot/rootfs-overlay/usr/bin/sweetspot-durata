@@ -1,0 +1,80 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - prova di durata durante l'ascolto (24 ore e piu').
+#   sweetspot-durata [ore] [secondi_tra_le_misure]   (predefiniti 24 e 60)
+# Si avvia con una playlist lunga in riproduzione (da terminale, Alt+F2 o
+# SSH: "sweetspot-durata 24 &"). Ogni minuto annota in
+# $RUN/durata.csv: uscita audio in riproduzione, processo del player,
+# XRUN della sessione, memoria disponibile, temperatura. Alla fine scrive
+# l'esito in $RUN/durata.txt (e sulla chiavetta, se c'e'):
+#   - nessun XRUN e nessun riavvio del player;
+#   - uscita in riproduzione in almeno il 95% delle misure;
+#   - memoria disponibile calata meno del 10%.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+hours=${1:-24}
+step=${2:-60}
+case "$hours$step" in *[!0-9]*) echo "uso: $0 [ore] [secondi]"; exit 2 ;; esac
+CSV=$RUN/durata.csv
+REPORT=$RUN/durata.txt
+SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
+
+playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
+mem_available() { sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo"; }
+xruns() { # XRUN nel registro di Squeezelite, compresi i recuperi falliti
+	[ -f "$SQLOG" ] || { echo 0; return; }
+	awk '/XRUN/ { n++ } END { print n + 0 }' "$SQLOG"
+}
+temperature() {
+	local t
+	for t in "$SYS"/class/thermal/thermal_zone*/temp "$SYS"/class/hwmon/hwmon*/temp1_input; do
+		[ -f "$t" ] && { echo $(($(cat "$t") / 1000)); return; }
+	done
+	echo ""
+}
+
+mkdir -p "$RUN"
+start=$(date +%s)
+# SWEETSPOT_DURATA_SECONDI: durata in secondi, per i test.
+end=$((start + ${SWEETSPOT_DURATA_SECONDI:-$((hours * 3600))}))
+pid0=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+xr0=$(xruns)
+mem0=$(mem_available)
+echo "ora,in_riproduzione,pid_player,xrun,memoria_kb,temperatura" > "$CSV"
+log "durata: prova di $hours ore avviata"
+echo "Prova di durata: $hours ore, una misura ogni $step secondi, registro in $CSV"
+
+n=0 on=0 restarts=0 last=$pid0 memmin=$mem0
+while [ "$(date +%s)" -lt "$end" ]; do
+	p=0; playing && p=1
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	m=$(mem_available)
+	echo "$(date '+%Y-%m-%d %H:%M:%S'),$p,$pid,$(($(xruns) - xr0)),$m,$(temperature)" >> "$CSV"
+	n=$((n + 1)); on=$((on + p))
+	[ "$pid" != "$last" ] && restarts=$((restarts + 1)) && last=$pid
+	[ -n "$m" ] && [ "$m" -lt "${memmin:-$m}" ] && memmin=$m
+	sleep "$step"
+done
+
+xr=$(($(xruns) - xr0))
+pct=$((on * 100 / (n > 0 ? n : 1)))
+drop=$(( (${mem0:-0} - ${memmin:-0}) * 100 / (${mem0:-1} > 0 ? ${mem0:-1} : 1) ))
+verdict=RIUSCITA
+[ "$xr" -eq 0 ] && [ "$restarts" -eq 0 ] && [ "$pct" -ge 95 ] && [ "$drop" -lt 10 ] || verdict="NON RIUSCITA"
+{
+	echo "Prova di durata: $verdict"
+	echo "versione: $(cat /etc/sweetspot-version 2>/dev/null)"
+	echo "durata: $hours ore, $n misure"
+	echo "uscita in riproduzione: $pct% delle misure (minimo 95%)"
+	echo "XRUN: $xr (atteso 0)"
+	echo "riavvii del player: $restarts (atteso 0)"
+	echo "memoria disponibile: da $((${mem0:-0} / 1024)) MB a un minimo di $((${memmin:-0} / 1024)) MB, calo $drop% (massimo 10%)"
+} | tee "$REPORT"
+log "durata: $verdict ($hours ore, XRUN $xr, riavvii $restarts, riproduzione $pct%, memoria -$drop%)"
+if stick_mount rw; then
+	cp "$REPORT" "$STICK_MNT/durata.txt" && cp "$CSV" "$STICK_MNT/durata.csv"
+	stick_umount
+fi
+[ "$verdict" = RIUSCITA ]
