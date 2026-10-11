@@ -1272,6 +1272,40 @@ expect "verifica: tutti i thread real-time sul core audio" "OK|CamillaDSP in rea
 expect "verifica: CamillaDSP parte con il primo brano" \
 	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
 
+echo "Altri DAC (zone)"
+# DAC principale (scheda 1), un secondo DAC (2) e un microfono USB (3, solo ingresso).
+mkdir -p "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3"
+echo R26 > "$DSP/proc/asound/card1/id"; echo 292b:0a26 > "$DSP/proc/asound/card1/usbid"
+echo Zona > "$DSP/proc/asound/card2/id"; echo 1234:5678 > "$DSP/proc/asound/card2/usbid"
+echo UMIK > "$DSP/proc/asound/card3/id"; echo 2752:0007 > "$DSP/proc/asound/card3/usbid"
+printf '01-00: USB Audio : USB Audio : playback 1\n02-00: USB Audio : USB Audio : playback 1\n03-00: USB Audio : USB Audio : capture 1\n' > "$DSP/proc/asound/pcm"
+printf ' 1 [R26            ]: USB-Audio - R26\n 2 [Zona           ]: USB-Audio - Zona DAC\n 3 [UMIK           ]: USB-Audio - UMIK-1\n' > "$DSP/proc/asound/cards"
+rm -f "$DSP/run/taskset.call"; rm -rf "$DSP/run/zone"
+echo ALTRI_DAC=no > "$DSP/run/sweetspot.conf"
+dspfn 1 "HK=0; zones_sync 1"
+expect "zone spente di serie: nessun altro player" "" "$(calls taskset)"
+echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
+dspfn 1 "HK=0; zones_sync 1"
+zcall=$(calls taskset)
+case "$zcall" in "-c 0 squeezelite -o hw:CARD=Zona,DEV=0 "*"-n Sweetspot - Zona DAC -M Sweetspot -m 02:"*"-p 75 "*"-s 127.0.0.1"*) ok "zona: Squeezelite sul secondo DAC, sui core di sistema" ;; *) ko "zona avviata" "squeezelite su Zona" "$zcall" ;; esac
+case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "solo Zona" "$zcall" ;; *) ok "zona: niente microfono ne' DAC principale" ;; esac
+expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
+expect "zona: MAC stabile e locale" "1|02" \
+	"$([ "$(dspfn 1 'zone_mac Zona 1234:5678')" = "$(dspfn 1 'zone_mac Zona 1234:5678')" ] && echo 1)|$(dspfn 1 'zone_mac Zona 1234:5678' | cut -c1-2)"
+sleep 300 & zpid=$!
+echo "$zpid Zona" > "$DSP/run/zone/2"
+expect "stato: zona attiva" "OK|Altri DAC (zone)|un player in Lyrion per Zona; si raggruppano da Lyrion" \
+	"$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Altri DAC')"
+rm -rf "$DSP/proc/asound/card2"
+dspfn 1 "HK=0; zones_sync 1"
+expect "DAC della zona staccato: player fermato" "no|no" \
+	"$([ -f "$DSP/run/zone/2" ] && echo si || echo no)|$(kill -0 "$zpid" 2>/dev/null && echo si || echo no)"
+rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card3" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone"
+rm -f "$DSP/run/sweetspot.conf"
+
 echo "Contatori live della sessione"
 irqs() { # conteggi dei core 2 e 3: IRQ16 IRQ29 LOC
 	printf '           CPU0       CPU1       CPU2       CPU3\n'

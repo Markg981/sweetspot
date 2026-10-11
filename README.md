@@ -332,6 +332,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
 | `DAC` | `auto`, nome ALSA (es. `R26`) o `VID:PID` | auto |
+| `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC; pagina Stato, voce "Altri DAC (zone)" | no |
 | `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC, Squeezelite fisso al 100% e cursore di Lyrion seguito dalla CLI (0,6 dB per passo, 100 = 0 dB, mai sopra 0 dB). Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
