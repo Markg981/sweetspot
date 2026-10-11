@@ -90,6 +90,17 @@ diffusore sinistro e uno per il destro.
   voce "Clipping di CamillaDSP", somma i campioni tagliati nella sessione
   (letti ogni pochi secondi dal websocket di CamillaDSP, aperto solo su
   127.0.0.1:1234).
+- **Filtri FIR** (convoluzione): impulsi WAV esportati da rePhase, Acourate o
+  REW, copiati dal computer nella cartella `correzione-ambientale` della
+  chiavetta come `fir-sinistro.wav` e, se diverso, `fir-destro.wav` (un file
+  stereo da solo vale per i due canali; mono o stereo, fino a 16 MB, stessa
+  frequenza). Si applicano dopo i filtri di REW, con la correzione accesa.
+  CamillaDSP lavora alla frequenza degli impulsi e ricampiona i brani a
+  frequenze diverse (ricampionatore `Synchronous`; con la stessa frequenza il
+  ricampionamento si spegne da solo); il DAC deve accettarla. Attenuazione in
+  più `FIR_MARGINE_DB` (3 dB): i FIR di rePhase e Acourate sono di solito già
+  normalizzati, la voce "Clipping di CamillaDSP" della pagina Stato dice se
+  basta.
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.

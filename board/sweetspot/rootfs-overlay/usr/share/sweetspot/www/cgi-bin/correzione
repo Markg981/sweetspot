@@ -64,8 +64,17 @@ HTML
 # --- Stato -------------------------------------------------------------------------
 nsx=$(count_filters sinistro)
 ndx=$(count_filters destro)
+fir=$(sweetspot-dsp fir) || fir=""
 echo '<h2>Stato</h2><div class="card">'
-if [ "$nsx" = 0 ]; then
+# Impulsi FIR (rePhase, Acourate, REW) copiati dal computer sulla chiavetta.
+if [ -n "$fir" ]; then
+	set -- $fir
+	if [ "$3" = proprio ]; then fd="il destro ha il suo file"; elif [ "$2" = 2 ]; then fd="un file stereo per i due canali"; else fd="il destro usa il file del sinistro"; fi
+	info_row OK "Filtri FIR" "Impulsi a $1 Hz, $fd. CamillaDSP lavora a $1 Hz e ricampiona i brani a frequenze diverse; attenuazione in più di $4 dB per i FIR. Si usano con la correzione accesa."
+elif [ -e "$RUN/correzione/fir-sinistro.wav" ] || [ -e "$RUN/correzione/fir-destro.wav" ]; then
+	info_row ATTENZIONE "Filtri FIR non usati" "fir-sinistro.wav manca o non è un WAV valido (mono o stereo, al massimo 16 MB, stessa frequenza per i due canali)."
+fi
+if [ "$nsx" = 0 ] && [ -z "$fir" ]; then
 	info_row "" "Nessun filtro" "Misura la stanza con REW (guida qui sotto) e incolla i filtri: poi potrai accendere la correzione."
 else
 	# Attenuazione scritta all'italiana: "2,9 dB".

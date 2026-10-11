@@ -127,8 +127,72 @@ dsp_mode() {
 }
 
 correction_active() {
-	[ "$(dsp_mode)" != no ] && filters_ok
+	[ "$(dsp_mode)" != no ] && { filters_ok || fir_ok; }
 }
+
+# --- Filtri FIR (convoluzione) ------------------------------------------------
+#
+# Impulsi WAV esportati da rePhase, Acourate o REW, nella cartella della
+# correzione: fir-sinistro.wav e, facoltativo, fir-destro.wav (senza, il
+# destro usa il sinistro; un file stereo da solo vale per i due canali).
+# CamillaDSP lavora alla frequenza dei file: ogni brano viene ricampionato
+# (Synchronous) a quella frequenza, salvo che sia gia' la stessa.
+# Attenuazione in piu' per i FIR: FIR_MARGINE_DB (predefinito 3 dB).
+FIR_MAX_KB=16384
+
+# "FREQUENZA CANALI" di un WAV (intestazione standard: fmt subito dopo RIFF).
+wav_info() { # file
+	local ch rate
+	[ -s "$1" ] || return 1
+	[ "$(head -c 4 "$1")" = RIFF ] || return 1
+	[ "$(dd if="$1" bs=1 skip=8 count=8 2>/dev/null)" = "WAVEfmt " ] || return 1
+	ch=$(od -An -tu2 -j22 -N2 "$1" | tr -d ' ')
+	rate=$(od -An -tu4 -j24 -N4 "$1" | tr -d ' ')
+	[ "${ch:-0}" -ge 1 ] && [ "${ch:-0}" -le 2 ] && [ "${rate:-0}" -ge 8000 ] || return 1
+	echo "$rate $ch"
+}
+
+# File FIR di un canale (il destro ricade sul sinistro).
+fir_file() { # sinistro|destro
+	local f=$DSP_DIR/fir-$1.wav
+	[ "$1" = destro ] && [ ! -s "$f" ] && f=$DSP_DIR/fir-sinistro.wav
+	echo "$f"
+}
+
+# Canale del file da usare: 1 solo per il destro letto da un file stereo unico.
+fir_channel() { # sinistro|destro
+	local info
+	[ "$1" = destro ] || { echo 0; return; }
+	[ -s "$DSP_DIR/fir-destro.wav" ] && { echo 0; return; }
+	info=$(wav_info "$DSP_DIR/fir-sinistro.wav")
+	if [ "${info#* }" = 2 ]; then echo 1; else echo 0; fi
+}
+
+fir_rate() { wav_info "$DSP_DIR/fir-sinistro.wav" | cut -d' ' -f1; }
+
+fir_ok() {
+	local l r f
+	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
+		[ -s "$f" ] || continue
+		[ "$(( $(wc -c < "$f") / 1024 ))" -le "$FIR_MAX_KB" ] || return 1
+	done
+	l=$(wav_info "$DSP_DIR/fir-sinistro.wav") || return 1
+	[ -s "$DSP_DIR/fir-destro.wav" ] || return 0
+	r=$(wav_info "$DSP_DIR/fir-destro.wav") || return 1
+	# Stessa frequenza per i due canali.
+	[ "${l% *}" = "${r% *}" ]
+}
+
+fir_margin() {
+	local m
+	m=$(conf FIR_MARGINE_DB 3)
+	case "$m" in ''|*[!0-9.]*) m=3 ;; esac
+	echo "$m"
+}
+
+# FIR in uso: correzione attiva e file validi (anche nel confronto a pari
+# volume: stessa frequenza e stessa attenuazione, senza i filtri).
+fir_in_use() { correction_active && fir_ok; }
 
 # VOLUME=dsp: il volume di Lyrion lo applica CamillaDSP a 64 bit, con il
 # dither all'uscita, invece del troncamento di Squeezelite. Solo nella
@@ -317,11 +381,22 @@ filter_names() { # prefisso canale
 }
 
 write_config() { # scheda
-	local card=$1 id dev fmt gain=0.0 ch pre side bits
+	local card=$1 id dev fmt gain=0.0 ch pre side bits fir="" rate=44100 alsafmt
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	fmt=$(dsp_out_format "$card") || { log "correzione: formato PCM del playback non disponibile"; return 1; }
 	correction_active && gain=$(do_gain)
+	# Con i FIR CamillaDSP lavora (e suona sul DAC) alla frequenza dei file.
+	if fir_in_use; then
+		fir=1
+		rate=$(fir_rate)
+		case "$fmt" in S24_3_LE) alsafmt=S24_3LE ;; S24_4_RJ_LE) alsafmt=S24_LE ;; *) alsafmt=$fmt ;; esac
+		if ! printf ' %s ' "$(dac_rates "$card" "$alsafmt" 2 | tr '\n' ' ')" | grep -q " $rate "; then
+			log "correzione: il DAC non accetta $rate Hz, la frequenza dei filtri FIR"
+			return 1
+		fi
+		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
+	fi
 	# Dither TPDF alla risoluzione dell'uscita: sempre con il DAC a 16 bit;
 	# con il volume a 64 bit anche a 24 bit (i DAC "a 32 bit" ne convertono
 	# al piu' 24 in modo lineare).
@@ -336,8 +411,14 @@ write_config() { # scheda
 		echo "# Generato da Sweetspot (sweetspot-dsp): non modificare."
 		echo "# Frequenza, formato e canali in ingresso li passa il plugin cdsp."
 		echo "devices:"
-		echo "  samplerate: 44100"
+		echo "  samplerate: $rate"
 		echo "  chunksize: 4096"
+		if [ -n "$fir" ]; then
+			# La frequenza del brano (dal plugin) diventa quella d'ingresso; se
+			# coincide con quella dei FIR il ricampionatore si spegne da solo.
+			echo "  resampler:"
+			echo "    type: Synchronous"
+		fi
 		echo "  queuelimit: 1"
 		# Il volume non supera mai 0 dB, qualunque comando arrivi.
 		echo "  volume_limit: 0.0"
@@ -357,6 +438,16 @@ write_config() { # scheda
 		echo "      gain: $gain"
 		write_filters_yaml sx sinistro
 		write_filters_yaml dx destro
+		if [ -n "$fir" ]; then
+			for side in sinistro destro; do
+				echo "  fir_$side:"
+				echo "    type: Conv"
+				echo "    parameters:"
+				echo "      type: Wav"
+				echo "      filename: \"$(fir_file "$side")\""
+				echo "      channel: $(fir_channel "$side")"
+			done
+		fi
 		if [ -n "$bits" ]; then
 			echo "  dither:"
 			echo "    type: Dither"
@@ -373,6 +464,7 @@ write_config() { # scheda
 			echo "    names:"
 			echo "      - attenuazione"
 			filter_names "$pre" "$side"
+			[ -n "$fir" ] && [ "$(dsp_mode)" = si ] && echo "      - fir_$side"
 			if [ -n "$bits" ]; then echo "      - dither"; fi
 		done
 	} > "$DSP_YML.nuovo" && mv "$DSP_YML.nuovo" "$DSP_YML"
@@ -424,7 +516,8 @@ do_prepare() { # scheda
 # --- Salvataggio -------------------------------------------------------------------
 
 # Sulla chiavetta i filtri stanno in una cartella propria, leggibile anche
-# dal computer: correzione-ambientale/sinistro.txt e destro.txt.
+# dal computer: correzione-ambientale/sinistro.txt e destro.txt, e gli
+# impulsi FIR fir-sinistro.wav e fir-destro.wav (copiati dal computer).
 STICK_DSP_DIR=correzione-ambientale
 
 do_save() { # file_sinistro file_destro
@@ -443,8 +536,9 @@ do_save() { # file_sinistro file_destro
 	cp "$tmp"/*.txt "$DSP_DIR/" 2>/dev/null
 	rm -rf "$tmp"
 	if stick_mount rw; then
-		rm -rf "${STICK_MNT:?}/$STICK_DSP_DIR"
+		# Solo i filtri di REW: gli impulsi FIR (fir-*.wav) restano.
 		mkdir -p "$STICK_MNT/$STICK_DSP_DIR"
+		rm -f "$STICK_MNT/$STICK_DSP_DIR/sinistro.txt" "$STICK_MNT/$STICK_DSP_DIR/destro.txt"
 		cp "$DSP_DIR"/sinistro.txt "$DSP_DIR"/destro.txt "$STICK_MNT/$STICK_DSP_DIR/" 2>/dev/null
 		stick_umount
 		log "correzione: filtri salvati sulla chiavetta"
@@ -459,6 +553,12 @@ case "$1" in
 	leggi) parse_rew "$2" ;;
 	attiva) active ;;
 	correzione) correction_active ;;
+	fir)
+		# "FREQUENZA CANALI DESTRO(proprio|sinistro) MARGINE_DB"
+		fir_ok || exit 1
+		d=sinistro
+		[ -s "$DSP_DIR/fir-destro.wav" ] && d=proprio
+		echo "$(wav_info "$DSP_DIR/fir-sinistro.wav") $d $(fir_margin)" ;;
 	volume) volume_dsp ;;
 	stato) dsp_state_write "$2" "$3" ;;
 	guadagno) do_gain ;;
