@@ -9,6 +9,7 @@
 #
 #   PRECARICO=si|no              (predefinito si)
 #   PRECARICO_MB=auto|N          memoria massima; auto: meta' di quella libera
+#                                (tolti i buffer del player ancora da riempire)
 #   PRECARICO_FILE_MAX_MB=N      file piu' grandi esclusi (predefinito 1024)
 #   PRECARICO_STANDBY=si|no      dischi in standby a coda caricata
 #
@@ -23,6 +24,15 @@ SUMMARY=$RUN/precarico.json
 HOLDER_PID=$RUN/precarico.tieni.pid
 PLAN=$RUN/precarico.piano
 SLEPT=$RUN/precarico.standby
+URLS=$RUN/precarico.coda
+
+# Limite dei file in KB (PRECARICO_FILE_MAX_MB, solo cifre).
+file_max_kb() {
+	local mb
+	mb=$(conf PRECARICO_FILE_MAX_MB 1024)
+	case "$mb" in ''|*[!0-9]*) mb=1024 ;; esac
+	echo $((mb * 1024))
+}
 
 # KB che il precarico tiene gia' in RAM (non piu' contati come liberi).
 held_kb() {
@@ -30,15 +40,30 @@ held_kb() {
 	awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$PLAN"
 }
 
+# KB che i buffer di Squeezelite (-b, player_buffers) occuperanno ma non
+# occupano ancora: li alloca a poco a poco mentre si riempiono, e la
+# memoria libera di adesso li conterebbe due volte. Senza il player in
+# esecuzione contano per intero.
+player_reserve_kb() {
+	local b s o rss=0 pid
+	b=$(player_buffers)
+	s=${b%:*} o=${b#*:}
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	[ -n "$pid" ] && rss=$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/$pid/status" 2>/dev/null)
+	[ -n "$rss" ] || rss=0
+	[ $((s + o - rss)) -gt 0 ] && echo $((s + o - rss)) || echo 0
+}
+
 # Memoria per il precarico in KB: PRECARICO_MB, mai oltre la memoria libera
-# meno 256 MB per il sistema; auto vale meta' della memoria libera. La
-# memoria gia' bloccata dal precarico conta come libera, altrimenti il budget
-# si ridurrebbe dopo ogni caricamento.
+# meno i buffer del player ancora da riempire e 256 MB per il sistema; auto
+# vale meta' di quella memoria. La memoria gia' bloccata dal precarico conta
+# come libera, altrimenti il budget si ridurrebbe dopo ogni caricamento.
 preload_budget_kb() {
 	local avail mb max
 	avail=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo")
 	[ -n "$avail" ] || avail=0
-	avail=$((avail + $(held_kb)))
+	avail=$((avail + $(held_kb) - $(player_reserve_kb)))
+	[ "$avail" -gt 0 ] || avail=0
 	max=$((avail - 262144))
 	[ "$max" -gt 0 ] || max=0
 	mb=$(conf PRECARICO_MB auto)
@@ -120,7 +145,9 @@ holder_running() {
 plan_held() { # piano
 	local wanted
 	wanted=$(printf '%s\n' "$1" | sed -n 's/^SI [0-9]* //p')
-	[ -z "$wanted" ] || printf '%s\n' "$wanted" | grep -F -x -v -f "$LIST" -q && return 1
+	if [ -n "$wanted" ]; then
+		printf '%s\n' "$wanted" | grep -F -x -v -f "$LIST" -q && return 1
+	fi
 	! printf '%s\n' "$1" | grep -q -E '^(GRANDE|OLTRE|MANCA) '
 }
 
@@ -128,7 +155,7 @@ release() {
 	local pid
 	pid=$(cat "$HOLDER_PID" 2>/dev/null)
 	[ -n "$pid" ] && kill "$pid" 2>/dev/null
-	rm -f "$HOLDER_PID" "$LIST" "$STATE" "$PLAN" "$SLEPT"
+	rm -f "$HOLDER_PID" "$LIST" "$STATE" "$PLAN" "$SLEPT" "$SLEPT.t" "$URLS"
 }
 
 # Disco intero che contiene un file: /dev/sdb1 -> sdb.
@@ -138,18 +165,45 @@ file_disk() {
 	case "$dev" in /dev/*) part_disk "${dev#/dev/}" ;; *) return 1 ;; esac
 }
 
+HDPARM=${SWEETSPOT_HDPARM:-hdparm}
+
+# Il disco e' davvero in standby? (hdparm -C non lo sveglia)
+disk_in_standby() { # disco
+	"$HDPARM" -C "/dev/$1" 2>/dev/null | grep -q 'standby'
+}
+
+# Dischi meccanici che contengono i file del piano.
+plan_disks() {
+	sed -n 's/^SI [0-9]* //p' "$PLAN" | while IFS= read -r path; do file_disk "$path"; done | sort -u |
+		while IFS= read -r disk; do
+			[ "$(cat "$SYS/block/$disk/queue/rotational" 2>/dev/null)" = 1 ] && echo "$disk"
+		done
+}
+
 # Coda tutta in RAM: i dischi meccanici che la contengono vanno in standby.
+# Lo stato scritto e' quello vero (hdparm -C): un disco svegliato da altro
+# (Lyrion, la cartella condivisa) sparisce dall'elenco e si riprova a
+# fermarlo non prima di un minuto, senza fare a gara con chi lo usa.
 standby_disks() {
-	local disk disks sleeping=""
+	local disk sleeping="" now last=0 retry=0
 	is_yes "$(conf PRECARICO_STANDBY si)" || return 0
-	[ -f "$SLEPT" ] && return 0
-	disks=$(sed -n 's/^SI [0-9]* //p' "$PLAN" | while IFS= read -r path; do file_disk "$path"; done | sort -u)
-	for disk in $disks; do
-		[ "$(cat "$SYS/block/$disk/queue/rotational" 2>/dev/null)" = 1 ] || continue
-		hdparm -y "/dev/$disk" >/dev/null 2>&1 || continue
+	now=$(date +%s)
+	[ -f "$SLEPT.t" ] && last=$(cat "$SLEPT.t")
+	[ $((now - last)) -ge 60 ] && retry=1
+	for disk in $(plan_disks); do
+		if disk_in_standby "$disk"; then
+			sleeping="$sleeping $disk"
+			continue
+		fi
+		if grep -q -w "$disk" "$SLEPT" 2>/dev/null; then
+			log "precarico: disco $disk svegliato da altro"
+		fi
+		[ "$retry" = 1 ] || continue
+		"$HDPARM" -y "/dev/$disk" >/dev/null 2>&1 || continue
 		sleeping="$sleeping $disk"
 		log "precarico: disco $disk in standby, coda in RAM"
 	done
+	[ "$retry" = 1 ] && echo "$now" > "$SLEPT.t"
 	echo "${sleeping# }" > "$SLEPT"
 }
 
@@ -196,7 +250,14 @@ step() {
 		write_summary attesa
 		return
 	fi
-	plan=$(printf '%s\n' "$urls" | preload_plan "$(preload_budget_kb)" $(( $(conf PRECARICO_FILE_MAX_MB 1024) * 1024 )))
+	# Con la coda uguale e il caricamento in corso o finito il piano resta:
+	# niente stat dei file (sulle cartelle di rete e' traffico) a ogni giro.
+	if [ "$urls" = "$(cat "$URLS" 2>/dev/null)" ] && holder_running && [ -f "$PLAN" ]; then
+		plan=$(cat "$PLAN")
+	else
+		plan=$(printf '%s\n' "$urls" | preload_plan "$(preload_budget_kb)" "$(file_max_kb)")
+		printf '%s\n' "$urls" > "$URLS"
+	fi
 	if [ "$plan" != "$(cat "$PLAN" 2>/dev/null)" ] && holder_running && plan_held "$plan"; then
 		# Un brano finito esce dalla coda: gli altri sono gia' in RAM e i
 		# dischi possono restare fermi.
@@ -205,7 +266,13 @@ step() {
 		release
 		printf '%s\n' "$plan" > "$PLAN"
 		printf '%s\n' "$plan" | sed -n 's/^SI [0-9]* //p' > "$LIST"
-		/usr/sbin/sweetspot-precarica tieni "$LIST" "$STATE" &
+		# Lettura in secondo piano, dietro a tutti (nice, ionice idle): il
+		# brano in corso lo serve gia' il buffer del player.
+		if command -v ionice >/dev/null 2>&1; then
+			nice -n 19 ionice -c 3 /usr/sbin/sweetspot-precarica tieni "$LIST" "$STATE" &
+		else
+			nice -n 19 /usr/sbin/sweetspot-precarica tieni "$LIST" "$STATE" &
+		fi
 		echo $! > "$HOLDER_PID"
 		log "precarico: $(grep -c . "$LIST") file della coda in caricamento"
 	fi
