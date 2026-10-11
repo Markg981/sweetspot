@@ -64,7 +64,7 @@ verdict() { # formato frequenza canali
 	elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$hwfmt")" ] 2>/dev/null; then
 		why="il brano ha $src_bits bit, il DAC ne riceve $(alsa_bits "$hwfmt")"
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
-		why="il volume è regolato dal software"
+		why="il volume è abbassato dal software, che tronca i bit bassi senza dither"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
 		why="il ricampionamento è attivo"
 	fi
@@ -150,6 +150,14 @@ if [ "$(boot_type)" = rpi ]; then
 fi
 
 # --- Impostazioni -------------------------------------------------------------------
+# Il volume software di Squeezelite moltiplica i campioni e tronca i bit
+# bassi, senza dither: l'errore resta legato al segnale, piu' udibile a basso
+# volume e con DAC a 16 bit. Il fisso (dall'amplificatore) o il volume
+# hardware del DAC non toccano i campioni.
+volume_note() {
+	[ "$1" = software ] || return 0
+	printf '<p class="sub">%s</p>\n' "Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither. Sotto il 100% il segnale perde risoluzione in modo legato alla musica, più evidente a basso volume e con DAC a 16 bit. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
+}
 vol=$(lower "$(conf VOLUME fisso)")
 rs=$(lower "$(conf RICAMPIONAMENTO no)")
 echo '<h2>Impostazioni</h2><div class="card formcard">'
@@ -159,8 +167,9 @@ cat <<HTML
 <select id="vol" name="volume">
 $(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
 $(option dac "Dal DAC: usa il controllo hardware (dipende dal DAC)" "$vol")
-$(option software "Dal software: per diffusori attivi senza volume (non bit-perfect)" "$vol")
+$(option software "Dal software: senza dither, peggiore del fisso (solo per diffusori attivi senza volume)" "$vol")
 </select>
+$(volume_note "$vol")
 
 <label for="dsd">DSD</label>
 <select id="dsd" name="dsd">

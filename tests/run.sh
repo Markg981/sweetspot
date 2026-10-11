@@ -328,7 +328,22 @@ case "$out" in *"esattamente i campioni"*) ko "audio: nessuna prova campioni inv
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
-case "$(page audio 'VOLUME=software')" in *"Non bit-perfect"*"regolato dal software"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect" "-" ;; esac
+out=$(page audio 'VOLUME=software')
+case "$out" in *"Non bit-perfect"*"abbassato dal software, che tronca i bit bassi senza dither"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, senza dither" "-" ;; esac
+case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota senza dither" "-" ;; esac
+case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
+volcheck() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Volume|'
+}
+expect "stato: volume software e' un avviso" \
+	"ATTENZIONE|Volume|dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC" \
+	"$(volcheck VOLUME=software)"
+expect "stato: volume del DAC resta informativo" \
+	"INFO|Volume|regolabile (dac): sotto il 100% il segnale non e' piu' bit-perfect" "$(volcheck VOLUME=dac)"
+rm -f "$WEB/s.txt"
 printf 'access: MMAP_INTERLEAVED\nformat: DSD_U32_BE\nsubformat: STD\nchannels: 2\nrate: 88200 (88200/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"DSD nativo"*"DSD64"*) ok "audio: DSD64 nativo riconosciuto" ;; *) ko "audio DSD nativo" "DSD64" "-" ;; esac
 out=$(page plugin)
