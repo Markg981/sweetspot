@@ -16,25 +16,44 @@
 # pagine si salva solo l'impronta ($1$...). Password dimenticata: togli la
 # riga PASSWORD_WEB da sweetspot.txt con il computer.
 # Lyrion (porta 9000) ha la sua protezione nelle sue impostazioni.
+#
+# La pagina /cgi-bin/vivo (risponde solo "ok" e la copia in uso) serve a
+# sweetspot-aggiorna per confermare che una versione appena installata e'
+# partita: con la password avrebbe risposto 401 e ogni aggiornamento sarebbe
+# stato annullato. Per quella sola pagina vale anche un utente "sweetspot"
+# con una chiave casuale di questo avvio, in $RUN/vivo.chiave (solo root):
+# l'httpd di BusyBox applica la regola con il percorso piu' lungo.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 HTTPD_CONF=$RUN/httpd.conf
+VIVO_KEY=$RUN/vivo.chiave
 
 hash() { httpd -m "$1"; }
 
+random_key() {
+	od -An -N16 -tx1 "${SWEETSPOT_URANDOM:-/dev/urandom}" 2>/dev/null | tr -d ' \n'
+}
+
 apply() {
-	local pw h
+	local pw h key
 	mkdir -p "$RUN"
 	pw=$(conf PASSWORD_WEB)
 	if [ -z "$pw" ]; then
 		: > "$HTTPD_CONF.nuovo"
+		rm -f "$VIVO_KEY"
 	else
 		case "$pw" in
 			'$1$'*) h=$pw ;;
 			*) h=$(hash "$pw") || return 1 ;;
 		esac
-		printf '/:admin:%s\n' "$h" > "$HTTPD_CONF.nuovo"
+		key=$(random_key)
+		[ ${#key} -eq 32 ] || return 1
+		# La chiave prima della regola: quando la regola vale, la chiave c'e'.
+		printf '%s\n' "$key" > "$VIVO_KEY.nuovo"
+		chmod 600 "$VIVO_KEY.nuovo"
+		mv "$VIVO_KEY.nuovo" "$VIVO_KEY"
+		printf '/cgi-bin/vivo:sweetspot:%s\n/:admin:%s\n' "$key" "$h" > "$HTTPD_CONF.nuovo"
 	fi
 	chmod 600 "$HTTPD_CONF.nuovo"
 	mv "$HTTPD_CONF.nuovo" "$HTTPD_CONF"
