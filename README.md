@@ -100,7 +100,10 @@ diffusore sinistro e uno per il destro.
   ricampionamento si spegne da solo); il DAC deve accettarla. Attenuazione in
   più `FIR_MARGINE_DB` (3 dB): i FIR di rePhase e Acourate sono di solito già
   normalizzati, la voce "Clipping di CamillaDSP" della pagina Stato dice se
-  basta.
+  basta. La coda di ogni brano non viene tagliata: quando lo stream si chiude
+  (stop, cambio di frequenza, pausa lunga) CamillaDSP legge ancora tanti
+  campioni di silenzio quanti i tap dei FIR più due blocchi
+  (`extra_samples`), così il suono ancora dentro i filtri arriva al DAC.
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.
