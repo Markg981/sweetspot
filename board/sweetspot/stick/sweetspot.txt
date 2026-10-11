@@ -60,7 +60,9 @@ DAC=auto
 # Volume:
 #   fisso    = 100%, si regola dall'amplificatore (bit-perfect, consigliato)
 #   dac      = usa il controllo di volume del DAC (bit-perfect)
-#   software = attenuazione digitale, per diffusori attivi senza volume
+#   software = attenuazione digitale di Squeezelite, senza dither
+#   dsp      = volume a 64 bit con dither (CamillaDSP), solo in modalita'
+#              completa: il migliore se il volume va regolato da Lyrion
 VOLUME=fisso
 
 # DSD:

@@ -364,6 +364,14 @@ check_dsp_clipping() {
 	fi
 }
 
+# Volume attuale del volume a 64 bit, se sweetspot-volume l'ha gia' letto.
+volume_dsp_now() {
+	local v d m
+	[ -s "$RUN/volume.dsp" ] || return 0
+	read -r v d m < "$RUN/volume.dsp"
+	if [ "$m" = 1 ]; then printf ' (ora in sordina)'; else printf ' (ora %s, %s dB)' "$v" "$d"; fi
+}
+
 check_player() {
 	local pid xr recovery counts bufs state vol hist=ATTENZIONE
 	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
@@ -404,13 +412,17 @@ check_player() {
 		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
 	elif [ "$vol" = software ]; then
 		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC"
+	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
+		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita, Squeezelite fisso al 100%$(volume_dsp_now); sotto il 100% non e' bit-perfect, ma senza troncamenti"
+	elif [ "$vol" = dsp ] && [ -f "$RUN/volume.modo" ]; then
+		emit ATTENZIONE "Volume" "a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither"
 	else
 		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
 	fi
 	if [ -n "$(conf RICAMPIONAMENTO)" ] && [ "$(lower "$(conf RICAMPIONAMENTO)")" != no ]; then
 		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta"
 	fi
-	if [ -f "$RUN/correzione.attiva" ]; then
+	if correction_running; then
 		if [ "$(lower "$(conf CORREZIONE no)")" = confronto ]; then
 			emit INFO "Correzione ambientale" "esclusa a pari volume: CamillaDSP applica solo l'attenuazione"
 		else

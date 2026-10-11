@@ -153,6 +153,13 @@ dsp_clip_poll() {
 
 # Latenza durante l'ascolto (facoltativa, LATENZA_ASCOLTO=si): una misura
 # leggera sul core della riproduzione per tutta la sessione.
+start_volume_watch() {
+	VOLPID=""
+	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] || return 0
+	taskset -c "$HK" sweetspot-volume segui "$PLAYER_MAC" &
+	VOLPID=$!
+}
+
 start_latency_watch() {
 	LATPID=""
 	[ "$(lower "$(conf LATENZA_ASCOLTO no)")" = si ] || return 0
@@ -259,17 +266,35 @@ run_player() {
 	# Correzione ambientale (facoltativa): squeezelite suona sul dispositivo
 	# della correzione, che passa ogni brano a CamillaDSP; altrimenti
 	# direttamente sul DAC.
+	# Con VOLUME=dsp CamillaDSP c'e' anche senza correzione, per il volume.
+	# correzione.attiva: CamillaDSP e' nel percorso; correzione.filtri: con i
+	# filtri della stanza; volume.modo: dsp (volume a 64 bit) o riserva.
 	dsp=""
-	rm -f "$RUN/correzione.attiva" "$RUN/correzione.errore"
+	rm -f "$RUN/correzione.attiva" "$RUN/correzione.filtri" "$RUN/correzione.errore" "$RUN/volume.modo"
 	if sweetspot-dsp attiva; then
 		if dsp=$(sweetspot-dsp prepara "$card"); then
 			echo "$dsp" > "$RUN/correzione.attiva"
-			log "player: correzione ambientale attiva (CamillaDSP, attenuazione $(sweetspot-dsp guadagno) dB)"
+			if sweetspot-dsp correzione; then
+				touch "$RUN/correzione.filtri"
+				log "player: correzione ambientale attiva (CamillaDSP, attenuazione $(sweetspot-dsp guadagno) dB)"
+			fi
+			if sweetspot-dsp volume; then
+				echo dsp > "$RUN/volume.modo"
+				log "player: volume a 64 bit con dither (CamillaDSP)"
+			fi
 		else
 			dsp=""
-			echo "configurazione dei filtri non valida" > "$RUN/correzione.errore"
-			log "player: correzione ambientale non applicabile, uscita diretta sul DAC"
+			if sweetspot-dsp correzione; then
+				echo "configurazione dei filtri non valida" > "$RUN/correzione.errore"
+				log "player: correzione ambientale non applicabile, uscita diretta sul DAC"
+			fi
 		fi
+	fi
+	# Volume a 64 bit chiesto ma CamillaDSP non disponibile (o modalita'
+	# player): il volume resta regolabile dal software, mai fisso al massimo.
+	if [ "$(lower "$(conf VOLUME fisso)")" = dsp ] && [ ! -f "$RUN/volume.modo" ]; then
+		echo riserva > "$RUN/volume.modo"
+		log "player: volume a 64 bit non disponibile, uso il volume software"
 	fi
 	if [ -n "$dsp" ]; then
 		set -- -o "$dsp" -O "hw:CARD=$id" -a "$alsa:$periods::0"
@@ -328,16 +353,21 @@ run_player() {
 # ReplayGain, niente dissolvenze tra i brani, nessun limite di bitrate
 # (i file arrivano al player cosi' come sono).
 apply_player_prefs() {
-	local digital=0
+	local digital=0 vol_dsp=0
 	[ "$(mode)" = completa ] || return 0
 	[ "$PREFS_SET" = 1 ] && return 0
 	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$PLAYER_MAC" connected '?')" = 1 ] || return 1
-	case "$(lower "$(conf VOLUME fisso)")" in software|dac) digital=1 ;; esac
+	# Volume a 64 bit: Squeezelite fisso al 100%, il cursore di Lyrion resta
+	# libero e lo segue sweetspot-volume. Se CamillaDSP manca, volume software.
+	case "$(lower "$(conf VOLUME fisso)")" in
+		software|dac) digital=1 ;;
+		dsp) if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then vol_dsp=1; else digital=1; fi ;;
+	esac
 	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null || return 1
-	if [ "$digital" = 0 ]; then
+	if [ "$digital" = 0 ] && [ "$vol_dsp" = 0 ]; then
 		lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null || return 1
 	fi
 	PREFS_SET=1
@@ -358,6 +388,7 @@ player_loop() {
 		run_player "$card" || { sleep 2; continue; }
 		say "attivo su $(dac_name "$card")"
 		start_latency_watch
+		start_volume_watch
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"
 		while kill -0 "$PID" 2>/dev/null; do
@@ -373,6 +404,7 @@ player_loop() {
 		done
 		wait "$PID" 2>/dev/null
 		[ -n "$LATPID" ] && kill "$LATPID" 2>/dev/null
+		[ -n "$VOLPID" ] && kill "$VOLPID" 2>/dev/null
 		say "riavvio del player"
 		rm -f "$RUN/audio.tid"
 		sleep 2

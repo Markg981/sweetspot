@@ -79,7 +79,7 @@ set_excluded() { # nome aggiungi|togli
 case "$F_a" in
 	# --- Audio -------------------------------------------------------------------
 	audio)
-		case "$F_volume" in fisso|dac|software) ;; *) F_volume=fisso ;; esac
+		case "$F_volume" in fisso|dac|software|dsp) ;; *) F_volume=fisso ;; esac
 		case "$F_dsd" in auto|nativo|dop|no) ;; *) F_dsd=auto ;; esac
 		case "$F_ricampionamento" in no|sincrono|asincrono) ;; *) F_ricampionamento=no ;; esac
 		case "$F_filtro" in lineare|intermedio|minimo) ;; *) F_filtro=lineare ;; esac
