@@ -361,13 +361,24 @@ sempre svegli. Il Turbo è sempre spento.
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
 | Campioni, continuità e cambi di frequenza nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF e sei transizioni PCM fra 44,1/48/96 kHz; [protocollo](docs/audio-verification.md) |
-| Riconoscimento DoP del DAC | `tools/genera-test-dop.py`: vedi sotto |
+| Riconoscimento DoP del DAC | pagina Audio, "Prova DoP" (DAC senza DSD nativo), oppure `tools/genera-test-dop.py`: vedi sotto |
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
 | XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 | Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
 
 ### Prova di riconoscimento con il file DoP
+
+Con un DAC USB che non dichiara il DSD nativo, `DSD=auto` fa convertire i file
+DSD in PCM dal server (Lyrion), senza provare il DoP. Molti DAC accettano
+comunque il DoP: la pagina **Audio** propone la **Prova DoP**. Genera sul
+player lo stesso file descritto sotto (`sweetspot-prova-dop`), lo fa suonare
+per 6 secondi e chiede l'esito: se il DAC ha mostrato DSD/DoP e si è sentito il
+tono, imposta `DSD=dop`; altrimenti non cambia nulla. La prova non parte con
+volume software, correzione ambientale o ricampionamento attivi, né se il DAC
+non dichiara 176,4 kHz, perché l'esito non sarebbe affidabile.
+
+Lo stesso file si può creare anche sul computer:
 
 ```sh
 python3 tools/genera-test-dop.py

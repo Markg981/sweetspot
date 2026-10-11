@@ -134,3 +134,19 @@ button() { # azione etichetta [campo valore] [classe]
 	[ -n "$3" ] && printf '<input type="hidden" name="%s" value="%s">' "$3" "$(esc "$4")"
 	printf '<button class="%s">%s</button></form>' "${5:-}" "$(esc "$2")"
 }
+
+# Prova DoP della pagina Audio: perche' adesso non darebbe un esito
+# affidabile (vuoto: si puo' fare). Argomento: frequenze del DAC.
+dop_test_blocker() {
+	if [ "$(mode)" != completa ]; then
+		echo "il file di prova sta su questo player: serve la modalità completa (Lyrion su Sweetspot)"
+	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
+		echo "il volume software altera i campioni e cancella i marcatori DoP: scegli Fisso o Dal DAC"
+	elif [ -f "$RUN/correzione.attiva" ]; then
+		echo "la correzione ambientale elabora i campioni: spegnila per la durata della prova"
+	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
+		echo "il ricampionamento altera i campioni: spegnilo per la durata della prova"
+	elif ! printf ' %s ' "$1" | grep -q ' 176400 '; then
+		echo "il DAC non dichiara 176,4 kHz, la frequenza che il DoP richiede per il DSD64"
+	fi
+}

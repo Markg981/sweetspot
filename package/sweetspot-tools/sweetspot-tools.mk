@@ -18,6 +18,8 @@ define SWEETSPOT_TOOLS_BUILD_CMDS
 		-o $(@D)/sweetspot-partizione $(@D)/sweetspot-partizione.c
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
 		-o $(@D)/sweetspot-precarica $(@D)/sweetspot-precarica.c
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
+		-o $(@D)/sweetspot-prova-dop $(@D)/sweetspot-prova-dop.c -lm
 endef
 
 define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
@@ -25,6 +27,7 @@ define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-reboot2 $(TARGET_DIR)/usr/sbin/sweetspot-reboot2
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-partizione $(TARGET_DIR)/usr/sbin/sweetspot-partizione
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-precarica $(TARGET_DIR)/usr/sbin/sweetspot-precarica
+	$(INSTALL) -D -m 0755 $(@D)/sweetspot-prova-dop $(TARGET_DIR)/usr/sbin/sweetspot-prova-dop
 endef
 
 $(eval $(generic-package))
