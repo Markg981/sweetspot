@@ -419,9 +419,18 @@ acc() { # impostazioni
 	cat "$WEB/run/httpd.conf"
 }
 expect "pagine aperte senza password" "" "$(acc '')"
-expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh')"
-case "$(acc 'PASSWORD_WEB=segreta')" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | tail -n 1)"
+case "$(acc 'PASSWORD_WEB=segreta' | tail -n 1)" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
 expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
+# La pagina vivo resta raggiungibile dall'aggiornamento: utente sweetspot
+# con la chiave casuale dell'avvio, regola prima di quella generale.
+vivo_key=$(cat "$WEB/run/vivo.chiave")
+expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#vivo_key}|$(stat -c %a "$WEB/run/vivo.chiave")"
+case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
+expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
+expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
+acc '' > /dev/null
+expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
 printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
@@ -893,6 +902,17 @@ upd conferma
 expect "la nuova versione si conferma" "b|" "$(genv slot)|$(genv tentato)"
 expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riuscita=')"
 expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
+# Con la password delle pagine l'httpd risponde 401 a chi non si presenta:
+# la conferma usa l'utente sweetspot con la chiave di questo avvio.
+printf '#!/bin/sh\nfor a; do case "$a" in http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
+chmod +x "$UPD/bin/wget-401"
+setenv prova= tentato=b
+UPD_WGET=$UPD/bin/wget-401 upd conferma
+expect "con la password e senza chiave la conferma non passa (401)" "b" "$(genv tentato)"
+echo 0123456789abcdef0123456789abcdef > "$UPD/run/vivo.chiave"
+UPD_WGET=$UPD/bin/wget-401 upd conferma
+expect "con la password la conferma passa con la chiave della pagina vivo" "b|" "$(genv slot)|$(genv tentato)"
+rm -f "$UPD/run/vivo.chiave"
 # Secondo aggiornamento (va nella copia A), che non parte: si torna a B
 rm -f "$UPD/run/aggiornamento/riuscita"
 mkpkg v1.2.0 x86_64
