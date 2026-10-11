@@ -19,7 +19,7 @@ saved_msg() { # codice testo
 
 # Campi dei moduli, riempiti da read_form.
 F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome=""
-F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac=""
+F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
@@ -83,6 +83,14 @@ case "$F_a" in
 		case "$F_volume" in fisso|dac|software|dsp) ;; *) F_volume=fisso ;; esac
 		case "$F_dsd" in auto|nativo|dop|no) ;; *) F_dsd=auto ;; esac
 		case "$F_altri_dac" in si|no) ;; *) F_altri_dac=no ;; esac
+		# DAC principale: auto, un identificativo USB, oppure il valore gia'
+		# scritto a mano in sweetspot.txt (non si tocca).
+		F_dac=$(lower "$F_dac")
+		case "$F_dac" in
+			''|auto) F_dac=auto ;;
+			[0-9a-f][0-9a-f][0-9a-f][0-9a-f]:[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+			*) [ "$F_dac" = "$(lower "$(conf DAC auto)")" ] || done_to audio "DAC principale non valido." ;;
+		esac
 		case "$F_ricampionamento" in no|sincrono|asincrono) ;; *) F_ricampionamento=no ;; esac
 		case "$F_filtro" in lineare|intermedio|minimo) ;; *) F_filtro=lineare ;; esac
 		in_range "$F_frequenza_max" 0 1536000 || done_to audio "Frequenza massima non valida: scrivi 0 oppure un valore in Hz, es. 192000."
@@ -93,7 +101,7 @@ case "$F_a" in
 		sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" RICAMPIONAMENTO "$F_ricampionamento" \
 			FILTRO "$F_filtro" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
 			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd" \
-			ALTRI_DAC "$F_altri_dac"
+			ALTRI_DAC "$F_altri_dac" DAC "$F_dac"
 		rc=$?
 		[ $rc -eq 1 ] && done_to audio "$(saved_msg 1)"
 		restart_player

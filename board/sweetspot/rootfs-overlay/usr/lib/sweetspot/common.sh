@@ -361,8 +361,42 @@ i2s_card() {
 	return 1
 }
 
+# Con gli altri DAC come zone (ALTRI_DAC=si) e DAC=auto, il DAC principale
+# e' quello scelto la prima volta in questo avvio (sweetspot-player lo
+# annota in $RUN/dac.principale): se viene staccato il player aspetta lui,
+# non passa a un DAC di zona. Una scheda gia' zona non e' mai il principale.
+# La scheda USB (indice ALSA) e' quella voluta come DAC principale?
+# DAC esplicito: per nome ALSA, identificativo USB o parte del nome.
+# DAC=auto: qualunque, oppure solo quella annotata in $RUN/dac.principale
+# (identificativo USB e numero di serie).
+dac_wanted() { # indice
+	local want d idx=$1 id usbid name main
+	want=$(lower "$(conf DAC auto)")
+	d=$PROC/asound/card$idx
+	id=$(cat "$d/id" 2>/dev/null)
+	usbid=$(lower "$(cat "$d/usbid" 2>/dev/null)")
+	case "$want" in
+		auto|'')
+			main=""
+			is_yes "$(conf ALTRI_DAC no)" && main=$(cat "$RUN/dac.principale" 2>/dev/null)
+			[ -z "$main" ] || [ "$main" = "$(dac_identity "$idx")" ] ;;
+		*)
+			[ "$want" = "$(lower "$id")" ] && return 0
+			[ "$want" = "$usbid" ] && return 0
+			name=$(lower "$(sed -n "s/^ *$idx \[[^]]*\]: *//p" "$PROC/asound/cards" 2>/dev/null)")
+			case "$name" in *"$want"*) return 0 ;; esac
+			return 1 ;;
+	esac
+}
+
+# Scheda gia' in uso come zona (ALTRI_DAC=si, sweetspot-player).
+dac_is_zone() { # indice
+	is_yes "$(conf ALTRI_DAC no)" || return 1
+	[ "$(cut -d' ' -f2 "$RUN/zone/$1" 2>/dev/null)" = "$(cat "$PROC/asound/card$1/id" 2>/dev/null)" ]
+}
+
 dac_find() {
-	local want d idx id usbid name
+	local want d idx
 	want=$(lower "$(conf DAC auto)")
 	case "$want" in auto|'') i2s_card && return 0 ;; esac
 	for d in "$PROC"/asound/card[0-9]*; do
@@ -370,18 +404,25 @@ dac_find() {
 		idx=${d##*card}
 		[ -f "$d/usbid" ] || continue
 		[ -n "$(dac_playback_dev "$idx")" ] || continue
-		id=$(cat "$d/id" 2>/dev/null)
-		usbid=$(lower "$(cat "$d/usbid" 2>/dev/null)")
-		name=$(lower "$(sed -n "s/^ *$idx \[[^]]*\]: *//p" "$PROC/asound/cards" 2>/dev/null)")
-		case "$want" in
-			auto|'') echo "$idx"; return 0 ;;
-		esac
-		if [ "$want" = "$(lower "$id")" ] || [ "$want" = "$usbid" ]; then
-			echo "$idx"; return 0
-		fi
-		case "$name" in *"$want"*) echo "$idx"; return 0 ;; esac
+		dac_is_zone "$idx" && continue
+		dac_wanted "$idx" || continue
+		echo "$idx"; return 0
 	done
 	return 1
+}
+
+# Numero di serie USB del DAC (vuoto se non lo dichiara): distingue due DAC
+# dello stesso modello.
+dac_usb_serial() {
+	local p
+	p=$(dac_usb_device "$1") || return 1
+	cat "$p/serial" 2>/dev/null
+}
+
+# Identita' del DAC che non dipende dalla porta ne' dall'ordine di
+# collegamento: identificativo USB e numero di serie (se c'e').
+dac_identity() { # indice
+	printf '%s %s' "$(dac_usbid "$1")" "$(dac_usb_serial "$1")"
 }
 
 dac_id() { cat "$PROC/asound/card$1/id" 2>/dev/null; }
