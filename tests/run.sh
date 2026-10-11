@@ -1020,6 +1020,58 @@ rm -f "$CC/lms/cache/artwork.db"
 lmsfn link_caches
 expect "senza archivio: cache in RAM come prima" "no" "$([ -e "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
 
+echo "Precarico in RAM"
+PRE=$WORK/precarico
+mkdir -p "$PRE/proc" "$PRE/run" "$PRE/musica/Album è"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
+head -c 3000 /dev/zero > "$PRE/musica/Album è/a.flac"
+head -c 2000 /dev/zero > "$PRE/musica/Album è/b c.flac"
+head -c 5000 /dev/zero > "$PRE/musica/Album è/grande.dsf"
+head -c 1000 /dev/zero > "$PRE/musica/Album è/d.flac"
+prefn() {
+	SWEETSPOT_PROCFS=$PRE/proc SWEETSPOT_RUN=$PRE/run SWEETSPOT_LOG=$PRE/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-precarico; $1"
+}
+U=file://$PRE/musica/Album%20%C3%A8
+expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
+expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
+expect "budget automatico: meta' della memoria libera" "2097152" "$(prefn preload_budget_kb)"
+echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
+expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
+echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
+expect "budget mai oltre la memoria libera meno 256 MB" "3932160" "$(prefn preload_budget_kb)"
+rm -f "$PRE/run/sweetspot.conf"
+sleep 30 &
+echo $! > "$PRE/run/precarico.tieni.pid"
+printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "2097652" "$(prefn preload_budget_kb)"
+kill "$(cat "$PRE/run/precarico.tieni.pid")"
+rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
+expect "piano: in coda fino al budget, poi si ferma" \
+	"SI 3 $PRE/musica/Album è/a.flac|STREAM http://radio.example/stream|GRANDE 5 $PRE/musica/Album è/grande.dsf|OLTRE 2 $PRE/musica/Album è/b c.flac|MANCA $PRE/musica/Album è/manca.flac|OLTRE 1 $PRE/musica/Album è/d.flac" \
+	"$(prefn "preload_plan 4 4 < '$PRE/coda'" | tr '\n' '|' | sed 's/|$//')"
+printf '%s\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.elenco"
+expect "brano finito: il resto della coda e' gia' in RAM" "si" \
+	"$(prefn "plan_held 'SI 2 $PRE/musica/Album è/b c.flac
+STREAM http://radio.example/stream' && echo si || echo no")"
+expect "nuovo brano in coda: precarico da rifare" "no" \
+	"$(prefn "plan_held 'SI 1 $PRE/musica/Album è/d.flac' && echo si || echo no")"
+expect "brano escluso: nuovo verdetto" "no" \
+	"$(prefn "plan_held 'SI 2 $PRE/musica/Album è/b c.flac
+OLTRE 1 $PRE/musica/Album è/d.flac' && echo si || echo no")"
+printf 'SI 3 %s\nSI 2 %s\nSTREAM http://radio.example/stream\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+printf 'stato\tpronto\nfile\t3000\tok\t%s\nfile\t2000\terrore: Cannot allocate memory\t%s\nfile\t9\tok\t/vecchio.flac\n' \
+	"$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.stato"
+if command -v jq >/dev/null; then
+	prefn "write_summary parziale"
+	expect "riepilogo: solo i brani del piano, errori e streaming" "parziale 3 1 1 1 0" \
+		"$(jq -r '"\(.stato) \(.brani) \(.caricati) \(.errori) \(.streaming) \(.oltre)"' "$PRE/run/precarico.json")"
+else
+	echo "  (jq non installato: riepilogo non provato)"
+fi
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
@@ -1042,4 +1094,5 @@ sh "$ROOT/tests/ops-safety.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
+python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

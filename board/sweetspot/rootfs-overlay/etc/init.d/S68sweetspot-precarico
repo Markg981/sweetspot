@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - precarico in RAM della coda di ascolto (solo in modalita' completa).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+PIDFILE=$RUN/precarico.pid
+
+case "$1" in
+	start)
+		[ "$(mode)" = completa ] || exit 0
+		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/sweetspot-precarico
+		;;
+	stop)
+		start-stop-daemon -K -s TERM -p "$PIDFILE" 2>/dev/null
+		rm -f "$PIDFILE"
+		;;
+	*) echo "uso: $0 start|stop" ;;
+esac

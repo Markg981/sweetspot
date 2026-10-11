@@ -16,12 +16,15 @@ define SWEETSPOT_TOOLS_BUILD_CMDS
 		-o $(@D)/sweetspot-reboot2 $(@D)/sweetspot-reboot2.c
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
 		-o $(@D)/sweetspot-partizione $(@D)/sweetspot-partizione.c
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
+		-o $(@D)/sweetspot-precarica $(@D)/sweetspot-precarica.c
 endef
 
 define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-arcrc $(TARGET_DIR)/usr/bin/sweetspot-arcrc
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-reboot2 $(TARGET_DIR)/usr/sbin/sweetspot-reboot2
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-partizione $(TARGET_DIR)/usr/sbin/sweetspot-partizione
+	$(INSTALL) -D -m 0755 $(@D)/sweetspot-precarica $(TARGET_DIR)/usr/sbin/sweetspot-precarica
 endef
 
 $(eval $(generic-package))

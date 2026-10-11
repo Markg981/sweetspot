@@ -268,6 +268,28 @@ check_library() {
 	fi
 }
 
+# Precarico della coda in RAM (sweetspot-precarico), dal riepilogo che scrive.
+check_preload() {
+	local s stato detail
+	s=$(cat "$RUN/precarico.json" 2>/dev/null)
+	stato=$(printf '%s' "$s" | jq -r '.stato // empty' 2>/dev/null)
+	detail=$(printf '%s' "$s" | jq -r '"\(.caricati) di \(.brani) brani in RAM, \(.mb) MB su \(.budget_mb) MB"
+		+ (if .streaming > 0 then ", \(.streaming) in streaming" else "" end)
+		+ (if .grandi > 0 then ", \(.grandi) oltre la dimensione massima" else "" end)
+		+ (if .oltre > 0 then ", \(.oltre) oltre il budget" else "" end)
+		+ (if .mancanti > 0 then ", \(.mancanti) non trovati" else "" end)
+		+ (if .errori > 0 then ", \(.errori) non caricati" else "" end)
+		+ (if .standby != "" then "; dischi in standby: \(.standby)" else "" end)' 2>/dev/null)
+	case "$stato" in
+		pronto) emit OK "Precarico in RAM" "coda completa: $detail" ;;
+		caricamento) emit INFO "Precarico in RAM" "caricamento: $detail" ;;
+		parziale) emit INFO "Precarico in RAM" "parziale, alcuni brani si leggono dal disco: $detail" ;;
+		attesa) emit INFO "Precarico in RAM" "nessuna coda in riproduzione" ;;
+		spento) emit INFO "Precarico in RAM" "spento (PRECARICO=no)" ;;
+		*) emit ATTENZIONE "Precarico in RAM" "stato non disponibile" ;;
+	esac
+}
+
 check_system() {
 	local srv ip disks b t st
 	emit INFO "Classe del computer" "$(machine_class) - $(cpu_model) - $(( $(mem_total_kb) / 1024 )) MB di RAM"
@@ -305,6 +327,7 @@ check_usb
 check_dac
 check_player
 [ "$(mode)" = completa ] && check_library
+[ "$(mode)" = completa ] && check_preload
 check_system
 
 if [ "$1" = "--dati" ]; then
