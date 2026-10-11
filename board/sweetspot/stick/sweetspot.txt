@@ -133,6 +133,14 @@ PROFILO=bilanciato
 # Dopo quanti minuti spegnere lo schermo (0 = mai).
 SCHERMO_MINUTI=2
 
+# Periferiche che il player non usa, su qualunque computer: webcam,
+# Bluetooth e lettori di smart card USB scollegati dai driver (anche se
+# collegati dopo); scheda video secondaria, audio integrato non scelto,
+# modem, FireWire, lettore di schede, Wi-Fi non configurato e schede di
+# rete senza cavo lasciati a riposo. accese = lasciate come sono.
+# DAC, dischi, tastiere e la rete in uso non vengono mai toccati.
+PERIFERICHE_INUTILIZZATE=spente
+
 # Accesso remoto per l'assistenza tecnica (SSH).
 SSH=no
 SSH_PASSWORD=

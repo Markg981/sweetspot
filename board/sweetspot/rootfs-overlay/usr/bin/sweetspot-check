@@ -98,6 +98,71 @@ check_cpu() {
 	fi
 }
 
+# Attivita' elettrica superflua (sweetspot-silenzio e sweetspot-display).
+check_quiet() {
+	local l leds=0 lit="" d off="" iso hk c mask=0 cur con st b screens="" pci awake bdf kind rs
+	for l in "$SYS"/class/leds/*; do
+		[ -d "$l" ] || continue
+		case "${l##*/}" in *::capslock|*::numlock|*::scrolllock|*::compose|*::kana) continue ;; esac
+		leds=$((leds + 1))
+		[ "$(cat "$l/brightness" 2>/dev/null)" = 0 ] || lit="$lit ${l##*/}"
+	done
+	if [ "$leds" -gt 0 ] && [ -z "$lit" ]; then
+		emit OK "LED" "spenti (tranne quelli della tastiera)"
+	elif [ -n "$lit" ]; then
+		emit INFO "LED" "accesi:$lit"
+	fi
+	for d in "$SYS"/bus/usb/devices/*; do
+		case "${d##*/}" in *:*|usb*) continue ;; esac
+		[ "$(cat "$d/authorized" 2>/dev/null)" = 0 ] &&
+			off="$off, $(cat "$d/product" 2>/dev/null || echo "${d##*/}")"
+	done
+	[ -n "$off" ] && emit OK "USB inutilizzate" "scollegate dai driver: ${off#, }"
+	# Stato reale dei PCI lasciati a riposo da sweetspot-silenzio.
+	if [ -s "$RUN/silenzio.pci" ]; then
+		pci="" awake=0
+		while IFS='|' read -r bdf kind; do
+			rs=$(cat "$SYS/bus/pci/devices/$bdf/power/runtime_status" 2>/dev/null)
+			case "$rs" in
+				suspended) rs="a riposo" ;;
+				*) rs="attivo${rs:+ ($rs)}"; awake=$((awake + 1)) ;;
+			esac
+			pci="$pci, $kind $bdf $rs"
+		done < "$RUN/silenzio.pci"
+		if [ "$awake" = 0 ]; then
+			emit OK "PCI a riposo" "${pci#, }"
+		else
+			emit INFO "PCI a riposo" "${pci#, }; un dispositivo senza driver o che non lo supporta resta attivo"
+		fi
+	fi
+	iso=$(expand_list "$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)")
+	cur=$(cat "$SYS/devices/virtual/workqueue/cpumask" 2>/dev/null | tr -d ',' | sed 's/^0*//')
+	if [ -n "$iso" ] && [ -n "$cur" ]; then
+		hk=$(subtract "$(cpu_online)" "$iso")
+		for c in $hk; do mask=$((mask | (1 << c))); done
+		if [ "$cur" = "$(printf '%x' "$mask")" ]; then
+			emit OK "Lavoro differito del kernel" "workqueue solo sui core di sistema $(join_list "$hk")"
+		else
+			emit ATTENZIONE "Lavoro differito del kernel" "workqueue anche sui core isolati (maschera $cur)"
+		fi
+	fi
+	for con in "$SYS"/class/drm/card*-*; do
+		[ "$(cat "$con/status" 2>/dev/null)" = connected ] || continue
+		st=$(cat "$con/dpms" 2>/dev/null)
+		screens="$screens, ${con##*/card[0-9]-} ${st:-?}"
+	done
+	for b in "$SYS"/class/backlight/*; do
+		[ -f "$b/bl_power" ] || continue
+		if [ "$(cat "$b/bl_power")" = 0 ]; then
+			screens="$screens, retroilluminazione accesa"
+		else
+			screens="$screens, retroilluminazione spenta"
+		fi
+	done
+	[ -n "$screens" ] &&
+		emit INFO "Schermo" "${screens#, }; si spegne dopo $(conf SCHERMO_MINUTI 2) minuti senza tasti (0 = mai)"
+}
+
 check_usb() {
 	local a
 	a=$(cat "$SYS/module/usbcore/parameters/autosuspend" 2>/dev/null)
@@ -457,6 +522,7 @@ check_system() {
 check_kernel
 check_ram_system
 check_cpu
+check_quiet
 check_usb
 check_dac
 check_player

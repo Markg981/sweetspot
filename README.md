@@ -344,6 +344,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |
 | `USCITA_INTEGRATA` | usa la scheda audio del PC | no |
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
+| `PERIFERICHE_INUTILIZZATE` | `spente`: su qualunque computer, per classe di dispositivo e mai per modello. USB con sole interfacce smart card, video, Bluetooth/wireless (webcam, adattatori BT) scollegate dai driver (`authorized=0`), anche se collegate dopo l'avvio (regola udev). PCI inutilizzati a riposo quando inattivi (`power/control=auto`, e il ponte PCI sopra se porta solo a loro): scheda video che non mostra la console, audio integrato se `USCITA_INTEGRATA=no`, multimedia, modem, FireWire, lettore di schede, Wi-Fi senza `WIFI_NOME`, Bluetooth, schede di rete senza cavo né indirizzo. Mai DAC, dischi, tastiere, hub o la rete in uso; `accese` lascia tutto com'è | spente |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
@@ -371,6 +372,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
 | Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
+| Attività elettrica superflua | pagina di stato: "LED" (spenti tranne quelli della tastiera), "USB inutilizzate", "PCI a riposo" (ogni dispositivo con il suo stato reale: a riposo o attivo), "Lavoro differito del kernel" (workqueue non legate a un core solo sui core di sistema) e "Schermo" (stato DPMS dei connettori collegati e retroilluminazione). Le applica `sweetspot-silenzio` all'avvio, se le ottimizzazioni sono attive; è una riduzione di attività, non una misura del rumore analogico |
 | Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
 
 ### Prova di riconoscimento con il file DoP
