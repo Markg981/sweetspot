@@ -84,8 +84,12 @@ FILTRO=lineare
 # Correzione ambientale con i filtri misurati con REW (pagina Audio >
 # Correzione ambientale). Cambia il segnale, quindi di serie e' spenta.
 # I filtri sono nella cartella correzione-ambientale (testo esportato da REW:
-# sinistro.txt e destro.txt).
+# sinistro.txt e destro.txt). Nella stessa cartella si possono copiare dal
+# computer anche impulsi FIR in WAV (rePhase, Acourate, REW): fir-sinistro.wav
+# e, se diverso, fir-destro.wav; CamillaDSP lavora alla loro frequenza.
 CORREZIONE=no
+# Attenuazione in piu' (dB) quando ci sono i filtri FIR.
+FIR_MARGINE_DB=3
 
 # Frequenza massima inviata al DAC, in Hz. 0 = quella dichiarata dal DAC.
 FREQUENZA_MAX=0

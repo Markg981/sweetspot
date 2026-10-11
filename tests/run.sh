@@ -714,6 +714,50 @@ expect "filtri salvati sulla chiavetta, cartella propria" "0|$(wc -c < "$DSPE/re
 	"$rc|$(wc -c < "$DSPE/chiavetta/correzione-ambientale/sinistro.txt" | tr -d ' ')|$([ -f "$DSPE/chiavetta/correzione-ambientale/destro.txt" ] && echo si || echo no)"
 SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/run/correzione/sinistro.txt" ""
 expect "salvare sopra lo stesso file non lo svuota" "$(wc -c < "$DSPE/rew.txt" | tr -d ' ')" "$(wc -c < "$DSPE/run/correzione/sinistro.txt" | tr -d ' ')"
+if command -v python3 > /dev/null; then
+	# Impulso FIR: WAV float a 32 bit con 512 campioni (frequenza, canali).
+	mkwav() { python3 -c "
+import struct, sys
+rate, ch = int(sys.argv[1]), int(sys.argv[2])
+data = b''.join(struct.pack('<f', 0.5 if i < ch else 0.0) for i in range(512 * ch))
+sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 3, ch, rate, rate * 4 * ch, 4 * ch, 32) + b'data' + struct.pack('<I', len(data)) + data)" "$1" "$2"; }
+	printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
+	mkwav 96000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR: frequenza, canali, destro e margine" "96000 1 sinistro 3" "$(dsp 'CORREZIONE=si' fir)"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	yml=$(cat "$DSPE/run/camilladsp.yml")
+	expect "FIR: CamillaDSP a 96 kHz con il ricampionatore sincrono" "samplerate: 96000|type: Synchronous" \
+		"$(printf '%s\n' "$yml" | grep -o 'samplerate: 96000')|$(printf '%s\n' "$yml" | grep -o 'type: Synchronous')"
+	expect "FIR: due convoluzioni dal file del sinistro, canale 0, dopo i filtri di REW" \
+		"2|2|- fir_sinistro|- fir_destro|-7.5" \
+		"$(printf '%s\n' "$yml" | grep -c "filename: \"$DSPE/run/correzione/fir-sinistro.wav\"")|$(printf '%s\n' "$yml" | grep -c 'channel: 0')|$(printf '%s\n' "$yml" | grep -o -- '- fir_sinistro')|$(printf '%s\n' "$yml" | grep -o -- '- fir_destro')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
+	if command -v camilladsp > /dev/null; then
+		if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione FIR accettata da CamillaDSP"; else ko "camilladsp -c FIR" "valida" "rifiutata"; fi
+	fi
+	dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
+	expect "FIR nel confronto: stessa frequenza e attenuazione, senza convoluzione" "samplerate: 96000|0|-7.5" \
+		"$(grep -o 'samplerate: 96000' "$DSPE/run/camilladsp.yml")|$(grep -c -- '- fir_' "$DSPE/run/camilladsp.yml")|$(sed -n 's/^      gain: //p' "$DSPE/run/camilladsp.yml" | head -n 1)"
+	mkwav 96000 2 > "$DSPE/run/correzione/fir-sinistro.wav"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	expect "FIR stereo unico: il destro legge il canale 1" "channel: 0|channel: 1" \
+		"$(grep -o 'channel: [01]' "$DSPE/run/camilladsp.yml" | tr '\n' '|' | sed 's/|$//')"
+	mkwav 48000 1 > "$DSPE/run/correzione/fir-destro.wav"
+	expect "FIR con frequenze diverse sui due canali: rifiutati" "1" "$(dsp 'CORREZIONE=si' fir > /dev/null; echo $?)"
+	rm -f "$DSPE/run/correzione/fir-destro.wav"
+	mkwav 192000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR a una frequenza che il DAC non accetta: correzione non applicata" "1" "$(dsp 'CORREZIONE=si' prepara 1 > /dev/null; echo $?)"
+	echo "non sono un wav" > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR non valido: ignorato" "1" "$(dsp 'CORREZIONE=si' fir > /dev/null; echo $?)"
+	mkwav 96000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	mv "$DSPE/run/correzione/sinistro.txt" "$DSPE/sinistro-rew.bak"
+	expect "solo FIR, senza filtri di REW: correzione attiva" "0" "$(dsp 'CORREZIONE=si' correzione; echo $?)"
+	mv "$DSPE/sinistro-rew.bak" "$DSPE/run/correzione/sinistro.txt"
+	cp "$DSPE/run/correzione/fir-sinistro.wav" "$DSPE/chiavetta/correzione-ambientale/"
+	SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/rew.txt" "" > /dev/null
+	expect "salvare i filtri di REW non cancella i FIR sulla chiavetta" "si" \
+		"$([ -s "$DSPE/chiavetta/correzione-ambientale/fir-sinistro.wav" ] && echo si || echo no)"
+	rm -f "$DSPE/run/correzione/fir-sinistro.wav" "$DSPE/run/correzione/fir-destro.wav"
+fi
 ln -sf "$OVERLAY/usr/bin/sweetspot-dsp" "$WEB/bin/sweetspot-dsp"
 mkdir -p "$WEB/run/correzione"
 out=$(SWEETSPOT_AWK=$MATHAWK page correzione)
