@@ -468,6 +468,24 @@ check_library() {
 }
 
 # Precarico della coda in RAM (sweetspot-precarico), dal riepilogo che scrive.
+# Modalita' ascolto (pagina Sistema) e cosa sta facendo adesso.
+check_listening() {
+	local kind n=0
+	case "$(listening_choice)" in
+		no)
+			emit INFO "Ascolto" "modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica"
+			return ;;
+		puro) kind="ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi)" ;;
+		*) kind="lavori di fondo sospesi durante la musica" ;;
+	esac
+	[ -s "$RUN/ascolto.fermi" ] && n=$(grep -c . "$RUN/ascolto.fermi")
+	if dac_playing; then
+		emit OK "Ascolto" "$kind: ora $n lavori sospesi"
+	else
+		emit OK "Ascolto" "$kind: si attiva quando la musica suona"
+	fi
+}
+
 check_preload() {
 	local s stato detail
 	s=$(cat "$RUN/precarico.json" 2>/dev/null)
@@ -535,6 +553,7 @@ check_usb
 check_dac
 check_player
 [ "$(mode)" = completa ] && check_library
+check_listening
 [ "$(mode)" = completa ] && check_preload
 check_system
 

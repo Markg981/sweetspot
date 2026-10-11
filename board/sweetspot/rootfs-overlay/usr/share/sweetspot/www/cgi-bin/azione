@@ -345,7 +345,12 @@ case "$F_a" in
 		[ -n "$nome" ] || nome=Sweetspot
 		case "$F_modalita" in completa|player) ;; *) F_modalita=completa ;; esac
 		case "$F_profilo" in bilanciato|silenzio|prestazioni) ;; *) F_profilo=bilanciato ;; esac
-		case "$F_ascolto" in si|no) ;; *) F_ascolto=si ;; esac
+		# Ascolto puro = lavori sospesi + precarico in RAM con dischi fermi.
+		case "$F_ascolto" in
+			puro) F_ascolto=si; precarico=si ;;
+			no) precarico=no ;;
+			*) F_ascolto=si; precarico=no ;;
+		esac
 		case "$F_ssh" in si|no) ;; *) F_ssh=no ;; esac
 		case "$F_ottimizzazioni" in si|no) ;; *) F_ottimizzazioni=si ;; esac
 		case "$F_server" in *[!A-Za-z0-9.:_-]*) done_to sistema "Indirizzo del server non valido." ;; esac
@@ -353,7 +358,7 @@ case "$F_a" in
 		old_mode=$(mode)
 		old_name=$(conf NOME_PLAYER Sweetspot)
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
-			SSH "$F_ssh" OTTIMIZZAZIONI "$F_ottimizzazioni"
+			PRECARICO "$precarico" SSH "$F_ssh" OTTIMIZZAZIONI "$F_ottimizzazioni"
 		[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
 		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else sweetspot-config rimuovi SERVER; fi
 		sweetspot-config imposta "$@"

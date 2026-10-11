@@ -40,10 +40,11 @@ $(option silenzio "Silenzio: frequenza fissa al minimo, meno consumo e calore" "
 $(option prestazioni "Prestazioni: frequenza fissa alla nominale" "$(conf PROFILO bilanciato)")
 </select>
 
-<label for="asc">Modalità ascolto</label>
+<label for="asc">Modalità ascolto <span>(vale subito)</span></label>
 <select id="asc" name="ascolto">
-$(option si "Attiva: mentre la musica suona la lettura della libreria si sospende (consigliato)" "$(conf MODALITA_ASCOLTO si)")
-$(option no "Spenta" "$(conf MODALITA_ASCOLTO si)")
+$(option puro "Ascolto puro: brani della coda in RAM, dischi fermi, lavori di fondo sospesi (consigliato)" "$(listening_choice)")
+$(option si "Lavori di fondo sospesi mentre la musica suona, brani letti dal disco" "$(listening_choice)")
+$(option no "Spenta: i lavori di fondo continuano anche durante la musica" "$(listening_choice)")
 </select>
 
 <details>
