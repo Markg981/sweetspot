@@ -1186,6 +1186,93 @@ expect "verifica: tutti i thread real-time sul core audio" "OK|CamillaDSP in rea
 expect "verifica: CamillaDSP parte con il primo brano" \
 	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
 
+echo "Contatori live della sessione"
+irqs() { # conteggi dei core 2 e 3: IRQ16 IRQ29 LOC
+	printf '           CPU0       CPU1       CPU2       CPU3\n'
+	printf '  0:         10          0          0          0   IO-APIC   2-edge      timer\n'
+	printf ' 16:        100          0 %10s %10s   IO-APIC  16-fasteoi   ehci_hcd:usb1\n' "$1" "$1"
+	printf ' 29:          0          0 %10s %10s   PCI-MSI 327680-edge      xhci_hcd\n' "$2" "$2"
+	printf 'NMI:          0          0          0          0   Non-maskable interrupts\n'
+	printf 'LOC:       1000        900 %10s %10s   Local timer interrupts\n' "$3" "$3"
+	printf 'ERR:          0\n'
+}
+irqs 0 7000 700 > "$DSP/proc/interrupts"
+expect "interruzioni: colonna del core, nome del driver" \
+	"0 0 timer|16 0 ehci_hcd:usb1|29 7000 xhci_hcd|NMI 0 |LOC 700 " \
+	"$(dspfn 1 'irq_cpu_counts 3' | tr '\n' '|' | sed 's/|$//')"
+printf '[12:00:00] _output_frames:123 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
+expect "sessione: posizione nel registro di Squeezelite" "35|3" \
+	"$(sed -n 's/^sqlog=//p' "$DSP/run/sessione")|$(sed -n 's/^core=//p' "$DSP/run/sessione")"
+expect "sessione: interruzioni del core all'inizio" "29 7000 xhci_hcd" "$(grep '^29 ' "$DSP/run/sessione.irq")"
+mkdir -p "$DSP/bin"
+printf '#!/bin/sh\n[ -s "%s" ] || exit 1\nprintf '"'"'{"GetClippedSamples":{"result":"Ok","value":%%s}}\\n'"'"' "$(cat "%s")"\n' \
+	"$DSP/run/camilla.valore" "$DSP/run/camilla.valore" > "$DSP/bin/sweetspot-camilla"
+chmod +x "$DSP/bin/sweetspot-camilla"
+clip() { echo "$1" > "$DSP/run/camilla.valore"; dspfn 1 "PATH=$DSP/bin:\$PATH; dsp_clip_poll"; cat "$DSP/run/dsp.clip" 2>/dev/null; }
+expect "clipping: primo valore del processo" "4242 10 10" "$(clip 10)"
+expect "clipping: cresce con il processo" "4242 25 25" "$(clip 25)"
+expect "clipping: nuovo processo, si somma da zero" "5000 3 28" "$(DSP_PID=5000 clip 3)"
+expect "clipping: contatore ripartito nello stesso processo" "5000 1 29" "$(DSP_PID=5000 clip 1)"
+: > "$DSP/run/camilla.valore"
+expect "clipping: CamillaDSP che non risponde non cambia il totale" "5000 1 29" "$(DSP_PID=5000 clip '')"
+livecheck() { # voce
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$DSP/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" | grep "^[A-Z]*|$1|"
+}
+expect "stato: campioni tagliati nella sessione" \
+	"ATTENZIONE|Clipping di CamillaDSP|29 campioni tagliati nella sessione: l'attenuazione automatica non basta, riduci in REW i filtri che alzano il livello" \
+	"$(livecheck 'Clipping di CamillaDSP')"
+echo "5000 0 0" > "$DSP/run/dsp.clip"
+expect "stato: nessun campione tagliato" "OK|Clipping di CamillaDSP|nessun campione tagliato nella sessione" "$(livecheck 'Clipping di CamillaDSP')"
+# Sessione iniziata due minuti fa; nel registro un XRUN prima e uno dopo.
+sed -i "s/^inizio=.*/inizio=$(( $(date +%s) - 150 ))/" "$DSP/run/sessione"
+expect "stato: XRUN prima della sessione esclusi" "OK|XRUN nella sessione|nessuno in 2 minuti" "$(livecheck 'XRUN nella sessione')"
+expect "stato: lo storico diventa informazione" "INFO|XRUN ALSA registrati|1 nel registro storico; non misura il jitter del clock" "$(livecheck 'XRUN ALSA registrati')"
+printf '[12:05:00] _output_frames:123 XRUN\n[12:05:01] output_thread:123 XRUN recover failed: Broken pipe\n' >> "$DSP/squeezelite.log"
+expect "stato: XRUN della sessione" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 1)" "$(livecheck 'XRUN nella sessione')"
+printf 'XRUN\n' > "$DSP/squeezelite.log"
+expect "stato: registro ricominciato, conta tutto" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 0)" "$(livecheck 'XRUN nella sessione')"
+expect "stato: nessuna interruzione di dispositivi" "OK|Interruzioni sul core audio|nessuna da dispositivi in 2 minuti sul core 3" \
+	"$(livecheck 'Interruzioni sul core audio')"
+irqs 2 7600 12700 > "$DSP/proc/interrupts"
+# Nel /sys finto il core 3 riceve anche le interruzioni USB: e' voluto.
+expect "stato: interruzioni USB sul core condiviso" \
+	"INFO|Interruzioni sul core audio|IRQ 16 (ehci_hcd:usb1) 2, IRQ 29 (xhci_hcd) 600 in 2 minuti (un solo core: USB e riproduzione lo condividono)" \
+	"$(livecheck 'Interruzioni sul core audio')"
+expect "stato: interruzioni di sistema al secondo" "INFO|Interruzioni di sistema sul core audio|100 al secondo (timer e chiamate fra core)" \
+	"$(livecheck 'Interruzioni di sistema sul core audio')"
+irqs 0 7000 700 > "$DSP/proc/interrupts"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; LAYOUT_AUDIO=2; session_start"
+sed -i "s/^inizio=.*/inizio=$(( $(date +%s) - 150 ))/" "$DSP/run/sessione"
+irqs 2 7600 12700 > "$DSP/proc/interrupts"
+expect "stato: interruzioni di dispositivi sul core isolato" \
+	"ATTENZIONE|Interruzioni sul core audio|IRQ 16 (ehci_hcd:usb1) 2, IRQ 29 (xhci_hcd) 600 in 2 minuti sul core 2, che dovrebbe restare libero" \
+	"$(livecheck 'Interruzioni sul core audio')"
+expect "stato: latenza non misurata per scelta" \
+	"INFO|Latenza durante l'ascolto|non misurata: LATENZA_ASCOLTO=si la misura, sweetspot-latenza a riproduzione ferma" \
+	"$(livecheck "Latenza durante l'ascolto")"
+mkdir -p "$DSP/proc/asound/card0/pcm0p/sub0"
+printf 'state: RUNNING\n' > "$DSP/proc/asound/card0/pcm0p/sub0/status"
+# Tre finestre di misura, poi il player "sparisce" e la sorveglianza si ferma.
+LATSTUB="cyclictest() { n=\$(( \$(cat '$DSP/run/finestre' 2>/dev/null || echo 0) + 1 )); echo \$n > '$DSP/run/finestre'
+	case \$n in 1) m=50 ;; 2) m=120 ;; *) m=30 ;; esac
+	echo \"T: 0 (  1) P:85 I:10000 C:   3000 Min:      2 Act:    5 Avg:    4 Max:     \$m\"; }
+kill() { [ \"\$(cat '$DSP/run/finestre' 2>/dev/null)\" != 3 ]; }"
+SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	$TEST_SH -c "$LATSTUB
+set -- --ascolto 3; . $OVERLAY/usr/bin/sweetspot-latenza"
+expect "latenza in ascolto: massima, finestre, ultima" "120 3 30" "$(cat "$DSP/run/latenza.ascolto")"
+expect "stato: latenza durante l'ascolto" "OK|Latenza durante l'ascolto|massima 120 us in 3 finestre di 30 s (ultima 30 us)" \
+	"$(livecheck "Latenza durante l'ascolto")"
+echo "400 4 400" > "$DSP/run/latenza.ascolto"
+expect "stato: latenza alta durante l'ascolto" \
+	"ATTENZIONE|Latenza durante l'ascolto|massima 400 us in 4 finestre di 30 s (ultima 400 us): prova il profilo 'prestazioni' e le impostazioni del BIOS" \
+	"$(livecheck "Latenza durante l'ascolto")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
