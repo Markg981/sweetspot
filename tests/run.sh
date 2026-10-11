@@ -1074,19 +1074,22 @@ fi
 
 echo "CamillaDSP in real-time"
 DSP=$WORK/dsp
-mkdir -p "$DSP/bin" "$DSP/run" "$DSP/proc/4242/task/4242" "$DSP/proc/4242/task/4243"
+mkdir -p "$DSP/run" "$DSP/proc/4242/task/4242" "$DSP/proc/4242/task/4243"
 # /proc/PID/stat: dopo "(comm) " il 38esimo campo e' la priorita', il 39esimo la politica.
 dspstat() { printf '%s (camilladsp) S%s %s %s 0\n' "$1" "$(printf ' 0%.0s' $(seq 2 37))" "$2" "$3"; }
 dspstat 4242 0 0 > "$DSP/proc/4242/task/4242/stat"
 dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"
-printf '#!/bin/sh\necho 4242\n' > "$DSP/bin/pidof"
-printf '#!/bin/sh\necho "$*" >> "%s"\n' "$DSP/run/chrt.call" > "$DSP/bin/chrt"
-printf '#!/bin/sh\necho "$*" >> "%s"\n' "$DSP/run/taskset.call" > "$DSP/bin/taskset"
-chmod +x "$DSP/bin/"*
+# Funzioni al posto dei comandi: BusyBox preferisce le sue applet ai file nel PATH.
+DSPSTUB="pidof() { [ -n \"\$DSP_PID\" ] && echo \"\$DSP_PID\"; }
+chrt() { echo \"\$*\" >> '$DSP/run/chrt.call'; }
+taskset() { echo \"\$*\" >> '$DSP/run/taskset.call'; }"
+DSP_PID=4242
+export DSP_PID
 dspfn() { # PIN funzione
-	SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log SWEETSPOT_PATH="$DSP/bin:$SWEETSPOT_PATH" \
+	SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
-		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; PIN=$1; LAYOUT_AUDIO=3; $2"
+		$TEST_SH -c "$DSPSTUB
+. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; PIN=$1; LAYOUT_AUDIO=3; $2"
 }
 calls() { cat "$DSP/run/$1.call" 2>/dev/null | tr '\n' '|' | sed 's/|$//'; }
 dspfn 1 pin_dsp
@@ -1107,7 +1110,8 @@ rm -f "$DSP/run/sweetspot.conf"
 dspcheck() {
 	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
-		SWEETSPOT_PATH="$DSP/bin:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati | grep '^[A-Z]*|CamillaDSP in real-time|'
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" | grep '^[A-Z]*|CamillaDSP in real-time|'
 }
 printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/status"
 for f in mounts meminfo cpuinfo cmdline; do [ -e "$WEB/proc/$f" ] && cp "$WEB/proc/$f" "$DSP/proc/$f"; done
@@ -1117,9 +1121,8 @@ expect "verifica: un thread non real-time e' un avviso" \
 	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
 dspstat 4242 70 1 > "$DSP/proc/4242/task/4242/stat"
 expect "verifica: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread a priorita' 70 sul core 3" "$(dspcheck)"
-printf '#!/bin/sh\nexit 1\n' > "$DSP/bin/pidof"
 expect "verifica: CamillaDSP parte con il primo brano" \
-	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(dspcheck)"
+	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
 
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
