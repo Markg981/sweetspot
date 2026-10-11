@@ -23,6 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
+F_web_password="" F_web_libero=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
 
