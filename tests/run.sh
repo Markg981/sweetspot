@@ -634,6 +634,12 @@ dsp() { # impostazioni comando...
 		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-dsp" sh "$@"
 }
+dspf() { # funzione...
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_AWK=$MATHAWK \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dsp; $1"
+}
 expect "filtri di REW (virgole, kHz, spenti, larghezza in ottave)" \
 	"Peaking 38.5 -6.8 q 6.5|Peaking 63.3 -9.2 q 4.9|Peaking 112 2.5 q 3|Lowshelf 80 1.5 q 0.707|HighshelfFO 8000 -1 none 0|Peaking 245 -3 bandwidth 0.333" \
 	"$(dsp '' leggi "$DSPE/rew.txt" | tr '\n' '|' | sed 's/|$//')"
@@ -651,6 +657,7 @@ yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "CamillaDSP: uscita sul DAC a 32 bit" "2" "$(printf '%s\n' "$yml" | grep -c -e 'device: "hw:CARD=R26,DEV=0"' -e 'format: S32_LE' | head -n 1 | sed 's/3/2/')"
 expect "CamillaDSP: 12 filtri e l'attenuazione" "12 -4.5" "$(printf '%s\n' "$yml" | grep -c 'type: Biquad') $(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
 expect "CamillaDSP: ingresso dal plugin" "type: Stdin" "$(printf '%s\n' "$yml" | grep -o 'type: Stdin')"
+expect "CamillaDSP: coda del brano di due blocchi per i filtri di REW" "extra_samples: 8192" "$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 expect "ALSA: frequenze del DAC fino a 384 kHz" "rates = [ 44100 48000 88200 96000 176400 192000 352800 384000 ]" \
 	"$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
 dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
@@ -731,6 +738,10 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 	expect "FIR: due convoluzioni dal file del sinistro, canale 0, dopo i filtri di REW" \
 		"2|2|- fir_sinistro|- fir_destro|-7.5" \
 		"$(printf '%s\n' "$yml" | grep -c "filename: \"$DSPE/run/correzione/fir-sinistro.wav\"")|$(printf '%s\n' "$yml" | grep -c 'channel: 0')|$(printf '%s\n' "$yml" | grep -o -- '- fir_sinistro')|$(printf '%s\n' "$yml" | grep -o -- '- fir_destro')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
+	# Coda del brano: con i FIR CamillaDSP legge, dopo la fine dello stream,
+	# tanti campioni di silenzio quanti i tap (512) piu' due blocchi.
+	expect "FIR: coda del brano non tagliata (extra_samples = tap + 2 blocchi)" "512|extra_samples: 8704" \
+		"$(dspf fir_taps)|$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 	if command -v camilladsp > /dev/null; then
 		if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione FIR accettata da CamillaDSP"; else ko "camilladsp -c FIR" "valida" "rifiutata"; fi
 	fi
@@ -743,6 +754,9 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 		"$(grep -o 'channel: [01]' "$DSPE/run/camilladsp.yml" | tr '\n' '|' | sed 's/|$//')"
 	mkwav 48000 1 > "$DSPE/run/correzione/fir-destro.wav"
 	expect "FIR con frequenze diverse sui due canali: rifiutati" "1" "$(dsp 'CORREZIONE=si' fir > /dev/null; echo $?)"
+	rm -f "$DSPE/run/correzione/fir-destro.wav"
+	mkwav 96000 1 | head -c 1068 > "$DSPE/run/correzione/fir-destro.wav"
+	expect "FIR: la coda e' quella del canale piu' lungo (512 a sinistra, 256 a destra)" "512|256" "$(dspf fir_taps)|$(dspf "wav_frames $DSPE/run/correzione/fir-destro.wav")"
 	rm -f "$DSPE/run/correzione/fir-destro.wav"
 	mkwav 192000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
 	expect "FIR a una frequenza che il DAC non accetta: correzione non applicata" "1" "$(dsp 'CORREZIONE=si' prepara 1 > /dev/null; echo $?)"
