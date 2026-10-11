@@ -15,7 +15,6 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
-SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
 
 dmi() { tr -d '\n' < "$SYS/class/dmi/id/$1" 2>/dev/null; }
 
