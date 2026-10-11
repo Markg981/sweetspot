@@ -1418,6 +1418,42 @@ quiet
 expect "audio integrato scelto e Wi-Fi configurato: restano attivi" "on on" \
 	"$(cat "$Q/sys/devices/pci0000:00/0000:00:1b.0/power/control") $(cat "$Q/sys/devices/pci0000:00/0000:00:1c.1/0000:03:00.0/power/control")"
 
+echo "Watchdog e prova di durata"
+qreset
+expect "stato: watchdog non attivo" "ATTENZIONE|Watchdog|non attivo: un blocco totale richiede di spegnere a mano" "$(qcheck Watchdog)"
+mkdir -p "$Q/sys/class/watchdog/watchdog0"
+echo active > "$Q/sys/class/watchdog/watchdog0/state"
+echo "iTCO_wdt" > "$Q/sys/class/watchdog/watchdog0/identity"
+echo 60 > "$Q/sys/class/watchdog/watchdog0/timeout"
+qwd() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
+		$TEST_SH -c "pidof() { echo 99; }
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Watchdog|'
+}
+expect "stato: watchdog attivo e alimentato" "OK|Watchdog|iTCO_wdt: riavvio dopo 60 secondi di blocco totale" "$(qwd)"
+echo WATCHDOG=no > "$Q/run/sweetspot.conf"
+expect "stato: watchdog spento per scelta" "INFO|Watchdog|spento (WATCHDOG=no): un blocco totale richiede di spegnere a mano" "$(qwd)"
+rm -f "$Q/run/sweetspot.conf"
+mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
+printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
+echo 777 > "$Q/run/squeezelite.pid"
+printf 'avvio\n' > "$Q/squeezelite.log"
+durata() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
+		SWEETSPOT_STICK_DIR=$Q/chiavetta SWEETSPOT_DURATA_SECONDI=2 \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-durata" 0 1 > /dev/null 2>&1
+}
+durata && rc=0 || rc=$?
+expect "durata: ascolto continuo riuscito" "0|Prova di durata: RIUSCITA" "$rc|$(head -n 1 "$Q/run/durata.txt")"
+expect "durata: esito copiato sulla chiavetta" "Prova di durata: RIUSCITA" "$(head -n 1 "$Q/chiavetta/durata.txt" 2>/dev/null)"
+expect "durata: una riga per misura con intestazione" "ora,in_riproduzione,pid_player,xrun,memoria_kb,temperatura" "$(head -n 1 "$Q/run/durata.csv")"
+printf 'state: XRUN\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
+durata && rc=0 || rc=$?
+expect "durata: uscita ferma, prova non riuscita" "1|Prova di durata: NON RIUSCITA|uscita in riproduzione: 0% delle misure (minimo 95%)" \
+	"$rc|$(head -n 1 "$Q/run/durata.txt")|$(grep '^uscita' "$Q/run/durata.txt")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*

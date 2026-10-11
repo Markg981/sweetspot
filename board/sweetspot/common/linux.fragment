@@ -96,3 +96,12 @@ CONFIG_MAC80211=m
 CONFIG_DEBUG_INFO_NONE=y
 # CONFIG_KVM is not set
 # CONFIG_XEN is not set
+
+# Watchdog: un blocco totale fa ripartire il computer (sweetspot-watchdog);
+# dopo un aggiornamento riparte cosi' la versione precedente. softdog
+# copre i computer senza watchdog hardware.
+CONFIG_WATCHDOG=y
+CONFIG_WATCHDOG_CORE=y
+CONFIG_WATCHDOG_SYSFS=y
+# CONFIG_WATCHDOG_NOWAYOUT is not set
+CONFIG_SOFT_WATCHDOG=m
