@@ -11,10 +11,17 @@ write_blacklist() {
 	{
 		echo "# Generato all'avvio da Sweetspot."
 		# Mai necessari a un player: Bluetooth, webcam, lettori di schede,
-		# altoparlante di sistema, watchdog hardware.
-		for m in bluetooth btusb uvcvideo pcspkr iTCO_wdt sp5100_tco rtsx_pci rtsx_usb joydev; do
+		# altoparlante di sistema.
+		for m in bluetooth btusb uvcvideo pcspkr rtsx_pci rtsx_usb joydev; do
 			echo "blacklist $m"
 		done
+		# Il watchdog hardware del chipset serve a S21sweetspot-watchdog;
+		# con WATCHDOG=no resta fuori.
+		if ! is_yes "$(conf WATCHDOG si)"; then
+			for m in iTCO_wdt sp5100_tco; do
+				echo "blacklist $m"
+			done
+		fi
 		if ! is_yes "$(conf USCITA_INTEGRATA no)"; then
 			echo "blacklist snd_hda_intel"
 		fi
@@ -24,7 +31,7 @@ write_blacklist() {
 				echo "blacklist $m"
 			done
 		fi
-	} > /etc/modprobe.d/sweetspot-run.conf
+	} > "${SWEETSPOT_MODPROBE_D:-/etc/modprobe.d}/sweetspot-run.conf"
 }
 
 tune_sysctl() {
@@ -37,6 +44,8 @@ tune_sysctl() {
 	# Statistiche della memoria aggiornate di rado: meno risvegli periodici.
 	put 10 /proc/sys/vm/stat_interval
 }
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 case "$1" in
 	start)

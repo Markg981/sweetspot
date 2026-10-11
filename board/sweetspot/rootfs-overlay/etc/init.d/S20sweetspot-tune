@@ -4,7 +4,8 @@
 # Sweetspot - ottimizzazioni dopo il riconoscimento dell'hardware:
 # parametri di avvio adattati al computer, frequenza fissa della CPU,
 # radio spente, dischi interni in standby, USB sempre alimentato,
-# LED e periferiche USB inutilizzate spenti (sweetspot-silenzio).
+# LED e periferiche USB e PCI inutilizzate spenti (sweetspot-silenzio; le
+# schede di rete le decide S40sweetspot-net, a rete su).
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 

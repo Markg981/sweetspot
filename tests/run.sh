@@ -1503,16 +1503,24 @@ qreset() {
 		echo on > "$d/power/control"
 		echo active > "$d/power/runtime_status"
 		[ "${3:-}" = vga ] && echo 1 > "$d/boot_vga"
-		[ -n "${4:-}" ] && mkdir -p "$d/net/$3" && echo "$4" > "$d/net/$3/carrier"
+		if [ -n "${4:-}" ]; then
+			# Interfaccia gia' su (flags con IFF_UP), con o senza cavo.
+			mkdir -p "$d/net/$3" "$Q/sys/class/net"
+			echo "$4" > "$d/net/$3/carrier"
+			echo 0x1003 > "$d/net/$3/flags"
+			echo 1 > "$d/net/$3/type"
+			mkdir -p "$d/net/$3/device"
+			ln -sfn "$d/net/$3" "$Q/sys/class/net/$3"
+		fi
 		ln -s "$d" "$Q/sys/bus/pci/devices/${d##*/}"
 	done
 }
 pcistate() { for b in 00:01.0 00:01.0/0000:01:00.0 00:02.0 00:14.0 00:1b.0 00:1c.0 00:1c.0/0000:02:00.0 00:1c.1 00:1c.1/0000:03:00.0 00:1c.2 00:1c.2/0000:04:00.0; do
 	printf '%s ' "$(cat "$Q/sys/devices/pci0000:00/0000:$b/power/control")"; done; }
-quiet() {
+quiet() { # [comando]
 	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
-		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
-		$TEST_SH "$OVERLAY/usr/bin/sweetspot-silenzio" applica
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SILENZIO_ATTESA=0 \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-silenzio" "${1:-applica}"
 }
 usbstate() { for d in 1-1 1-2 1-3 1-4 1-5; do printf '%s ' "$(cat "$Q/sys/bus/usb/devices/$d/authorized")$(cat "$Q/sys/bus/usb/devices/$d/power/control")"; done; }
 qreset
@@ -1523,7 +1531,17 @@ expect "USB: webcam e Bluetooth scollegate, DAC e periferiche miste intatte" "0a
 expect "workqueue solo sui core di sistema" "3 3" \
 	"$(cat "$Q/sys/devices/virtual/workqueue/cpumask" "$Q/sys/bus/workqueue/devices/writeback/cpumask" | tr '\n' ' ' | sed 's/ $//')"
 expect "registro: periferiche scollegate per nome" "2" "$(grep -c 'silenzio: USB 1-[13] (\(Webcam\|Bluetooth\)) scollegata' "$Q/log")"
-expect "PCI: a riposo GPU discreta, audio integrato, Wi-Fi, rete senza cavo e i loro ponti; console, USB e rete in uso intatte" \
+expect "PCI: a riposo GPU discreta, audio integrato, Wi-Fi e i loro ponti; console, USB e schede di rete (ancora da decidere) intatte" \
+	"auto auto on on auto on on auto auto on on " "$(pcistate)"
+# Le schede di rete si decidono a rete su (S40sweetspot-net): solo quelle
+# attive e senza cavo; una scheda ancora giu' non si tocca.
+echo 0x1002 > "$Q/sys/devices/pci0000:00/0000:00:1c.2/0000:04:00.0/net/enp4s0/flags"
+quiet rete
+expect "rete: scheda senza cavo ma non ancora attivata: lasciata stare" "on on " \
+	"$(cat "$Q/sys/devices/pci0000:00/0000:00:1c.2/power/control") $(cat "$Q/sys/devices/pci0000:00/0000:00:1c.2/0000:04:00.0/power/control") "
+echo 0x1003 > "$Q/sys/devices/pci0000:00/0000:00:1c.2/0000:04:00.0/net/enp4s0/flags"
+quiet rete
+expect "rete: a riposo la scheda attiva senza cavo e il suo ponte, la scheda con il cavo resta" \
 	"auto auto on on auto on on auto auto auto auto " "$(pcistate)"
 expect "PCI: elenco per la pagina Stato" \
 	"0000:00:1b.0|audio integrato 0000:01:00.0|scheda video secondaria 0000:03:00.0|Wi-Fi 0000:04:00.0|scheda di rete senza cavo" \
@@ -1581,11 +1599,11 @@ expect "stato: workqueue anche sui core isolati" "ATTENZIONE|Lavoro differito de
 	"$(qcheck 'Lavoro differito del kernel')"
 expect "stato: LED accesi elencati" "INFO|LED|accesi: phy0-led tpacpi::power" "$(qcheck LED)"
 echo PERIFERICHE_INUTILIZZATE=accese > "$Q/run/sweetspot.conf"
-quiet
+quiet; quiet rete
 expect "PERIFERICHE_INUTILIZZATE=accese: periferiche lasciate stare" "1on 1on 1on 1on 1on |on on on on on on on on on on on " "$(usbstate)|$(pcistate)"
 qreset
 echo OTTIMIZZAZIONI=no > "$Q/run/sweetspot.conf"
-quiet
+quiet; quiet rete
 expect "ottimizzazioni spente: niente silenzio" "1on 1on 1on 1on 1on |on on on on on on on on on on on |1|f" \
 	"$(usbstate)|$(pcistate)|$(cat "$Q/sys/class/leds/phy0-led/brightness")|$(cat "$Q/sys/devices/virtual/workqueue/cpumask")"
 usbplug 1-7 Webcam 0e
@@ -1615,6 +1633,30 @@ set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|W
 expect "stato: watchdog attivo e alimentato" "OK|Watchdog|iTCO_wdt: riavvio dopo 60 secondi di blocco totale" "$(qwd)"
 echo WATCHDOG=no > "$Q/run/sweetspot.conf"
 expect "stato: watchdog spento per scelta" "INFO|Watchdog|spento (WATCHDOG=no): un blocco totale richiede di spegnere a mano" "$(qwd)"
+# I moduli del watchdog hardware (iTCO_wdt, sp5100_tco) restano in
+# blacklist solo con WATCHDOG=no: con il watchdog acceso li carica S21.
+blacklist() { # impostazioni
+	printf '%s\n' "$1" > "$Q/run/sweetspot.conf"
+	mkdir -p "$Q/modprobe.d"
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_MODPROBE_D=$Q/modprobe.d SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/etc/init.d/S03sweetspot-early; write_blacklist"
+	grep -c 'blacklist \(iTCO_wdt\|sp5100_tco\)' "$Q/modprobe.d/sweetspot-run.conf"
+}
+expect "watchdog acceso: i moduli del chipset non sono in blacklist" "0|1" "$(blacklist '')|$(grep -c 'blacklist pcspkr' "$Q/modprobe.d/sweetspot-run.conf")"
+expect "watchdog spento: i moduli del chipset restano in blacklist" "2" "$(blacklist 'WATCHDOG=no')"
+# S21: tempo limitato al massimo del dispositivo (Raspberry Pi: 15 s),
+# riavvio precedente del watchdog segnalato.
+echo 15 > "$Q/sys/class/watchdog/watchdog0/max_timeout"
+echo 32 > "$Q/sys/class/watchdog/watchdog0/bootstatus"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/taskset.call"
+SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WATCHDOG_DEV=/dev/null \
+	$TEST_SH -c "modprobe() { echo \"\$*\" >> '$Q/run/modprobe.call'; }; udevadm() { :; }; taskset() { echo \"\$*\" >> '$Q/run/taskset.call'; }
+set -- start; . $OVERLAY/etc/init.d/S21sweetspot-watchdog" > /dev/null 2>&1
+expect "S21: tempo del watchdog limitato al massimo del dispositivo" "-c 0 chrt -f 5 watchdog -T 15 -t 5 /dev/null" "$(cat "$Q/run/taskset.call")"
+expect "S21: riavvio precedente del watchdog annotato" "32|1" "$(cat "$Q/run/watchdog.riavvio")|$(grep -c 'riavvio del watchdog (bootstatus 32)' "$Q/log")"
+rm -f "$Q/sys/class/watchdog/watchdog0/max_timeout" "$Q/sys/class/watchdog/watchdog0/bootstatus" "$Q/run/watchdog.riavvio" "$Q/run/taskset.call" "$Q/run/modprobe.call"
 echo VOLUME=dsp > "$Q/run/sweetspot.conf"
 echo dsp > "$Q/run/volume.modo"
 echo "50 -30.0 0" > "$Q/run/volume.dsp"
@@ -1660,6 +1702,7 @@ expect "stato: modalita' ascolto spenta" \
 rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
 
 echo "Rapporto e matrice di compatibilita'"
+rm -rf "$Q/sys/class/net"
 mkdir -p "$Q/sys/class/dmi/id" "$Q/repbin" "$Q/sys/class/net/eth0/device" "$Q/drivers/r8169"
 echo ASUSTeK > "$Q/sys/class/dmi/id/sys_vendor"
 echo N550JV > "$Q/sys/class/dmi/id/product_name"
