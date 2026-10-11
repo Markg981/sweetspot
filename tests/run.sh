@@ -393,6 +393,48 @@ expect "archivio web: PARTUUID stabile" "imposta ARCHIVIO PARTUUID=partizione" "
 rm -f "$WEB/run/dischi.call"
 archive_action 2 > /dev/null
 expect "archivio web: salvataggio fallito non rimonta" "no" "$([ -e "$WEB/run/dischi.call" ] && echo si || echo no)"
+
+echo "Password delle pagine e impostazioni iniziali"
+acc() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c "killall() { :; }; . $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- applica; . $OVERLAY/usr/bin/sweetspot-accesso"
+	cat "$WEB/run/httpd.conf"
+}
+expect "pagine aperte senza password" "" "$(acc '')"
+expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh')"
+case "$(acc 'PASSWORD_WEB=segreta')" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
+printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
+chmod +x "$WEB/actionbin/sweetspot-accesso"
+web_action() { # corpo senza gettone
+	local body
+	body="t=$(cat "$WEB/run/web.token")&$1"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
+}
+rm -f "$WEB/run/config.call"
+web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
+expect "sistema: si salva l'impronta, non la password" '1|0' \
+	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.call")|$(grep -c segreta "$WEB/run/config.call")"
+out=$(web_action "a=ripristina")
+case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
+expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si" > /dev/null
+expect "ripristino confermato" "ripristina" "$(tail -n 1 "$WEB/run/config.call")"
+RS=$WORK/ripristino
+mkdir -p "$RS/avvio" "$RS/chiavetta" "$RS/run"
+printf 'VOLUME=fisso\r\n' > "$RS/avvio/sweetspot.txt"
+printf 'VOLUME=software\r\nPASSWORD_WEB=x\r\n' > "$RS/chiavetta/sweetspot.txt"
+SWEETSPOT_RUN=$RS/run SWEETSPOT_LOG=$RS/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	SWEETSPOT_STICK_DIR=$RS/chiavetta SWEETSPOT_AVVIO=$RS/avvio $TEST_SH "$OVERLAY/usr/bin/sweetspot-config" ripristina; rc=$?
+expect "ripristino: sweetspot.txt iniziale sulla chiavetta e in memoria" "0|VOLUME=fisso|fisso" \
+	"$rc|$(tr -d '\r' < "$RS/chiavetta/sweetspot.txt")|$(sed -n 's/^VOLUME=//p' "$RS/run/sweetspot.conf" | tail -n 1)"
+SWEETSPOT_RUN=$RS/run SWEETSPOT_LOG=$RS/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	SWEETSPOT_STICK_DIR=$RS/assente SWEETSPOT_AVVIO=$RS/avvio $TEST_SH "$OVERLAY/usr/bin/sweetspot-config" ripristina; rc=$?
+expect "ripristino senza chiavetta: vale solo fino al riavvio" "2" "$rc"
 printf 'Musica.a|sdc1|ext4|1G|ro|/media/Musica.a|\n' > "$WEB/run/dischi.list"
 rm -f "$WEB/run/config.call"
 archive_action > /dev/null

@@ -24,3 +24,6 @@ CONFIG_NC=y
 CONFIG_FEATURE_AWK_LIBM=y
 # Alimenta il watchdog hardware (sweetspot-watchdog).
 CONFIG_WATCHDOG=y
+# Password delle pagine web (sweetspot-accesso).
+CONFIG_FEATURE_HTTPD_BASIC_AUTH=y
+CONFIG_FEATURE_HTTPD_AUTH_MD5=y

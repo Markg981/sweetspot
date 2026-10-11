@@ -69,8 +69,10 @@ case "$1" in
 		write_blacklist
 		tune_sysctl
 		# Impostazioni e stato di Sweetspot sulla porta 80 (Lyrion e' sulla 9000).
+		# Con PASSWORD_WEB le pagine chiedono utente e password (sweetspot-accesso).
+		sweetspot-accesso applica
 		mkdir -p /etc/default
-		echo 'HTTPD_ARGS="-p 80 -h /usr/share/sweetspot/www"' > /etc/default/httpd
+		echo 'HTTPD_ARGS="-p 80 -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"' > /etc/default/httpd
 		;;
 	stop) ;;
 	*) echo "uso: $0 start" ;;
