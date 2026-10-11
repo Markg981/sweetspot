@@ -3,7 +3,8 @@
 #
 # Sweetspot - ottimizzazioni dopo il riconoscimento dell'hardware:
 # parametri di avvio adattati al computer, frequenza fissa della CPU,
-# radio spente, dischi interni in standby, USB sempre alimentato.
+# radio spente, dischi interni in standby, USB sempre alimentato,
+# LED e periferiche USB inutilizzate spenti (sweetspot-silenzio).
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -49,6 +50,7 @@ case "$1" in
 		sweetspot-cpu
 		radios_off
 		usb_power_on
+		sweetspot-silenzio applica
 		disks_standby &
 		;;
 	stop) ;;

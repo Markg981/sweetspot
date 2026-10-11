@@ -1,0 +1,97 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - meno attivita' elettrica superflua durante l'ascolto:
+#   - LED del computer spenti (tranne quelli della tastiera);
+#   - periferiche USB che il player non usa (webcam, Bluetooth, lettori di
+#     smart card) scollegate dai driver con authorized=0, cosi' restano
+#     senza traffico e possono sospendersi; mai DAC, archivi, tastiere,
+#     hub e schede di rete. USB_INUTILIZZATE=accese le lascia stare;
+#   - lavoro differito del kernel (workqueue non legate a un core) solo
+#     sui core di sistema, lontano da quelli isolati per l'audio.
+# Lo schermo si spegne gia' da solo (sweetspot-display, SCHERMO_MINUTI).
+#   sweetspot-silenzio applica
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+# Classi USB delle interfacce che il player non usa mai: smart card (0b),
+# sicurezza dei contenuti (0d), video (0e), salute personale (0f),
+# controller wireless come il Bluetooth (e0).
+UNUSED_CLASSES="0b 0d 0e 0f e0"
+
+# Classi delle interfacce di una periferica USB, separate da spazi.
+usb_classes() { # cartella della periferica
+	local i
+	for i in "$1":*; do
+		[ -f "$i/bInterfaceClass" ] && cat "$i/bInterfaceClass"
+	done | tr '\n' ' '
+}
+
+# Vero se tutte le interfacce della periferica sono di classi inutili.
+usb_unused() { # cartella della periferica
+	local c classes
+	classes=$(usb_classes "$1")
+	[ -n "$classes" ] || return 1
+	for c in $classes; do
+		case " $UNUSED_CLASSES " in *" $c "*) ;; *) return 1 ;; esac
+	done
+}
+
+usb_quiet() {
+	local d name
+	[ "$(lower "$(conf USB_INUTILIZZATE spente)")" = accese ] && return 0
+	for d in "$SYS"/bus/usb/devices/*; do
+		case "${d##*/}" in *:*|usb*) continue ;; esac
+		[ "$(cat "$d/authorized" 2>/dev/null)" = 1 ] || continue
+		usb_unused "$d" || continue
+		name=$(cat "$d/product" 2>/dev/null)
+		put auto "$d/power/control"
+		put 0 "$d/authorized" && log "silenzio: USB ${d##*/} (${name:-senza nome}) scollegata dai driver"
+	done
+}
+
+# I LED della tastiera seguono i tasti (Bloc Maiusc): restano.
+leds_off() {
+	local l n=0
+	for l in "$SYS"/class/leds/*; do
+		[ -d "$l" ] || continue
+		case "${l##*/}" in *::capslock|*::numlock|*::scrolllock|*::compose|*::kana) continue ;; esac
+		put none "$l/trigger"
+		put 0 "$l/brightness" && n=$((n + 1))
+	done
+	[ "$n" -gt 0 ] && log "silenzio: $n LED spenti"
+	return 0
+}
+
+# Maschera esadecimale di un elenco di core ("0 1" -> 3).
+cpu_mask() {
+	local c m=0
+	for c in $1; do m=$((m | (1 << c))); done
+	printf '%x' "$m"
+}
+
+workqueues_housekeeping() {
+	local iso hk mask w
+	iso=$(expand_list "$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)")
+	[ -n "$iso" ] || return 0
+	hk=$(subtract "$(cpu_online)" "$iso")
+	[ -n "$hk" ] || return 0
+	mask=$(cpu_mask "$hk")
+	put "$mask" "$SYS/devices/virtual/workqueue/cpumask" &&
+		log "silenzio: workqueue sui core $(join_list "$hk")"
+	for w in "$SYS"/bus/workqueue/devices/*/cpumask; do
+		put "$mask" "$w"
+	done
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	applica)
+		safe_mode && exit 0
+		leds_off
+		usb_quiet
+		workqueues_housekeeping
+		;;
+	*) echo "uso: $0 applica" ;;
+esac

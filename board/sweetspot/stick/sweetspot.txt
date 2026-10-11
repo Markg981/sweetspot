@@ -133,6 +133,11 @@ PROFILO=bilanciato
 # Dopo quanti minuti spegnere lo schermo (0 = mai).
 SCHERMO_MINUTI=2
 
+# Periferiche USB che il player non usa (webcam, Bluetooth, lettori di
+# smart card): spente = scollegate dai driver all'avvio; accese = lasciate.
+# DAC, archivi, tastiere e schede di rete non vengono mai toccati.
+USB_INUTILIZZATE=spente
+
 # Accesso remoto per l'assistenza tecnica (SSH).
 SSH=no
 SSH_PASSWORD=

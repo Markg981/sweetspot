@@ -1273,6 +1273,81 @@ expect "stato: latenza alta durante l'ascolto" \
 	"ATTENZIONE|Latenza durante l'ascolto|massima 400 us in 4 finestre di 30 s (ultima 400 us): prova il profilo 'prestazioni' e le impostazioni del BIOS" \
 	"$(livecheck "Latenza durante l'ascolto")"
 
+echo "Silenzio elettrico"
+Q=$WORK/quiet
+qreset() {
+	rm -rf "$Q"
+	mkdir -p "$Q/run" "$Q/proc" "$Q/sys/devices/system/cpu" "$Q/sys/devices/virtual/workqueue" \
+		"$Q/sys/bus/workqueue/devices/writeback" "$Q/sys/bus/usb/devices/usb1"
+	echo "BOOT_IMAGE=/bzImage quiet" > "$Q/proc/cmdline"
+	printf 'MemTotal:       16303112 kB\nMemAvailable:   15000000 kB\n' > "$Q/proc/meminfo"
+	: > "$Q/proc/mounts"
+	echo 0-3 > "$Q/sys/devices/system/cpu/online"
+	echo 2-3 > "$Q/sys/devices/system/cpu/isolated"
+	echo f > "$Q/sys/devices/virtual/workqueue/cpumask"
+	echo f > "$Q/sys/bus/workqueue/devices/writeback/cpumask"
+	for l in input3::capslock tpacpi::power phy0-led; do
+		mkdir -p "$Q/sys/class/leds/$l"
+		echo 1 > "$Q/sys/class/leds/$l/brightness"
+		echo "none [default-on]" > "$Q/sys/class/leds/$l/trigger"
+	done
+	# webcam, DAC, Bluetooth, webcam con microfono, periferica senza interfacce
+	for d in "1-1 Webcam 0e 0e" "1-2 DAC 01 01" "1-3 Bluetooth e0 e0" "1-4 Camera 0e 01" "1-5 Vuota"; do
+		set -- $d
+		mkdir -p "$Q/sys/bus/usb/devices/$1/power"
+		echo 1 > "$Q/sys/bus/usb/devices/$1/authorized"
+		echo on > "$Q/sys/bus/usb/devices/$1/power/control"
+		echo "$2" > "$Q/sys/bus/usb/devices/$1/product"
+		dev=$1; shift 2; n=0
+		for c in "$@"; do
+			mkdir -p "$Q/sys/bus/usb/devices/$dev:1.$n"
+			echo "$c" > "$Q/sys/bus/usb/devices/$dev:1.$n/bInterfaceClass"
+			n=$((n + 1))
+		done
+	done
+}
+quiet() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-silenzio" applica
+}
+usbstate() { for d in 1-1 1-2 1-3 1-4 1-5; do printf '%s ' "$(cat "$Q/sys/bus/usb/devices/$d/authorized")$(cat "$Q/sys/bus/usb/devices/$d/power/control")"; done; }
+qreset
+quiet
+expect "LED: spenti senza trigger, la tastiera resta" "1 0 0|none none" \
+	"$(cat "$Q/sys/class/leds/input3::capslock/brightness" "$Q/sys/class/leds/tpacpi::power/brightness" "$Q/sys/class/leds/phy0-led/brightness" | tr '\n' ' ' | sed 's/ $//')|$(cat "$Q/sys/class/leds/tpacpi::power/trigger" "$Q/sys/class/leds/phy0-led/trigger" | tr '\n' ' ' | sed 's/ $//')"
+expect "USB: webcam e Bluetooth scollegate, DAC e periferiche miste intatte" "0auto 1on 0auto 1on 1on " "$(usbstate)"
+expect "workqueue solo sui core di sistema" "3 3" \
+	"$(cat "$Q/sys/devices/virtual/workqueue/cpumask" "$Q/sys/bus/workqueue/devices/writeback/cpumask" | tr '\n' ' ' | sed 's/ $//')"
+expect "registro: periferiche scollegate per nome" "2" "$(grep -c 'silenzio: USB 1-[13] (\(Webcam\|Bluetooth\)) scollegata' "$Q/log")"
+qcheck() { # voce
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep "^[A-Z]*|$1|"
+}
+expect "stato: LED spenti" "OK|LED|spenti (tranne quelli della tastiera)" "$(qcheck LED)"
+expect "stato: USB scollegate" "OK|USB inutilizzate|scollegate dai driver: Webcam, Bluetooth" "$(qcheck 'USB inutilizzate')"
+expect "stato: workqueue sui core di sistema" "OK|Lavoro differito del kernel|workqueue solo sui core di sistema 0,1" \
+	"$(qcheck 'Lavoro differito del kernel')"
+mkdir -p "$Q/sys/class/drm/card0-HDMI-A-1" "$Q/sys/class/backlight/intel_backlight"
+echo connected > "$Q/sys/class/drm/card0-HDMI-A-1/status"
+echo On > "$Q/sys/class/drm/card0-HDMI-A-1/dpms"
+echo 4 > "$Q/sys/class/backlight/intel_backlight/bl_power"
+expect "stato: schermo e retroilluminazione" \
+	"INFO|Schermo|HDMI-A-1 On, retroilluminazione spenta; si spegne dopo 2 minuti senza tasti (0 = mai)" "$(qcheck Schermo)"
+qreset
+expect "stato: workqueue anche sui core isolati" "ATTENZIONE|Lavoro differito del kernel|workqueue anche sui core isolati (maschera f)" \
+	"$(qcheck 'Lavoro differito del kernel')"
+expect "stato: LED accesi elencati" "INFO|LED|accesi: phy0-led tpacpi::power" "$(qcheck LED)"
+echo USB_INUTILIZZATE=accese > "$Q/run/sweetspot.conf"
+quiet
+expect "USB_INUTILIZZATE=accese: periferiche lasciate stare" "1on 1on 1on 1on 1on " "$(usbstate)"
+qreset
+echo OTTIMIZZAZIONI=no > "$Q/run/sweetspot.conf"
+quiet
+expect "ottimizzazioni spente: niente silenzio" "1on 1on 1on 1on 1on |1|f" \
+	"$(usbstate)|$(cat "$Q/sys/class/leds/phy0-led/brightness")|$(cat "$Q/sys/devices/virtual/workqueue/cpumask")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*

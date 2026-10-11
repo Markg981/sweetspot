@@ -344,6 +344,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |
 | `USCITA_INTEGRATA` | usa la scheda audio del PC | no |
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
+| `USB_INUTILIZZATE` | `spente`: webcam, Bluetooth e lettori di smart card presenti all'avvio scollegati dai driver (`authorized=0`) e lasciati sospendere; mai DAC, archivi, tastiere, hub o schede di rete; `accese` le lascia stare | spente |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
@@ -371,6 +372,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
 | Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
+| Attività elettrica superflua | pagina di stato: "LED" (spenti tranne quelli della tastiera), "USB inutilizzate", "Lavoro differito del kernel" (workqueue non legate a un core solo sui core di sistema) e "Schermo" (stato DPMS dei connettori collegati e retroilluminazione). Le applica `sweetspot-silenzio` all'avvio, se le ottimizzazioni sono attive; è una riduzione di attività, non una misura del rumore analogico |
 | Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
 
 ### Prova di riconoscimento con il file DoP
