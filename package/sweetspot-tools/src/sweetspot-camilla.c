@@ -5,6 +5,7 @@
  *
  *   sweetspot-camilla 1234 GetClippedSamples
  *   {"GetClippedSamples":{"result":"Ok","value":0}}
+ *   sweetspot-camilla 1234 '{"SetVolume":-20.0}'
  *
  * Basta un client minimo: una connessione, un messaggio di testo, una
  * risposta. Esce con 1 se CamillaDSP non risponde entro due secondi.
@@ -91,6 +92,19 @@ static int send_text(int fd, const char *text)
 	return send_all(fd, frame, h + len);
 }
 
+/* Chiusura regolare (frame Close mascherato, vuoto): senza, CamillaDSP
+ * registra un avviso nel suo log a ogni comando. Si attende la sua risposta
+ * Close, poi si chiude la connessione. */
+static void send_close(int fd)
+{
+	static const unsigned char frame[6] = { 0x88, 0x80, 0x5e, 0x37, 0xa1, 0x0c };
+	unsigned char buf[256];
+
+	if (send_all(fd, frame, sizeof(frame)) == 0)
+		while (read(fd, buf, sizeof(buf)) > 0)
+			;
+}
+
 /* Primo frame di testo della risposta (salta ping e altri frame di controllo). */
 static int recv_text(int fd, char *out, size_t cap)
 {
@@ -136,8 +150,9 @@ int main(int argc, char **argv)
 	int fd, port;
 
 	if (argc != 3 || (port = atoi(argv[1])) <= 0 || port > 65535 ||
-	    strlen(argv[2]) > 500 || strpbrk(argv[2], "\"\\")) {
-		fprintf(stderr, "uso: sweetspot-camilla PORTA COMANDO\n");
+	    strlen(argv[2]) > 500 || strchr(argv[2], '\\') ||
+	    (argv[2][0] != '{' && strchr(argv[2], '"'))) {
+		fprintf(stderr, "uso: sweetspot-camilla PORTA COMANDO|{\"Comando\":valore}\n");
 		return 2;
 	}
 	fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -149,13 +164,18 @@ int main(int argc, char **argv)
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons((unsigned short)port);
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	snprintf(command, sizeof(command), "\"%s\"", argv[2]);
+	/* Un comando con argomenti e' gia' un oggetto JSON; uno senza e' una stringa. */
+	if (argv[2][0] == '{')
+		snprintf(command, sizeof(command), "%s", argv[2]);
+	else
+		snprintf(command, sizeof(command), "\"%s\"", argv[2]);
 	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
 	    handshake(fd, port) != 0 || send_text(fd, command) != 0 ||
 	    recv_text(fd, reply, sizeof(reply)) != 0) {
 		close(fd);
 		return 1;
 	}
+	send_close(fd);
 	close(fd);
 	puts(reply);
 	return 0;

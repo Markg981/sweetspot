@@ -1,0 +1,72 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - volume a 64 bit (VOLUME=dsp): il volume del player in Lyrion
+# lo applica CamillaDSP in virgola mobile con il dither all'uscita, mentre
+# Squeezelite resta fisso al 100%.
+#
+#   sweetspot-volume segui MAC          segue il volume del player (lo avvia
+#                                       il player con CamillaDSP in uso)
+#   sweetspot-volume applica VOL MUTO   volume 0-100 e sordina 0/1
+#   sweetspot-volume db VOL             guadagno in dB di un volume 0-100
+#
+# Scala: 0,6 dB per passo, 100 = 0 dB, 50 = -30 dB, 1 = -59,4 dB, 0 = sordina.
+# Ogni valore va nel file che il plugin cdsp legge a ogni avvio di CamillaDSP
+# (sweetspot-dsp stato) e, dal vivo, al websocket di CamillaDSP (rampa di
+# 400 ms). Il guadagno non supera mai 0 dB (volume_limit nella configurazione).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
+
+db() { # volume 0-100
+	awk -v v="$1" 'BEGIN { if (v >= 100) { printf "0.0"; exit } if (v < 0) v = 0; printf "%.1f", -(100 - v) * 0.6 }'
+}
+
+apply() { # volume muto
+	local v=${1%.*} m=$2 d mute=false
+	case "$v" in ''|-|*[!0-9-]*) return 1 ;; esac
+	# Lyrion indica la sordina anche con un volume negativo.
+	if [ "$v" -lt 0 ]; then v=$((-v)); m=1; fi
+	[ "$v" -gt 100 ] && v=100
+	[ "$v" = 0 ] && m=1
+	d=$(db "$v")
+	[ "$m" = 1 ] && mute=true
+	if [ "$mute" = true ]; then sweetspot-dsp stato "$d" muto; else sweetspot-dsp stato "$d"; fi || return 1
+	sweetspot-camilla "$DSP_PORTA" "{\"SetVolume\":$d}" > /dev/null 2>&1
+	sweetspot-camilla "$DSP_PORTA" "{\"SetMute\":$mute}" > /dev/null 2>&1
+	echo "$v $d $m" > "$RUN/volume.dsp"
+}
+
+# Volume e sordina attuali del player, letti da Lyrion.
+sync_now() { # mac
+	local v m
+	v=$(LMS_TIMEOUT=5 lms_get '._volume' "$1" mixer volume '?')
+	m=$(LMS_TIMEOUT=5 lms_get '._muting' "$1" mixer muting '?')
+	[ -n "$v" ] && apply "$v" "${m:-0}"
+}
+
+# Notifiche della CLI di Lyrion: ogni cambio del mixer del player rilegge
+# il valore assoluto (le notifiche possono essere relative, es. "+5").
+follow() { # mac
+	local mac=$1 enc
+	enc=$(printf '%s' "$mac" | sed 's/:/%3A/g')
+	while kill -0 "$PPID" 2>/dev/null; do
+		sync_now "$mac"
+		{ echo "subscribe mixer"; while kill -0 "$PPID" 2>/dev/null; do sleep 30; done; } |
+			nc "$LMS_HOST" "$LMS_CLI_PORT" 2>/dev/null |
+			while read -r line; do
+				case "$line" in "$enc mixer "*) sync_now "$mac" ;; esac
+			done
+		sleep 5
+	done
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	segui) follow "${2:?mac}" ;;
+	applica) apply "${2:?volume}" "${3:-0}" ;;
+	db) db "${2:?volume}"; echo ;;
+	*) echo "uso: $0 segui MAC | applica VOLUME MUTO | db VOLUME" >&2; exit 1 ;;
+esac

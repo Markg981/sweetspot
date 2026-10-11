@@ -604,6 +604,50 @@ expect "DAC a 16 bit: dither" "format: S16_LE|dither 3" \
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione accettata da CamillaDSP"; else ko "camilladsp -c" "valida" "rifiutata"; fi
 fi
+expect "correzione: volume principale a 0 dB per ogni processo" "0.0 0|1" \
+	"$(cat "$DSPE/run/camilladsp.volume")|$(grep -c "vol_file \"$DSPE/run/camilladsp.volume\"" "$DSPE/asound.conf")"
+expect "volume a 64 bit: CamillaDSP serve anche senza correzione" "0|1" "$(dsp 'VOLUME=dsp' attiva; echo $?)|$(dsp 'VOLUME=dsp' correzione; echo $?)"
+expect "volume a 64 bit: solo nella modalita' completa" "1" "$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player')" attiva; echo $?)"
+rm -f "$DSPE/run/camilladsp.volume"
+mv "$DSPE/run/correzione/sinistro.txt" "$DSPE/sinistro.bak"
+dsp 'VOLUME=dsp' prepara 1 > /dev/null
+yml=$(cat "$DSPE/run/camilladsp.yml")
+expect "volume a 64 bit, DAC a 16 bit: nessun filtro, guadagno 0, dither a 16 bit, mai sopra 0 dB" "0|0.0|bits: 16|volume_limit: 0.0" \
+	"$(printf '%s\n' "$yml" | grep -c 'type: Biquad')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)|$(printf '%s\n' "$yml" | grep -o 'bits: 16')|$(printf '%s\n' "$yml" | grep -o 'volume_limit: 0.0')"
+expect "volume a 64 bit: primo avvio a -30 dB" "-30.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
+echo "-17.4 1" > "$DSPE/run/camilladsp.volume"
+dsp 'VOLUME=dsp' prepara 1 > /dev/null
+expect "volume a 64 bit, DAC a 32 bit: dither a 24 bit" "S32_LE|bits: 24|dither 3" \
+	"$(grep -o 'format: S32_LE' "$DSPE/run/camilladsp.yml" | head -n 1 | cut -d' ' -f2)|$(grep -o 'bits: 24' "$DSPE/run/camilladsp.yml")|dither $(grep -c 'dither' "$DSPE/run/camilladsp.yml")"
+expect "volume a 64 bit: il volume gia' scelto resta" "-17.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
+if command -v camilladsp > /dev/null; then
+	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione del volume accettata da CamillaDSP"; else ko "camilladsp -c volume" "valida" "rifiutata"; fi
+fi
+expect "file del volume: valori non validi rifiutati" "1|-17.4 1" "$(dsp '' stato 'abc'; echo $?)|$(cat "$DSPE/run/camilladsp.volume")"
+mv "$DSPE/sinistro.bak" "$DSPE/run/correzione/sinistro.txt"
+dsp 'CORREZIONE=si' prepara 1 > /dev/null
+expect "tornando al volume fisso il guadagno riparte da 0 dB" "0.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+VB=$DSPE/volbin
+mkdir -p "$VB"
+printf '#!/bin/sh\nprintf "%%s\\n" "$2" >> "%s"\necho "{}"\n' "$DSPE/run/camilla.call" > "$VB/sweetspot-camilla"
+chmod +x "$VB/sweetspot-camilla"
+vol() {
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume" sh "$@"
+}
+expect "scala del volume: 0,6 dB per passo" "0.0|-30.0|-59.4|-60.0" "$(vol db 100)|$(vol db 50)|$(vol db 1)|$(vol db 0)"
+rm -f "$DSPE/run/camilla.call"
+vol applica 50 0
+expect "volume 50: file per i prossimi processi e CamillaDSP dal vivo" '-30.0 0|{"SetVolume":-30.0}|{"SetMute":false}|50 -30.0 0' \
+	"$(cat "$DSPE/run/camilladsp.volume")|$(tr '\n' '|' < "$DSPE/run/camilla.call")$(cat "$DSPE/run/volume.dsp")"
+vol applica -20 0
+expect "volume negativo di Lyrion: sordina" "-48.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+vol applica 0 0
+expect "volume 0: sordina" "-60.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+vol applica abc 0; rc=$?
+expect "volume non numerico: nessun cambio" "1|-60.0 1" "$rc|$(cat "$DSPE/run/camilladsp.volume")"
 mkdir -p "$DSPE/chiavetta/sweetspot-dati"
 cp "$DSPE/rew.txt" "$DSPE/nuovo.txt"
 SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/nuovo.txt" "" ; rc=$?
@@ -1434,7 +1478,17 @@ set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|W
 expect "stato: watchdog attivo e alimentato" "OK|Watchdog|iTCO_wdt: riavvio dopo 60 secondi di blocco totale" "$(qwd)"
 echo WATCHDOG=no > "$Q/run/sweetspot.conf"
 expect "stato: watchdog spento per scelta" "INFO|Watchdog|spento (WATCHDOG=no): un blocco totale richiede di spegnere a mano" "$(qwd)"
-rm -f "$Q/run/sweetspot.conf"
+echo VOLUME=dsp > "$Q/run/sweetspot.conf"
+echo dsp > "$Q/run/volume.modo"
+echo "50 -30.0 0" > "$Q/run/volume.dsp"
+expect "stato: volume a 64 bit in uso" \
+	"OK|Volume|a 64 bit in CamillaDSP con dither all'uscita, Squeezelite fisso al 100% (ora 50, -30.0 dB); sotto il 100% non e' bit-perfect, ma senza troncamenti" \
+	"$(qcheck Volume)"
+echo riserva > "$Q/run/volume.modo"
+expect "stato: volume a 64 bit non disponibile, riserva software" \
+	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither" \
+	"$(qcheck Volume)"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp"
 mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
 printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
 echo 777 > "$Q/run/squeezelite.pid"
