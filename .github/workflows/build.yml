@@ -20,6 +20,32 @@ permissions:
   contents: read
 
 jobs:
+  # Nelle pull request che non toccano i file dell'immagine non si ricompila:
+  # le prove Lyrion e ALSA usano i pacchetti dell'ultima compilazione di main.
+  # Push su main e sui rami fase*, tag e avvii a mano compilano sempre.
+  modifiche:
+    runs-on: ubuntu-26.04
+    outputs:
+      compila: ${{ steps.file.outputs.compila }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: File dell'immagine modificati
+        id: file
+        env:
+          EVENTO: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          compila=true
+          if [ "$EVENTO" = pull_request ]; then
+            git diff --name-only "$BASE...HEAD" > modificati.txt
+            cat modificati.txt
+            grep -q -E '^(configs|board|package|patches|scripts)/|^(Config\.in|external\.desc|external\.mk)$' modificati.txt ||
+              compila=false
+          fi
+          echo "compila=$compila" | tee -a "$GITHUB_OUTPUT"
+
   test:
     runs-on: ubuntu-26.04
     steps:
@@ -32,7 +58,8 @@ jobs:
         run: sh tests/cd-simulato.sh
 
   build:
-    needs: test
+    needs: [test, modifiche]
+    if: ${{ needs.modifiche.outputs.compila == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -175,9 +202,10 @@ jobs:
   # architettura: per il Raspberry Pi e' la prova che i moduli compilati per
   # ARM funzionano con il Perl del sistema.
   lyrion:
-    needs: build
-    # Anche se una delle due compilazioni non e' riuscita, l'altra si prova.
-    if: ${{ !cancelled() }}
+    needs: [build, modifiche]
+    # Anche se una delle due compilazioni non e' riuscita, l'altra si prova;
+    # senza compilazione si provano i pacchetti di main.
+    if: ${{ !cancelled() && needs.modifiche.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -188,11 +216,41 @@ jobs:
             runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v7
+      # Pacchetti di questa esecuzione o, se non si e' compilato, dell'ultima
+      # compilazione riuscita di main che li ha ancora; l'evidenza lo registra.
+      - name: Pacchetti da provare
+        id: pacchetti
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPILA: ${{ needs.modifiche.outputs.compila }}
+          SCHEDA: ${{ matrix.scheda }}
+        run: |
+          id=$GITHUB_RUN_ID
+          if [ "$COMPILA" != true ]; then
+            id=""
+            for r in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&event=push&status=success&per_page=20" --jq '.workflow_runs[].id'); do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$r/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.expired | not) | .name' | grep -qx "sweetspot-$SCHEDA-aggiornamento.tar"; then
+                id=$r
+                break
+              fi
+            done
+            [ -n "$id" ] || { echo "::error::nessuna compilazione di main con sweetspot-$SCHEDA-aggiornamento.tar"; exit 1; }
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/sweetspot-audio-evidence"
+          printf 'compilazione: %s/%s/actions/runs/%s\nricompilato in questa esecuzione: %s\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$id" "$COMPILA" | tee "$RUNNER_TEMP/sweetspot-audio-evidence/pacchetti.txt"
       - uses: actions/download-artifact@v8
         with:
           name: sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+          run-id: ${{ steps.pacchetti.outputs.id }}
+          github-token: ${{ github.token }}
       - name: Strumenti
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl python3
       - name: Lyrion e verifica PCM nel sistema compilato
@@ -206,6 +264,8 @@ jobs:
         if: ${{ !cancelled() && matrix.scheda == 'x86_64' }}
         with:
           name: sweetspot.img.xz
+          run-id: ${{ steps.pacchetti.outputs.id }}
+          github-token: ${{ github.token }}
       - name: Verifica PCM/DoP sul percorso ALSA in QEMU
         if: ${{ !cancelled() && matrix.scheda == 'x86_64' }}
         run: |
