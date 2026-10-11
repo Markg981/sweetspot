@@ -73,7 +73,11 @@ verdict() { # formato frequenza canali
 			return ;;
 	esac
 	out="$(alsa_bits "$hwfmt") bit ($hwfmt), $(awk "BEGIN {printf \"%g\", $hwrate/1000}") kHz, $hwch canali"
-	if [ -f "$RUN/correzione.attiva" ]; then
+	if [ -f "$RUN/correzione.attiva" ] && ! correction_running; then
+		info_row OK "Volume a 64 bit" "Il volume è applicato da CamillaDSP in virgola mobile a 64 bit, con dither all'uscita; al 100% i campioni passano invariati salvo il dither. Uscita: $out."
+		return
+	fi
+	if correction_running; then
 		if [ "$(lower "$(conf CORREZIONE no)")" = confronto ]; then
 			info_row ATTENZIONE "Confronto a pari volume" "Il segnale passa per CamillaDSP con la sola attenuazione, senza i filtri. Uscita: $out."
 		else
@@ -187,6 +191,10 @@ fi
 # volume e con DAC a 16 bit. Il fisso (dall'amplificatore) o il volume
 # hardware del DAC non toccano i campioni.
 volume_note() {
+	if [ "$1" = dsp ]; then
+		printf '<p class="sub">%s</p>\n' "Volume a 64 bit: Squeezelite resta fisso al 100% e il volume di Lyrion lo applica CamillaDSP in virgola mobile, con dither TPDF alla risoluzione del DAC (24 o 16 bit). Sotto il 100% non è bit-perfect, ma non tronca. Solo nella modalità completa; se CamillaDSP non parte si usa il volume software, mai il massimo."
+		return 0
+	fi
 	[ "$1" = software ] || return 0
 	printf '<p class="sub">%s</p>\n' "Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither. Sotto il 100% il segnale perde risoluzione in modo legato alla musica, più evidente a basso volume e con DAC a 16 bit. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
 }
@@ -199,6 +207,7 @@ cat <<HTML
 <select id="vol" name="volume">
 $(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
 $(option dac "Dal DAC: usa il controllo hardware (dipende dal DAC)" "$vol")
+$(option dsp "A 64 bit con dither (CamillaDSP): il migliore se il volume va regolato qui" "$vol")
 $(option software "Dal software: senza dither, peggiore del fisso (solo per diffusori attivi senza volume)" "$vol")
 </select>
 $(volume_note "$vol")

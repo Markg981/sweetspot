@@ -142,6 +142,8 @@ dop_test_blocker() {
 		echo "il file di prova sta su questo player: serve la modalità completa (Lyrion su Sweetspot)"
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
 		echo "il volume software altera i campioni e cancella i marcatori DoP: scegli Fisso o Dal DAC"
+	elif [ "$(lower "$(conf VOLUME fisso)")" = dsp ]; then
+		echo "il volume a 64 bit altera i campioni e cancella i marcatori DoP: scegli Fisso o Dal DAC"
 	elif [ -f "$RUN/correzione.attiva" ]; then
 		echo "la correzione ambientale elabora i campioni: spegnila per la durata della prova"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then

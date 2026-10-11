@@ -611,6 +611,13 @@ lms_ready() { [ -n "$(LMS_TIMEOUT=5 lms_get '._version' '' version '?')" ]; }
 # Lyrion sta leggendo la libreria?
 lms_scanning() { [ "$(lms_get '.rescan' '' rescan '?')" = 1 ]; }
 
+# CamillaDSP e' nel percorso con i filtri della stanza, non solo per il
+# volume a 64 bit (lo decide il player, vedi sweetspot-player).
+correction_running() {
+	[ -f "$RUN/correzione.filtri" ] && return 0
+	[ -f "$RUN/correzione.attiva" ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" != dsp ]
+}
+
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
 dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
