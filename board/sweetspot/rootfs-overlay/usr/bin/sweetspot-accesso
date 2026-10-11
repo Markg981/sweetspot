@@ -1,0 +1,51 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - password delle pagine web (utente "admin").
+#
+#   sweetspot-accesso applica          scrive la configurazione dell'httpd di
+#                                      BusyBox da PASSWORD_WEB e gliela fa
+#                                      rileggere (SIGHUP)
+#   sweetspot-accesso hash PASSWORD    impronta MD5-crypt da salvare
+#
+# PASSWORD_WEB vuota (predefinita): pagine aperte a chi e' nella rete di
+# casa, come oggi. Con una password, ogni pagina e ogni azione chiedono
+# utente "admin" e password (autenticazione Basic: protegge dagli altri
+# della rete, non da chi ascolta il traffico). In sweetspot.txt si puo'
+# scrivere la password in chiaro: all'avvio vale come la sua impronta; dalle
+# pagine si salva solo l'impronta ($1$...). Password dimenticata: togli la
+# riga PASSWORD_WEB da sweetspot.txt con il computer.
+# Lyrion (porta 9000) ha la sua protezione nelle sue impostazioni.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+HTTPD_CONF=$RUN/httpd.conf
+
+hash() { httpd -m "$1"; }
+
+apply() {
+	local pw h
+	mkdir -p "$RUN"
+	pw=$(conf PASSWORD_WEB)
+	if [ -z "$pw" ]; then
+		: > "$HTTPD_CONF.nuovo"
+	else
+		case "$pw" in
+			'$1$'*) h=$pw ;;
+			*) h=$(hash "$pw") || return 1 ;;
+		esac
+		printf '/:admin:%s\n' "$h" > "$HTTPD_CONF.nuovo"
+	fi
+	chmod 600 "$HTTPD_CONF.nuovo"
+	mv "$HTTPD_CONF.nuovo" "$HTTPD_CONF"
+	killall -HUP httpd 2>/dev/null
+	return 0
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	applica) apply ;;
+	hash) hash "${2:?password}" ;;
+	*) echo "uso: $0 applica | hash PASSWORD" >&2; exit 1 ;;
+esac
