@@ -291,6 +291,7 @@ cat > "$WEB/bin/wget" <<'FINTO'
 #!/bin/sh
 for a; do case "$a" in --post-data=*) d=${a#--post-data=} ;; esac; done
 prev=""; for a; do [ "$prev" = --post-data ] && d=$a; prev=$a; done
+[ -n "$SWEETSPOT_RUN" ] && printf '%s\n' "$d" >> "$SWEETSPOT_RUN/wget.post"
 case "$d" in
 	*serverstatus*) echo '{"result":{"version":"9.1.1","info total songs":1200,"info total albums":100,"info total artists":80}}' ;;
 	*plugin-stato*) echo '{"result":{"plugins_loop":[{"nome":"MaterialSkin","versione":"6.4.12","stato":"enabled","errore":""},{"nome":"Qobuz","versione":"3.7.2","stato":"enabled","errore":""},{"nome":"Altro","versione":"1.0","stato":"enabled","errore":""}],"scaricamenti":0,"riavvio":1}}' ;;
@@ -483,18 +484,29 @@ dop_action() { # azione [esito]
 }
 printf 'VOLUME=fisso\n' > "$WEB/s.txt"
 run "$WEB" "config_build $WEB/s.txt"
+rm -f "$WEB/run/wget.post"
 out=$(dop_action prova_dop)
 expect "prova DoP: tono di 6 secondi generato sul player" "$WEB/prova-dop/prova-dop.wav 6" "$(cat "$WEB/run/prova-dop.call" 2>/dev/null)"
 expect "prova DoP: esito atteso dopo l'avvio" "si" "$([ -f "$WEB/run/prova-dop.avviata" ] && echo si || echo no)"
+expect "prova DoP: la coda di ascolto e' messa da parte (preview), non cancellata" "1|0" \
+	"$(grep -c "\"playlist\",\"preview\",\"url:file://$WEB/prova-dop/prova-dop.wav\",\"title:Prova DoP\"" "$WEB/run/wget.post")|$(grep -c '"playlist","play"' "$WEB/run/wget.post")"
 case "$out" in *"%50%72%6f%76%61%20%44%6f%50%20%61%76%76%69%61%74%61"*) ok "prova DoP: pagina con le istruzioni" ;; *) ko "prova DoP messaggio" "Prova DoP avviata" "$(printf '%s' "$out" | head -c 200)" ;; esac
 case "$(page audio)" in *"usa DoP"*"lascia la conversione"*) ok "audio: dopo la prova si sceglie l'esito" ;; *) ko "audio esito prova DoP" "due pulsanti" "-" ;; esac
-rm -f "$WEB/run/config.call"
+rm -f "$WEB/run/config.call" "$WEB/run/wget.post"
 dop_action prova_dop_esito no > /dev/null
 expect "esito negativo: nessuna impostazione cambiata" "no|no" \
 	"$([ -e "$WEB/run/config.call" ] && echo si || echo no)|$([ -f "$WEB/run/prova-dop.avviata" ] && echo si || echo no)"
+expect "esito: la coda di ascolto torna com'era" "1" "$(grep -c '"playlist","preview","cmd:stop"' "$WEB/run/wget.post")"
 touch "$WEB/run/prova-dop.avviata"
+rm -f "$WEB/run/wget.post"
 dop_action prova_dop_esito si > /dev/null
-expect "esito positivo: DSD tramite DoP" "imposta DSD dop" "$(cat "$WEB/run/config.call" 2>/dev/null)"
+expect "esito positivo: DSD tramite DoP, coda tornata com'era" "imposta DSD dop|1" "$(cat "$WEB/run/config.call" 2>/dev/null)|$(grep -c '"playlist","preview","cmd:stop"' "$WEB/run/wget.post")"
+# DAC a 16 bit (o uscita forzata a 16 bit): i marcatori DoP non ci stanno.
+cp "$WEB/proc/asound/card1/stream0" "$WEB/stream0.bak"
+printf 'Playback:\n  Interface 1\n    Format: S16_LE\n    Rates: 44100, 48000, 176400\n' > "$WEB/proc/asound/card1/stream0"
+case "$(page audio)" in *"Prova non disponibile"*"non dichiara 176,4 kHz a 24 o 32 bit"*) ok "audio: prova DoP bloccata con il DAC a 16 bit" ;; *) ko "audio prova DoP 16 bit" "prova non disponibile" "-" ;; esac
+cp "$WEB/stream0.bak" "$WEB/proc/asound/card1/stream0"
+case "$(page audio 'FORMATO_USCITA=16')" in *"Prova non disponibile"*"forzata a 16 bit"*) ok "audio: prova DoP bloccata con l'uscita forzata a 16 bit" ;; *) ko "audio prova DoP FORMATO_USCITA" "prova non disponibile" "-" ;; esac
 printf 'VOLUME=software\n' > "$WEB/s.txt"
 run "$WEB" "config_build $WEB/s.txt"
 rm -f "$WEB/run/prova-dop.call"

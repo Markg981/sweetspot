@@ -103,7 +103,7 @@ case "$F_a" in
 	prova_dop)
 		card=$(dac_find)
 		[ -n "$card" ] || done_to audio "Nessun DAC collegato: la prova DoP richiede il DAC acceso."
-		blocker=$(dop_test_blocker "$(dac_rates "$card")")
+		blocker=$(dop_test_blocker "$card")
 		[ -z "$blocker" ] || done_to audio "Prova DoP non disponibile: $blocker."
 		mac=$(cat "$RUN/player.mac" 2>/dev/null)
 		[ -n "$mac" ] || done_to audio "Il player non è ancora avviato: riprova tra qualche secondo."
@@ -111,7 +111,10 @@ case "$F_a" in
 		mkdir -p "$dir" && chmod 755 "$dir" &&
 			sweetspot-prova-dop "$dir/prova-dop.wav" 6 && chmod 644 "$dir/prova-dop.wav" ||
 			done_to audio "Impossibile preparare il file di prova DoP."
-		lms_json "$mac" playlist play "file://$dir/prova-dop.wav" > /dev/null ||
+		# "playlist preview" mette da parte la coda di ascolto e suona il
+		# tono; "cmd:stop" (all'esito) la rimette com'era, senza farla
+		# ripartire. "playlist play" l'avrebbe cancellata.
+		lms_json "$mac" playlist preview "url:file://$dir/prova-dop.wav" "title:Prova DoP" > /dev/null ||
 			done_to audio "Lyrion non ha avviato la prova DoP: riprova tra qualche secondo."
 		touch "$RUN/prova-dop.avviata"
 		log "audio: prova DoP avviata"
@@ -119,6 +122,9 @@ case "$F_a" in
 
 	prova_dop_esito)
 		rm -f "$RUN/prova-dop.avviata"
+		# La coda di ascolto torna com'era (ferma).
+		mac=$(cat "$RUN/player.mac" 2>/dev/null)
+		[ -n "$mac" ] && lms_json "$mac" playlist preview cmd:stop > /dev/null
 		case "$F_esito" in
 			si)
 				sweetspot-config imposta DSD dop
