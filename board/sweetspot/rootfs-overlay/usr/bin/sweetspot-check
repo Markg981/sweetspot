@@ -249,6 +249,32 @@ check_player() {
 	elif [ -s "$RUN/correzione.errore" ]; then
 		emit ATTENZIONE "Correzione ambientale" "non applicata: $(cat "$RUN/correzione.errore")"
 	fi
+	[ -f "$RUN/correzione.attiva" ] && check_dsp_threads
+}
+
+# Thread di CamillaDSP: tutti in real-time (SCHED_FIFO), come il player.
+check_dsp_threads() {
+	local p t sched total=0 rt=0 prios="" cpus
+	p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
+	if [ -z "$p" ]; then
+		emit INFO "CamillaDSP in real-time" "non in esecuzione: parte con il primo brano"
+		return
+	fi
+	for t in "$PROC/$p"/task/*; do
+		[ -d "$t" ] || continue
+		total=$((total + 1))
+		sched=$(sed 's/.*) //' "$t/stat" 2>/dev/null | cut -d' ' -f38,39)
+		if [ "${sched#* }" = 1 ]; then
+			rt=$((rt + 1))
+			case " $prios " in *" ${sched% *} "*) ;; *) prios="$prios ${sched% *}" ;; esac
+		fi
+	done
+	cpus=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$PROC/$p/status" 2>/dev/null)
+	if [ "$total" -gt 0 ] && [ "$rt" = "$total" ]; then
+		emit OK "CamillaDSP in real-time" "$total thread a priorita'${prios} sul core ${cpus:-?}"
+	else
+		emit ATTENZIONE "CamillaDSP in real-time" "$rt di $total thread in real-time: la correzione puo' interrompersi sotto carico"
+	fi
 }
 
 check_library() {

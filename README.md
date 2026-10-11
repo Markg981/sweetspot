@@ -78,8 +78,10 @@ diffusore sinistro e uno per il destro.
 
 - I filtri li applica **CamillaDSP** in virgola mobile a 64 bit, alla
   frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
-  frequenza), sul core dedicato all'audio con priorità real-time; DAC a 16 bit
-  con dither.
+  frequenza), sul core dedicato all'audio con priorità real-time (`SCHED_FIFO`
+  70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta) per tutti i suoi
+  thread; la pagina Stato verifica, alla voce "CamillaDSP in real-time", la
+  priorità e il core di ogni thread. DAC a 16 bit con dither.
 - Sweetspot calcola la curva della correzione e un'**attenuazione** conservativa
   dal massimo guadagno dei singoli filtri, comprese le risonanze: i picchi
   stretti non dipendono dalla griglia usata per disegnare la curva. Il margine
