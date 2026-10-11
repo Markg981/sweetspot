@@ -1,0 +1,3 @@
+# Sweetspot - periferiche USB collegate dopo l'avvio: quelle che il player non
+# usa (webcam, Bluetooth...) vengono scollegate dai driver (sweetspot-silenzio).
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ACTION=="add", RUN+="/usr/bin/sweetspot-silenzio usb %p"

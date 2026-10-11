@@ -100,7 +100,7 @@ check_cpu() {
 
 # Attivita' elettrica superflua (sweetspot-silenzio e sweetspot-display).
 check_quiet() {
-	local l leds=0 lit="" d off="" iso hk c mask=0 cur con st b screens=""
+	local l leds=0 lit="" d off="" iso hk c mask=0 cur con st b screens="" pci awake bdf kind rs
 	for l in "$SYS"/class/leds/*; do
 		[ -d "$l" ] || continue
 		case "${l##*/}" in *::capslock|*::numlock|*::scrolllock|*::compose|*::kana) continue ;; esac
@@ -118,6 +118,23 @@ check_quiet() {
 			off="$off, $(cat "$d/product" 2>/dev/null || echo "${d##*/}")"
 	done
 	[ -n "$off" ] && emit OK "USB inutilizzate" "scollegate dai driver: ${off#, }"
+	# Stato reale dei PCI lasciati a riposo da sweetspot-silenzio.
+	if [ -s "$RUN/silenzio.pci" ]; then
+		pci="" awake=0
+		while IFS='|' read -r bdf kind; do
+			rs=$(cat "$SYS/bus/pci/devices/$bdf/power/runtime_status" 2>/dev/null)
+			case "$rs" in
+				suspended) rs="a riposo" ;;
+				*) rs="attivo${rs:+ ($rs)}"; awake=$((awake + 1)) ;;
+			esac
+			pci="$pci, $kind $bdf $rs"
+		done < "$RUN/silenzio.pci"
+		if [ "$awake" = 0 ]; then
+			emit OK "PCI a riposo" "${pci#, }"
+		else
+			emit INFO "PCI a riposo" "${pci#, }; un dispositivo senza driver o che non lo supporta resta attivo"
+		fi
+	fi
 	iso=$(expand_list "$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)")
 	cur=$(cat "$SYS/devices/virtual/workqueue/cpumask" 2>/dev/null | tr -d ',' | sed 's/^0*//')
 	if [ -n "$iso" ] && [ -n "$cur" ]; then

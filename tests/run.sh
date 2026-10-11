@@ -1238,6 +1238,8 @@ expect "stato: registro ricominciato, conta tutto" "ATTENZIONE|XRUN nella sessio
 expect "stato: nessuna interruzione di dispositivi" "OK|Interruzioni sul core audio|nessuna da dispositivi in 2 minuti sul core 3" \
 	"$(livecheck 'Interruzioni sul core audio')"
 irqs 2 7600 12700 > "$DSP/proc/interrupts"
+# Di nuovo due minuti e mezzo: le verifiche precedenti richiedono tempo.
+sed -i "s/^inizio=.*/inizio=$(( $(date +%s) - 150 ))/" "$DSP/run/sessione"
 # Nel /sys finto il core 3 riceve anche le interruzioni USB: e' voluto.
 expect "stato: interruzioni USB sul core condiviso" \
 	"INFO|Interruzioni sul core audio|IRQ 16 (ehci_hcd:usb1) 2, IRQ 29 (xhci_hcd) 600 in 2 minuti (un solo core: USB e riproduzione lo condividono)" \
@@ -1304,8 +1306,28 @@ qreset() {
 			echo "$c" > "$Q/sys/bus/usb/devices/$dev:1.$n/bInterfaceClass"
 			n=$((n + 1))
 		done
+		printf ' %s\n' "$n" > "$Q/sys/bus/usb/devices/$dev/bNumInterfaces"
+	done
+	# PCI: video integrato (console), GPU discreta dietro un ponte, audio
+	# integrato, controller USB, rete con cavo, Wi-Fi e rete senza cavo
+	# ciascuna dietro il proprio ponte.
+	mkdir -p "$Q/sys/bus/pci/devices"
+	for p in "00:01.0 0x060400" "00:01.0/0000:01:00.0 0x030200" "00:02.0 0x030000 vga" "00:14.0 0x0c0330" \
+		"00:1b.0 0x040300" "00:1c.0 0x060400" "00:1c.0/0000:02:00.0 0x020000 enp2s0 1" \
+		"00:1c.1 0x060400" "00:1c.1/0000:03:00.0 0x028000" "00:1c.2 0x060400" "00:1c.2/0000:04:00.0 0x020000 enp4s0 0"; do
+		set -- $p
+		d=$Q/sys/devices/pci0000:00/0000:$1
+		mkdir -p "$d/power"
+		echo "$2" > "$d/class"
+		echo on > "$d/power/control"
+		echo active > "$d/power/runtime_status"
+		[ "${3:-}" = vga ] && echo 1 > "$d/boot_vga"
+		[ -n "${4:-}" ] && mkdir -p "$d/net/$3" && echo "$4" > "$d/net/$3/carrier"
+		ln -s "$d" "$Q/sys/bus/pci/devices/${d##*/}"
 	done
 }
+pcistate() { for b in 00:01.0 00:01.0/0000:01:00.0 00:02.0 00:14.0 00:1b.0 00:1c.0 00:1c.0/0000:02:00.0 00:1c.1 00:1c.1/0000:03:00.0 00:1c.2 00:1c.2/0000:04:00.0; do
+	printf '%s ' "$(cat "$Q/sys/devices/pci0000:00/0000:$b/power/control")"; done; }
 quiet() {
 	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
@@ -1320,13 +1342,43 @@ expect "USB: webcam e Bluetooth scollegate, DAC e periferiche miste intatte" "0a
 expect "workqueue solo sui core di sistema" "3 3" \
 	"$(cat "$Q/sys/devices/virtual/workqueue/cpumask" "$Q/sys/bus/workqueue/devices/writeback/cpumask" | tr '\n' ' ' | sed 's/ $//')"
 expect "registro: periferiche scollegate per nome" "2" "$(grep -c 'silenzio: USB 1-[13] (\(Webcam\|Bluetooth\)) scollegata' "$Q/log")"
+expect "PCI: a riposo GPU discreta, audio integrato, Wi-Fi, rete senza cavo e i loro ponti; console, USB e rete in uso intatte" \
+	"auto auto on on auto on on auto auto auto auto " "$(pcistate)"
+expect "PCI: elenco per la pagina Stato" \
+	"0000:00:1b.0|audio integrato 0000:01:00.0|scheda video secondaria 0000:03:00.0|Wi-Fi 0000:04:00.0|scheda di rete senza cavo" \
+	"$(tr '\n' ' ' < "$Q/run/silenzio.pci" | sed 's/ $//')"
+# Periferiche collegate dopo l'avvio (regola udev, un evento per interfaccia).
+usbplug() { # periferica prodotto classi...
+	local dev=$1 n=0
+	mkdir -p "$Q/sys/bus/usb/devices/$dev/power"
+	echo 1 > "$Q/sys/bus/usb/devices/$dev/authorized"
+	echo on > "$Q/sys/bus/usb/devices/$dev/power/control"
+	echo "$2" > "$Q/sys/bus/usb/devices/$dev/product"
+	shift 2
+	for c in "$@"; do
+		mkdir -p "$Q/sys/bus/usb/devices/$dev:1.$n"
+		echo "$c" > "$Q/sys/bus/usb/devices/$dev:1.$n/bInterfaceClass"
+		n=$((n + 1))
+	done
+	printf ' %s\n' "$n" > "$Q/sys/bus/usb/devices/$dev/bNumInterfaces"
+}
+plugevent() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-silenzio" usb "/devices/pci0000:00/0000:00:14.0/usb1/$1/$1:1.0"
+}
+usbplug 1-7 Webcam 0e
+usbplug 1-8 "Webcam con microfono" 0e 01
+plugevent 1-7; plugevent 1-8
+expect "USB collegate dopo: webcam scollegata, webcam con microfono intatta" "0auto 1on" \
+	"$(cat "$Q/sys/bus/usb/devices/1-7/authorized")$(cat "$Q/sys/bus/usb/devices/1-7/power/control") $(cat "$Q/sys/bus/usb/devices/1-8/authorized")$(cat "$Q/sys/bus/usb/devices/1-8/power/control")"
 qcheck() { # voce
 	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep "^[A-Z]*|$1|"
 }
 expect "stato: LED spenti" "OK|LED|spenti (tranne quelli della tastiera)" "$(qcheck LED)"
-expect "stato: USB scollegate" "OK|USB inutilizzate|scollegate dai driver: Webcam, Bluetooth" "$(qcheck 'USB inutilizzate')"
+expect "stato: USB scollegate, anche quelle collegate dopo" "OK|USB inutilizzate|scollegate dai driver: Webcam, Bluetooth, Webcam" "$(qcheck 'USB inutilizzate')"
 expect "stato: workqueue sui core di sistema" "OK|Lavoro differito del kernel|workqueue solo sui core di sistema 0,1" \
 	"$(qcheck 'Lavoro differito del kernel')"
 mkdir -p "$Q/sys/class/drm/card0-HDMI-A-1" "$Q/sys/class/backlight/intel_backlight"
@@ -1335,18 +1387,36 @@ echo On > "$Q/sys/class/drm/card0-HDMI-A-1/dpms"
 echo 4 > "$Q/sys/class/backlight/intel_backlight/bl_power"
 expect "stato: schermo e retroilluminazione" \
 	"INFO|Schermo|HDMI-A-1 On, retroilluminazione spenta; si spegne dopo 2 minuti senza tasti (0 = mai)" "$(qcheck Schermo)"
+echo suspended > "$Q/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/power/runtime_status"
+expect "stato: PCI con lo stato reale" \
+	"INFO|PCI a riposo|audio integrato 0000:00:1b.0 attivo (active), scheda video secondaria 0000:01:00.0 a riposo, Wi-Fi 0000:03:00.0 attivo (active), scheda di rete senza cavo 0000:04:00.0 attivo (active); un dispositivo senza driver o che non lo supporta resta attivo" \
+	"$(qcheck 'PCI a riposo')"
+for b in 00:1b.0 00:1c.1/0000:03:00.0 00:1c.2/0000:04:00.0; do echo suspended > "$Q/sys/devices/pci0000:00/0000:$b/power/runtime_status"; done
+expect "stato: tutti i PCI a riposo" \
+	"OK|PCI a riposo|audio integrato 0000:00:1b.0 a riposo, scheda video secondaria 0000:01:00.0 a riposo, Wi-Fi 0000:03:00.0 a riposo, scheda di rete senza cavo 0000:04:00.0 a riposo" \
+	"$(qcheck 'PCI a riposo')"
 qreset
 expect "stato: workqueue anche sui core isolati" "ATTENZIONE|Lavoro differito del kernel|workqueue anche sui core isolati (maschera f)" \
 	"$(qcheck 'Lavoro differito del kernel')"
 expect "stato: LED accesi elencati" "INFO|LED|accesi: phy0-led tpacpi::power" "$(qcheck LED)"
-echo USB_INUTILIZZATE=accese > "$Q/run/sweetspot.conf"
+echo PERIFERICHE_INUTILIZZATE=accese > "$Q/run/sweetspot.conf"
 quiet
-expect "USB_INUTILIZZATE=accese: periferiche lasciate stare" "1on 1on 1on 1on 1on " "$(usbstate)"
+expect "PERIFERICHE_INUTILIZZATE=accese: periferiche lasciate stare" "1on 1on 1on 1on 1on |on on on on on on on on on on on " "$(usbstate)|$(pcistate)"
 qreset
 echo OTTIMIZZAZIONI=no > "$Q/run/sweetspot.conf"
 quiet
-expect "ottimizzazioni spente: niente silenzio" "1on 1on 1on 1on 1on |1|f" \
-	"$(usbstate)|$(cat "$Q/sys/class/leds/phy0-led/brightness")|$(cat "$Q/sys/devices/virtual/workqueue/cpumask")"
+expect "ottimizzazioni spente: niente silenzio" "1on 1on 1on 1on 1on |on on on on on on on on on on on |1|f" \
+	"$(usbstate)|$(pcistate)|$(cat "$Q/sys/class/leds/phy0-led/brightness")|$(cat "$Q/sys/devices/virtual/workqueue/cpumask")"
+usbplug 1-7 Webcam 0e
+plugevent 1-7
+expect "ottimizzazioni spente: USB collegate dopo lasciate stare" "1on" \
+	"$(cat "$Q/sys/bus/usb/devices/1-7/authorized")$(cat "$Q/sys/bus/usb/devices/1-7/power/control")"
+qreset
+echo USCITA_INTEGRATA=si > "$Q/run/sweetspot.conf"
+echo WIFI_NOME=casa >> "$Q/run/sweetspot.conf"
+quiet
+expect "audio integrato scelto e Wi-Fi configurato: restano attivi" "on on" \
+	"$(cat "$Q/sys/devices/pci0000:00/0000:00:1b.0/power/control") $(cat "$Q/sys/devices/pci0000:00/0000:00:1c.1/0000:03:00.0/power/control")"
 
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
