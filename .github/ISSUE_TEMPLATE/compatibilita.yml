@@ -1,0 +1,25 @@
+name: Rapporto di compatibilità
+description: Un computer e un DAC provati con Sweetspot, per la matrice di compatibilità.
+title: "Compatibilità: <computer> + <DAC>"
+labels: [compatibilita]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Nella pagina **Stato** di Sweetspot usa *Scarica il rapporto di compatibilità*
+        (oppure `sweetspot-rapporto salva` dal terminale: il file finisce sulla chiavetta,
+        cartella `compatibilita`). Il rapporto non contiene indirizzi né dati personali.
+        Meglio crearlo durante l'ascolto e, se puoi, dopo `sweetspot-durata 24`.
+  - type: textarea
+    id: rapporto
+    attributes:
+      label: Rapporto (JSON)
+      description: Incolla qui il contenuto di sweetspot-rapporto.json.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: Note di ascolto
+      description: Problemi, impostazioni particolari (DSD, volume, correzione), firmware del DAC aggiornato…

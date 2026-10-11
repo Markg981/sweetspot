@@ -1,0 +1,90 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - rapporto di compatibilita': computer, schede di rete, DAC con
+# firmware e gli esiti delle verifiche di questo sistema, in JSON. Serve
+# alla matrice di compatibilita' pubblica (docs/compatibilita.md): si allega
+# a una segnalazione "Rapporto di compatibilita'" su GitHub.
+#
+#   sweetspot-rapporto            stampa il rapporto
+#   sweetspot-rapporto salva      lo scrive anche sulla chiavetta, nella
+#                                 cartella compatibilita
+#
+# Nessun dato personale: niente indirizzi, nomi di rete, password o
+# percorsi della musica; i numeri di serie non vengono letti.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+
+dmi() { tr -d '\n' < "$SYS/class/dmi/id/$1" 2>/dev/null; }
+
+# Computer: DMI sui PC, albero dei dispositivi sul Raspberry Pi.
+computer_json() {
+	local model
+	model=$(tr -d '\000' < "$PROC/device-tree/model" 2>/dev/null)
+	jq -n --arg produttore "$(dmi sys_vendor)" --arg modello "${model:-$(dmi product_name)}" \
+		--arg scheda_madre "$(dmi board_name)" --arg bios "$(dmi bios_version)" \
+		--arg cpu "$(cpu_model)" --arg core "$(count_words "$(cpu_online)")" \
+		--arg ram_mb "$(( $(mem_total_kb) / 1024 ))" \
+		'{produttore: $produttore, modello: $modello, scheda_madre: $scheda_madre, bios: $bios,
+		  cpu: $cpu, core: ($core | tonumber), ram_mb: ($ram_mb | tonumber)}'
+}
+
+# Schede di rete: driver e se il cavo (o il Wi-Fi) e' collegato.
+network_json() {
+	local n drv
+	for n in "$SYS"/class/net/*; do
+		[ -e "$n/device" ] || continue
+		drv=$(basename "$(readlink "$n/device/driver" 2>/dev/null)" 2>/dev/null)
+		jq -n --arg driver "${drv:-?}" --arg tipo "$([ -d "$n/wireless" ] && echo wifi || echo ethernet)" \
+			--arg collegata "$(cat "$n/carrier" 2>/dev/null || echo 0)" \
+			'{driver: $driver, tipo: $tipo, collegata: ($collegata == "1")}'
+	done | jq -s .
+}
+
+# DAC: nome, identificativo USB, versione del firmware (bcdDevice), formati.
+dac_json() {
+	local card usb dev
+	card=$(dac_find)
+	if [ -z "$card" ]; then
+		echo null
+		return
+	fi
+	usb=$(readlink -f "$SYS/class/sound/card$card/device" 2>/dev/null)
+	dev=${usb%/*}
+	jq -n --arg nome "$(dac_name "$card")" --arg usbid "$(dac_usbid "$card")" \
+		--arg firmware "$(cat "$dev/bcdDevice" 2>/dev/null)" --arg produttore "$(cat "$dev/manufacturer" 2>/dev/null)" \
+		--arg prodotto "$(cat "$dev/product" 2>/dev/null)" --arg usb_velocita "$(cat "$dev/speed" 2>/dev/null)" \
+		--arg dsd_nativo "$(dac_native_dsd "$card")" --arg frequenze "$(dac_rates "$card" | tr '\n' ' ')" \
+		'{nome: $nome, usbid: $usbid, firmware: $firmware, produttore: $produttore, prodotto: $prodotto,
+		  usb_mbit: $usb_velocita, dsd_nativo: $dsd_nativo, frequenze: ($frequenze | split(" ") | map(select(. != "")))}'
+}
+
+# Esiti: ogni voce della pagina Stato e, se fatta, la prova di durata.
+results_json() {
+	sweetspot-check --dati 2>/dev/null | jq -R -s '
+		split("\n") | map(select(length > 0) | split("|") | {esito: .[0], voce: .[1], dettaglio: (.[2:] | join("|"))})
+		| map(select(.voce != "Rete" and .voce != "Interfaccia" and .voce != "Server Lyrion"))
+		| map(.dettaglio |= (gsub("https?://[^ ]*"; "[indirizzo]") | gsub("[0-9]+(\\.[0-9]+){3}"; "[indirizzo]")))'
+}
+
+report() {
+	jq -n --arg versione "$(cat /etc/sweetspot-version 2>/dev/null)" --arg scheda "$(boot_type)" \
+		--arg kernel "$(uname -r)" --arg data "$(date -u '+%Y-%m-%d')" --arg modalita "$(mode)" \
+		--argjson computer "$(computer_json)" --argjson rete "$(network_json)" --argjson dac "$(dac_json)" \
+		--argjson verifiche "$(results_json)" \
+		--arg durata "$(head -n 1 "$RUN/durata.txt" 2>/dev/null)" \
+		'{formato: 1, versione: $versione, scheda: $scheda, kernel: $kernel, data: $data, modalita: $modalita,
+		  computer: $computer, rete: $rete, dac: $dac, verifiche: $verifiche,
+		  prova_durata: (if $durata == "" then null else $durata end)}'
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+out=$(report) || exit 1
+printf '%s\n' "$out"
+if [ "${1:-}" = salva ] && stick_mount rw; then
+	mkdir -p "$STICK_MNT/compatibilita"
+	printf '%s\n' "$out" > "$STICK_MNT/compatibilita/rapporto-$(date -u '+%Y%m%d-%H%M').json"
+	stick_umount
+fi
