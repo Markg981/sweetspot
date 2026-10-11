@@ -329,7 +329,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
 | `DAC` | `auto`, nome ALSA (es. `R26`) o `VID:PID` | auto |
-| `VOLUME` | `fisso`, `dac`, `software` | fisso |
+| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato) | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |

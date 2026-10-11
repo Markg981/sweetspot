@@ -234,6 +234,8 @@ check_player() {
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
 	elif [ "$vol" = fisso ]; then
 		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
+	elif [ "$vol" = software ]; then
+		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC"
 	else
 		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
 	fi
