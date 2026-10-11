@@ -409,6 +409,49 @@ expect "sistema: valore sconosciuto = solo lavori sospesi" "MODALITA_ASCOLTO si 
 case "$(page sistema)" in *'<option value="puro" selected'*) ok "sistema: ascolto puro di serie" ;; *) ko "sistema ascolto puro" "puro selezionato" "-" ;; esac
 case "$(page sistema 'PRECARICO=no')" in *'<option value="si" selected'*) ok "sistema: senza precarico solo lavori sospesi" ;; *) ko "sistema ascolto si" "si selezionato" "-" ;; esac
 case "$(page sistema "$(printf 'MODALITA_ASCOLTO=no\nPRECARICO=si')")" in *'<option value="no" selected'*) ok "sistema: ascolto spento" ;; *) ko "sistema ascolto no" "no selezionato" "-" ;; esac
+
+
+echo "Password delle pagine e impostazioni iniziali"
+acc() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c "killall() { :; }; . $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- applica; . $OVERLAY/usr/bin/sweetspot-accesso"
+	cat "$WEB/run/httpd.conf"
+}
+expect "pagine aperte senza password" "" "$(acc '')"
+expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh')"
+case "$(acc 'PASSWORD_WEB=segreta')" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
+printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
+chmod +x "$WEB/actionbin/sweetspot-accesso"
+web_action() { # corpo senza gettone
+	local body
+	body="t=$(cat "$WEB/run/web.token")&$1"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
+}
+rm -f "$WEB/run/config.call"
+web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
+expect "sistema: si salva l'impronta, non la password" '1|0' \
+	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.call")|$(grep -c segreta "$WEB/run/config.call")"
+out=$(web_action "a=ripristina")
+case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
+expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si" > /dev/null
+expect "ripristino confermato" "ripristina" "$(tail -n 1 "$WEB/run/config.call")"
+RS=$WORK/ripristino
+mkdir -p "$RS/avvio" "$RS/chiavetta" "$RS/run"
+printf 'VOLUME=fisso\r\n' > "$RS/avvio/sweetspot.txt"
+printf 'VOLUME=software\r\nPASSWORD_WEB=x\r\n' > "$RS/chiavetta/sweetspot.txt"
+SWEETSPOT_RUN=$RS/run SWEETSPOT_LOG=$RS/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	SWEETSPOT_STICK_DIR=$RS/chiavetta SWEETSPOT_AVVIO=$RS/avvio $TEST_SH "$OVERLAY/usr/bin/sweetspot-config" ripristina; rc=$?
+expect "ripristino: sweetspot.txt iniziale sulla chiavetta e in memoria" "0|VOLUME=fisso|fisso" \
+	"$rc|$(tr -d '\r' < "$RS/chiavetta/sweetspot.txt")|$(sed -n 's/^VOLUME=//p' "$RS/run/sweetspot.conf" | tail -n 1)"
+SWEETSPOT_RUN=$RS/run SWEETSPOT_LOG=$RS/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	SWEETSPOT_STICK_DIR=$RS/assente SWEETSPOT_AVVIO=$RS/avvio $TEST_SH "$OVERLAY/usr/bin/sweetspot-config" ripristina; rc=$?
+expect "ripristino senza chiavetta: vale solo fino al riavvio" "2" "$rc"
 printf 'Musica.a|sdc1|ext4|1G|ro|/media/Musica.a|\n' > "$WEB/run/dischi.list"
 rm -f "$WEB/run/config.call"
 archive_action > /dev/null
@@ -1537,6 +1580,32 @@ echo MODALITA_ASCOLTO=no > "$Q/run/sweetspot.conf"
 expect "stato: modalita' ascolto spenta" \
 	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
+
+echo "Rapporto e matrice di compatibilita'"
+mkdir -p "$Q/sys/class/dmi/id" "$Q/repbin" "$Q/sys/class/net/eth0/device" "$Q/drivers/r8169"
+echo ASUSTeK > "$Q/sys/class/dmi/id/sys_vendor"
+echo N550JV > "$Q/sys/class/dmi/id/product_name"
+echo 1 > "$Q/sys/class/net/eth0/carrier"
+ln -sfn "$Q/drivers/r8169" "$Q/sys/class/net/eth0/device/driver"
+printf '#!/bin/sh\nprintf "OK|Rete|indirizzo 192.168.1.20\\nINFO|Interfaccia|http://salotto.local/\\nOK|XRUN nella sessione|nessuno in 5 minuti\\nATTENZIONE|Turbo|attivo, vedi http://192.168.1.20/\\n"\n' > "$Q/repbin/sweetspot-check"
+chmod +x "$Q/repbin/sweetspot-check"
+rap=$(SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	$TEST_SH -c "PATH=$Q/repbin:\$PATH; . $OVERLAY/usr/bin/sweetspot-rapporto" 2>/dev/null)
+expect "rapporto: JSON con computer e rete" "1|ASUSTeK|N550JV|r8169 ethernet true" \
+	"$(printf '%s' "$rap" | jq -r '[.formato, .computer.produttore, .computer.modello, (.rete[0] | "\(.driver) \(.tipo) \(.collegata)")] | join("|")' 2>/dev/null)"
+expect "rapporto: senza indirizzi ne' voci di rete" "XRUN nella sessione|Turbo|attivo, vedi [indirizzo]" \
+	"$(printf '%s' "$rap" | jq -r '[.verifiche[].voce] + [.verifiche[-1].dettaglio] | join("|")' 2>/dev/null)"
+expect "rapporto: nessun 192.168 nel testo" "0" "$(printf '%s' "$rap" | grep -c '192\.168')"
+if command -v python3 > /dev/null; then
+	mkdir -p "$Q/matrice"
+	printf '%s\n' "$rap" > "$Q/matrice/prova.json"
+	python3 "$ROOT/tools/matrice-compatibilita.py" --rapporti "$Q/matrice" --pagina "$Q/matrice.md"
+	expect "matrice: una riga dal rapporto, avvisi contati" "1|1" \
+		"$(grep -c '^| .*ASUSTeK N550JV' "$Q/matrice.md")|$(grep '^| .*ASUSTeK' "$Q/matrice.md" | awk -F'|' '{gsub(/ /, "", $8); print $8}')"
+	expect "matrice: docs/compatibilita.md aggiornata" "0" \
+		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
+fi
 
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then

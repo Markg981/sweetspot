@@ -56,6 +56,10 @@ $(option si "Acceso (utente root)" "$(conf SSH no)")
 </select>
 <label for="sshp">Password SSH <span>(lascia vuoto per non cambiarla)</span></label>
 <input id="sshp" name="ssh_password" type="password" autocomplete="new-password">
+<label for="webp">Password di queste pagine <span>(utente admin; lascia vuoto per non cambiarla)</span></label>
+<input id="webp" name="web_password" type="password" autocomplete="new-password">
+$(if [ -n "$(conf PASSWORD_WEB)" ]; then echo '<label class="check"><input type="checkbox" name="web_libero" value="si"> Togli la password: pagine aperte a chi è nella rete di casa</label>'; fi)
+<p class="sub">Con la password ogni pagina chiede utente <b>admin</b> e password; vale subito. Se la dimentichi, togli la riga PASSWORD_WEB da sweetspot.txt sulla chiavetta.</p>
 <label for="ott">Ottimizzazioni del sistema</label>
 <select id="ott" name="ottimizzazioni">
 $(option si "Attive: core dedicati, frequenza fissa, interruzioni isolate (consigliato)" "$(conf OTTIMIZZAZIONI si)")
@@ -216,4 +220,14 @@ HTML
 button riavvia "Riavvia"
 button spegni "Spegni" "" "" danger
 echo '</div>'
+
+echo '<h2>Impostazioni iniziali</h2><div class="card formcard">'
+form_start ripristina
+cat <<'HTML'
+<p class="sub">Riporta sweetspot.txt com'era alla prima accensione: modalità, audio, rete (anche il Wi-Fi), password e opzioni tornano quelle iniziali, poi Sweetspot si riavvia. Musica, archivio, libreria di Lyrion e filtri della correzione restano.</p>
+<label class="check"><input type="checkbox" name="conferma" value="si" required> Ho capito: tutte le impostazioni torneranno quelle iniziali</label>
+<button class="danger">Ripristina le impostazioni iniziali</button>
+</form>
+</div>
+HTML
 page_end

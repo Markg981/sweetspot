@@ -23,6 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
+F_web_password="" F_web_libero=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
 
@@ -360,10 +361,19 @@ case "$F_a" in
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
 			PRECARICO "$precarico" SSH "$F_ssh" OTTIMIZZAZIONI "$F_ottimizzazioni"
 		[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
+		# Password delle pagine: si salva solo l'impronta MD5-crypt.
+		valid_value "$F_web_password" || done_to sistema "Password non valida."
+		if [ -n "$F_web_password" ]; then
+			h=$(sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
+			set -- "$@" PASSWORD_WEB "$h"
+		elif [ "$F_web_libero" = si ]; then
+			sweetspot-config rimuovi PASSWORD_WEB
+		fi
 		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else sweetspot-config rimuovi SERVER; fi
 		sweetspot-config imposta "$@"
 		rc=$?
 		[ $rc -eq 1 ] && done_to sistema "$(saved_msg 1)"
+		sweetspot-accesso applica
 		# Il nome nuovo vale subito, in Lyrion e nel player.
 		if [ "$nome" != "$old_name" ] && [ "$old_mode" = completa ]; then
 			mac=$(cat "$RUN/player.mac" 2>/dev/null)
@@ -463,6 +473,17 @@ case "$F_a" in
 		[ "$F_archivio" = si ] || F_archivio=no
 		out=$(sweetspot-installa avvia "$F_disco" "$F_archivio") || done_to sistema "Installazione non avviata: $out."
 		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
+
+	ripristina)
+		[ "$F_conferma" = si ] || done_to sistema "Per ripristinare conferma che tutte le impostazioni torneranno quelle iniziali."
+		sweetspot-config ripristina
+		rc=$?
+		[ $rc -eq 1 ] && done_to sistema "Ripristino non riuscito."
+		# Senza chiavetta un riavvio riporterebbe le impostazioni di prima.
+		[ $rc -eq 2 ] && done_to sistema "Chiavetta non trovata: le impostazioni iniziali valgono solo fino al riavvio."
+		sweetspot-accesso applica
+		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
+		done_to stato "Impostazioni iniziali ripristinate: Sweetspot si riavvia (circa un minuto)." ;;
 
 	riavvia)
 		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
