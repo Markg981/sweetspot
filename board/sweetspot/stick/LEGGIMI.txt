@@ -14,6 +14,18 @@ Come si usa
    Li' scegli la musica, installi i plugin (Qobuz, TIDAL, Spotify, radio)
    e trovi le impostazioni: menu dell'interfaccia > Impostazioni Sweetspot.
 
+Senza cavo di rete (Wi-Fi)
+--------------------------
+Il cavo e' sempre preferibile. Se proprio non puoi collegarlo, prima
+di accendere apri questa chiavetta con un computer, apri il file
+sweetspot.txt con il Blocco note e scrivi il nome e la password della
+rete di casa:
+    WIFI_NOME=La mia rete
+    WIFI_PASSWORD=la-password
+Salva, rimetti questa chiavetta nel computer e accendi. L'indirizzo da aprire
+e' sempre http://sweetspot.local/ (se il telefono non lo trova, usa
+quello che compare nella pagina del router tra i dispositivi collegati).
+
 La musica
 ---------
 - Dischi interni e USB: vengono trovati da soli e letti in sola lettura.
