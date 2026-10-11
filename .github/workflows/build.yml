@@ -54,6 +54,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign python3-yaml cpio zstd sqlite3 gcc
       - name: Test degli script
         run: sh tests/run.sh
+      - name: Matrice di compatibilità aggiornata
+        run: python3 tools/matrice-compatibilita.py --verifica
       - name: Copia di un CD simulato
         run: sh tests/cd-simulato.sh
 

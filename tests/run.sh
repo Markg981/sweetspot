@@ -1454,6 +1454,32 @@ durata && rc=0 || rc=$?
 expect "durata: uscita ferma, prova non riuscita" "1|Prova di durata: NON RIUSCITA|uscita in riproduzione: 0% delle misure (minimo 95%)" \
 	"$rc|$(head -n 1 "$Q/run/durata.txt")|$(grep '^uscita' "$Q/run/durata.txt")"
 
+echo "Rapporto e matrice di compatibilita'"
+mkdir -p "$Q/sys/class/dmi/id" "$Q/repbin" "$Q/sys/class/net/eth0/device" "$Q/drivers/r8169"
+echo ASUSTeK > "$Q/sys/class/dmi/id/sys_vendor"
+echo N550JV > "$Q/sys/class/dmi/id/product_name"
+echo 1 > "$Q/sys/class/net/eth0/carrier"
+ln -sfn "$Q/drivers/r8169" "$Q/sys/class/net/eth0/device/driver"
+printf '#!/bin/sh\nprintf "OK|Rete|indirizzo 192.168.1.20\\nINFO|Interfaccia|http://salotto.local/\\nOK|XRUN nella sessione|nessuno in 5 minuti\\nATTENZIONE|Turbo|attivo, vedi http://192.168.1.20/\\n"\n' > "$Q/repbin/sweetspot-check"
+chmod +x "$Q/repbin/sweetspot-check"
+rap=$(SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	$TEST_SH -c "PATH=$Q/repbin:\$PATH; . $OVERLAY/usr/bin/sweetspot-rapporto" 2>/dev/null)
+expect "rapporto: JSON con computer e rete" "1|ASUSTeK|N550JV|r8169 ethernet true" \
+	"$(printf '%s' "$rap" | jq -r '[.formato, .computer.produttore, .computer.modello, (.rete[0] | "\(.driver) \(.tipo) \(.collegata)")] | join("|")' 2>/dev/null)"
+expect "rapporto: senza indirizzi ne' voci di rete" "XRUN nella sessione|Turbo|attivo, vedi [indirizzo]" \
+	"$(printf '%s' "$rap" | jq -r '[.verifiche[].voce] + [.verifiche[-1].dettaglio] | join("|")' 2>/dev/null)"
+expect "rapporto: nessun 192.168 nel testo" "0" "$(printf '%s' "$rap" | grep -c '192\.168')"
+if command -v python3 > /dev/null; then
+	mkdir -p "$Q/matrice"
+	printf '%s\n' "$rap" > "$Q/matrice/prova.json"
+	python3 "$ROOT/tools/matrice-compatibilita.py" --rapporti "$Q/matrice" --pagina "$Q/matrice.md"
+	expect "matrice: una riga dal rapporto, avvisi contati" "1|1" \
+		"$(grep -c '^| .*ASUSTeK N550JV' "$Q/matrice.md")|$(grep '^| .*ASUSTeK' "$Q/matrice.md" | awk -F'|' '{gsub(/ /, "", $8); print $8}')"
+	expect "matrice: docs/compatibilita.md aggiornata" "0" \
+		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
+fi
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
