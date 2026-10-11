@@ -166,27 +166,50 @@ start_volume_watch() {
 # un player separato in Lyrion ("Sweetspot - nome del DAC"); le zone si
 # raggruppano e si sincronizzano da Lyrion. Il DAC principale resta com'e'
 # (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di
-# sistema, con priorita' real-time un po' piu' bassa, uscita diretta e
-# volume regolabile da Lyrion. Si avviano e si fermano da soli quando un DAC
-# viene collegato o staccato.
+# sistema, con priorita' real-time un po' piu' bassa, uscita diretta,
+# mixer del DAC a 0 dB e volume regolabile da Lyrion. Si avviano e si
+# fermano da soli quando un DAC viene collegato o staccato, anche mentre il
+# DAC principale manca.
+#
+# Il DAC principale e' quello indicato da DAC oppure, con DAC=auto, quello
+# scelto la prima volta in questo avvio (annotato in $RUN/dac.principale):
+# se viene staccato, il player principale lo aspetta e non passa a una zona
+# (che intanto continua a suonare); al ritorno riprende lui.
 ZONE_DIR=$RUN/zone
 
-other_dacs() { # scheda del DAC principale
+remember_main_dac() { # scheda
+	is_yes "$(conf ALTRI_DAC no)" || return 0
+	printf '%s\n' "$(dac_identity "$1")" > "$RUN/dac.principale.nuovo" &&
+		mv "$RUN/dac.principale.nuovo" "$RUN/dac.principale"
+}
+
+other_dacs() { # scheda del DAC principale (vuota se manca)
 	local d idx
 	for d in "$PROC"/asound/card[0-9]*; do
 		[ -d "$d" ] || continue
 		idx=${d##*card}
-		[ "$idx" = "$1" ] && continue
 		[ -f "$d/usbid" ] || continue
 		[ -n "$(dac_playback_dev "$idx")" ] || continue
+		if [ -n "$1" ]; then
+			[ "$idx" = "$1" ] && continue
+		else
+			# Il DAC principale manca: quando torna non deve diventare
+			# una zona, lo riprende il player principale.
+			dac_wanted "$idx" && continue
+		fi
 		echo "$idx"
 	done
 }
 
 # MAC stabile per ogni DAC (indirizzo locale, 02:...): Lyrion ricorda il
-# player e le sue impostazioni anche se la porta USB cambia.
-zone_mac() { # id usbid
-	printf '%s %s' "$1" "$2" | md5sum | awk '{ s = $1; printf "02:%s:%s:%s:%s:%s", substr(s, 1, 2), substr(s, 3, 2), substr(s, 5, 2), substr(s, 7, 2), substr(s, 9, 2) }'
+# player e le sue impostazioni anche se la porta USB o l'ordine di
+# collegamento cambiano. Dall'identificativo USB e dal numero di serie
+# (due DAC uguali: serie diverse); senza numero di serie, dal nome ALSA.
+zone_mac() { # scheda
+	local serial
+	serial=$(dac_usb_serial "$1")
+	[ -n "$serial" ] || serial=$(dac_id "$1")
+	printf '%s %s' "$(dac_usbid "$1")" "$serial" | md5sum | awk '{ s = $1; printf "02:%s:%s:%s:%s:%s", substr(s, 1, 2), substr(s, 3, 2), substr(s, 5, 2), substr(s, 7, 2), substr(s, 9, 2) }'
 }
 
 zone_start() { # scheda
@@ -197,12 +220,14 @@ zone_start() { # scheda
 	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
 	prio=$(( $(num_conf PRIORITA_AUDIO 80) - 5 ))
 	set -- -o "hw:CARD=$id,DEV=$dev" -a "$(num_conf BUFFER_ALSA_MS 400):$(num_conf PERIODI_ALSA 4)::1" \
-		-n "$name" -M Sweetspot -m "$(zone_mac "$id" "$(dac_usbid "$card")")" -C 30 -p "$prio" \
+		-n "$name" -M Sweetspot -m "$(zone_mac "$card")" -C 30 -p "$prio" \
 		-d output=info -f "/var/log/squeezelite-$id.log"
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	fmt=$(dac_native_dsd "$card")
 	[ -n "$fmt" ] && set -- "$@" -D "$(num_conf PAUSA_DSD_MS 500):$fmt"
 	mkdir -p "$ZONE_DIR"
+	# Il volume della zona lo fa Lyrion (software): il mixer del DAC a 0 dB.
+	dac_unity_gain "$card"
 	taskset -c "$HK" squeezelite "$@" &
 	echo "$! $id" > "$ZONE_DIR/$card"
 	log "player: zona \"$name\" sul DAC $id"
@@ -210,7 +235,7 @@ zone_start() { # scheda
 
 # Allinea le zone ai DAC collegati: ferma quelle di DAC staccati (o diventati
 # il principale, o con ALTRI_DAC=no), riavvia quelle cadute, avvia le nuove.
-zones_sync() { # scheda del DAC principale
+zones_sync() { # scheda del DAC principale (vuota se manca)
 	local f card pid id want=0
 	is_yes "$(conf ALTRI_DAC no)" && want=1
 	for f in "$ZONE_DIR"/*; do
@@ -448,10 +473,13 @@ player_loop() {
 		card=$(dac_find)
 		if [ -z "$card" ]; then
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
+			# Le zone continuano anche senza il DAC principale.
+			zones_sync ""
 			sleep 3
 			continue
 		fi
 		id=$(dac_id "$card")
+		remember_main_dac "$card"
 		setup_usb_irq "$card"
 		[ "$(lower "$(conf VOLUME fisso)")" = dac ] || dac_unity_gain "$card"
 		run_player "$card" || { sleep 2; continue; }
@@ -485,6 +513,14 @@ player_loop() {
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 mkdir -p "$RUN" /var/log
+# Supervisore appena partito: il DAC principale si sceglie di nuovo e le
+# zone rimaste senza processo (fermate con il supervisore) non contano.
+rm -f "$RUN/dac.principale"
+for f in "$ZONE_DIR"/*; do
+	[ -f "$f" ] || continue
+	read -r zpid _ < "$f"
+	kill -0 "$zpid" 2>/dev/null || rm -f "$f"
+done
 setup_layout
 log "player: modalita' $(mode), core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
 player_loop

@@ -100,7 +100,10 @@ diffusore sinistro e uno per il destro.
   ricampionamento si spegne da solo); il DAC deve accettarla. Attenuazione in
   più `FIR_MARGINE_DB` (3 dB): i FIR di rePhase e Acourate sono di solito già
   normalizzati, la voce "Clipping di CamillaDSP" della pagina Stato dice se
-  basta.
+  basta. La coda di ogni brano non viene tagliata: quando lo stream si chiude
+  (stop, cambio di frequenza, pausa lunga) CamillaDSP legge ancora tanti
+  campioni di silenzio quanti i tap dei FIR più due blocchi
+  (`extra_samples`), così il suono ancora dentro i filtri arriva al DAC.
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.
@@ -342,8 +345,8 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
-| `DAC` | `auto`, nome ALSA (es. `R26`) o `VID:PID` | auto |
-| `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC; pagina Stato, voce "Altri DAC (zone)" | no |
+| `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
+| `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
 | `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC, Squeezelite fisso al 100% e cursore di Lyrion seguito dalla CLI (0,6 dB per passo, 100 = 0 dB, mai sopra 0 dB). Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
@@ -358,7 +361,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `PERIFERICHE_INUTILIZZATE` | `spente`: su qualunque computer, per classe di dispositivo e mai per modello. USB con sole interfacce smart card, video, Bluetooth/wireless (webcam, adattatori BT) scollegate dai driver (`authorized=0`), anche se collegate dopo l'avvio (regola udev). PCI inutilizzati a riposo quando inattivi (`power/control=auto`, e il ponte PCI sopra se porta solo a loro): scheda video che non mostra la console, audio integrato se `USCITA_INTEGRATA=no`, multimedia, modem, FireWire, lettore di schede, Wi-Fi senza `WIFI_NOME`, Bluetooth, schede di rete attive ma senza cavo né indirizzo (decise a rete su, da `S40sweetspot-net`, dopo qualche secondo per il collegamento: una scheda non ancora attivata non si tocca). Mai DAC, dischi, tastiere, hub o la rete in uso; `accese` lascia tutto com'è | spente |
 | `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
-| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. Lyrion (porta 9000) ha la sua protezione. Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
+| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Lyrion (porta 9000) ha la sua protezione. Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
