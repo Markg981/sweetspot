@@ -170,6 +170,29 @@ fir_channel() { # sinistro|destro
 
 fir_rate() { wav_info "$DSP_DIR/fir-sinistro.wav" | cut -d' ' -f1; }
 
+# Campioni (per canale) di un impulso WAV: dalla dimensione del file, con
+# l'intestazione standard di 44 byte (per difetto, mai in meno).
+wav_frames() { # file
+	local ch bps size
+	ch=$(od -An -tu2 -j22 -N2 "$1" | tr -d ' ')
+	bps=$(od -An -tu2 -j34 -N2 "$1" | tr -d ' ')
+	size=$(wc -c < "$1")
+	case "$bps" in 8|16|24|32|64) ;; *) bps=16 ;; esac
+	[ "${ch:-0}" -ge 1 ] || ch=1
+	echo $(( (size - 44) / (ch * bps / 8) ))
+}
+
+# Il FIR piu' lungo dei due canali, in campioni alla sua frequenza.
+fir_taps() {
+	local f n max=0
+	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
+		[ -s "$f" ] || continue
+		n=$(wav_frames "$f")
+		[ "$n" -gt "$max" ] && max=$n
+	done
+	echo "$max"
+}
+
 fir_ok() {
 	local l r f
 	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
@@ -381,7 +404,7 @@ filter_names() { # prefisso canale
 }
 
 write_config() { # scheda
-	local card=$1 id dev fmt gain=0.0 ch pre side bits fir="" rate=44100 alsafmt
+	local card=$1 id dev fmt gain=0.0 ch pre side bits fir="" rate=44100 alsafmt extra=8192
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	fmt=$(dsp_out_format "$card") || { log "correzione: formato PCM del playback non disponibile"; return 1; }
@@ -396,6 +419,7 @@ write_config() { # scheda
 			return 1
 		fi
 		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
+		extra=$(( $(fir_taps) + 8192 ))
 	fi
 	# Dither TPDF alla risoluzione dell'uscita: sempre con il DAC a 16 bit;
 	# con il volume a 64 bit anche a 24 bit (i DAC "a 32 bit" ne convertono
@@ -426,6 +450,14 @@ write_config() { # scheda
 		echo "    type: Stdin"
 		echo "    channels: 2"
 		echo "    format: S32_LE"
+		# Coda del brano: quando il plugin chiude lo stream (stop, cambio di
+		# frequenza, chiusura dopo la pausa) CamillaDSP esce appena finiscono
+		# i blocchi letti e taglia il suono ancora dentro i filtri. Con gli
+		# extra_samples legge altri campioni di silenzio: due blocchi per la
+		# coda dei biquad e, con i FIR, tutta la loro lunghezza (alla
+		# frequenza di questa configurazione: CamillaDSP li scala quando il
+		# plugin cambia la frequenza).
+		echo "    extra_samples: $extra"
 		echo "  playback:"
 		echo "    type: Alsa"
 		echo "    channels: 2"

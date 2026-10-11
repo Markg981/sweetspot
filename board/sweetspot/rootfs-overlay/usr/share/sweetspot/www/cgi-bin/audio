@@ -37,6 +37,27 @@ dop_test_card() {
 	echo '</div>'
 }
 
+# Scelta del DAC principale: automatico (il primo trovato, poi lo stesso per
+# tutto l'avvio) oppure uno dei DAC USB collegati, per identificativo USB.
+# Un valore scritto a mano in sweetspot.txt (nome ALSA, parte del nome)
+# resta scelto cosi' com'e'.
+main_dac_options() {
+	local want d idx usbid found=0
+	want=$(lower "$(conf DAC auto)")
+	[ -z "$want" ] && want=auto
+	option auto "Automatico: il primo DAC USB trovato, lo stesso per tutto l'avvio" "$want"
+	for d in "$PROC"/asound/card[0-9]*; do
+		[ -d "$d" ] || continue
+		idx=${d##*card}
+		[ -f "$d/usbid" ] || continue
+		[ -n "$(dac_playback_dev "$idx")" ] || continue
+		usbid=$(dac_usbid "$idx")
+		[ "$usbid" = "$want" ] && found=1
+		option "$usbid" "$(dac_name "$idx") (USB $usbid)" "$want"
+	done
+	[ "$want" = auto ] || [ "$found" = 1 ] || option "$want" "$want (da sweetspot.txt)" "$want"
+}
+
 card=$(dac_find)
 mac=$(cat "$RUN/player.mac" 2>/dev/null)
 
@@ -218,6 +239,11 @@ $(option auto "Automatico: nativo se il DAC lo dichiara, altrimenti convertito i
 $(option nativo "Nativo forzato: per DAC che lo supportano senza dichiararlo" "$(conf DSD auto)")
 $(option dop "DoP: solo se il DAC lo supporta, altrimenti forte fruscio" "$(conf DSD auto)")
 $(option no "Convertito in PCM" "$(conf DSD auto)")
+</select>
+
+<label for="dacp">DAC principale <span>(con più DAC collegati: quello del core isolato, della correzione e del volume a 64 bit)</span></label>
+<select id="dacp" name="dac">
+$(main_dac_options)
 </select>
 
 <label for="altri">Altri DAC USB</label>
