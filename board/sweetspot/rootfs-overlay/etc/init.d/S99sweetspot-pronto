@@ -8,6 +8,9 @@ case "$1" in
 	start)
 		touch /run/sweetspot/avvio-completato
 		setsid /usr/bin/sweetspot-aggiorna conferma > /dev/null 2>&1 < /dev/null &
+		# Dopo 10 minuti di funzionamento i riavvii del watchdog non sono
+		# piu' consecutivi (vedi sweetspot-aggiorna watchdog).
+		setsid sh -c 'sleep 600; /usr/bin/sweetspot-aggiorna stabile' > /dev/null 2>&1 < /dev/null &
 		;;
 	stop) rm -f /run/sweetspot/avvio-completato ;;
 esac

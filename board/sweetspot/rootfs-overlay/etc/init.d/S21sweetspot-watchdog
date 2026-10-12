@@ -41,8 +41,16 @@ case "$1" in
 		max=$(cat "$WDSYS/max_timeout" 2>/dev/null)
 		case "$max" in ''|*[!0-9]*|0) ;; *) [ "$max" -lt "$TIMEOUT" ] && TIMEOUT=$max ;; esac
 		# Perche' si e' riavviato: bootstatus diverso da 0 = il watchdog.
+		# sweetspot-aggiorna conta i riavvii consecutivi e al secondo fa
+		# partire l'altra copia dal prossimo avvio.
 		boot=$(cat "$WDSYS/bootstatus" 2>/dev/null)
-		case "$boot" in ''|0) ;; *) log "watchdog: l'avvio precedente e' finito con un riavvio del watchdog (bootstatus $boot)"; echo "$boot" > "$RUN/watchdog.riavvio" ;; esac
+		case "$boot" in
+			''|0) ;;
+			*)
+				log "watchdog: l'avvio precedente e' finito con un riavvio del watchdog (bootstatus $boot)"
+				echo "$boot" > "$RUN/watchdog.riavvio"
+				sweetspot-aggiorna watchdog ;;
+		esac
 		# Sul core di sistema, sopra i processi normali e sotto l'audio.
 		taskset -c 0 chrt -f 5 watchdog -T "$TIMEOUT" -t $PERIOD "$WD" &&
 			log "watchdog: $(cat "$WDSYS/identity" 2>/dev/null), riavvio dopo $(cat "$WDSYS/timeout" 2>/dev/null) secondi di blocco"

@@ -13,6 +13,12 @@
 #   sweetspot-aggiorna altra           al prossimo avvio prova l'altra versione
 #   sweetspot-aggiorna predefinita     la versione in uso diventa quella predefinita
 #   sweetspot-aggiorna conferma        a fine avvio: questa versione funziona
+#   sweetspot-aggiorna watchdog        all'avvio dopo un riavvio del watchdog
+#                                      (S21): conta i riavvii consecutivi e,
+#                                      al secondo, al prossimo avvio parte
+#                                      l'altra copia
+#   sweetspot-aggiorna stabile         dopo 10 minuti di funzionamento (S99):
+#                                      azzera il conteggio
 #
 # Sulla partizione SWEETSPOT ci sono due copie del sistema (vedi common.sh):
 # l'aggiornamento va sempre in quella non in uso, poi GRUB la avvia una
@@ -72,6 +78,8 @@ do_status() {
 	fi
 	[ -f "$DIR/fallita" ] && echo "fallita=$(cat "$DIR/fallita")"
 	[ -f "$DIR/riuscita" ] && echo "riuscita=1"
+	[ -f "$DIR/watchdog.riavvii" ] && echo "watchdog_riavvii=$(cat "$DIR/watchdog.riavvii")"
+	[ -f "$DIR/watchdog.ritorno" ] && echo "watchdog_ritorno=$(cat "$DIR/watchdog.ritorno")"
 	if [ -f "$DIR/stato" ]; then
 		job=$(cat "$DIR/stato")
 		if running; then
@@ -386,6 +394,59 @@ do_default() {
 	stick_umount
 }
 
+# --- Riavvii del watchdog ----------------------------------------------------
+#
+# Un blocco totale fa ripartire il computer con il watchdog, ma nella stessa
+# copia: se il blocco si ripete a ogni avvio (una versione che si blocca
+# dopo la conferma, un'impostazione sbagliata) resterebbe cosi' per sempre.
+# Il conteggio dei riavvii consecutivi del watchdog sta nello stato
+# dell'avvio (riavvii=N, con la copia in uso); al secondo, se l'altra copia
+# e' installata, diventa quella predefinita dal prossimo avvio (senza
+# riavviare adesso: se questo avvio regge, l'utente legge l'avviso nella
+# pagina Stato e puo' decidere). Dopo 10 minuti di funzionamento il
+# conteggio si azzera.
+
+WATCHDOG_MAX=2
+
+do_watchdog_reset() {
+	local env slot n other d
+	slot=$(running_slot)
+	other=$(other_slot "$slot")
+	mkdir -p "$DIR"
+	stick_mount rw || return 0
+	env=$(boot_env)
+	n=$(grubenv_get "$env" riavvii)
+	[ "$(grubenv_get "$env" riavvii_copia)" = "$slot" ] || n=0
+	case "$n" in ''|*[!0-9]*) n=0 ;; esac
+	n=$((n + 1))
+	grubenv_set "$env" "riavvii=$n" "riavvii_copia=$slot"
+	echo "$n" > "$DIR/watchdog.riavvii"
+	log "aggiornamento: $n riavvii consecutivi del watchdog con la copia $slot"
+	d=$(slot_dir "$STICK_MNT" "$other")
+	if [ "$n" -ge "$WATCHDOG_MAX" ] && [ -f "$d/$(kernel_file)" ] && [ -f "$d/rootfs.cpio.zst" ] &&
+		[ "$(grubenv_get "$env" slot)" != "$other" ]; then
+		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=
+		[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$other"
+		echo "$other" > "$DIR/watchdog.ritorno"
+		log "aggiornamento: dal prossimo avvio parte la copia $other ($(cat "$STICK_MNT/boot/versioni/$other" 2>/dev/null || echo versione sconosciuta))"
+	fi
+	stick_umount
+}
+
+# Dieci minuti di funzionamento: i riavvii del watchdog non sono piu'
+# consecutivi.
+do_stable() {
+	local env
+	stick_mount rw || return 0
+	env=$(boot_env)
+	if [ -n "$(grubenv_get "$env" riavvii)" ]; then
+		grubenv_set "$env" riavvii= riavvii_copia=
+		log "aggiornamento: funzionamento stabile, conteggio dei riavvii del watchdog azzerato"
+	fi
+	stick_umount
+	rm -f "$DIR/watchdog.riavvii"
+}
+
 # --- Conferma a fine avvio ----------------------------------------------------
 
 # Aggiorna menu e GRUB sulla chiavetta se questa versione ne porta di nuovi
@@ -500,6 +561,8 @@ case "$1" in
 	pacchetti) do_packages ;;
 	annulla) do_cancel ;;
 	altra) do_other ;;
+	watchdog) do_watchdog_reset ;;
+	stabile) do_stable ;;
 	predefinita) do_default ;;
 	conferma) do_confirm ;;
 	_lavoro) install_job "$2" "$3"; rc=$?; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"; exit "$rc" ;;

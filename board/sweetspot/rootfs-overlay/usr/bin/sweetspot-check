@@ -549,6 +549,11 @@ check_system() {
 	else
 		emit ATTENZIONE "Watchdog" "non attivo: un blocco totale richiede di spegnere a mano"
 	fi
+	if [ -s "$RUN/aggiornamento/watchdog.ritorno" ]; then
+		emit ATTENZIONE "Riavvii del watchdog" "due di seguito con questa copia: dal prossimo avvio parte la copia $(cat "$RUN/aggiornamento/watchdog.ritorno") (Sistema > aggiornamenti per cambiare)"
+	elif [ -s "$RUN/aggiornamento/watchdog.riavvii" ]; then
+		emit ATTENZIONE "Riavvii del watchdog" "l'ultimo avvio e' finito con un blocco totale; al secondo di seguito parte l'altra copia"
+	fi
 	ip=$(net_ipv4)
 	if [ -n "$ip" ]; then emit OK "Rete" "indirizzo $ip"; else emit ATTENZIONE "Rete" "nessun indirizzo: il cavo e' collegato?"; fi
 	if [ "$(mode)" = player ]; then
