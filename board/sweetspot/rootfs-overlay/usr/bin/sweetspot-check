@@ -432,7 +432,7 @@ check_player() {
 	elif [ "$vol" = software ]; then
 		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC"
 	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
-		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita, Squeezelite fisso al 100%$(volume_dsp_now); sotto il 100% non e' bit-perfect, ma senza troncamenti"
+		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati$(volume_dsp_now); non e' bit-perfect, ma senza troncamenti"
 	elif [ "$vol" = dsp ] && [ -f "$RUN/volume.modo" ]; then
 		emit ATTENZIONE "Volume" "a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither"
 	else

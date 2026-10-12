@@ -81,7 +81,9 @@ diffusore sinistro e uno per il destro.
   frequenza), sul core dedicato all'audio con priorità real-time (`SCHED_FIFO`
   70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta) per tutti i suoi
   thread; la pagina Stato verifica, alla voce "CamillaDSP in real-time", la
-  priorità e il core di ogni thread. DAC a 16 bit con dither.
+  priorità e il core di ogni thread. All'uscita sempre il dither TPDF alla
+  risoluzione del DAC (16 o 24 bit): CamillaDSP modifica i campioni, e il
+  passaggio da 64 bit all'uscita non va troncato.
 - Sweetspot calcola la curva della correzione e un'**attenuazione** conservativa
   dal massimo guadagno dei singoli filtri, comprese le risonanze: i picchi
   stretti non dipendono dalla griglia usata per disegnare la curva. Il margine
@@ -347,7 +349,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
 | `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
-| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC, Squeezelite fisso al 100% e cursore di Lyrion seguito dalla CLI (0,6 dB per passo, 100 = 0 dB, mai sopra 0 dB). Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
+| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |

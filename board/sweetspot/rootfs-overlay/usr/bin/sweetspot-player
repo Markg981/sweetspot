@@ -153,11 +153,18 @@ dsp_clip_poll() {
 
 # Latenza durante l'ascolto (facoltativa, LATENZA_ASCOLTO=si): una misura
 # leggera sul core della riproduzione per tutta la sessione.
+# I sorveglianti (volume, latenza) partono in un gruppo di processi
+# proprio (setsid): fermandoli si fermano anche i loro figli (nc, pipeline).
 start_volume_watch() {
 	VOLPID=""
 	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] || return 0
-	taskset -c "$HK" sweetspot-volume segui "$PLAYER_MAC" &
+	taskset -c "$HK" setsid sweetspot-volume segui "$PLAYER_MAC" &
 	VOLPID=$!
+}
+
+stop_watch() { # pid
+	[ -n "$1" ] || return 0
+	kill -- "-$1" 2>/dev/null || kill "$1" 2>/dev/null
 }
 
 # --- Altri DAC (zone) ---------------------------------------------------------------
@@ -257,7 +264,7 @@ zones_sync() { # scheda del DAC principale (vuota se manca)
 start_latency_watch() {
 	LATPID=""
 	[ "$(lower "$(conf LATENZA_ASCOLTO no)")" = si ] || return 0
-	taskset -c "$HK" sweetspot-latenza --ascolto "$LAYOUT_AUDIO" &
+	taskset -c "$HK" setsid sweetspot-latenza --ascolto "$LAYOUT_AUDIO" &
 	LATPID=$!
 }
 
@@ -416,6 +423,11 @@ run_player() {
 			log "player: il DAC non ha un controllo del volume, volume fisso"
 		fi
 	fi
+	# Volume a 64 bit: Lyrion tiene il controllo digitale del volume (cosi'
+	# Material e le app mostrano il cursore) e manda il guadagno a
+	# Squeezelite, che con -F lo ignora: i campioni escono invariati e il
+	# volume lo applica CamillaDSP (sweetspot-volume segue il cursore).
+	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && set -- "$@" -F
 
 	dsd=$(lower "$(conf DSD auto)")
 	fmt=$(dac_native_dsd "$card")
@@ -451,11 +463,13 @@ apply_player_prefs() {
 	[ "$(mode)" = completa ] || return 0
 	[ "$PREFS_SET" = 1 ] && return 0
 	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$PLAYER_MAC" connected '?')" = 1 ] || return 1
-	# Volume a 64 bit: Squeezelite fisso al 100%, il cursore di Lyrion resta
-	# libero e lo segue sweetspot-volume. Se CamillaDSP manca, volume software.
+	# Volume a 64 bit: il controllo digitale del volume resta acceso in
+	# Lyrion (senza, Material e le app mostrano il player a volume fisso e
+	# nascondono il cursore); Squeezelite lo ignora (-F) e il cursore lo
+	# segue sweetspot-volume. Se CamillaDSP manca, volume software.
 	case "$(lower "$(conf VOLUME fisso)")" in
 		software|dac) digital=1 ;;
-		dsp) if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then vol_dsp=1; else digital=1; fi ;;
+		dsp) digital=1; [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && vol_dsp=1 ;;
 	esac
 	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
@@ -501,8 +515,8 @@ player_loop() {
 			fi
 		done
 		wait "$PID" 2>/dev/null
-		[ -n "$LATPID" ] && kill "$LATPID" 2>/dev/null
-		[ -n "$VOLPID" ] && kill "$VOLPID" 2>/dev/null
+		stop_watch "$LATPID"
+		stop_watch "$VOLPID"
 		say "riavvio del player"
 		rm -f "$RUN/audio.tid"
 		sleep 2

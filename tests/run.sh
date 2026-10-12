@@ -721,17 +721,35 @@ vol() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
 		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume" sh "$@"
 }
-expect "scala del volume: 0,6 dB per passo" "0.0|-30.0|-59.4|-60.0" "$(vol db 100)|$(vol db 50)|$(vol db 1)|$(vol db 0)"
+volfn() { # funzione
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf SWEETSPOT_TEST=1 \
+		SWEETSPOT_WGET=$VB/wget SWEETSPOT_VOLUME_ATTESA=10 \
+		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume; $1"
+}
+# La scala di Lyrion per Squeezelite (SqueezePlay): 74 dB in due tratti,
+# cosi' il cursore suona come con il volume software e sulle zone.
+expect "scala del volume: quella di Lyrion (100 = 0 dB, 50 = -24,7, 25 = -37, 1 = -72,5)" "0.0|-24.7|-37.0|-72.5|-74.0" \
+	"$(vol db 100)|$(vol db 50)|$(vol db 25)|$(vol db 1)|$(vol db 0)"
 rm -f "$DSPE/run/camilla.call"
 vol applica 50 0
-expect "volume 50: file per i prossimi processi e CamillaDSP dal vivo" '-30.0 0|{"SetVolume":-30.0}|{"SetMute":false}|50 -30.0 0' \
+expect "volume 50: file per i prossimi processi e CamillaDSP dal vivo" '-24.7 0|{"SetVolume":-24.7}|{"SetMute":false}|50 -24.7 0' \
 	"$(cat "$DSPE/run/camilladsp.volume")|$(tr '\n' '|' < "$DSPE/run/camilla.call")$(cat "$DSPE/run/volume.dsp")"
+vol applica 100 0
+expect "volume 100: 0 dB, e resta anche per il prossimo CamillaDSP" "0.0 0|0.0 0" \
+	"$(cat "$DSPE/run/camilladsp.volume")|$(dsp 'VOLUME=dsp' prepara 1 > /dev/null; cat "$DSPE/run/camilladsp.volume")"
 vol applica -20 0
-expect "volume negativo di Lyrion: sordina" "-48.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+expect "volume negativo di Lyrion: sordina" "-44.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
 vol applica 0 0
-expect "volume 0: sordina" "-60.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+expect "volume 0: sordina" "-74.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
 vol applica abc 0; rc=$?
-expect "volume non numerico: nessun cambio" "1|-60.0 1" "$rc|$(cat "$DSPE/run/camilladsp.volume")"
+expect "volume non numerico: nessun cambio" "1|-74.0 1" "$rc|$(cat "$DSPE/run/camilladsp.volume")"
+# Primo allineamento: si riprova finche' Lyrion conosce il player.
+printf '#!/bin/sh\ncase "$*" in *mixer*volume*) n=$(cat "%s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "%s"; [ $n -ge 3 ] && echo "{\\"result\\":{\\"_volume\\":70}}" ;; *mixer*muting*) echo "{\\"result\\":{\\"_muting\\":0}}" ;; esac\nexit 0\n' "$DSPE/run/wget.n" "$DSPE/run/wget.n" > "$VB/wget"
+chmod +x "$VB/wget"
+rm -f "$DSPE/run/wget.n"
+expect "primo allineamento: riprova finche' il player non e' in Lyrion" "0|3|70 -14.8 0" \
+	"$(volfn 'sleep() { :; }; sync_first 00:11:22:33:44:55' 2>/dev/null; echo $?)|$(cat "$DSPE/run/wget.n")|$(cat "$DSPE/run/volume.dsp")"
 mkdir -p "$DSPE/chiavetta/sweetspot-dati"
 cp "$DSPE/rew.txt" "$DSPE/nuovo.txt"
 SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/nuovo.txt" "" ; rc=$?
@@ -1701,7 +1719,7 @@ echo VOLUME=dsp > "$Q/run/sweetspot.conf"
 echo dsp > "$Q/run/volume.modo"
 echo "50 -30.0 0" > "$Q/run/volume.dsp"
 expect "stato: volume a 64 bit in uso" \
-	"OK|Volume|a 64 bit in CamillaDSP con dither all'uscita, Squeezelite fisso al 100% (ora 50, -30.0 dB); sotto il 100% non e' bit-perfect, ma senza troncamenti" \
+	"OK|Volume|a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati (ora 50, -30.0 dB); non e' bit-perfect, ma senza troncamenti" \
 	"$(qcheck Volume)"
 echo riserva > "$Q/run/volume.modo"
 expect "stato: volume a 64 bit non disponibile, riserva software" \

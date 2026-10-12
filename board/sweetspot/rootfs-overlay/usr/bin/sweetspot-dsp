@@ -242,11 +242,12 @@ dsp_state_write() { # dB [muto]
 }
 
 # Senza il volume a 64 bit il volume principale resta a 0 dB (solo la
-# correzione); con il volume si parte da -30 dB finche' Lyrion non dice il suo.
+# correzione); con il volume si parte da -30 dB finche' Lyrion non dice il
+# suo, e un valore gia' scritto (anche 0.0, cioe' il cursore al 100%) resta.
 dsp_state_prepare() {
 	if ! volume_dsp; then
 		dsp_state_write 0.0
-	elif ! grep -qE '^-[0-9.]+ [01]$' "$DSP_VOLUME" 2>/dev/null; then
+	elif ! grep -qE '^-?[0-9]+(\.[0-9]+)? [01]$' "$DSP_VOLUME" 2>/dev/null; then
 		dsp_state_write -30.0
 	fi
 }
@@ -421,13 +422,14 @@ write_config() { # scheda
 		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
 		extra=$(( $(fir_taps) + 8192 ))
 	fi
-	# Dither TPDF alla risoluzione dell'uscita: sempre con il DAC a 16 bit;
-	# con il volume a 64 bit anche a 24 bit (i DAC "a 32 bit" ne convertono
-	# al piu' 24 in modo lineare).
-	bits=""
+	# Dither TPDF alla risoluzione dell'uscita: CamillaDSP modifica sempre i
+	# campioni (attenuazione, filtri o volume), quindi il passaggio da 64 bit
+	# all'uscita va fatto con il dither e non con il troncamento: a 16 bit con
+	# il DAC a 16 bit, a 24 bit negli altri casi (i DAC "a 32 bit" ne
+	# convertono al piu' 24 in modo lineare).
 	if [ "$fmt" = S16_LE ]; then
 		bits=16
-	elif volume_dsp; then
+	else
 		bits=24
 	fi
 	{
@@ -480,14 +482,12 @@ write_config() { # scheda
 				echo "      channel: $(fir_channel "$side")"
 			done
 		fi
-		if [ -n "$bits" ]; then
-			echo "  dither:"
-			echo "    type: Dither"
-			echo "    parameters:"
-			echo "      type: Flat"
-			echo "      bits: $bits"
-			echo "      amplitude: 2.0"
-		fi
+		echo "  dither:"
+		echo "    type: Dither"
+		echo "    parameters:"
+		echo "      type: Flat"
+		echo "      bits: $bits"
+		echo "      amplitude: 2.0"
 		echo "pipeline:"
 		for ch in 0 1; do
 			if [ $ch = 0 ]; then pre=sx; side=sinistro; else pre=dx; side=destro; fi
@@ -497,7 +497,7 @@ write_config() { # scheda
 			echo "      - attenuazione"
 			filter_names "$pre" "$side"
 			[ -n "$fir" ] && [ "$(dsp_mode)" = si ] && echo "      - fir_$side"
-			if [ -n "$bits" ]; then echo "      - dither"; fi
+			echo "      - dither"
 		done
 	} > "$DSP_YML.nuovo" && mv "$DSP_YML.nuovo" "$DSP_YML"
 }

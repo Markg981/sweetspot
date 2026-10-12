@@ -3,14 +3,17 @@
 #
 # Sweetspot - volume a 64 bit (VOLUME=dsp): il volume del player in Lyrion
 # lo applica CamillaDSP in virgola mobile con il dither all'uscita, mentre
-# Squeezelite resta fisso al 100%.
+# Squeezelite lascia i campioni invariati (-F).
 #
 #   sweetspot-volume segui MAC          segue il volume del player (lo avvia
 #                                       il player con CamillaDSP in uso)
 #   sweetspot-volume applica VOL MUTO   volume 0-100 e sordina 0/1
 #   sweetspot-volume db VOL             guadagno in dB di un volume 0-100
 #
-# Scala: 0,6 dB per passo, 100 = 0 dB, 50 = -30 dB, 1 = -59,4 dB, 0 = sordina.
+# Scala: la stessa che Lyrion usa per Squeezelite (Slim::Player::SqueezePlay,
+# 74 dB in due tratti), cosi' il cursore suona uguale al volume software e
+# alle zone: 100 = 0 dB, da 100 a 25 circa 0,49 dB per passo (50 = -24,7 dB,
+# 25 = -37 dB), da 25 a 1 1,48 dB per passo (1 = -72,5 dB), 0 = sordina.
 # Ogni valore va nel file che il plugin cdsp legge a ogni avvio di CamillaDSP
 # (sweetspot-dsp stato) e, dal vivo, al websocket di CamillaDSP (rampa di
 # 400 ms). Il guadagno non supera mai 0 dB (volume_limit nella configurazione).
@@ -20,7 +23,12 @@
 LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
 
 db() { # volume 0-100
-	awk -v v="$1" 'BEGIN { if (v >= 100) { printf "0.0"; exit } if (v < 0) v = 0; printf "%.1f", -(100 - v) * 0.6 }'
+	awk -v v="$1" 'BEGIN {
+		if (v >= 100) { printf "0.0"; exit }
+		if (v < 0) v = 0
+		if (v > 25) d = (v - 100) * 37 / 75; else d = v * 74 / 50 - 74
+		printf "%.1f", d
+	}'
 }
 
 apply() { # volume muto
@@ -38,25 +46,45 @@ apply() { # volume muto
 	echo "$v $d $m" > "$RUN/volume.dsp"
 }
 
-# Volume e sordina attuali del player, letti da Lyrion.
+# Volume e sordina attuali del player, letti da Lyrion. Esce con 1 se Lyrion
+# non risponde o non conosce ancora il player.
 sync_now() { # mac
 	local v m
 	v=$(LMS_TIMEOUT=5 lms_get '._volume' "$1" mixer volume '?')
+	[ -n "$v" ] || return 1
 	m=$(LMS_TIMEOUT=5 lms_get '._muting' "$1" mixer muting '?')
-	[ -n "$v" ] && apply "$v" "${m:-0}"
+	apply "$v" "${m:-0}"
+}
+
+# Il player appena avviato si presenta a Lyrion dopo qualche secondo: si
+# riprova finche' il volume non si legge (senza, il brano partirebbe al
+# volume di riserva del file finche' qualcuno non tocca il cursore).
+sync_first() { # mac
+	local i=0
+	while [ $i -lt "${SWEETSPOT_VOLUME_ATTESA:-120}" ]; do
+		sync_now "$1" && return 0
+		sleep 2
+		i=$((i + 2))
+	done
+	return 1
 }
 
 # Notifiche della CLI di Lyrion: ogni cambio del mixer del player rilegge
-# il valore assoluto (le notifiche possono essere relative, es. "+5").
+# il valore assoluto (le notifiche possono essere relative, es. "+5"); a
+# ogni (ri)collegamento del player si rilegge, perche' Lyrion non manda il
+# volume a chi si ricollega.
 follow() { # mac
-	local mac=$1 enc
+	local mac=$1 enc me=$$
 	enc=$(printf '%s' "$mac" | sed 's/:/%3A/g')
 	while kill -0 "$PPID" 2>/dev/null; do
-		sync_now "$mac"
-		{ echo "subscribe mixer"; while kill -0 "$PPID" 2>/dev/null; do sleep 30; done; } |
+		sync_first "$mac"
+		{ echo "subscribe mixer,client"; while kill -0 "$me" 2>/dev/null; do sleep 30; done; } |
 			nc "$LMS_HOST" "$LMS_CLI_PORT" 2>/dev/null |
 			while read -r line; do
-				case "$line" in "$enc mixer "*) sync_now "$mac" ;; esac
+				case "$line" in
+					"$enc mixer "*) sync_now "$mac" ;;
+					"$enc client new"*|"$enc client reconnect"*) sync_first "$mac" ;;
+				esac
 			done
 		sleep 5
 	done
