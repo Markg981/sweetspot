@@ -1067,6 +1067,45 @@ if command -v minisign > /dev/null; then
 	rm -f "$UPD/pkg/SHA256SUMS.minisig"
 fi
 
+echo "Riavvii del watchdog: al secondo di seguito parte l'altra copia"
+# In uso la copia A (predefinita), la B installata.
+echo "BOOT_IMAGE=/bzImage sweetspot.slot=a sweetspot.part=ABCD-1234" > "$UPD/proc/cmdline"
+setenv slot=a prova= tentato= riavvii= riavvii_copia=
+echo "kernel vB" > "$UPD/stick/b/bzImage"; echo "rootfs vB" > "$UPD/stick/b/rootfs.cpio.zst"; echo v9.9.9 > "$UPD/stick/boot/versioni/b"
+rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
+upd watchdog
+expect "primo riavvio del watchdog: contato, copia invariata" "1|a|a|1|no" \
+	"$(genv riavvii)|$(genv riavvii_copia)|$(genv slot)|$(upd stato | sed -n 's/^watchdog_riavvii=//p')|$([ -f "$UPD/run/aggiornamento/watchdog.ritorno" ] && echo si || echo no)"
+upd stabile
+expect "dieci minuti di funzionamento: conteggio azzerato" "||no" "$(genv riavvii)|$(genv riavvii_copia)|$([ -f "$UPD/run/aggiornamento/watchdog.riavvii" ] && echo si || echo no)"
+upd watchdog; upd watchdog
+expect "secondo riavvio di seguito: dal prossimo avvio parte la copia B" "b||b|watchdog_ritorno=b" \
+	"$(genv slot)|$(genv riavvii)|$(cat "$UPD/run/aggiornamento/watchdog.ritorno")|$(upd stato | grep '^watchdog_ritorno=')"
+wdcheck() {
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep '^[A-Z]*|Riavvii del watchdog|'
+}
+mkdir -p "$WEB/run/aggiornamento"
+cp "$UPD/run/aggiornamento/watchdog.ritorno" "$WEB/run/aggiornamento/"
+expect "stato: ritorno all'altra copia segnalato" \
+	"ATTENZIONE|Riavvii del watchdog|due di seguito con questa copia: dal prossimo avvio parte la copia b (Sistema > aggiornamenti per cambiare)" "$(wdcheck)"
+rm -f "$WEB/run/aggiornamento/watchdog.ritorno"
+echo 1 > "$WEB/run/aggiornamento/watchdog.riavvii"
+expect "stato: primo riavvio del watchdog segnalato" \
+	"ATTENZIONE|Riavvii del watchdog|l'ultimo avvio e' finito con un blocco totale; al secondo di seguito parte l'altra copia" "$(wdcheck)"
+rm -f "$WEB/run/aggiornamento/watchdog.riavvii"
+expect "stato: senza riavvii del watchdog nessuna voce" "" "$(wdcheck)"
+# Riavvii con copie diverse non sono consecutivi; senza l'altra copia non si cambia.
+rm -f "$UPD/run/aggiornamento/watchdog.ritorno" "$UPD/run/aggiornamento/watchdog.riavvii"
+setenv slot=a riavvii=1 riavvii_copia=b
+upd watchdog
+expect "riavvio precedente con l'altra copia: si ricomincia da uno" "1|a|a" "$(genv riavvii)|$(genv riavvii_copia)|$(genv slot)"
+rm -f "$UPD/stick/b/rootfs.cpio.zst"
+upd watchdog
+expect "senza l'altra copia installata: conteggio ma nessun cambio" "2|a|no" "$(genv riavvii)|$(genv slot)|$([ -f "$UPD/run/aggiornamento/watchdog.ritorno" ] && echo si || echo no)"
+setenv slot=a prova= tentato= riavvii= riavvii_copia=
+rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
+
 echo "Raspberry Pi"
 PI=$WORK/rpi
 mkdir -p "$PI/proc/device-tree/chosen/bootloader" "$PI/run" "$PI/sys/devices/system/cpu/smt" "$PI/stick/a/overlays" \
