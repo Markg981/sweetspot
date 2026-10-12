@@ -11,25 +11,41 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 # Il watchdog del Raspberry Pi arriva al massimo a 15 secondi: si alimenta
-# ogni 5, cosi' basta su ogni scheda.
+# ogni 5, cosi' basta su ogni scheda (il tempo si adatta al massimo del
+# dispositivo).
 TIMEOUT=60
 PERIOD=5
+WD=${SWEETSPOT_WATCHDOG_DEV:-/dev/watchdog}
+WDSYS=$SYS/class/watchdog/watchdog0
 
 case "$1" in
 	start)
 		is_yes "$(conf WATCHDOG si)" || exit 0
 		mkdir -p "$RUN"
-		if [ ! -c /dev/watchdog ]; then
+		# Watchdog hardware del chipset (gli stessi moduli che S03 toglie
+		# dalla blacklist con WATCHDOG=si); softdog solo se manca.
+		if [ ! -c "$WD" ]; then
+			for m in iTCO_wdt sp5100_tco; do
+				modprobe "$m" 2>/dev/null
+			done
+			udevadm settle --timeout=5 2>/dev/null
+		fi
+		if [ ! -c "$WD" ]; then
 			modprobe softdog soft_margin=$TIMEOUT 2>/dev/null
 			udevadm settle --timeout=5 2>/dev/null
 		fi
-		if [ ! -c /dev/watchdog ]; then
+		if [ ! -c "$WD" ]; then
 			log "watchdog: nessun dispositivo disponibile"
 			exit 0
 		fi
+		max=$(cat "$WDSYS/max_timeout" 2>/dev/null)
+		case "$max" in ''|*[!0-9]*|0) ;; *) [ "$max" -lt "$TIMEOUT" ] && TIMEOUT=$max ;; esac
+		# Perche' si e' riavviato: bootstatus diverso da 0 = il watchdog.
+		boot=$(cat "$WDSYS/bootstatus" 2>/dev/null)
+		case "$boot" in ''|0) ;; *) log "watchdog: l'avvio precedente e' finito con un riavvio del watchdog (bootstatus $boot)"; echo "$boot" > "$RUN/watchdog.riavvio" ;; esac
 		# Sul core di sistema, sopra i processi normali e sotto l'audio.
-		taskset -c 0 chrt -f 5 watchdog -T $TIMEOUT -t $PERIOD /dev/watchdog &&
-			log "watchdog: $(cat "$SYS/class/watchdog/watchdog0/identity" 2>/dev/null), riavvio dopo $(cat "$SYS/class/watchdog/watchdog0/timeout" 2>/dev/null) secondi di blocco"
+		taskset -c 0 chrt -f 5 watchdog -T "$TIMEOUT" -t $PERIOD "$WD" &&
+			log "watchdog: $(cat "$WDSYS/identity" 2>/dev/null), riavvio dopo $(cat "$WDSYS/timeout" 2>/dev/null) secondi di blocco"
 		;;
 	stop)
 		# Alla chiusura BusyBox disattiva il watchdog (carattere magico V).

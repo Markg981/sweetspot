@@ -81,6 +81,8 @@ case "$1" in
 		done
 		# Orologio sincronizzato una volta sola, poi nessun traffico.
 		(sleep 10; ntpd -n -q -p pool.ntp.org >/dev/null 2>&1) &
+		# Schede di rete rimaste senza cavo a riposo (ora che sono su).
+		sweetspot-silenzio rete &
 		;;
 	stop)
 		killall udhcpc wpa_supplicant 2>/dev/null
