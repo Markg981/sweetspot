@@ -1318,16 +1318,26 @@ prefn() {
 U=file://$PRE/musica/Album%20%C3%A8
 expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
 expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
-expect "budget automatico: meta' della memoria libera" "2097152" "$(prefn preload_budget_kb)"
+# I buffer di Squeezelite (8 GB: 1 GB + 2 GB, player_buffers) si riempiono
+# a poco a poco: senza il player in esecuzione contano per intero.
+expect "buffer del player da riempire: contano per intero senza il player" "3048576" "$(prefn player_reserve_kb)"
+expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "572864" "$(prefn preload_budget_kb)"
+mkdir -p "$PRE/proc/4321"
+printf 'VmRSS:\t 1048576 kB\n' > "$PRE/proc/4321/status"
+echo 4321 > "$PRE/run/squeezelite.pid"
+expect "buffer del player in parte gia' occupati: conta solo il resto" "2000000|1097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
+rm -f "$PRE/run/squeezelite.pid"
 echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
 expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
 echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
-expect "budget mai oltre la memoria libera meno 256 MB" "3932160" "$(prefn preload_budget_kb)"
+expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "883584" "$(prefn preload_budget_kb)"
+printf 'PRECARICO_FILE_MAX_MB=1 2\n' > "$PRE/run/sweetspot.conf"
+expect "limite dei file non numerico: predefinito, senza errori" "1048576" "$(prefn file_max_kb 2>&1)"
 rm -f "$PRE/run/sweetspot.conf"
 sleep 30 &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
-expect "budget stabile: la memoria gia' bloccata conta come libera" "2097652" "$(prefn preload_budget_kb)"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "573364" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
 printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
@@ -1343,6 +1353,40 @@ expect "nuovo brano in coda: precarico da rifare" "no" \
 expect "brano escluso: nuovo verdetto" "no" \
 	"$(prefn "plan_held 'SI 2 $PRE/musica/Album è/b c.flac
 OLTRE 1 $PRE/musica/Album è/d.flac' && echo si || echo no")"
+expect "coda di soli streaming: niente da tenere, nessuna esclusione" "si|no" \
+	"$(prefn "plan_held 'STREAM http://radio.example/stream' && echo si || echo no")|$(prefn "plan_held 'STREAM http://radio.example/stream
+MANCA /x.flac' && echo si || echo no")"
+# Standby dei dischi: stato vero da hdparm -C, un disco svegliato da altro
+# esce dall'elenco e si riprova non prima di un minuto.
+mkdir -p "$PRE/bin" "$PRE/sys/block/sdb/queue" "$PRE/sys/block/sdc/queue"
+echo 1 > "$PRE/sys/block/sdb/queue/rotational"; echo 1 > "$PRE/sys/block/sdc/queue/rotational"
+cat > "$PRE/bin/hdparm" <<'FINTO'
+#!/bin/sh
+echo "$*" >> "$HDPARM_LOG"
+case "$1" in
+	-C) if grep -q "^${2#/dev/}$" "$HDPARM_SLEEPING" 2>/dev/null; then echo " drive state is:  standby"; else echo " drive state is:  active/idle"; fi ;;
+	-y) echo "${2#/dev/}" >> "$HDPARM_SLEEPING" ;;
+esac
+FINTO
+chmod +x "$PRE/bin/hdparm"
+prestandby() {
+	HDPARM_LOG=$PRE/run/hdparm.log HDPARM_SLEEPING=$PRE/run/dormienti SWEETSPOT_HDPARM=$PRE/bin/hdparm SWEETSPOT_SYSFS=$PRE/sys \
+		prefn "file_disk() { case \"\$1\" in *a.flac) echo sdb ;; *) echo sdc ;; esac; }; standby_disks"
+}
+printf 'SI 3 %s\nSI 2 %s\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+rm -f "$PRE/run/hdparm.log" "$PRE/run/dormienti" "$PRE/run/precarico.standby" "$PRE/run/precarico.standby.t"
+prestandby
+expect "standby: i dischi della coda fermati e annotati" "sdb sdc|2" "$(cat "$PRE/run/precarico.standby")|$(grep -c -- '^-y' "$PRE/run/hdparm.log")"
+echo sdb > "$PRE/run/dormienti"
+rm -f "$PRE/run/hdparm.log"
+prestandby
+expect "standby: disco svegliato da altro: fuori dall'elenco, nessun nuovo -y prima di un minuto" "sdb|0|1" \
+	"$(cat "$PRE/run/precarico.standby")|$(grep -c -- '^-y' "$PRE/run/hdparm.log")|$(grep -c 'disco sdc svegliato da altro' "$PRE/log")"
+echo 0 > "$PRE/run/precarico.standby.t"
+rm -f "$PRE/run/hdparm.log"
+prestandby
+expect "standby: passato un minuto si riprova" "sdb sdc|1" "$(cat "$PRE/run/precarico.standby")|$(grep -c -- '^-y /dev/sdc' "$PRE/run/hdparm.log")"
+rm -f "$PRE/run/precarico.piano" "$PRE/run/precarico.standby" "$PRE/run/precarico.standby.t" "$PRE/run/dormienti" "$PRE/run/hdparm.log"
 printf 'SI 3 %s\nSI 2 %s\nSTREAM http://radio.example/stream\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
 printf 'stato\tpronto\nfile\t3000\tok\t%s\nfile\t2000\terrore: Cannot allocate memory\t%s\nfile\t9\tok\t/vecchio.flac\n' \
 	"$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.stato"

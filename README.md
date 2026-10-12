@@ -37,12 +37,16 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
    aspetta la fine dell'ascolto.
 9. **Precarico in RAM** (modalità completa): i file della coda, dal brano in
-   corso alla fine, vengono letti e bloccati in RAM (`mlock`), entro un budget
-   di memoria (per difetto metà di quella libera). Quando tutta la coda è in
-   RAM, i dischi meccanici che la contengono vanno in standby. Lo streaming non
-   si precarica, i file oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la
-   pagina Stato mostra brani caricati, memoria usata, esclusioni e dischi
-   fermi.
+   corso alla fine, vengono letti dietro a tutti gli altri processi (`nice`,
+   `ionice` idle) e bloccati in RAM (`mlock`), entro un budget di memoria (per
+   difetto metà di quella libera, tolti i buffer di Squeezelite ancora da
+   riempire). Quando tutta la coda è in RAM, i dischi meccanici che la
+   contengono vanno in standby; lo stato mostrato è quello vero (`hdparm -C`):
+   un disco svegliato da altro esce dall'elenco e si riprova a fermarlo dopo
+   un minuto. Con la coda invariata il piano non si ricalcola (niente `stat`
+   sulle cartelle di rete a ogni giro). Lo streaming non si precarica, i file
+   oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la pagina Stato mostra
+   brani caricati, memoria usata, esclusioni e dischi fermi.
 
 ## Come si usa
 
@@ -342,7 +346,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `SERVER` | solo modalità player: indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
 | `MODALITA_ASCOLTO` | `si`, `no`: mentre la musica suona lettura della libreria, copie e ripping restano sospesi. Nella pagina Sistema un'unica scelta, che vale subito: *ascolto puro* (questa più `PRECARICO=si`: coda in RAM e dischi fermi), *lavori sospesi* (`PRECARICO=no`) o *spenta*; la pagina Stato, voce "Ascolto", dice quale è attiva e quanti lavori sono sospesi ora | si |
 | `PRECARICO` | `si`, `no`: coda di ascolto in RAM | si |
-| `PRECARICO_MB` | `auto` (metà della memoria libera) o MB | auto |
+| `PRECARICO_MB` | `auto` (metà della memoria libera, tolti i buffer di Squeezelite ancora da riempire) o MB; mai oltre la memoria libera meno quei buffer e 256 MB | auto |
 | `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
 | `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
