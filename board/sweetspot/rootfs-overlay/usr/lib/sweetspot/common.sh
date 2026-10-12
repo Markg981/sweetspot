@@ -802,6 +802,29 @@ part_disk() { # sdb1 -> sdb, nvme0n1p1 -> nvme0n1
 	echo "${p##*/}"
 }
 
+# Dischi (interi) che contengono la musica montata da sweetspot-dischi.
+music_disks() {
+	local dev disk
+	[ -f "$RUN/dischi.list" ] || return 0
+	cut -d'|' -f2 "$RUN/dischi.list" | while IFS= read -r dev; do
+		[ -n "$dev" ] || continue
+		disk=$(part_disk "$dev") || disk=$dev
+		echo "$disk"
+	done | sort -u
+}
+
+# La prova dell'ascolto puro: "disco NOME SETTORI_LETTI" per ogni disco con
+# la musica e "rete BYTE" (ricevuti + trasmessi, senza lo). Li annota
+# sweetspot-ascolto all'inizio di ogni ascolto, li confronta sweetspot-check.
+io_counters() {
+	local disk
+	for disk in $(music_disks); do
+		[ -f "$SYS/block/$disk/stat" ] || continue
+		echo "disco $disk $(awk '{ print $3 }' "$SYS/block/$disk/stat")"
+	done
+	echo "rete $(awk 'NR > 2 && $1 !~ /^lo:/ { sub(/^[^:]*:/, ""); t += $1 + $9 } END { print t + 0 }' "$PROC/net/dev")"
+}
+
 # Montaggio condiviso: chi monta la chiavetta (impostazioni, salvataggio
 # dei dati, aggiornamenti) la smonta solo se nessun altro la sta usando.
 # Il primo che chiede la scrittura la rimonta scrivibile. Il blocco usa il

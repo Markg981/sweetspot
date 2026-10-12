@@ -66,7 +66,7 @@ Daphile:
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
 | **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
-| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete |
+| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
 anche con il Blocco note).
@@ -392,6 +392,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH) a riproduzione ferma, obiettivo sotto 50 µs |
 | Latenza durante l'ascolto | `LATENZA_ASCOLTO=si` in `sweetspot.txt`: finestre di 30 s a 100 risvegli al secondo sul core della riproduzione, solo mentre l'uscita suona; pagina di stato, massima e ultima finestra. Spenta in modo predefinito: il thread di misura (priorità 85) toglie pochi µs ogni 10 ms al player |
 | XRUN della sessione | pagina di stato, "XRUN nella sessione": eventi e recuperi falliti dall'ultimo avvio del player; lo storico del registro resta come informazione. Zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
+| Ascolto puro | pagina di stato, "Letture dal disco durante l'ascolto" e "Rete durante l'ascolto": settori letti dai dischi con la musica (`/sys/block/*/stat`) e byte di rete (`/proc/net/dev`, senza `lo`) dall'inizio dell'ascolto in corso o dell'ultimo, annotati da `sweetspot-ascolto` quando il DAC parte. Con il precarico finito le letture sono zero ("la musica suona dalla RAM"); la rete, in modalità completa, è solo il controllo dal browser e dalle app (sotto 2 KB/s), altrimenti streaming, cartelle di rete o precarico dalla rete |
 | Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
 | Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
