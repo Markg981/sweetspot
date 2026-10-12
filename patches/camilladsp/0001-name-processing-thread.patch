@@ -1,0 +1,34 @@
+Subject: [PATCH] processing: name the processing thread
+
+The capture and playback threads are named ("FileCapture", "AlsaPlayback",
+"AlsaPlaybackInner"), the processing thread is not: it shares the comm
+"camilladsp" with the main, signal and websocket threads. Sweetspot pins
+only the audio threads to its isolated core with real-time priority and
+keeps the others on the system cores: with a name it can tell them apart.
+
+Source: HEnquist/camilladsp v4.1.3
+Upstream: Not submitted (local change)
+
+--- a/src/processing.rs
++++ b/src/processing.rs
+@@ -32,7 +32,13 @@
+     rx_pipeconf: crossbeam_channel::Receiver<(config::ConfigChange, config::Configuration)>,
+     processing_params: Arc<ProcessingParameters>,
+ ) -> thread::JoinHandle<()> {
+-    thread::spawn(move || {
++    // Named like the capture and playback threads ("FileCapture",
++    // "AlsaPlayback"), so that a supervisor can tell the audio threads
++    // from the websocket, signal and main threads (Sweetspot pins only
++    // the audio threads to the isolated core with real-time priority).
++    thread::Builder::new()
++        .name("Processing".to_string())
++        .spawn(move || {
+         let chunksize = conf_proc.devices.chunksize;
+         let samplerate = conf_proc.devices.samplerate;
+         let multithreaded = conf_proc.devices.multithreaded();
+@@ -187,4 +193,5 @@
+             };
+         }
+     })
++        .expect("failed to spawn the processing thread")
+ }

@@ -96,27 +96,58 @@ dsp_priority() {
 	printf '%s' "$p"
 }
 
-# CamillaDSP (correzione ambientale), tutti i suoi thread, in real-time
-# (SCHED_FIFO, PRIORITA_DSP) e, con i core isolati, sul core della
-# riproduzione: lo avvia il plugin ALSA a ogni brano, si controlla a ogni
-# giro. Un thread gia' a posto non si tocca.
+# Thread audio di CamillaDSP, dal nome (comm): cattura dallo stdin del
+# plugin, elaborazione (nome dato dalla nostra patch), riproduzione ALSA.
+# Gli altri (principale, segnali, websocket e le sue connessioni) non
+# toccano l'audio.
+dsp_audio_thread() { # comm
+	case "$1" in FileCapture|RawFileCapture|Processing|AlsaPlayback|AlsaPlaybackInner) return 0 ;; esac
+	return 1
+}
+
+# Core consentiti a un thread (Cpus_allowed_list) e "PRIORITA' POLITICA".
+thread_cpus() { sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$1/status" 2>/dev/null; }
+thread_sched() { sed 's/.*) //' "$1/stat" 2>/dev/null | cut -d' ' -f38,39; }
+
+# CamillaDSP (correzione ambientale o volume a 64 bit): lo avvia il plugin
+# ALSA a ogni brano, dal thread real-time di Squeezelite, quindi nasce con
+# la sua priorita' (80) sul core della riproduzione. I suoi thread audio
+# restano li', in real-time sotto il player (SCHED_FIFO, PRIORITA_DSP); gli
+# altri (principale, segnali, websocket, connessioni di sweetspot-camilla)
+# vanno sui core di sistema con la priorita' normale: sul core isolato
+# gira solo l'audio. Senza thread "Processing" (CamillaDSP senza la nostra
+# patch) si trattano tutti come audio, come prima. Un thread gia' a posto
+# non si tocca; si controlla a ogni giro.
 pin_dsp() {
-	local p t prio sched
+	local p t tid prio comm named audio
 	[ -f "$RUN/correzione.attiva" ] || return 0
 	prio=$(dsp_priority)
 	for p in $(pidof camilladsp 2>/dev/null); do
+		named=0
+		for t in "$PROC/$p"/task/*; do
+			[ "$(cat "$t/comm" 2>/dev/null)" = Processing ] && named=1
+		done
 		for t in "$PROC/$p"/task/*; do
 			[ -d "$t" ] || continue
-			[ "$PIN" = 1 ] && taskset -p -c "$LAYOUT_AUDIO" "${t##*/}" >/dev/null 2>&1
-			sched=$(sed 's/.*) //' "$t/stat" 2>/dev/null | cut -d' ' -f38,39)
-			[ "$sched" = "$prio 1" ] || chrt -f -p "$prio" "${t##*/}" >/dev/null 2>&1
+			tid=${t##*/}
+			comm=$(cat "$t/comm" 2>/dev/null)
+			if [ "$named" = 1 ] && ! dsp_audio_thread "$comm"; then audio=0; else audio=1; fi
+			if [ "$audio" = 1 ]; then
+				[ "$PIN" = 1 ] && [ "$(thread_cpus "$t")" != "$LAYOUT_AUDIO" ] &&
+					taskset -p -c "$LAYOUT_AUDIO" "$tid" >/dev/null 2>&1
+				[ "$(thread_sched "$t")" = "$prio 1" ] || chrt -f -p "$prio" "$tid" >/dev/null 2>&1
+			else
+				[ "$PIN" = 1 ] && [ "$(thread_cpus "$t")" != "$HK" ] &&
+					taskset -p -c "$HK" "$tid" >/dev/null 2>&1
+				[ "$(thread_sched "$t")" = "0 0" ] || chrt -o -p 0 "$tid" >/dev/null 2>&1
+			fi
 		done
 		if [ "$(cat "$RUN/dsp.pid" 2>/dev/null)" != "$p" ]; then
 			echo "$p" > "$RUN/dsp.pid"
 			if [ "$PIN" = 1 ]; then
-				log "player: CamillaDSP $p in real-time (priorita' $prio) sul core $LAYOUT_AUDIO"
+				log "player: CamillaDSP $p, thread audio in real-time (priorita' $prio) sul core $LAYOUT_AUDIO, gli altri sui core $HK"
 			else
-				log "player: CamillaDSP $p in real-time (priorita' $prio)"
+				log "player: CamillaDSP $p, thread audio in real-time (priorita' $prio)"
 			fi
 		fi
 	done
@@ -503,7 +534,9 @@ player_loop() {
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"
 		while kill -0 "$PID" 2>/dev/null; do
-			if [ -f "$RUN/audio.tid" ]; then sleep 5; else sleep 2; fi
+			# Con CamillaDSP nel percorso si guarda piu' spesso: ogni nuovo
+			# processo nasce con la priorita' del player e va sistemato.
+			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then sleep 5; else sleep 2; fi
 			pin_output_thread "$PID"
 			pin_dsp
 			dsp_clip_poll

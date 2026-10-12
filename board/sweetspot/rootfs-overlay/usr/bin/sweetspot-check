@@ -503,27 +503,48 @@ check_player() {
 }
 
 # Thread di CamillaDSP: tutti in real-time (SCHED_FIFO), come il player.
+# Thread audio di CamillaDSP (come in sweetspot-player): con la nostra
+# patch il thread di elaborazione si chiama "Processing"; senza, tutti i
+# thread contano come audio.
 check_dsp_threads() {
-	local p t sched total=0 rt=0 prios="" cpus
+	local p t sched comm named total=0 rt=0 others=0 prios="" cpus="" c
 	p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
 	if [ -z "$p" ]; then
 		emit INFO "CamillaDSP in real-time" "non in esecuzione: parte con il primo brano"
 		return
 	fi
+	named=0
+	for t in "$PROC/$p"/task/*; do
+		[ "$(cat "$t/comm" 2>/dev/null)" = Processing ] && named=1
+	done
 	for t in "$PROC/$p"/task/*; do
 		[ -d "$t" ] || continue
-		total=$((total + 1))
+		comm=$(cat "$t/comm" 2>/dev/null)
 		sched=$(sed 's/.*) //' "$t/stat" 2>/dev/null | cut -d' ' -f38,39)
+		if [ "$named" = 1 ]; then
+			case "$comm" in
+				FileCapture|RawFileCapture|Processing|AlsaPlayback|AlsaPlaybackInner) ;;
+				*)
+					# Un thread non audio in real-time sul core isolato e' un difetto.
+					[ "${sched#* }" = 1 ] && others=$((others + 1))
+					continue ;;
+			esac
+		fi
+		total=$((total + 1))
 		if [ "${sched#* }" = 1 ]; then
 			rt=$((rt + 1))
 			case " $prios " in *" ${sched% *} "*) ;; *) prios="$prios ${sched% *}" ;; esac
 		fi
+		c=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$t/status" 2>/dev/null)
+		[ -n "$c" ] && [ -z "$cpus" ] && cpus=$c
 	done
-	cpus=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$PROC/$p/status" 2>/dev/null)
-	if [ "$total" -gt 0 ] && [ "$rt" = "$total" ]; then
-		emit OK "CamillaDSP in real-time" "$total thread a priorita'${prios} sul core ${cpus:-?}"
+	[ -n "$cpus" ] || cpus=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$PROC/$p/status" 2>/dev/null)
+	if [ "$total" -gt 0 ] && [ "$rt" = "$total" ] && [ "$others" = 0 ]; then
+		emit OK "CamillaDSP in real-time" "$total thread audio a priorita'${prios} sul core ${cpus:-?}$([ "$named" = 1 ] && echo ', gli altri sui core di sistema')"
+	elif [ "$total" -gt 0 ] && [ "$rt" = "$total" ]; then
+		emit ATTENZIONE "CamillaDSP in real-time" "$total thread audio a priorita'${prios}, ma $others thread non audio ancora in real-time: si sistemano entro pochi secondi"
 	else
-		emit ATTENZIONE "CamillaDSP in real-time" "$rt di $total thread in real-time: la correzione puo' interrompersi sotto carico"
+		emit ATTENZIONE "CamillaDSP in real-time" "$rt di $total thread audio in real-time: la correzione puo' interrompersi sotto carico"
 	fi
 }
 

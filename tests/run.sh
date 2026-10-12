@@ -1427,7 +1427,31 @@ expect "CamillaDSP: tutti i thread sul core della riproduzione" "-p -c 3 4242|-p
 rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
 dspfn 0 pin_dsp
 expect "core non isolati: real-time senza spostare i thread" "-f -p 70 4242|" "$(calls chrt)|$(calls taskset)"
-expect "registro: una riga per processo CamillaDSP" "1" "$(grep -c 'CamillaDSP 4242 in real-time' "$DSP/log")"
+expect "registro: una riga per processo CamillaDSP" "1" "$(grep -c 'CamillaDSP 4242, thread audio in real-time' "$DSP/log")"
+# CamillaDSP con la nostra patch (thread "Processing"): solo i thread audio
+# sul core della riproduzione in real-time; principale, segnali e
+# websocket sui core di sistema con la priorita' normale. Un thread gia' a
+# posto (core e politica) non si tocca.
+for t in 4242 4243 4244 4245 4246; do mkdir -p "$DSP/proc/4242/task/$t"; done
+echo camilladsp > "$DSP/proc/4242/task/4242/comm"
+echo Processing > "$DSP/proc/4242/task/4243/comm"
+echo FileCapture > "$DSP/proc/4242/task/4244/comm"
+echo AlsaPlayback > "$DSP/proc/4242/task/4245/comm"
+echo camilladsp > "$DSP/proc/4242/task/4246/comm"
+dspstat 4242 80 1 > "$DSP/proc/4242/task/4242/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4242/status"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4243/status"
+dspstat 4244 80 1 > "$DSP/proc/4242/task/4244/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4244/status"
+dspstat 4245 80 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4245/status"
+dspstat 4246 0 0 > "$DSP/proc/4242/task/4246/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4246/status"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
+dspfn 1 "HK=0,1; pin_dsp"
+expect "thread audio: in real-time sul core audio, solo chi non lo e' gia'" \
+	"-f -p 70 4244|-f -p 70 4245|-p -c 3 4245" \
+	"$(grep -- '424[345]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[345]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
+expect "thread non audio: sui core di sistema con la priorita' normale, solo chi non lo e' gia'" \
+	"-o -p 0 4242|-p -c 0,1 4242" \
+	"$(grep -- '424[26]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[26]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
 echo PRIORITA_DSP=99 > "$DSP/run/sweetspot.conf"
 expect "priorita' DSP limitata a 98" "98" "$(dspfn 1 dsp_priority)"
 echo PRIORITA_DSP=alta > "$DSP/run/sweetspot.conf"
@@ -1443,10 +1467,25 @@ printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/status"
 for f in mounts meminfo cpuinfo cmdline; do [ -e "$WEB/proc/$f" ] && cp "$WEB/proc/$f" "$DSP/proc/$f"; done
 grep -q '^MemTotal:' "$DSP/proc/meminfo" 2>/dev/null || printf 'MemTotal:       16303112 kB\n' >> "$DSP/proc/meminfo"
 [ -e "$DSP/proc/mounts" ] || : > "$DSP/proc/mounts"
-expect "verifica: un thread non real-time e' un avviso" \
-	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
+expect "verifica: un thread non audio ancora in real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|3 thread audio a priorita' 70 80, ma 1 thread non audio ancora in real-time: si sistemano entro pochi secondi" "$(dspcheck)"
+dspstat 4242 0 0 > "$DSP/proc/4242/task/4242/stat"
+dspstat 4244 70 1 > "$DSP/proc/4242/task/4244/stat"
+dspstat 4245 70 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4245/status"
+expect "verifica: thread audio in real-time sul core audio, gli altri sui core di sistema" \
+	"OK|CamillaDSP in real-time|3 thread audio a priorita' 70 sul core 3, gli altri sui core di sistema" "$(dspcheck)"
+dspstat 4244 0 0 > "$DSP/proc/4242/task/4244/stat"
+expect "verifica: un thread audio non real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|2 di 3 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
+# CamillaDSP senza la patch (nessun thread "Processing"): tutti i thread contano.
+rm -rf "$DSP/proc/4242/task/4243" "$DSP/proc/4242/task/4244" "$DSP/proc/4242/task/4245" "$DSP/proc/4242/task/4246"
+mkdir -p "$DSP/proc/4242/task/4243"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"
+rm -f "$DSP/proc/4242/task/4242/comm"
+expect "verifica senza la patch: un thread non real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
 dspstat 4242 70 1 > "$DSP/proc/4242/task/4242/stat"
-expect "verifica: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread a priorita' 70 sul core 3" "$(dspcheck)"
+expect "verifica senza la patch: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread audio a priorita' 70 sul core 3" "$(dspcheck)"
 expect "verifica: CamillaDSP parte con il primo brano" \
 	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
 
