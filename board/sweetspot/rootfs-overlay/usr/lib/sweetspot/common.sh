@@ -623,11 +623,25 @@ json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')";
 
 # lms_json PLAYER PAROLA...: invia un comando a Lyrion (PLAYER vuoto per i
 # comandi del server) e stampa la risposta JSON. Fallisce se non risponde.
+# Lyrion protetto da utente e password (Impostazioni > Avanzate > Sicurezza
+# di Lyrion): LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt valgono per
+# le richieste JSON di Sweetspot (Basic) e per la CLI (login). Senza, le
+# richieste restano come prima.
+lms_user() { conf LYRION_UTENTE; }
+lms_auth_header() {
+	local u
+	u=$(lms_user)
+	[ -n "$u" ] || return 0
+	printf 'Authorization: Basic %s' "$(printf '%s:%s' "$u" "$(conf LYRION_PASSWORD)" | base64 | tr -d '\n')"
+}
+
 lms_json() {
-	local player=$1 args="" w out
+	local player=$1 args="" w out auth
 	shift
 	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
+	auth=$(lms_auth_header)
 	out=$("${SWEETSPOT_WGET:-wget}" -q -T "${LMS_TIMEOUT:-20}" -O - --header 'Content-Type: application/json' \
+		${auth:+--header "$auth"} \
 		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null) || return 1
 	[ -n "$out" ] || return 1
@@ -800,6 +814,29 @@ part_disk() { # sdb1 -> sdb, nvme0n1p1 -> nvme0n1
 	p=$(readlink -f "$SYS/class/block/$1/.." 2>/dev/null) || return 1
 	[ -f "$p/size" ] && [ -d "$p/queue" ] || return 1
 	echo "${p##*/}"
+}
+
+# Dischi (interi) che contengono la musica montata da sweetspot-dischi.
+music_disks() {
+	local dev disk
+	[ -f "$RUN/dischi.list" ] || return 0
+	cut -d'|' -f2 "$RUN/dischi.list" | while IFS= read -r dev; do
+		[ -n "$dev" ] || continue
+		disk=$(part_disk "$dev") || disk=$dev
+		echo "$disk"
+	done | sort -u
+}
+
+# La prova dell'ascolto puro: "disco NOME SETTORI_LETTI" per ogni disco con
+# la musica e "rete BYTE" (ricevuti + trasmessi, senza lo). Li annota
+# sweetspot-ascolto all'inizio di ogni ascolto, li confronta sweetspot-check.
+io_counters() {
+	local disk
+	for disk in $(music_disks); do
+		[ -f "$SYS/block/$disk/stat" ] || continue
+		echo "disco $disk $(awk '{ print $3 }' "$SYS/block/$disk/stat")"
+	done
+	echo "rete $(awk 'NR > 2 && $1 !~ /^lo:/ { sub(/^[^:]*:/, ""); t += $1 + $9 } END { print t + 0 }' "$PROC/net/dev")"
 }
 
 # Montaggio condiviso: chi monta la chiavetta (impostazioni, salvataggio

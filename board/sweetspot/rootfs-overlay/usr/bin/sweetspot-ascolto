@@ -11,20 +11,33 @@
 #
 # Il salvataggio sulla chiavetta (sweetspot-dati) aspetta gia' da solo la
 # fine dell'ascolto; i plugin di Lyrion si aggiornano solo su richiesta.
+#
+# La prova dell'ascolto puro: all'inizio di ogni ascolto (DAC che parte) si
+# annotano i settori letti dai dischi con la musica e i byte passati dalla
+# rete ($RUN/ascolto.io); la pagina Stato mostra quanto e' stato letto e
+# trasmesso da allora. Con il precarico finito devono restare a zero.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 STOPPED=$RUN/ascolto.fermi
 PAUSABLE=$RUN/sospendibili
+IO=$RUN/ascolto.io
 
-# Processi della lettura della libreria di Lyrion.
-scanner_pids() {
-	local p
-	for p in "$PROC"/[0-9]*; do
-		case "$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)" in
-			*scanner.pl*) printf '%s\n' "${p##*/}" ;;
-		esac
-	done
+# Processi della lettura della libreria di Lyrion (pgrep: un solo processo,
+# non una lettura di /proc per ogni PID a ogni giro).
+scanner_pids() { pgrep -f scanner.pl 2>/dev/null; }
+
+# Inizio dell'ascolto: contatori di partenza (io_counters in common.sh).
+io_start() {
+	{ echo "inizio $(date +%s)"; io_counters; } > "$IO.nuovo" && mv "$IO.nuovo" "$IO"
+}
+
+# Fine dell'ascolto: i contatori di arrivo restano per la pagina Stato
+# ("nell'ultimo ascolto"), con il momento della fine.
+io_stop() {
+	[ -f "$IO" ] || return 0
+	grep -q '^fine ' "$IO" && return 0
+	{ echo "fine $(date +%s)"; io_counters | sed 's/^/fine_/'; } >> "$IO"
 }
 
 pause_work() {
@@ -58,11 +71,15 @@ resume_work() {
 
 mkdir -p "$RUN"
 : > "$STOPPED"
-trap 'resume_work; exit 0' TERM INT
+rm -f "$IO"
+playing=0
+trap 'resume_work; io_stop; exit 0' TERM INT
 while true; do
-	if is_yes "$(conf MODALITA_ASCOLTO si)" && dac_playing; then
-		pause_work
+	if dac_playing; then
+		[ "$playing" = 1 ] || { playing=1; io_start; }
+		if is_yes "$(conf MODALITA_ASCOLTO si)"; then pause_work; else resume_work; fi
 	else
+		[ "$playing" = 0 ] || { playing=0; io_stop; }
 		resume_work
 	fi
 	sleep 5

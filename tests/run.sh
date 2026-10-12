@@ -477,6 +477,37 @@ archive_action > /dev/null
 expect "archivio web: identita' ambigua non salvata" "no" "$([ -e "$WEB/run/config.call" ] && echo si || echo no)"
 rm -f "$WEB/run/dischi.list"
 
+echo "Credenziali di Lyrion"
+# Lyrion protetto: le richieste JSON portano l'intestazione Basic, la CLI
+# fa il login prima di iscriversi; senza credenziali niente cambia.
+cat > "$WEB/bin/wget-auth" <<'FINTO'
+#!/bin/sh
+prev=""; for a; do [ "$prev" = --header ] && printf '%s\n' "$a" >> "$SWEETSPOT_RUN/wget.headers"; prev=$a; done
+echo '{"result":{"_version":"9.1.1"}}'
+FINTO
+chmod +x "$WEB/bin/wget-auth"
+lmsauth() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	rm -f "$WEB/run/wget.headers"
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; lms_json '' version '?' > /dev/null"
+	grep -c '^Authorization: ' "$WEB/run/wget.headers"
+}
+expect "Lyrion aperto: nessuna intestazione di autenticazione" "0" "$(lmsauth '')"
+expect "Lyrion protetto: Basic con utente e password" "1|Authorization: Basic bWFyY286cGE6c3M=" \
+	"$(lmsauth "$(printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=pa:ss')")|$(grep '^Authorization' "$WEB/run/wget.headers")"
+printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=segreta\n' > "$WEB/s.txt"
+clisub() {
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; cli_subscribe" | tr '\n' '|' | sed 's/|$//'
+}
+expect "CLI di Lyrion: login prima dell'iscrizione" "login marco segreta|subscribe mixer,client" "$(clisub)"
+printf '' > "$WEB/s.txt"
+expect "CLI di Lyrion aperto: solo l'iscrizione" "subscribe mixer,client" "$(clisub)"
+rm -f "$WEB/s.txt" "$WEB/run/wget.headers"
+printf '' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+
 echo "Prova DoP guidata"
 mkdac "$WEB" no
 out=$(page audio)
@@ -1466,7 +1497,31 @@ expect "CamillaDSP: tutti i thread sul core della riproduzione" "-p -c 3 4242|-p
 rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
 dspfn 0 pin_dsp
 expect "core non isolati: real-time senza spostare i thread" "-f -p 70 4242|" "$(calls chrt)|$(calls taskset)"
-expect "registro: una riga per processo CamillaDSP" "1" "$(grep -c 'CamillaDSP 4242 in real-time' "$DSP/log")"
+expect "registro: una riga per processo CamillaDSP" "1" "$(grep -c 'CamillaDSP 4242, thread audio in real-time' "$DSP/log")"
+# CamillaDSP con la nostra patch (thread "Processing"): solo i thread audio
+# sul core della riproduzione in real-time; principale, segnali e
+# websocket sui core di sistema con la priorita' normale. Un thread gia' a
+# posto (core e politica) non si tocca.
+for t in 4242 4243 4244 4245 4246; do mkdir -p "$DSP/proc/4242/task/$t"; done
+echo camilladsp > "$DSP/proc/4242/task/4242/comm"
+echo Processing > "$DSP/proc/4242/task/4243/comm"
+echo FileCapture > "$DSP/proc/4242/task/4244/comm"
+echo AlsaPlayback > "$DSP/proc/4242/task/4245/comm"
+echo camilladsp > "$DSP/proc/4242/task/4246/comm"
+dspstat 4242 80 1 > "$DSP/proc/4242/task/4242/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4242/status"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4243/status"
+dspstat 4244 80 1 > "$DSP/proc/4242/task/4244/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4244/status"
+dspstat 4245 80 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4245/status"
+dspstat 4246 0 0 > "$DSP/proc/4242/task/4246/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4246/status"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
+dspfn 1 "HK=0,1; pin_dsp"
+expect "thread audio: in real-time sul core audio, solo chi non lo e' gia'" \
+	"-f -p 70 4244|-f -p 70 4245|-p -c 3 4245" \
+	"$(grep -- '424[345]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[345]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
+expect "thread non audio: sui core di sistema con la priorita' normale, solo chi non lo e' gia'" \
+	"-o -p 0 4242|-p -c 0,1 4242" \
+	"$(grep -- '424[26]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[26]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
 echo PRIORITA_DSP=99 > "$DSP/run/sweetspot.conf"
 expect "priorita' DSP limitata a 98" "98" "$(dspfn 1 dsp_priority)"
 echo PRIORITA_DSP=alta > "$DSP/run/sweetspot.conf"
@@ -1482,10 +1537,25 @@ printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/status"
 for f in mounts meminfo cpuinfo cmdline; do [ -e "$WEB/proc/$f" ] && cp "$WEB/proc/$f" "$DSP/proc/$f"; done
 grep -q '^MemTotal:' "$DSP/proc/meminfo" 2>/dev/null || printf 'MemTotal:       16303112 kB\n' >> "$DSP/proc/meminfo"
 [ -e "$DSP/proc/mounts" ] || : > "$DSP/proc/mounts"
-expect "verifica: un thread non real-time e' un avviso" \
-	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
+expect "verifica: un thread non audio ancora in real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|3 thread audio a priorita' 70 80, ma 1 thread non audio ancora in real-time: si sistemano entro pochi secondi" "$(dspcheck)"
+dspstat 4242 0 0 > "$DSP/proc/4242/task/4242/stat"
+dspstat 4244 70 1 > "$DSP/proc/4242/task/4244/stat"
+dspstat 4245 70 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4245/status"
+expect "verifica: thread audio in real-time sul core audio, gli altri sui core di sistema" \
+	"OK|CamillaDSP in real-time|3 thread audio a priorita' 70 sul core 3, gli altri sui core di sistema" "$(dspcheck)"
+dspstat 4244 0 0 > "$DSP/proc/4242/task/4244/stat"
+expect "verifica: un thread audio non real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|2 di 3 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
+# CamillaDSP senza la patch (nessun thread "Processing"): tutti i thread contano.
+rm -rf "$DSP/proc/4242/task/4243" "$DSP/proc/4242/task/4244" "$DSP/proc/4242/task/4245" "$DSP/proc/4242/task/4246"
+mkdir -p "$DSP/proc/4242/task/4243"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"
+rm -f "$DSP/proc/4242/task/4242/comm"
+expect "verifica senza la patch: un thread non real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
 dspstat 4242 70 1 > "$DSP/proc/4242/task/4242/stat"
-expect "verifica: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread a priorita' 70 sul core 3" "$(dspcheck)"
+expect "verifica senza la patch: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread audio a priorita' 70 sul core 3" "$(dspcheck)"
 expect "verifica: CamillaDSP parte con il primo brano" \
 	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
 
@@ -1895,6 +1965,48 @@ echo MODALITA_ASCOLTO=no > "$Q/run/sweetspot.conf"
 expect "stato: modalita' ascolto spenta" \
 	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
+
+echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
+# Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
+# scheda di rete e lo.
+mkdir -p "$Q/sys/devices/virtual/block/sdb/queue" "$Q/sys/devices/virtual/block/sdb/sdb1" "$Q/sys/class/block" "$Q/sys/block/sdb" "$Q/proc/net"
+echo 1000000 > "$Q/sys/devices/virtual/block/sdb/size"
+ln -sfn "../../devices/virtual/block/sdb/sdb1" "$Q/sys/class/block/sdb1"
+printf 'Musica|sdb1|ext4|1G|ro|/media/Musica|\n' > "$Q/run/dischi.list"
+iostat() { # settori_letti byte_rx byte_tx
+	printf '100 0 %s 0 0 0 0 0 0 0 0\n' "$1" > "$Q/sys/block/sdb/stat"
+	printf 'Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  eth0: %s 10 0 0 0 0 0 0 %s 10 0 0 0 0 0 0\n' "$2" "$3" > "$Q/proc/net/dev"
+}
+ascfn() { # funzione
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-ascolto; $1"
+}
+iostat 20480 1000 2000
+expect "contatori: disco con la musica (intero) e rete senza lo" "disco sdb 20480|rete 3000" "$(ascfn io_counters | tr '\n' '|' | sed 's/|$//')"
+ascfn io_start
+expect "inizio dell'ascolto annotato" "1|disco sdb 20480|rete 3000" \
+	"$(grep -c '^inizio [0-9]' "$Q/run/ascolto.io")|$(grep '^disco' "$Q/run/ascolto.io")|$(grep '^rete' "$Q/run/ascolto.io")"
+# L'ascolto e' iniziato un minuto fa.
+sed -i "s/^inizio .*/inizio $(( $(date +%s) - 60 ))/" "$Q/run/ascolto.io"
+expect "stato: nessuna lettura e solo controllo durante l'ascolto in corso" \
+	"OK|Letture dal disco durante l'ascolto|nessuna durante l'ascolto in corso (1 min) da sdb: la musica suona dalla RAM|OK|Rete durante l'ascolto|0 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
+	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
+iostat $((20480 + 4096)) 1000 $((2000 + 30 * 1024))
+expect "stato: 2 MB letti dal disco e 30 KB di rete" \
+	"INFO|Letture dal disco durante l'ascolto|2 MB durante l'ascolto in corso (1 min) da sdb (precarico in corso, file oltre il budget o fuori dal precarico)|OK|Rete durante l'ascolto|30 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
+	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
+iostat $((20480 + 4096)) $((1000 + 5 * 1048576)) $((2000 + 30 * 1024))
+case "$(qcheck 'Rete durante l.ascolto')" in "INFO|Rete durante l'ascolto|5150 KB durante l'ascolto in corso (1 min) ("*" KB/s): streaming, cartelle di rete o precarico dalla rete") ok "stato: rete usata durante l'ascolto segnalata" ;; *) ko "stato rete ascolto" "INFO 5150 KB" "$(qcheck 'Rete durante l.ascolto')" ;; esac
+ascfn io_stop
+iostat $((20480 + 999999)) $((1000 + 9 * 1048576)) 2000
+expect "fine dell'ascolto: i contatori di arrivo restano, quelli dopo non contano" \
+	"1|fine_disco sdb 24576|INFO|Letture dal disco durante l'ascolto|2 MB nell'ultimo ascolto (1 min) da sdb (precarico in corso, file oltre il budget o fuori dal precarico)" \
+	"$(grep -c '^fine [0-9]' "$Q/run/ascolto.io")|$(grep '^fine_disco' "$Q/run/ascolto.io")|$(qcheck 'Letture dal disco durante l.ascolto')"
+ascfn io_stop
+expect "seconda fine: non si scrive due volte" "1" "$(grep -c '^fine [0-9]' "$Q/run/ascolto.io")"
+rm -f "$Q/run/ascolto.io" "$Q/run/dischi.list" "$Q/sys/block/sdb/stat"
+expect "senza ascolto registrato: nessuna voce" "" "$(qcheck 'Letture dal disco durante l.ascolto')$(qcheck 'Rete durante l.ascolto')"
 
 echo "Rapporto e matrice di compatibilita'"
 rm -rf "$Q/sys/class/net"

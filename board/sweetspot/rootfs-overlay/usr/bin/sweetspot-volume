@@ -73,12 +73,21 @@ sync_first() { # mac
 # il valore assoluto (le notifiche possono essere relative, es. "+5"); a
 # ogni (ri)collegamento del player si rilegge, perche' Lyrion non manda il
 # volume a chi si ricollega.
+# Comandi iniziali per la CLI: con Lyrion protetto prima il login
+# (LYRION_UTENTE e LYRION_PASSWORD), poi l'iscrizione alle notifiche.
+cli_subscribe() {
+	local user
+	user=$(lms_user)
+	[ -n "$user" ] && echo "login $user $(conf LYRION_PASSWORD)"
+	echo "subscribe mixer,client"
+}
+
 follow() { # mac
 	local mac=$1 enc me=$$
 	enc=$(printf '%s' "$mac" | sed 's/:/%3A/g')
 	while kill -0 "$PPID" 2>/dev/null; do
 		sync_first "$mac"
-		{ echo "subscribe mixer,client"; while kill -0 "$me" 2>/dev/null; do sleep 30; done; } |
+		{ cli_subscribe; while kill -0 "$me" 2>/dev/null; do sleep 30; done; } |
 			nc "$LMS_HOST" "$LMS_CLI_PORT" 2>/dev/null |
 			while read -r line; do
 				case "$line" in

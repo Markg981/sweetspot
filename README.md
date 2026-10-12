@@ -66,7 +66,7 @@ Daphile:
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
 | **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
-| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete |
+| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
 anche con il Blocco note).
@@ -82,10 +82,16 @@ diffusore sinistro e uno per il destro.
 
 - I filtri li applica **CamillaDSP** in virgola mobile a 64 bit, alla
   frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
-  frequenza), sul core dedicato all'audio con priorità real-time (`SCHED_FIFO`
-  70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta) per tutti i suoi
-  thread; la pagina Stato verifica, alla voce "CamillaDSP in real-time", la
-  priorità e il core di ogni thread. All'uscita sempre il dither TPDF alla
+  frequenza): i suoi **thread audio** (cattura dal plugin, elaborazione,
+  riproduzione ALSA) sul core dedicato all'audio con priorità real-time
+  (`SCHED_FIFO` 70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta), gli
+  altri (principale, segnali, websocket e le connessioni di
+  `sweetspot-camilla`) sui core di sistema con la priorità normale, così sul
+  core isolato gira solo l'audio. Il thread di elaborazione si riconosce dal
+  nome grazie alla patch `patches/camilladsp/0001-name-processing-thread.patch`;
+  la pagina Stato verifica, alla voce "CamillaDSP in real-time", priorità e
+  core dei thread audio e segnala un thread non audio rimasto in real-time.
+  All'uscita sempre il dither TPDF alla
   risoluzione del DAC (16 o 24 bit): CamillaDSP modifica i campioni, e il
   passaggio da 64 bit all'uscita non va troncato.
 - Sweetspot calcola la curva della correzione e un'**attenuazione** conservativa
@@ -366,8 +372,9 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `USCITA_INTEGRATA` | usa la scheda audio del PC | no |
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `PERIFERICHE_INUTILIZZATE` | `spente`: su qualunque computer, per classe di dispositivo e mai per modello. USB con sole interfacce smart card, video, Bluetooth/wireless (webcam, adattatori BT) scollegate dai driver (`authorized=0`), anche se collegate dopo l'avvio (regola udev). PCI inutilizzati a riposo quando inattivi (`power/control=auto`, e il ponte PCI sopra se porta solo a loro): scheda video che non mostra la console, audio integrato se `USCITA_INTEGRATA=no`, multimedia, modem, FireWire, lettore di schede, Wi-Fi senza `WIFI_NOME`, Bluetooth, schede di rete attive ma senza cavo né indirizzo (decise a rete su, da `S40sweetspot-net`, dopo qualche secondo per il collegamento: una scheda non ancora attivata non si tocca). Mai DAC, dischi, tastiere, hub o la rete in uso; `accese` lascia tutto com'è | spente |
-| `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) e contato nello stato dell'avvio (`riavvii`): al secondo di seguito con la stessa copia, se l'altra è installata, dal prossimo avvio parte l'altra (`sweetspot-aggiorna watchdog`), con l'avviso nella pagina Stato; dopo 10 minuti di funzionamento il conteggio si azzera (`sweetspot-aggiorna stabile`) | si |
-| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Lyrion (porta 9000) ha la sua protezione. Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
+| `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
+| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`. Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
+| `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
@@ -392,6 +399,7 @@ sempre svegli. Il Turbo è sempre spento.
 | Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH) a riproduzione ferma, obiettivo sotto 50 µs |
 | Latenza durante l'ascolto | `LATENZA_ASCOLTO=si` in `sweetspot.txt`: finestre di 30 s a 100 risvegli al secondo sul core della riproduzione, solo mentre l'uscita suona; pagina di stato, massima e ultima finestra. Spenta in modo predefinito: il thread di misura (priorità 85) toglie pochi µs ogni 10 ms al player |
 | XRUN della sessione | pagina di stato, "XRUN nella sessione": eventi e recuperi falliti dall'ultimo avvio del player; lo storico del registro resta come informazione. Zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
+| Ascolto puro | pagina di stato, "Letture dal disco durante l'ascolto" e "Rete durante l'ascolto": settori letti dai dischi con la musica (`/sys/block/*/stat`) e byte di rete (`/proc/net/dev`, senza `lo`) dall'inizio dell'ascolto in corso o dell'ultimo, annotati da `sweetspot-ascolto` quando il DAC parte. Con il precarico finito le letture sono zero ("la musica suona dalla RAM"); la rete, in modalità completa, è solo il controllo dal browser e dalle app (sotto 2 KB/s), altrimenti streaming, cartelle di rete o precarico dalla rete |
 | Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
 | Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
