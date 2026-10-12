@@ -22,8 +22,8 @@ dsd_without_native_row() {
 dop_test_card() {
 	local blocker
 	echo '<h2>Prova DoP</h2><div class="card formcard">'
-	echo '<p class="sub">Molti DAC accettano il DSD dentro il PCM (DoP) senza dichiararlo. La prova suona per 6 secondi un tono a 1 kHz in DSD64 via DoP. <b>Abbassa prima il volume dell&#39;amplificatore.</b> Se il DAC mostra DSD o DoP e senti il tono, il DoP funziona; se mostra PCM 176,4 kHz o senti un fruscio forte, no.</p>'
-	blocker=$(dop_test_blocker "$(dac_rates "$card")")
+	echo '<p class="sub">Molti DAC accettano il DSD dentro il PCM (DoP) senza dichiararlo. La prova suona per 6 secondi un tono a 1 kHz in DSD64 via DoP; la coda di ascolto viene messa da parte e torna com&#39;era quando indichi l&#39;esito. <b>Abbassa prima il volume dell&#39;amplificatore</b>: se il DAC non riconosce il DoP suona un fruscio forte, con una componente ultrasonica. Se il DAC mostra DSD o DoP e senti il tono, il DoP funziona; se mostra PCM 176,4 kHz o senti il fruscio, no.</p>'
+	blocker=$(dop_test_blocker "$card")
 	if [ -n "$blocker" ]; then
 		info_row ATTENZIONE "Prova non disponibile" "Adesso $blocker."
 	else

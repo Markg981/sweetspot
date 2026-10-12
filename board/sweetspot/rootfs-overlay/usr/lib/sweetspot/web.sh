@@ -135,9 +135,19 @@ button() { # azione etichetta [campo valore] [classe]
 	printf '<button class="%s">%s</button></form>' "${5:-}" "$(esc "$2")"
 }
 
+# Il DAC accetta 176,4 kHz in un formato di almeno 24 bit? Il DoP mette i
+# marcatori nei 8 bit alti di campioni a 24 bit: a 16 bit spariscono.
+dac_dop_capable() { # scheda
+	local f
+	for f in S32_LE S24_3LE S24_LE; do
+		printf ' %s ' "$(dac_rates "$1" "$f" 2>/dev/null)" | grep -q ' 176400 ' && return 0
+	done
+	return 1
+}
+
 # Prova DoP della pagina Audio: perche' adesso non darebbe un esito
-# affidabile (vuoto: si puo' fare). Argomento: frequenze del DAC.
-dop_test_blocker() {
+# affidabile (vuoto: si puo' fare). Argomento: scheda del DAC.
+dop_test_blocker() { # scheda
 	if [ "$(mode)" != completa ]; then
 		echo "il file di prova sta su questo player: serve la modalità completa (Lyrion su Sweetspot)"
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
@@ -148,7 +158,9 @@ dop_test_blocker() {
 		echo "la correzione ambientale elabora i campioni: spegnila per la durata della prova"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
 		echo "il ricampionamento altera i campioni: spegnilo per la durata della prova"
-	elif ! printf ' %s ' "$1" | grep -q ' 176400 '; then
-		echo "il DAC non dichiara 176,4 kHz, la frequenza che il DoP richiede per il DSD64"
+	elif [ "$(conf FORMATO_USCITA)" = 16 ]; then
+		echo "l'uscita è forzata a 16 bit (FORMATO_USCITA) e i marcatori DoP stanno nei bit alti dei campioni a 24 bit"
+	elif ! dac_dop_capable "$1"; then
+		echo "il DAC non dichiara 176,4 kHz a 24 o 32 bit, che il DoP richiede per il DSD64"
 	fi
 }

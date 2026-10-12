@@ -403,10 +403,15 @@ Con un DAC USB che non dichiara il DSD nativo, `DSD=auto` fa convertire i file
 DSD in PCM dal server (Lyrion), senza provare il DoP. Molti DAC accettano
 comunque il DoP: la pagina **Audio** propone la **Prova DoP**. Genera sul
 player lo stesso file descritto sotto (`sweetspot-prova-dop`), lo fa suonare
-per 6 secondi e chiede l'esito: se il DAC ha mostrato DSD/DoP e si è sentito il
-tono, imposta `DSD=dop`; altrimenti non cambia nulla. La prova non parte con
-volume software, correzione ambientale o ricampionamento attivi, né se il DAC
-non dichiara 176,4 kHz, perché l'esito non sarebbe affidabile.
+per 6 secondi (con `playlist preview` di Lyrion: la coda di ascolto viene
+messa da parte e torna com'era, ferma, quando si indica l'esito) e chiede
+l'esito: se il DAC ha mostrato DSD/DoP e si è sentito il tono, imposta
+`DSD=dop`; altrimenti non cambia nulla. La prova non parte con volume software
+o a 64 bit, correzione ambientale o ricampionamento attivi, con l'uscita
+forzata a 16 bit, né se il DAC non dichiara 176,4 kHz a 24 o 32 bit (i
+marcatori DoP stanno nei bit alti dei campioni a 24 bit), perché l'esito non
+sarebbe affidabile. Se il DAC non riconosce il DoP il tono diventa un fruscio
+forte con una componente ultrasonica: volume dell'amplificatore basso.
 
 Lo stesso file si può creare anche sul computer:
 
