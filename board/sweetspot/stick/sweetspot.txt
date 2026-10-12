@@ -162,6 +162,12 @@ SSH_PASSWORD=
 # ($1$...); qui si puo' scrivere anche in chiaro. Dimenticata: togli la riga.
 PASSWORD_WEB=
 
+# Lyrion protetto da utente e password (nelle sue impostazioni: Avanzate >
+# Sicurezza): scrivili anche qui, cosi' Sweetspot (volume, precarico,
+# pagine, prova DoP) continua a parlare con Lyrion. Vuoti = Lyrion aperto.
+LYRION_UTENTE=
+LYRION_PASSWORD=
+
 # Ottimizzazioni di sistema (core dedicati, frequenza fissa, ecc.).
 # no = funzionamento normale, utile solo per confronti o problemi.
 OTTIMIZZAZIONI=si

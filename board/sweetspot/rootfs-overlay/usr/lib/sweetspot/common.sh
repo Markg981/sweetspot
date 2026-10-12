@@ -623,11 +623,25 @@ json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')";
 
 # lms_json PLAYER PAROLA...: invia un comando a Lyrion (PLAYER vuoto per i
 # comandi del server) e stampa la risposta JSON. Fallisce se non risponde.
+# Lyrion protetto da utente e password (Impostazioni > Avanzate > Sicurezza
+# di Lyrion): LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt valgono per
+# le richieste JSON di Sweetspot (Basic) e per la CLI (login). Senza, le
+# richieste restano come prima.
+lms_user() { conf LYRION_UTENTE; }
+lms_auth_header() {
+	local u
+	u=$(lms_user)
+	[ -n "$u" ] || return 0
+	printf 'Authorization: Basic %s' "$(printf '%s:%s' "$u" "$(conf LYRION_PASSWORD)" | base64 | tr -d '\n')"
+}
+
 lms_json() {
-	local player=$1 args="" w out
+	local player=$1 args="" w out auth
 	shift
 	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
+	auth=$(lms_auth_header)
 	out=$("${SWEETSPOT_WGET:-wget}" -q -T "${LMS_TIMEOUT:-20}" -O - --header 'Content-Type: application/json' \
+		${auth:+--header "$auth"} \
 		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null) || return 1
 	[ -n "$out" ] || return 1

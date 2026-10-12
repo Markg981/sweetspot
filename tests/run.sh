@@ -477,6 +477,37 @@ archive_action > /dev/null
 expect "archivio web: identita' ambigua non salvata" "no" "$([ -e "$WEB/run/config.call" ] && echo si || echo no)"
 rm -f "$WEB/run/dischi.list"
 
+echo "Credenziali di Lyrion"
+# Lyrion protetto: le richieste JSON portano l'intestazione Basic, la CLI
+# fa il login prima di iscriversi; senza credenziali niente cambia.
+cat > "$WEB/bin/wget-auth" <<'FINTO'
+#!/bin/sh
+prev=""; for a; do [ "$prev" = --header ] && printf '%s\n' "$a" >> "$SWEETSPOT_RUN/wget.headers"; prev=$a; done
+echo '{"result":{"_version":"9.1.1"}}'
+FINTO
+chmod +x "$WEB/bin/wget-auth"
+lmsauth() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	rm -f "$WEB/run/wget.headers"
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; lms_json '' version '?' > /dev/null"
+	grep -c '^Authorization: ' "$WEB/run/wget.headers"
+}
+expect "Lyrion aperto: nessuna intestazione di autenticazione" "0" "$(lmsauth '')"
+expect "Lyrion protetto: Basic con utente e password" "1|Authorization: Basic bWFyY286cGE6c3M=" \
+	"$(lmsauth "$(printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=pa:ss')")|$(grep '^Authorization' "$WEB/run/wget.headers")"
+printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=segreta\n' > "$WEB/s.txt"
+clisub() {
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; cli_subscribe" | tr '\n' '|' | sed 's/|$//'
+}
+expect "CLI di Lyrion: login prima dell'iscrizione" "login marco segreta|subscribe mixer,client" "$(clisub)"
+printf '' > "$WEB/s.txt"
+expect "CLI di Lyrion aperto: solo l'iscrizione" "subscribe mixer,client" "$(clisub)"
+rm -f "$WEB/s.txt" "$WEB/run/wget.headers"
+printf '' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+
 echo "Prova DoP guidata"
 mkdac "$WEB" no
 out=$(page audio)

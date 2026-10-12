@@ -31,3 +31,5 @@ CONFIG_FEATURE_HTTPD_AUTH_MD5=y
 CONFIG_IONICE=y
 # Gruppo di processi proprio per i sorveglianti del player (setsid).
 CONFIG_SETSID=y
+# Credenziali di Lyrion nelle richieste JSON (lms_auth_header).
+CONFIG_BASE64=y
