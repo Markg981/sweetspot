@@ -1857,6 +1857,48 @@ expect "stato: modalita' ascolto spenta" \
 	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
 
+echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
+# Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
+# scheda di rete e lo.
+mkdir -p "$Q/sys/devices/virtual/block/sdb/queue" "$Q/sys/devices/virtual/block/sdb/sdb1" "$Q/sys/class/block" "$Q/sys/block/sdb" "$Q/proc/net"
+echo 1000000 > "$Q/sys/devices/virtual/block/sdb/size"
+ln -sfn "../../devices/virtual/block/sdb/sdb1" "$Q/sys/class/block/sdb1"
+printf 'Musica|sdb1|ext4|1G|ro|/media/Musica|\n' > "$Q/run/dischi.list"
+iostat() { # settori_letti byte_rx byte_tx
+	printf '100 0 %s 0 0 0 0 0 0 0 0\n' "$1" > "$Q/sys/block/sdb/stat"
+	printf 'Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  eth0: %s 10 0 0 0 0 0 0 %s 10 0 0 0 0 0 0\n' "$2" "$3" > "$Q/proc/net/dev"
+}
+ascfn() { # funzione
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-ascolto; $1"
+}
+iostat 20480 1000 2000
+expect "contatori: disco con la musica (intero) e rete senza lo" "disco sdb 20480|rete 3000" "$(ascfn io_counters | tr '\n' '|' | sed 's/|$//')"
+ascfn io_start
+expect "inizio dell'ascolto annotato" "1|disco sdb 20480|rete 3000" \
+	"$(grep -c '^inizio [0-9]' "$Q/run/ascolto.io")|$(grep '^disco' "$Q/run/ascolto.io")|$(grep '^rete' "$Q/run/ascolto.io")"
+# L'ascolto e' iniziato un minuto fa.
+sed -i "s/^inizio .*/inizio $(( $(date +%s) - 60 ))/" "$Q/run/ascolto.io"
+expect "stato: nessuna lettura e solo controllo durante l'ascolto in corso" \
+	"OK|Letture dal disco durante l'ascolto|nessuna durante l'ascolto in corso (1 min) da sdb: la musica suona dalla RAM|OK|Rete durante l'ascolto|0 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
+	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
+iostat $((20480 + 4096)) 1000 $((2000 + 30 * 1024))
+expect "stato: 2 MB letti dal disco e 30 KB di rete" \
+	"INFO|Letture dal disco durante l'ascolto|2 MB durante l'ascolto in corso (1 min) da sdb (precarico in corso, file oltre il budget o fuori dal precarico)|OK|Rete durante l'ascolto|30 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
+	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
+iostat $((20480 + 4096)) $((1000 + 5 * 1048576)) $((2000 + 30 * 1024))
+case "$(qcheck 'Rete durante l.ascolto')" in "INFO|Rete durante l'ascolto|5150 KB durante l'ascolto in corso (1 min) ("*" KB/s): streaming, cartelle di rete o precarico dalla rete") ok "stato: rete usata durante l'ascolto segnalata" ;; *) ko "stato rete ascolto" "INFO 5150 KB" "$(qcheck 'Rete durante l.ascolto')" ;; esac
+ascfn io_stop
+iostat $((20480 + 999999)) $((1000 + 9 * 1048576)) 2000
+expect "fine dell'ascolto: i contatori di arrivo restano, quelli dopo non contano" \
+	"1|fine_disco sdb 24576|INFO|Letture dal disco durante l'ascolto|2 MB nell'ultimo ascolto (1 min) da sdb (precarico in corso, file oltre il budget o fuori dal precarico)" \
+	"$(grep -c '^fine [0-9]' "$Q/run/ascolto.io")|$(grep '^fine_disco' "$Q/run/ascolto.io")|$(qcheck 'Letture dal disco durante l.ascolto')"
+ascfn io_stop
+expect "seconda fine: non si scrive due volte" "1" "$(grep -c '^fine [0-9]' "$Q/run/ascolto.io")"
+rm -f "$Q/run/ascolto.io" "$Q/run/dischi.list" "$Q/sys/block/sdb/stat"
+expect "senza ascolto registrato: nessuna voce" "" "$(qcheck 'Letture dal disco durante l.ascolto')$(qcheck 'Rete durante l.ascolto')"
+
 echo "Rapporto e matrice di compatibilita'"
 rm -rf "$Q/sys/class/net"
 mkdir -p "$Q/sys/class/dmi/id" "$Q/repbin" "$Q/sys/class/net/eth0/device" "$Q/drivers/r8169"

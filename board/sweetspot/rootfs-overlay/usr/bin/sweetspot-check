@@ -332,6 +332,51 @@ check_audio_irqs() { # minuti
 	emit INFO "Interruzioni di sistema sul core audio" "${sys:-0} al secondo (timer e chiamate fra core)"
 }
 
+# La prova dell'ascolto puro (sweetspot-ascolto, $RUN/ascolto.io): settori
+# letti dai dischi con la musica e byte di rete dall'inizio dell'ascolto in
+# corso, o dell'ultimo. Con il precarico finito le letture devono restare a
+# zero; la rete serve solo al controllo (browser, app).
+check_listening_io() {
+	local io=$RUN/ascolto.io start end when secs now disks mb kb rate
+	[ -s "$io" ] || return 0
+	start=$(sed -n 's/^inizio //p' "$io")
+	end=$(sed -n 's/^fine //p' "$io")
+	[ -n "$start" ] || return 0
+	if [ -n "$end" ]; then
+		secs=$((end - start))
+		when="nell'ultimo ascolto"
+		now=$(sed -n 's/^fine_//p' "$io")
+	else
+		secs=$(( $(date +%s) - start ))
+		when="durante l'ascolto in corso"
+		now=$(io_counters)
+	fi
+	[ "$secs" -ge 1 ] || secs=1
+	when="$when ($(( (secs + 59) / 60 )) min)"
+	# Dischi: somma delle differenze dei settori (512 byte).
+	disks=$(printf '%s\n' "$now" | awk -v io="$io" '
+		BEGIN { while ((getline l < io) > 0) { split(l, f, " "); if (f[1] == "disco") old[f[2]] = f[3] } }
+		$1 == "disco" && ($2 in old) { d = $3 - old[$2]; if (d < 0) d = 0; tot += d; names = names sep $2; sep = ", " }
+		END { printf "%d|%s", tot, names }')
+	mb=$(( ${disks%|*} / 2048 ))
+	if [ -n "${disks#*|}" ]; then
+		if [ "${disks%|*}" = 0 ]; then
+			emit OK "Letture dal disco durante l'ascolto" "nessuna $when da ${disks#*|}: la musica suona dalla RAM"
+		else
+			emit INFO "Letture dal disco durante l'ascolto" "$mb MB $when da ${disks#*|} (precarico in corso, file oltre il budget o fuori dal precarico)"
+		fi
+	fi
+	kb=$(printf '%s\n' "$now" | awk -v io="$io" '
+		BEGIN { while ((getline l < io) > 0) { split(l, f, " "); if (f[1] == "rete") old = f[2] } }
+		$1 == "rete" { d = $2 - old; if (d < 0) d = 0; printf "%d", d / 1024 }')
+	rate=$(( ${kb:-0} / secs ))
+	if [ "$rate" -lt 2 ]; then
+		emit OK "Rete durante l'ascolto" "${kb:-0} KB $when: solo il controllo (browser, app)"
+	else
+		emit INFO "Rete durante l'ascolto" "${kb:-0} KB $when ($rate KB/s): streaming, cartelle di rete o precarico dalla rete"
+	fi
+}
+
 # Latenza misurata durante l'ascolto da sweetspot-latenza --ascolto.
 check_listening_latency() {
 	local max n last
@@ -421,6 +466,7 @@ check_player() {
 		emit "$hist" "Recuperi XRUN falliti" "$recovery nel registro storico"
 	fi
 	check_session
+	check_listening_io
 	check_zones
 	bufs=$(player_buffers)
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
