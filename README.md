@@ -82,10 +82,16 @@ diffusore sinistro e uno per il destro.
 
 - I filtri li applica **CamillaDSP** in virgola mobile a 64 bit, alla
   frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
-  frequenza), sul core dedicato all'audio con priorità real-time (`SCHED_FIFO`
-  70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta) per tutti i suoi
-  thread; la pagina Stato verifica, alla voce "CamillaDSP in real-time", la
-  priorità e il core di ogni thread. All'uscita sempre il dither TPDF alla
+  frequenza): i suoi **thread audio** (cattura dal plugin, elaborazione,
+  riproduzione ALSA) sul core dedicato all'audio con priorità real-time
+  (`SCHED_FIFO` 70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta), gli
+  altri (principale, segnali, websocket e le connessioni di
+  `sweetspot-camilla`) sui core di sistema con la priorità normale, così sul
+  core isolato gira solo l'audio. Il thread di elaborazione si riconosce dal
+  nome grazie alla patch `patches/camilladsp/0001-name-processing-thread.patch`;
+  la pagina Stato verifica, alla voce "CamillaDSP in real-time", priorità e
+  core dei thread audio e segnala un thread non audio rimasto in real-time.
+  All'uscita sempre il dither TPDF alla
   risoluzione del DAC (16 o 24 bit): CamillaDSP modifica i campioni, e il
   passaggio da 64 bit all'uscita non va troncato.
 - Sweetspot calcola la curva della correzione e un'**attenuazione** conservativa
