@@ -8,6 +8,7 @@ package Plugins::Sweetspot::Plugin;
 #   sweetspot plugin-stato                 plugin installati e operazioni in corso
 #   sweetspot plugin-installa nome:NOME    scarica NOME dal repository dei plugin
 #   sweetspot plugin-rimuovi nome:NOME     lo toglie
+#   sweetspot stato                        stato del sistema (cache di sweetspot-stato)
 #
 # Installazione e rimozione diventano effettive al riavvio di Lyrion, come
 # dalla pagina dei plugin di Lyrion; le impostazioni di Sweetspot lo
@@ -22,6 +23,7 @@ use Slim::Utils::Log;
 use Slim::Utils::PluginDownloader;
 use Slim::Utils::PluginManager;
 use Slim::Utils::Prefs;
+use JSON::XS::VersionOne;
 
 my $log = Slim::Utils::Log->addLogCategory({
 	category     => 'plugin.sweetspot',
@@ -52,6 +54,36 @@ sub _cli {
 
 	my $cmd  = $request->getParam('_cmd') || '';
 	my $name = $request->getParam('nome') || '';
+
+	if ($cmd eq 'stato') {
+		# Sola lettura della cache scritta da sweetspot-stato (root, 0644).
+		my $file = ($ENV{SWEETSPOT_RUN} || '/run/sweetspot') . '/stato.json';
+		my $data;
+		if (open(my $fh, '<', $file)) {
+			local $/;
+			my $raw = <$fh>;
+			close $fh;
+			$data = eval { from_json($raw) };
+		}
+		if (ref $data ne 'HASH') {
+			$request->addResult('errore', 'stato non ancora disponibile');
+			$request->setStatusDone();
+			return;
+		}
+		$request->addResult('ts', $data->{ts});
+		$request->addResult('intervallo', $data->{intervallo});
+		$request->addResult('ascolto', $data->{ascolto} ? 1 : 0);
+		$request->addResult('traffico_kbs', $data->{traffico_kbs});
+		my $i = 0;
+		for my $v (@{ $data->{voci} || [] }) {
+			$request->addResultLoop('voci_loop', $i, 'esito', $v->{esito});
+			$request->addResultLoop('voci_loop', $i, 'voce', $v->{voce});
+			$request->addResultLoop('voci_loop', $i, 'dettaglio', $v->{dettaglio});
+			$i++;
+		}
+		$request->setStatusDone();
+		return;
+	}
 
 	if ($cmd eq 'plugin-stato') {
 		my $plugins = Slim::Utils::PluginManager->allPlugins;

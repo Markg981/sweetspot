@@ -1,0 +1,93 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - demone dello stato: ogni pochi secondi calcola gli esiti di
+# sweetspot-check e il traffico di rete e li lascia in cache, cosi' la pagina
+# Stato, l'endpoint JSON e il comando "sweetspot stato" di Lyrion leggono un
+# file invece di rifare i controlli a ogni richiesta.
+#
+#   sweetspot-stato aggiorna    un solo giro (scrive la cache e basta)
+#   sweetspot-stato sorveglia   giri ripetuti, piu' lenti durante l'ascolto
+#
+# In $RUN (scritti in modo atomico, leggibili da tutti: li legge anche lms):
+#   stato.dati   righe "ESITO|voce|dettaglio", come sweetspot-check --dati,
+#                con in coda la riga del traffico di rete
+#   stato.json   gli stessi dati in JSON
+#   stato.ts     "momento intervallo" dell'ultimo giro (secondi)
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DATI=$RUN/stato.dati
+JSON=$RUN/stato.json
+TS=$RUN/stato.ts
+NET=$RUN/stato.rete
+# Intervallo normale e durante l'ascolto (il check non e' leggero).
+EVERY=${SWEETSPOT_STATO_OGNI:-10}
+EVERY_LISTEN=${SWEETSPOT_STATO_OGNI_ASCOLTO:-45}
+
+net_bytes() { awk 'NR>2 && $1 !~ /^lo:/ {sub(/^[^:]*:/, ""); split($0, a, " "); t += a[1] + a[9]} END {print t+0}' "$PROC/net/dev"; }
+
+# Testo sicuro dentro una stringa JSON.
+json_esc() {
+	printf '%s' "$1" | awk '{gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/[\001-\037]/, " "); printf "%s", $0}'
+}
+
+# Traffico in KB/s dall'ultimo giro: nessuno sleep, la misura e' la
+# differenza con i byte letti la volta scorsa.
+traffic_kbs() {
+	local now b prev_t prev_b kbs=0
+	now=$(date +%s)
+	b=$(net_bytes)
+	if [ -r "$NET" ] && read -r prev_t prev_b < "$NET" && [ "$now" -gt "$prev_t" ] && [ "$b" -ge "$prev_b" ]; then
+		kbs=$(( (b - prev_b) / (now - prev_t) / 1024 ))
+	fi
+	echo "$now $b" > "$NET.nuovo" && mv "$NET.nuovo" "$NET"
+	echo "$kbs"
+}
+
+do_round() {
+	local every=$1 kbs esito now listening=false rows sep='' e v d
+	mkdir -p "$RUN"
+	now=$(date +%s)
+	kbs=$(traffic_kbs)
+	if [ "$kbs" -lt 2 ]; then esito=OK; else esito=INFO; fi
+	dac_playing && listening=true
+	rows=$(sweetspot-check --dati)
+	{
+		[ -n "$rows" ] && printf '%s\n' "$rows"
+		echo "$esito|Traffico di rete ora|$kbs KB/s (streaming e controllo remoto possono mantenere attiva la rete)"
+	} > "$DATI.nuovo"
+	{
+		printf '{"ts":%s,"intervallo":%s,"ascolto":%s,"traffico_kbs":%s,"voci":[' "$now" "$every" "$listening" "$kbs"
+		while IFS='|' read -r e v d; do
+			[ -n "$v" ] || continue
+			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$(json_esc "$e")" "$(json_esc "$v")" "$(json_esc "$d")"
+			sep=,
+		done < "$DATI.nuovo"
+		printf ']}\n'
+	} > "$JSON.nuovo"
+	echo "$now $every" > "$TS.nuovo"
+	chmod 644 "$DATI.nuovo" "$JSON.nuovo" "$TS.nuovo"
+	# Prima i dati, per ultimo il momento: chi vede il momento nuovo trova
+	# gia' i dati nuovi.
+	mv "$DATI.nuovo" "$DATI"; mv "$JSON.nuovo" "$JSON"; mv "$TS.nuovo" "$TS"
+}
+
+do_watch() {
+	local every
+	trap 'exit 0' TERM INT
+	while true; do
+		every=$EVERY
+		is_yes "$(conf MODALITA_ASCOLTO si)" && dac_playing && every=$EVERY_LISTEN
+		do_round "$every"
+		sleep "$every"
+	done
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	aggiorna) do_round "$EVERY" ;;
+	sorveglia) do_watch ;;
+	*) echo "uso: $0 aggiorna|sorveglia" >&2; exit 1 ;;
+esac
