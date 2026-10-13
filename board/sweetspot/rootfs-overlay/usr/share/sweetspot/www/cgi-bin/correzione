@@ -82,7 +82,11 @@ else
 	# Attenuazione scritta all'italiana: "2,9 dB".
 	gain=$(priv sweetspot-dsp guadagno | sed 's/^-//; s/\./,/')
 	if [ -s "$RUN/correzione.errore" ]; then
-		info_row ATTENZIONE "Correzione non applicata" "$(cat "$RUN/correzione.errore"): il DAC riceve il segnale diretto."
+		if grep -q '^percorso=bloccato' "$RUN/dsp.stato" 2>/dev/null; then
+			info_row ATTENZIONE "Correzione non applicata" "$(cat "$RUN/correzione.errore"): riproduzione bloccata finche' la correzione non e' valida (CORREZIONE_SE_ASSENTE=diretto per suonare senza)."
+		else
+			info_row ATTENZIONE "Correzione non applicata" "$(cat "$RUN/correzione.errore"): il DAC riceve il segnale diretto, senza correzione ne' attenuazione."
+		fi
 	fi
 	case "$mode_now" in
 		si) info_row OK "Correzione accesa" "$nsx filtri sul sinistro, $ndx sul destro; attenuazione di $gain dB per il guadagno massimo dei filtri. I picchi nel tempo possono richiedere ulteriore margine. Il segnale è elaborato: non è più bit-perfect, per scelta." ;;
