@@ -1,3 +1,0 @@
-# Sweetspot - schede audio che compaiono o spariscono: il supervisore del
-# player se ne accorge subito, senza aspettare il controllo periodico.
-SUBSYSTEM=="sound", KERNEL=="card[0-9]*", ACTION=="add|remove", RUN+="/usr/bin/sweetspot-evento-audio"

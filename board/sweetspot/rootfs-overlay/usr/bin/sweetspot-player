@@ -20,14 +20,6 @@
 SQLOG=/var/log/squeezelite.log
 STATE=$RUN/player.stato
 
-# Attesa interrompibile: udev (sweetspot-evento-audio) manda SIGUSR1 quando una
-# scheda audio compare o sparisce e il ciclo reagisce subito; il polling resta
-# come rete di sicurezza.
-nap() { # secondi
-	sleep "$1" &
-	wait $!
-}
-
 # Ritardo prima di riavviare squeezelite terminato da solo: raddoppia
 # (2, 4, 8... fino a 60 s) se e' durato meno di STABILE secondi, si azzera dopo
 # un periodo di funzionamento stabile.
@@ -543,14 +535,14 @@ player_loop() {
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
 			# Le zone continuano anche senza il DAC principale.
 			zones_sync ""
-			nap 3
+			sleep 3
 			continue
 		fi
 		inst=$(dac_instance "$card")
 		remember_main_dac "$card"
 		setup_usb_irq "$card"
 		[ "$(lower "$(conf VOLUME fisso)")" = dac ] || dac_unity_gain "$card"
-		run_player "$card" || { nap 2; continue; }
+		run_player "$card" || { sleep 2; continue; }
 		t0=$(date +%s)
 		LOST=0
 		say "attivo su $(dac_name "$card")"
@@ -561,7 +553,7 @@ player_loop() {
 		while kill -0 "$PID" 2>/dev/null; do
 			# Con CamillaDSP nel percorso si guarda piu' spesso: ogni nuovo
 			# processo nasce con la priorita' del player e va sistemato.
-			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then nap 5; else nap 2; fi
+			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then sleep 5; else sleep 2; fi
 			pin_output_thread "$PID"
 			pin_dsp
 			dsp_clip_poll
@@ -581,15 +573,15 @@ player_loop() {
 		if [ "$LOST" = 1 ]; then
 			BACKOFF=0
 			say "riavvio del player"
-			nap 2
+			sleep 2
 		else
 			BACKOFF=$(backoff_next "$BACKOFF" $(( $(date +%s) - t0 )))
 			if [ "$BACKOFF" -gt 0 ]; then
 				say "squeezelite terminato subito, nuovo tentativo tra $BACKOFF s"
-				nap "$BACKOFF"
+				sleep "$BACKOFF"
 			else
 				say "riavvio del player"
-				nap 2
+				sleep 2
 			fi
 		fi
 	done
@@ -608,8 +600,5 @@ for f in "$ZONE_DIR"/*; do
 	kill -0 "$zpid" 2>/dev/null || rm -f "$f"
 done
 setup_layout
-# SIGUSR1 serve solo a interrompere l'attesa (vedi nap).
-trap ':' USR1
-echo $$ > "$RUN/player.pid"
 log "player: modalita' $(mode), core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
 player_loop
