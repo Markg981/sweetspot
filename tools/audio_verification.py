@@ -19,7 +19,7 @@ import wave
 FORMATS = {"s16_le": (16, 2), "s24_3le": (24, 3),
            "s24_le": (24, 4), "s32_le": (32, 4)}
 CHUNK_FRAMES = 4096
-DOP_RATES = (176400, 352800)
+DOP_RATES = (176400, 352800, 705600)
 DOP_IDLE = (0x6969, 0x6969)
 
 
@@ -209,7 +209,7 @@ def generate_dop_fixtures(directory: Path, rate: int,
     """Emit two deterministic WAV24 DoP diagnostic tracks, not listening audio."""
     _integer(rate, "rate", 1)
     if rate not in DOP_RATES:
-        raise ValueError("DoP rate must be 176400 or 352800")
+        raise ValueError("DoP rate must be 176400, 352800 or 705600")
     frames = rate if frames is None else _integer(frames, "frames", 1)
     if frames * 6 > 0xFFFFFFFF - 36:
         raise ValueError("Fixture exceeds RIFF PCM limits")
@@ -516,7 +516,7 @@ def compare_dop_capture(references: list[Path], capture: Path, *, capture_format
     if offset_frames is not None:
         _integer(offset_frames, "offset_frames")
     if capture_rate not in DOP_RATES:
-        raise ValueError("DoP capture rate must be 176400 or 352800")
+        raise ValueError("DoP capture rate must be 176400, 352800 or 705600")
     if capture_format not in ("s24_3le", "s24_le", "s32_le"):
         raise ValueError("DoP capture requires s24_3le, s24_le or s32_le")
     source = [_wav_info(path) for path in references]

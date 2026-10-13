@@ -1193,5 +1193,85 @@ class DSDFixtureTests(unittest.TestCase):
                 self.assertFalse(output.exists())
 
 
+MATRIX_TOOL = Path(__file__).resolve().parents[1] / "tools" / "matrice-segnale.py"
+matrix_spec = importlib.util.spec_from_file_location("matrice_segnale", MATRIX_TOOL)
+matrix = importlib.util.module_from_spec(matrix_spec)
+matrix_spec.loader.exec_module(matrix)
+
+
+class SignalMatrixTests(unittest.TestCase):
+    """La matrice dichiara PASS solo con una cattura digitale identica."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "prova"
+        self.captures = Path(self.temp.name) / "catture"
+        self.captures.mkdir()
+
+    def prepare(self, filtro, frames=1500):
+        return matrix.prepara(self.root, filtro, frames)
+
+    def write_captures(self, case, corrupt=False):
+        total = len(case["preparati"])
+        for index, prepared in enumerate(case["preparati"], 1):
+            data = b"".join(matrix._dati_wav(self.root / r) for r in prepared["riferimenti"])
+            if corrupt:
+                data = data[:200] + bytes([data[200] ^ 1]) + data[201:]
+            name = f"{case['id']}.raw" if total == 1 else f"{case['id']}.{index}.raw"
+            (self.captures / name).write_bytes(data)
+
+    def states(self, filtro):
+        report = matrix.verifica(self.root, self.captures, "alsa_loopback", filtro)
+        return {case["id"]: case for case in report["casi"]}
+
+    def test_matrix_covers_required_dimensions(self):
+        cases = matrix.carica_casi()
+        ids = {case["id"] for case in cases}
+        for expected in ("flac-44100-16", "alac-384000-24", "wav-384000-32", "dsf-705600-24",
+                         "dff-176400-24", "cambio-pcm-dsd", "cambio-dsd-pcm", "hotplug-dac", "carico-prolungato"):
+            self.assertIn(expected, ids)
+        self.assertEqual(len(ids), len(cases))
+
+    def test_without_capture_nothing_passes(self):
+        self.prepare("wav-96000-24")
+        case = self.states("wav-96000-24")["wav-96000-24"]
+        self.assertEqual(case["stato"], "NON ESEGUITO")
+        self.assertIn("cattura digitale", case["motivo"])
+
+    def test_identical_capture_passes_and_corrupt_capture_fails(self):
+        for filtro in ("wav-96000-24", "wav-192000-32", "dsf-176400-24", "dff-705600-24"):
+            case = self.prepare(filtro)["casi"][0]
+            self.write_captures(case)
+            self.assertEqual(self.states(filtro)[filtro]["stato"], "PASS", filtro)
+            self.write_captures(case, corrupt=True)
+            self.assertEqual(self.states(filtro)[filtro]["stato"], "FAIL", filtro)
+
+    def test_sequence_needs_every_segment_and_the_event_evidence(self):
+        case = self.prepare("hotplug-dac")["casi"][0]
+        self.write_captures(case)
+        (self.captures / "hotplug-dac.2.raw").unlink()
+        self.assertEqual(self.states("hotplug-dac")["hotplug-dac"]["stato"], "NON ESEGUITO")
+        self.write_captures(case)
+        state = self.states("hotplug-dac")["hotplug-dac"]
+        self.assertEqual(state["stato"], "NON ESEGUITO")
+        self.assertIn("eventi", state["motivo"])
+        (self.captures / "hotplug-dac.eventi.txt").write_text("scollegato e ricollegato\n")
+        self.assertEqual(self.states("hotplug-dac")["hotplug-dac"]["stato"], "PASS")
+
+    def test_pcm_dsd_change_compares_each_segment_with_its_own_format(self):
+        case = self.prepare("cambio-dsd-pcm")["casi"][0]
+        self.write_captures(case)
+        self.assertEqual(self.states("cambio-dsd-pcm")["cambio-dsd-pcm"]["stato"], "PASS")
+
+    def test_missing_encoder_is_not_executed_with_reason(self):
+        with patch.object(matrix.shutil, "which", return_value=None):
+            case = self.prepare("flac-48000-16")["casi"][0]
+        self.write_captures({"id": case["id"], "preparati": []})
+        state = self.states("flac-48000-16")["flac-48000-16"]
+        self.assertEqual(state["stato"], "NON ESEGUITO")
+        self.assertIn("ffmpeg", state["motivo"])
+
+
 if __name__ == "__main__":
     unittest.main()
