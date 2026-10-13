@@ -47,7 +47,27 @@ playlistdir: $PLAYLISTS
 wizardDone: 1
 checkVersion: 0
 scannerPriority: 10
+csrfProtectionLevel: $CSRF_LEVEL
 EOF
+}
+
+# Protezione CSRF di Lyrion (pref csrfProtectionLevel: 0 nessuna, 1 media,
+# 2 alta). Il livello 1 e' quello predefinito di Lyrion: blocca le richieste
+# che arrivano da una pagina di un altro sito (Referer/Origin diverso) ma
+# lascia passare quelle senza Referer, come i client di terzi (iPeng,
+# Squeezer, app JSON-RPC) e wget di Sweetspot (lms_json). Il livello 2
+# chiederebbe un gettone a ogni comando e romperebbe quei client. Se manca o
+# e' 0 (nessuna protezione) lo si riporta a 1; 1 e 2 scelti dall'utente restano.
+CSRF_LEVEL=1
+
+ensure_csrf() {
+	local f=$PREFS/server.prefs cur
+	cur=$(grep '^csrfProtectionLevel:' "$f" 2>/dev/null | tail -n 1 | cut -d: -f2 | tr -d ' "'"'")
+	case "$cur" in 1|2) return 0 ;; esac
+	grep -v '^csrfProtectionLevel:' "$f" > "$f.tmp" 2>/dev/null
+	echo "csrfProtectionLevel: $CSRF_LEVEL" >> "$f.tmp"
+	mv "$f.tmp" "$f"
+	log "lyrion: protezione CSRF portata al livello $CSRF_LEVEL"
 }
 
 # Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
@@ -95,6 +115,7 @@ do_prepare() {
 		first_prefs > "$PREFS/server.prefs"
 		log "lyrion: preferenze iniziali scritte"
 	fi
+	ensure_csrf
 	material_actions > "$PREFS/material-skin/actions.json"
 	# Material Skin preinstallata. Se l'utente l'ha aggiornata dal gestore
 	# dei plugin si tiene la sua versione.
@@ -110,6 +131,16 @@ do_prepare() {
 	fi
 	link_caches
 	chown -R "$LMS_USER:$LMS_USER" "$LMS_DATA" "$LMS_LOG" 2>/dev/null
+}
+
+# Finche' Lyrion vive, ogni 20 secondi porta lo scanner (figlio del server,
+# nasce con il valore di Lyrion) tra i primi candidati dell'OOM killer.
+# Un giro leggero sulle righe di comando; niente scanner, niente scritture.
+oom_watch() {
+	while kill -0 "$1" 2>/dev/null; do
+		oom_adj_cmd 500 scanner.pl
+		sleep 20
+	done
 }
 
 do_service() {
@@ -128,8 +159,13 @@ do_service() {
 		taskset -c "$hk" nice -n 10 \
 			su -s /bin/sh "$LMS_USER" -c "exec perl $LMS_DIR/slimserver.pl --prefsdir $PREFS --cachedir $CACHE --logdir $LMS_LOG --charset utf8" \
 				>> "$LMS_LOG/avvio.log" 2>&1 &
-		echo $! > "$RUN/lms.pid"
-		wait $!
+		lmspid=$!
+		echo "$lmspid" > "$RUN/lms.pid"
+		# OOM killer: Lyrion poco protetto, lo scanner (figlio, lo eredita)
+		# tra i primi a cadere; il player (-1000) mai.
+		oom_adj -100 "$lmspid"
+		oom_watch "$lmspid" &
+		wait "$lmspid"
 		rc=$?
 		[ -f "$STOPFLAG" ] && break
 		# Fermate ripetute subito dopo l'avvio: si aspetta di piu'.

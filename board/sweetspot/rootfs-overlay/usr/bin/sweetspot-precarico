@@ -274,6 +274,9 @@ step() {
 			nice -n 19 /usr/sbin/sweetspot-precarica tieni "$LIST" "$STATE" &
 		fi
 		echo $! > "$HOLDER_PID"
+		# Le pagine bloccate non si liberano: sotto pressione di memoria
+		# il precarico cade prima del player.
+		oom_adj 500 $!
 		log "precarico: $(grep -c . "$LIST") file della coda in caricamento"
 	fi
 	if grep -q '^stato	pronto' "$STATE" 2>/dev/null; then
