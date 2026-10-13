@@ -462,7 +462,7 @@ expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#
 case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
 expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
 # stato.json non ha eccezioni: ricade nella regola generale "/" con password.
-expect "stato.json protetto dalla regola generale (nessuna eccezione)" "0|/:admin:" "$(grep -c 'stato' "$WEB/run/httpd.conf")|$(tail -n 1 "$WEB/run/httpd.conf" | cut -d: -f1-2)"
+expect "stato.json protetto dalla regola generale (nessuna eccezione)" "0|/:admin" "$(grep -c 'stato' "$WEB/run/httpd.conf")|$(tail -n 1 "$WEB/run/httpd.conf" | cut -d: -f1-2)"
 expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
 acc '' > /dev/null
 expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"

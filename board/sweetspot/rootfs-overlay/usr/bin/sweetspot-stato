@@ -29,7 +29,7 @@ net_bytes() { awk 'NR>2 && $1 !~ /^lo:/ {sub(/^[^:]*:/, ""); split($0, a, " "); 
 
 # Testo sicuro dentro una stringa JSON.
 json_esc() {
-	printf '%s' "$1" | awk '{gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/[\001-\037]/, " "); printf "%s", $0}'
+	printf '%s' "$1" | tr '\001-\037' ' ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
 # Traffico in KB/s dall'ultimo giro: nessuno sleep, la misura e' la
