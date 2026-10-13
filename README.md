@@ -41,6 +41,14 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    non resta congelato con una transazione del database aperta. Se il kernel
    non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
    riprende comunque quanto un'esecuzione precedente aveva lasciato fermo.
+8b. **Memoria sotto pressione**: il sistema non ha swap (e non si aggiunge, nemmeno
+   zram: riempirebbe di compressione e latenza il percorso del suono e
+   richiederebbe un kernel con swap). Per questo, se la RAM finisse (tipico
+   sui 2 GB, classe «essenziale»), l'OOM killer segue una scala di priorità
+   (`oom_score_adj`): Squeezelite e CamillaDSP a -1000 (mai uccisi), Lyrion a
+   -100, scanner di Lyrion, copie, estrazione dei CD e precarico a +500, i
+   primi a cadere. Resta il limite dei buffer di Squeezelite (`player_buffers`),
+   che lascia 768 MB al resto.
 9. **Precarico in RAM** (modalità completa): i file della coda, dal brano in
    corso alla fine, vengono letti dietro a tutti gli altri processi (`nice`,
    `ionice` idle) e bloccati in RAM (`mlock`), entro un budget di memoria (per
@@ -378,7 +386,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `PERIFERICHE_INUTILIZZATE` | `spente`: su qualunque computer, per classe di dispositivo e mai per modello. USB con sole interfacce smart card, video, Bluetooth/wireless (webcam, adattatori BT) scollegate dai driver (`authorized=0`), anche se collegate dopo l'avvio (regola udev). PCI inutilizzati a riposo quando inattivi (`power/control=auto`, e il ponte PCI sopra se porta solo a loro): scheda video che non mostra la console, audio integrato se `USCITA_INTEGRATA=no`, multimedia, modem, FireWire, lettore di schede, Wi-Fi senza `WIFI_NOME`, Bluetooth, schede di rete attive ma senza cavo né indirizzo (decise a rete su, da `S40sweetspot-net`, dopo qualche secondo per il collegamento: una scheda non ancora attivata non si tocca). Mai DAC, dischi, tastiere, hub o la rete in uso; `accese` lascia tutto com'è | spente |
 | `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
-| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`. Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
+| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Anche senza password le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |

@@ -166,6 +166,27 @@ expect "buffer 16 GB" "1048576:2000000" "$(run "$N550" player_buffers)"
 expect "buffer 2 GB" "203094:406189" "$(run "$DUAL" player_buffers)"
 expect "buffer 1 GB" "33928:67856" "$(run "$ONE" player_buffers)"
 
+echo "Protezione dall'OOM killer"
+OOM=$WORK/oom
+mkdir -p "$OOM/proc/100" "$OOM/proc/200" "$OOM/proc/300"
+for p in 100 200 300; do echo 0 > "$OOM/proc/$p/oom_score_adj"; done
+printf 'perl\0/usr/lib/lyrion/scanner.pl\0--rescan\0' > "$OOM/proc/200/cmdline"
+printf 'perl\0/usr/lib/lyrion/slimserver.pl\0' > "$OOM/proc/300/cmdline"
+printf 'squeezelite\0' > "$OOM/proc/100/cmdline"
+run "$OOM" oom_adj -1000 100 999
+expect "player mai ucciso (-1000)" "-1000" "$(cat "$OOM/proc/100/oom_score_adj")"
+expect "pid inesistente ignorato" "0" "$(run "$OOM" 'oom_adj 500 999; echo $?')"
+run "$OOM" oom_adj_cmd 500 scanner.pl
+expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
+expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
+grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
+grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
+grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
+grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
+grep -q 'oom_score_adj' "$OVERLAY/usr/bin/sweetspot-copia" && ok "copia: lavoro sospendibile a +500" || ko "copia: lavoro sospendibile a +500" "presente" "assente"
+grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
+grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-precarico" && ok "precarico a +500" || ko "precarico a +500" "presente" "assente"
+
 echo "DAC"
 expect "trova il DAC USB, non la scheda integrata" "1" "$(run "$N550" dac_find)"
 expect "nome" "GUSTARD R26" "$(run "$N550" "dac_name 1")"
@@ -434,6 +455,53 @@ expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-
 expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
 acc '' > /dev/null
 expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
+
+echo "Controllo dell'header Host (DNS rebinding)"
+# Come una richiesta web (GATEWAY_INTERFACE impostata): la pagina vivo e'
+# la CGI piu' semplice. $2 = Host ("-" = assente), $3 = indirizzo del client.
+mkdir -p "$WEB/hbin"
+printf '#!/bin/sh\nprintf "2: eth0    inet 192.168.1.50/24 brd 192.168.1.255 scope global eth0\\n2: eth0    inet6 fe80::1234:abcd/64 scope link\\n"\n' > "$WEB/hbin/ip"
+chmod +x "$WEB/hbin/ip"
+hostcall() { # impostazioni host client
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	if [ "$2" = "-" ]; then unset HTTP_HOST; else export HTTP_HOST=$2; fi
+	# La configurazione si costruisce prima: il controllo scatta quando la
+	# richiesta (GATEWAY_INTERFACE) arriva, a configurazione gia' pronta.
+	REMOTE_ADDR=${3:-192.168.1.9} \
+		SWEETSPOT_RUN=$WEB/run SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$WEB/hbin:$SWEETSPOT_PATH" SWEETSPOT_IP="$WEB/hbin/ip" \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; GATEWAY_INTERFACE=CGI/1.1; export GATEWAY_INTERFACE; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/vivo" 2>&1
+	unset HTTP_HOST
+}
+hostcode() { case "$(hostcall "$@")" in *"403 Forbidden"*) echo 403 ;; *"ok "*) echo ok ;; *) echo altro ;; esac; }
+for h in sweetspot.local sweetspot.local:80 SweetSpot.LOCAL localhost 127.0.0.1:80 192.168.1.50 192.168.1.50:80 '[fe80::1234:abcd]:80' '[fe80::1234:abcd]'; do
+	expect "Host $h accettato" ok "$(hostcode '' "$h")"
+done
+for h in evil.example.com evil.example.com:80 192.168.1.51 sweetspot.local.evil.com 10.0.0.1; do
+	expect "Host $h rifiutato con 403" 403 "$(hostcode '' "$h")"
+done
+expect "NOME_RETE personalizzato: salotto.local accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto.local)"
+expect "NOME_RETE personalizzato: nome breve accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto:80)"
+expect "NOME_RETE personalizzato: un altro nome non vale" 403 "$(hostcode 'NOME_RETE=salotto' cucina.local)"
+expect "Host assente dal computer stesso accettato" ok "$(hostcode '' - 127.0.0.1)"
+expect "Host assente dalla rete rifiutato" 403 "$(hostcode '' - 192.168.1.9)"
+out=$(hostcall '' evil.example.com)
+case "$out" in *"Status: 403"*"Content-Type: text/plain"*) ok "403 prima di qualunque altro output" ;; *) ko "403 senza altro output" "solo la risposta 403" "$out" ;; esac
+expect "fuori da una richiesta web nessun controllo" "ok" "$(HTTP_HOST=evil SWEETSPOT_RUN=$WEB/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; echo ok")"
+
+echo "Protezione CSRF di Lyrion"
+lmsprefs() { # contenuto iniziale di server.prefs ("-" = file assente)
+	rm -rf "$WEB/lmsdata"; mkdir -p "$WEB/lmsdata/prefs"
+	[ "$1" = "-" ] || printf '%s\n' "$1" > "$WEB/lmsdata/prefs/server.prefs"
+	SWEETSPOT_TEST=1 SWEETSPOT_LMS_DATA=$WEB/lmsdata SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-lms; [ -s \$PREFS/server.prefs ] || first_prefs > \$PREFS/server.prefs; ensure_csrf" > /dev/null 2>&1
+	grep '^csrfProtectionLevel' "$WEB/lmsdata/prefs/server.prefs" | tr '\n' '|'
+}
+expect "CSRF Lyrion: primo avvio a livello 1" "csrfProtectionLevel: 1|" "$(lmsprefs -)"
+expect "CSRF Lyrion: assente nelle preferenze esistenti -> 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'language: IT')"
+expect "CSRF Lyrion: livello 0 riportato a 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'csrfProtectionLevel: 0')"
+expect "CSRF Lyrion: livello 2 scelto dall'utente resta" "csrfProtectionLevel: 2|" "$(lmsprefs 'csrfProtectionLevel: 2')"
 printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
@@ -919,6 +987,27 @@ expect "disco Linux: cartelle Musica degli utenti" "Linux - anna" "$(links Linux
 expect "disco dati: tutto il disco" "Archivio" "$(links Archivio)"
 expect "collegamenti nella libreria" "Archivio Linux - anna Win - marco" "$(ls "$DSK/musica" | tr '\n' ' ' | sed 's/ $//')"
 expect "collegamento al disco" "$DSK/media/Archivio" "$(readlink "$DSK/musica/Archivio")"
+
+echo "Standby dei dischi interni"
+SB=$WORK/standby
+mkdir -p "$SB/run" "$SB/bin"
+for d in sda sdb sdc sdd; do
+	mkdir -p "$SB/sys/block/$d/queue" "$SB/sys/block/$d/${d}1" "$SB/sys/block/$d/dev"
+	echo 0 > "$SB/sys/block/$d/removable"
+	echo 1 > "$SB/sys/block/$d/queue/rotational"
+done
+echo 0 > "$SB/sys/block/sdd/queue/rotational"
+# sda: musica; sdb: archivio; sdc: nessuna musica; sdd: SSD
+printf 'Musica|/dev/sda1|ext4|500|1|ro|UUID=a\nArchivio|/dev/sdb1|ext4|900|1|rw|UUID=b\n' > "$SB/run/dischi.list"
+printf '#!/bin/sh\necho "$@" >> "$HDPARM_LOG"\n' > "$SB/bin/hdparm"
+chmod +x "$SB/bin/hdparm"
+SWEETSPOT_TEST=1 SWEETSPOT_SYSFS=$SB/sys SWEETSPOT_RUN=$SB/run SWEETSPOT_LOG=$SB/log SWEETSPOT_HDPARM=$SB/bin/hdparm HDPARM_LOG=$SB/hdparm.log \
+	$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-dischi; do_standby"
+expect "standby: dischi con musica e archivio solo timeout lungo" "-S 241 /dev/sda|-S 241 /dev/sdb" "$(grep -E '/dev/sd[ab]$' "$SB/hdparm.log" | sort -u | tr '\n' '|' | sed 's/|$//')"
+expect "standby: disco senza musica fermato subito" "-S 12 /dev/sdc|-y /dev/sdc" "$(grep '/dev/sdc$' "$SB/hdparm.log" | tr '\n' '|' | sed 's/|$//')"
+expect "standby: nessun -y sui dischi con musica" "0" "$(grep -c -- '^-y /dev/sd[ab]$' "$SB/hdparm.log")"
+expect "standby: SSD ignorato" "0" "$(grep -c '/dev/sdd' "$SB/hdparm.log")"
+expect "standby: non piu' in S20 (gira prima del montaggio)" "0" "$(grep -c 'hdparm' "$OVERLAY/etc/init.d/S20sweetspot-tune")"
 
 echo "Blocchi"
 LK=$WORK/lk
