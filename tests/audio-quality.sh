@@ -377,11 +377,11 @@ common "config_build '$E/settings'"
 echo dsp > "$E/run/volume.modo"
 rm -f "$E/rpc-log"
 expect "volume a 64 bit: cursore di Lyrion acceso e libero" 'playerpref digitalVolumeControl 1|0' \
-	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep "digitalVolumeControl [01]$" "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 echo riserva > "$E/run/volume.modo"
 rm -f "$E/rpc-log"
 expect "volume a 64 bit non disponibile: volume software di Lyrion" 'playerpref digitalVolumeControl 1|0' \
-	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep "digitalVolumeControl [01]$" "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 rm -f "$E/run/volume.modo"
 # Riconciliazione: le preferenze si riapplicano quando cambiano, dopo una
 # riconnessione e con server esterno; la divergenza non imponibile si vede.
@@ -397,7 +397,7 @@ printf 'MODALITA=completa\nVOLUME=software\n' > "$E/settings"
 common "config_build '$E/settings'"
 rm -f "$E/rpc-log"
 player 'PREFS_SET=1; PREFS_SIG=00127.0.0.1; PREFS_OGNI=3600; PREFS_T=$(date +%s); PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
-expect "VOLUME cambiato: riapplica senza riavviare il player" 'playerpref digitalVolumeControl 1' "$(grep digitalVolumeControl "$E/rpc-log" | tail -n 1)"
+expect "VOLUME cambiato: riapplica senza riavviare il player" 'playerpref digitalVolumeControl 1' "$(grep "digitalVolumeControl [01]$" "$E/rpc-log" | tail -n 1)"
 rm -f "$E/rpc-log"
 printf 'replayGainMode\n' > "$E/rpc-ignora"
 player 'PREFS_SET=0; PREFS_OGNI=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs; apply_player_prefs' > /dev/null
