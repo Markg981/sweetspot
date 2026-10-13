@@ -444,15 +444,18 @@ chmod +x "$WEB/hbin/ip"
 hostcall() { # impostazioni host client
 	printf '%s\n' "$1" > "$WEB/s.txt"
 	if [ "$2" = "-" ]; then unset HTTP_HOST; else export HTTP_HOST=$2; fi
-	GATEWAY_INTERFACE=CGI/1.1 REMOTE_ADDR=${3:-192.168.1.9} \
+	# La configurazione si costruisce prima: il controllo scatta quando la
+	# richiesta (GATEWAY_INTERFACE) arriva, a configurazione gia' pronta.
+	REMOTE_ADDR=${3:-192.168.1.9} \
 		SWEETSPOT_RUN=$WEB/run SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_LOG=$WEB/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$WEB/hbin:$SWEETSPOT_PATH" \
-		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/vivo" 2>&1
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; GATEWAY_INTERFACE=CGI/1.1; export GATEWAY_INTERFACE; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/vivo" 2>&1
 	unset HTTP_HOST
 }
 hostcode() { case "$(hostcall "$@")" in *"403 Forbidden"*) echo 403 ;; *"ok "*) echo ok ;; *) echo altro ;; esac; }
 for h in sweetspot.local sweetspot.local:80 SweetSpot.LOCAL localhost 127.0.0.1:80 192.168.1.50 192.168.1.50:80 '[fe80::1234:abcd]:80' '[fe80::1234:abcd]'; do
 	expect "Host $h accettato" ok "$(hostcode '' "$h")"
+	[ "$(hostcode '' "$h")" = ok ] || { echo "      ip finto: $(PATH="$WEB/hbin:$PATH" ip -o addr show 2>&1 | head -n 2 | tr '\n' '|')"; }
 done
 for h in evil.example.com evil.example.com:80 192.168.1.51 sweetspot.local.evil.com 10.0.0.1; do
 	expect "Host $h rifiutato con 403" 403 "$(hostcode '' "$h")"
