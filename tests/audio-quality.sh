@@ -353,6 +353,9 @@ expect "due risposte concatenate rifiutate" 1 "$(common 'lms_json player playerp
 printf '{"result":{}}\n' > "$E/rpc-response"
 expect "risposta di successo valida accettata" 0 "$(common 'lms_json player playerpref replayGainMode 0 > /dev/null; echo $?')"
 rm "$E/rpc-response"
+# Senza player avviato la modalita' effettiva deriva da VOLUME: niente stato
+# rimasto dalle prove di run_player precedenti.
+rm -f "$E/run/volume.effettivo"
 printf 'MODALITA=completa\nVOLUME=fisso\n' > "$E/settings"
 common "config_build '$E/settings'"
 printf 'playerpref replayGainMode 0\n' > "$E/rpc-fail"
