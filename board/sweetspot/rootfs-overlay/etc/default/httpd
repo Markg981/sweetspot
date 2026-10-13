@@ -1,4 +1,6 @@
 # Sweetspot - pagina di stato su http://sweetspot.local (porta 80).
 # Letto dallo script S90httpd di Buildroot.
 # -c: password delle pagine (PASSWORD_WEB), scritta da sweetspot-accesso.
-HTTPD_ARGS="-p 80 -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"
+# -u web:web: dopo aver aperto la porta 80 l'httpd (e quindi ogni CGI) lascia
+# root; le operazioni privilegiate passano da sweetspot-priv.
+HTTPD_ARGS="-p 80 -u web:web -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"

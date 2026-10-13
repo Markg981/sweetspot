@@ -19,7 +19,7 @@ fi
 echo '<div class="card">'
 if [ "$traffic" -lt 2048 ]; then t_esito=OK; else t_esito=INFO; fi
 {
-	sweetspot-check --dati
+	priv sweetspot-check --dati
 	echo "$t_esito|Traffico di rete ora|$((traffic / 1024)) KB/s (streaming e controllo remoto possono mantenere attiva la rete)"
 } | while IFS='|' read -r esito voce dettaglio; do
 	[ -n "$voce" ] || continue

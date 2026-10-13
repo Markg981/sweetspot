@@ -63,6 +63,7 @@ if [ "$OP" = ripristina ]; then
 		stick_umount
 	fi
 	cp "$tpl" "$RUN/sweetspot.txt"
+	chmod 600 "$RUN/sweetspot.txt" 2>/dev/null
 	config_build "$RUN/sweetspot.txt"
 	log "impostazioni: ripristinate quelle iniziali"
 	exit $saved
@@ -144,6 +145,7 @@ if [ $saved -ne 0 ]; then
 	[ -f "$RUN/sweetspot.txt" ] || : > "$RUN/sweetspot.txt"
 	edit_all "$RUN/sweetspot.txt" "$RUN/sweetspot.tmp" "$@" && mv "$RUN/sweetspot.tmp" "$RUN/sweetspot.txt"
 fi
+chmod 600 "$RUN/sweetspot.txt" 2>/dev/null # contiene le password: solo root
 config_build "$RUN/sweetspot.txt"
 while [ $# -gt 0 ]; do
 	case "$1" in

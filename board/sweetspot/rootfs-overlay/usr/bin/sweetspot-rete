@@ -148,6 +148,11 @@ case "$1" in
 	elenco) cat "$LIST" 2>/dev/null ;;
 	prova)
 		case "$2" in [1-9]) ;; *) echo "numero non valido"; exit 1 ;; esac
-		mount_share "$2" ;;
+		res=$(mount_share "$2")
+		rc=$?
+		echo "$res"
+		# Montata: la pagina Musica la mostra subito, senza attendere il prossimo avvio.
+		[ "$res" = OK ] && echo "$2|$(conf "CONDIVISIONE_$2")|OK|montata" >> "$LIST"
+		exit $rc ;;
 	*) echo "uso: $0 monta|smonta|smonta-una N|elenco|prova N" >&2; exit 1 ;;
 esac

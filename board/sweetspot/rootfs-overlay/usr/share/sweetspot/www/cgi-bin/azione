@@ -36,6 +36,10 @@ if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
 	done_to audio "Richiesta non valida: ricarica la pagina e riprova."
 fi
 
+# Cartella delle pagine (bozze dei filtri, stato della prova DoP): di solito la
+# crea root all'avvio con il proprietario "web"; qui solo se manca.
+mkdir -p "$WEBDIR/correzione" 2>/dev/null
+
 # numero VALORE MIN MAX
 in_range() {
 	case "$1" in ''|*[!0-9]*) return 1 ;; esac
@@ -57,7 +61,38 @@ is_cidr() {
 
 # Riavvio del player in sottofondo: la pagina risponde subito.
 restart_player() {
-	setsid /etc/init.d/S60sweetspot-player restart > /dev/null 2>&1 < /dev/null &
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @player
+	else
+		setsid /etc/init.d/S60sweetspot-player restart > /dev/null 2>&1 < /dev/null &
+	fi
+}
+
+# Riavvio, spegnimento e applicazione della scheda I2S dopo 2 secondi, in
+# sottofondo: la pagina risponde prima. Con l'helper li lancia root; senza
+# (test) direttamente.
+reboot_later() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @riavvia
+	else
+		( sleep 2; setsid sweetspot-riavvia ) > /dev/null 2>&1 &
+	fi
+}
+
+poweroff_later() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @spegni
+	else
+		( sleep 2; poweroff ) > /dev/null 2>&1 &
+	fi
+}
+
+autotune_later() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @autotune
+	else
+		( sleep 2; setsid sweetspot-autotune --applica ) > /dev/null 2>&1 &
+	fi
 }
 
 # Aggiunge o toglie un nome dalla lista ESCLUDI_DISCHI.
@@ -71,9 +106,9 @@ set_excluded() { # nome aggiungi|togli
 	[ "$2" = aggiungi ] && out=$(printf '%s\n%s\n' "$out" "$1")
 	out=$(printf '%s\n' "$out" | grep . | tr '\n' ',' | sed 's/,$//')
 	if [ -n "$out" ]; then
-		sweetspot-config imposta ESCLUDI_DISCHI "$out"
+		priv sweetspot-config imposta ESCLUDI_DISCHI "$out"
 	else
-		sweetspot-config rimuovi ESCLUDI_DISCHI
+		priv sweetspot-config rimuovi ESCLUDI_DISCHI
 	fi
 }
 
@@ -98,7 +133,7 @@ case "$F_a" in
 		in_range "$F_periodi" 2 16 || done_to audio "I periodi ALSA vanno da 2 a 16."
 		in_range "$F_pausa_frequenza" 0 5000 || done_to audio "La pausa al cambio di frequenza va da 0 a 5000 millisecondi."
 		in_range "$F_pausa_dsd" 0 5000 || done_to audio "La pausa tra DSD e PCM va da 0 a 5000 millisecondi."
-		sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" RICAMPIONAMENTO "$F_ricampionamento" \
+		priv sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" RICAMPIONAMENTO "$F_ricampionamento" \
 			FILTRO "$F_filtro" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
 			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd" \
 			ALTRI_DAC "$F_altri_dac" DAC "$F_dac"
@@ -124,18 +159,18 @@ case "$F_a" in
 		# ripartire. "playlist play" l'avrebbe cancellata.
 		lms_json "$mac" playlist preview "url:file://$dir/prova-dop.wav" "title:Prova DoP" > /dev/null ||
 			done_to audio "Lyrion non ha avviato la prova DoP: riprova tra qualche secondo."
-		touch "$RUN/prova-dop.avviata"
+		touch "$WEBDIR/prova-dop.avviata"
 		log "audio: prova DoP avviata"
 		done_to audio "Prova DoP avviata: guarda il display del DAC e ascolta, poi indica qui sotto com'è andata." ;;
 
 	prova_dop_esito)
-		rm -f "$RUN/prova-dop.avviata"
+		rm -f "$WEBDIR/prova-dop.avviata"
 		# La coda di ascolto torna com'era (ferma).
 		mac=$(cat "$RUN/player.mac" 2>/dev/null)
 		[ -n "$mac" ] && lms_json "$mac" playlist preview cmd:stop > /dev/null
 		case "$F_esito" in
 			si)
-				sweetspot-config imposta DSD dop
+				priv sweetspot-config imposta DSD dop
 				rc=$?
 				[ $rc -eq 1 ] && done_to audio "$(saved_msg 1)"
 				log "audio: prova DoP riuscita, DSD tramite DoP"
@@ -148,11 +183,11 @@ case "$F_a" in
 
 	# --- Musica ------------------------------------------------------------------
 	aggiorna)
-		sweetspot-lms aggiorna
+		priv sweetspot-lms aggiorna
 		done_to musica "Aggiornamento della libreria avviato." ;;
 
 	ricostruisci)
-		sweetspot-lms ricostruisci
+		priv sweetspot-lms ricostruisci
 		done_to musica "Ricostruzione della libreria avviata: con molti brani richiede alcuni minuti." ;;
 
 	aggiungi_condivisione)
@@ -171,41 +206,41 @@ case "$F_a" in
 		done
 		[ -n "$n" ] || done_to musica "Hai già 9 cartelle di rete: rimuovine una."
 		if [ -n "$F_utente" ]; then
-			sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir" \
+			priv sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir" \
 				"CONDIVISIONE_${n}_UTENTE" "$F_utente" "CONDIVISIONE_${n}_PASSWORD" "$F_password"
 		else
-			sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir"
+			priv sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir"
 		fi
-		res=$(sweetspot-rete prova "$n")
+		res=$(priv sweetspot-rete prova "$n")
 		if [ "$res" = OK ]; then
-			echo "$n|//$server/$dir|OK|montata" >> "$RUN/rete.list"
-			sweetspot-lms aggiorna
+			# (sweetspot-rete prova ha gia' messo la cartella nell'elenco)
+			priv sweetspot-lms aggiorna
 			done_to musica "Cartella aggiunta: la libreria si sta aggiornando."
 		fi
-		sweetspot-config rimuovi "CONDIVISIONE_$n" "CONDIVISIONE_${n}_UTENTE" "CONDIVISIONE_${n}_PASSWORD"
+		priv sweetspot-config rimuovi "CONDIVISIONE_$n" "CONDIVISIONE_${n}_UTENTE" "CONDIVISIONE_${n}_PASSWORD"
 		done_to musica "Cartella non aggiunta: $res." ;;
 
 	rimuovi_condivisione)
 		case "$F_n" in [1-9]) ;; *) done_to musica "Richiesta non valida." ;; esac
-		sweetspot-rete smonta-una "$F_n"
-		sweetspot-config rimuovi "CONDIVISIONE_$F_n" "CONDIVISIONE_${F_n}_UTENTE" "CONDIVISIONE_${F_n}_PASSWORD"
-		sweetspot-lms aggiorna
+		priv sweetspot-rete smonta-una "$F_n"
+		priv sweetspot-config rimuovi "CONDIVISIONE_$F_n" "CONDIVISIONE_${F_n}_UTENTE" "CONDIVISIONE_${F_n}_PASSWORD"
+		priv sweetspot-lms aggiorna
 		done_to musica "Cartella rimossa dalla libreria." ;;
 
 	escludi_disco)
 		name=$(safe_name "$F_nome")
 		[ -n "$name" ] || done_to musica "Richiesta non valida."
 		set_excluded "$name" aggiungi
-		sweetspot-dischi smonta "$name"
-		sweetspot-lms aggiorna
+		priv sweetspot-dischi smonta "$name"
+		priv sweetspot-lms aggiorna
 		done_to musica "Disco escluso dalla libreria." ;;
 
 	includi_disco)
 		name=$(safe_name "$F_nome")
 		[ -n "$name" ] || done_to musica "Richiesta non valida."
 		set_excluded "$name" togli
-		sweetspot-dischi monta
-		sweetspot-lms aggiorna
+		priv sweetspot-dischi monta
+		priv sweetspot-lms aggiorna
 		done_to musica "Disco aggiunto alla libreria." ;;
 
 	# --- Archivio -----------------------------------------------------------------
@@ -214,43 +249,43 @@ case "$F_a" in
 		[ -n "$name" ] || done_to archivio "Richiesta non valida."
 		identity=$(awk -F'|' -v n="$name" '$1 == n {print $7; exit}' "$RUN/dischi.list" 2>/dev/null)
 		case "$identity" in UUID=?*|PARTUUID=?*) ;; *) done_to archivio "Identità del disco non disponibile: ricollega il disco e riprova." ;; esac
-		sweetspot-config imposta ARCHIVIO "$identity"
+		priv sweetspot-config imposta ARCHIVIO "$identity"
 		rc=$?
 		[ "$rc" -eq 0 ] || done_to archivio "$(saved_msg "$rc")"
 		# Si rimonta il disco in scrittura.
-		sweetspot-dischi smonta "$name"
-		sweetspot-dischi monta
-		sweetspot-nas riavvia
-		sweetspot-lms aggiorna
-		[ -n "$(sweetspot-dischi archivio)" ] || done_to archivio "Il disco non si può usare in scrittura: controlla che non sia protetto o danneggiato."
+		priv sweetspot-dischi smonta "$name"
+		priv sweetspot-dischi monta
+		priv sweetspot-nas riavvia
+		priv sweetspot-lms aggiorna
+		[ -n "$(priv sweetspot-dischi archivio)" ] || done_to archivio "Il disco non si può usare in scrittura: controlla che non sia protetto o danneggiato."
 		done_to archivio "Archivio pronto: $name." ;;
 
 	# Archivio nello spazio libero del disco da cui parte Sweetspot.
 	archivio_spazio)
-		out=$(sweetspot-spazio crea) || done_to archivio "Non si può: $out."
+		out=$(priv sweetspot-spazio crea) || done_to archivio "Non si può: $out."
 		done_to archivio "Creazione dell'archivio avviata: richiede da qualche secondo a qualche minuto." ;;
 
 	archivio_togli)
-		a=$(sweetspot-dischi archivio)
+		a=$(priv sweetspot-dischi archivio)
 		[ -n "$a" ] || done_to archivio "Nessun archivio."
-		sweetspot-copia annulla
-		sweetspot-nas ferma
-		sweetspot-config rimuovi ARCHIVIO
-		sweetspot-dischi smonta "${a##*/}"
-		sweetspot-dischi monta
-		sweetspot-lms aggiorna
+		priv sweetspot-copia annulla
+		priv sweetspot-nas ferma
+		priv sweetspot-config rimuovi ARCHIVIO
+		priv sweetspot-dischi smonta "${a##*/}"
+		priv sweetspot-dischi monta
+		priv sweetspot-lms aggiorna
 		done_to archivio "Il disco è tornato in sola lettura." ;;
 
 	archivio_rete)
 		case "$F_condiviso" in si|no) ;; *) F_condiviso=no ;; esac
 		valid_value "$F_password" || done_to archivio "Password non valida."
 		if [ -n "$F_password" ]; then
-			sweetspot-config imposta ARCHIVIO_CONDIVISO "$F_condiviso" ARCHIVIO_PASSWORD "$F_password"
+			priv sweetspot-config imposta ARCHIVIO_CONDIVISO "$F_condiviso" ARCHIVIO_PASSWORD "$F_password"
 		else
-			sweetspot-config imposta ARCHIVIO_CONDIVISO "$F_condiviso"
+			priv sweetspot-config imposta ARCHIVIO_CONDIVISO "$F_condiviso"
 		fi
 		rc=$?
-		sweetspot-nas riavvia
+		priv sweetspot-nas riavvia
 		if [ "$F_condiviso" = si ]; then
 			done_to archivio "$(saved_msg $rc "Cartella di rete Musica attiva.")"
 		fi
@@ -258,25 +293,25 @@ case "$F_a" in
 
 	copia_avvia)
 		valid_value "$F_cartella" || done_to archivio "Richiesta non valida."
-		if err=$(sweetspot-copia avvia "$F_cartella"); then
+		if err=$(priv sweetspot-copia avvia "$F_cartella"); then
 			done_to archivio "Copia avviata."
 		fi
 		done_to archivio "Copia non avviata: $err." ;;
 
 	copia_annulla)
-		sweetspot-copia annulla
+		priv sweetspot-copia annulla
 		done_to archivio "Copia annullata." ;;
 
 	archivio_elimina)
 		valid_value "$F_cartella" || done_to archivio "Richiesta non valida."
-		if err=$(sweetspot-copia elimina "$F_cartella"); then
+		if err=$(priv sweetspot-copia elimina "$F_cartella"); then
 			done_to archivio "Cartella tolta dall'archivio."
 		fi
 		done_to archivio "Non tolta: $err." ;;
 
 	# --- CD ----------------------------------------------------------------------
 	cd_leggi)
-		if err=$(sweetspot-cd leggi); then
+		if err=$(priv sweetspot-cd leggi); then
 			done_to archivio "CD letto."
 		fi
 		done_to archivio "CD non letto: $err." ;;
@@ -284,23 +319,23 @@ case "$F_a" in
 	cd_copia)
 		valid_value "$F_album" && valid_value "$F_artista" || done_to archivio "Dati non validi."
 		case "$F_anno" in ''|[12][0-9][0-9][0-9]) ;; *) done_to archivio "Anno non valido." ;; esac
-		if err=$(sweetspot-cd copia "$F_album" "$F_artista" "$F_anno"); then
+		if err=$(priv sweetspot-cd copia "$F_album" "$F_artista" "$F_anno"); then
 			done_to archivio "Copia del CD avviata."
 		fi
 		done_to archivio "Copia non avviata: $err." ;;
 
 	cd_annulla)
-		sweetspot-cd annulla
+		priv sweetspot-cd annulla
 		done_to archivio "Copia del CD annullata." ;;
 
 	cd_espelli)
-		sweetspot-cd espelli
+		priv sweetspot-cd espelli
 		done_to archivio "CD espulso." ;;
 
 	# --- Plugin -------------------------------------------------------------------
 	plugin_installa)
 		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
-		if err=$(sweetspot-lms plugin installa "$F_nome"); then
+		if err=$(priv sweetspot-lms plugin installa "$F_nome"); then
 			done_to plugin "Plugin in arrivo: a scaricamento finito riavvia Lyrion per attivarlo."
 		fi
 		done_to plugin "Plugin non installato: ${err:-errore sconosciuto}. Sweetspot è collegato a Internet?" ;;
@@ -308,13 +343,13 @@ case "$F_a" in
 	plugin_rimuovi)
 		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
 		[ "$F_nome" = MaterialSkin ] && done_to plugin "L'interfaccia Material non si può togliere da qui."
-		if err=$(sweetspot-lms plugin rimuovi "$F_nome"); then
+		if err=$(priv sweetspot-lms plugin rimuovi "$F_nome"); then
 			done_to plugin "Il plugin viene tolto al riavvio di Lyrion."
 		fi
 		done_to plugin "Plugin non rimosso: ${err:-errore sconosciuto}." ;;
 
 	riavvia_lyrion)
-		sweetspot-lms riavvia
+		priv sweetspot-lms riavvia
 		done_to plugin "Lyrion si sta riavviando: tra circa un minuto i plugin sono attivi." ;;
 
 	# --- Rete --------------------------------------------------------------------
@@ -334,11 +369,11 @@ case "$F_a" in
 			is_ipv4 "$F_gateway" || done_to rete "Indirizzo del router non valido, es. 192.168.1.1."
 			[ -z "$F_dns" ] || is_ipv4 "$F_dns" || done_to rete "Indirizzo DNS non valido."
 			set -- "$@" IP_FISSO "$F_ip_fisso" GATEWAY "$F_gateway"
-			if [ -n "$F_dns" ]; then set -- "$@" DNS "$F_dns"; else sweetspot-config rimuovi DNS; fi
+			if [ -n "$F_dns" ]; then set -- "$@" DNS "$F_dns"; else priv sweetspot-config rimuovi DNS; fi
 		else
-			sweetspot-config rimuovi IP_FISSO GATEWAY DNS
+			priv sweetspot-config rimuovi IP_FISSO GATEWAY DNS
 		fi
-		sweetspot-config imposta "$@"
+		priv sweetspot-config imposta "$@"
 		rc=$?
 		done_to rete "$(saved_msg $rc "Impostazioni di rete salvate: valgono dal prossimo avvio.")" ;;
 
@@ -350,10 +385,10 @@ case "$F_a" in
 		case "$ov" in *[!a-z0-9-]*) done_to audio "Nome dell'overlay non valido: solo lettere minuscole, cifre e trattini." ;; esac
 		[ "${#ov}" -le 60 ] || done_to audio "Nome dell'overlay troppo lungo."
 		[ "$ov" = "$(conf SCHEDA_I2S)" ] && done_to audio "La scheda è già questa."
-		if [ -n "$ov" ]; then sweetspot-config imposta SCHEDA_I2S "$ov"; else sweetspot-config rimuovi SCHEDA_I2S; fi
+		if [ -n "$ov" ]; then priv sweetspot-config imposta SCHEDA_I2S "$ov"; else priv sweetspot-config rimuovi SCHEDA_I2S; fi
 		rc=$?
 		[ $rc -eq 0 ] || done_to audio "$(saved_msg $rc)"
-		( sleep 2; setsid sweetspot-autotune --applica ) > /dev/null 2>&1 &
+		autotune_later
 		done_to stato "Scheda salvata: il Raspberry Pi si riavvia per caricarla (circa un minuto)." ;;
 
 	# --- Sistema -----------------------------------------------------------------
@@ -380,16 +415,16 @@ case "$F_a" in
 		# Password delle pagine: si salva solo l'impronta MD5-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
 		if [ -n "$F_web_password" ]; then
-			h=$(sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
+			h=$(priv sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
 			set -- "$@" PASSWORD_WEB "$h"
 		elif [ "$F_web_libero" = si ]; then
-			sweetspot-config rimuovi PASSWORD_WEB
+			priv sweetspot-config rimuovi PASSWORD_WEB
 		fi
-		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else sweetspot-config rimuovi SERVER; fi
-		sweetspot-config imposta "$@"
+		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else priv sweetspot-config rimuovi SERVER; fi
+		priv sweetspot-config imposta "$@"
 		rc=$?
 		[ $rc -eq 1 ] && done_to sistema "$(saved_msg 1)"
-		sweetspot-accesso applica
+		priv sweetspot-accesso applica
 		# Il nome nuovo vale subito, in Lyrion e nel player.
 		if [ "$nome" != "$old_name" ] && [ "$old_mode" = completa ]; then
 			mac=$(cat "$RUN/player.mac" 2>/dev/null)
@@ -403,15 +438,15 @@ case "$F_a" in
 	# --- Correzione ambientale -------------------------------------------------------
 	correzione_salva)
 		case "$F_modo" in si|confronto|no) ;; *) F_modo=no ;; esac
-		d=$RUN/correzione
+		d=$WEBDIR/correzione
 		mkdir -p "$d"
 		printf '%s\n' "$F_sinistro" > "$d/nuovo-sinistro.txt"
 		printf '%s\n' "$F_destro" > "$d/nuovo-destro.txt"
 		: > "$d/bozza.errori"
 		for side in sinistro destro; do
 			if [ -n "$(tr -d ' \t\r\n' < "$d/nuovo-$side.txt")" ]; then
-				sweetspot-dsp leggi "$d/nuovo-$side.txt" | grep '^errore|' | sed "s/^/$side|/" >> "$d/bozza.errori"
-				[ "$side" = sinistro ] && ! sweetspot-dsp leggi "$d/nuovo-$side.txt" | grep -qv '^errore|' &&
+				priv sweetspot-dsp leggi "$d/nuovo-$side.txt" | grep '^errore|' | sed "s/^/$side|/" >> "$d/bozza.errori"
+				[ "$side" = sinistro ] && ! priv sweetspot-dsp leggi "$d/nuovo-$side.txt" | grep -qv '^errore|' &&
 					echo "sinistro|errore|-|nessun filtro attivo trovato nel testo" >> "$d/bozza.errori"
 			else
 				: > "$d/nuovo-$side.txt"
@@ -426,11 +461,11 @@ case "$F_a" in
 			done_to correzione "Filtri non salvati: ci sono righe da correggere."
 		fi
 		rm -f "$d/bozza-sinistro.txt" "$d/bozza-destro.txt" "$d/bozza.errori"
-		sweetspot-dsp salva "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
+		priv sweetspot-dsp salva "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
 		rc=$?
 		rm -f "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
-		[ ! -s "$d/sinistro.txt" ] && F_modo=no
-		sweetspot-config imposta CORREZIONE "$F_modo"
+		[ ! -s "$RUN/correzione/sinistro.txt" ] && F_modo=no
+		priv sweetspot-config imposta CORREZIONE "$F_modo"
 		rc2=$?
 		[ $rc -eq 0 ] && rc=$rc2
 		restart_player
@@ -442,7 +477,7 @@ case "$F_a" in
 
 	correzione_modo)
 		case "$F_modo" in si|confronto|no) ;; *) done_to correzione "Scelta non valida." ;; esac
-		sweetspot-config imposta CORREZIONE "$F_modo"
+		priv sweetspot-config imposta CORREZIONE "$F_modo"
 		rc=$?
 		restart_player
 		case "$F_modo" in
@@ -453,7 +488,7 @@ case "$F_a" in
 
 	# --- Aggiornamenti e installazione ------------------------------------------------
 	aggiorna_cerca)
-		out=$(sweetspot-aggiorna cerca)
+		out=$(priv sweetspot-aggiorna cerca)
 		case "$out" in
 			errore=*) done_to sistema "Ricerca non riuscita: ${out#errore=}." ;;
 		esac
@@ -464,49 +499,49 @@ case "$F_a" in
 		done_to sistema "È disponibile Sweetspot $v." ;;
 
 	aggiorna_scarica)
-		out=$(sweetspot-aggiorna scarica) || done_to sistema "Aggiornamento non avviato: $out."
+		out=$(priv sweetspot-aggiorna scarica) || done_to sistema "Aggiornamento non avviato: $out."
 		done_to sistema "Aggiornamento avviato: Sweetspot continua a suonare, la nuova versione si usa dopo il riavvio." ;;
 
 	aggiorna_file)
-		out=$(sweetspot-aggiorna file "$F_file") || done_to sistema "Aggiornamento non avviato: $out."
+		out=$(priv sweetspot-aggiorna file "$F_file") || done_to sistema "Aggiornamento non avviato: $out."
 		done_to sistema "Aggiornamento dal disco avviato." ;;
 
 	aggiorna_annulla)
-		sweetspot-aggiorna annulla
+		priv sweetspot-aggiorna annulla
 		done_to sistema "Aggiornamento annullato: resta la versione attuale." ;;
 
 	aggiorna_altra)
-		out=$(sweetspot-aggiorna altra) || done_to sistema "Non si può: $out."
-		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
+		out=$(priv sweetspot-aggiorna altra) || done_to sistema "Non si può: $out."
+		reboot_later
 		done_to stato "Riavvio con l'altra versione: la pagina tornerà disponibile tra circa un minuto." ;;
 
 	aggiorna_predefinita)
-		sweetspot-aggiorna predefinita > /dev/null
+		priv sweetspot-aggiorna predefinita > /dev/null
 		done_to sistema "Questa versione è ora quella che parte all'accensione." ;;
 
 	installa)
 		[ "$F_conferma" = si ] || done_to sistema "Per installare conferma che il disco verrà cancellato."
 		[ "$F_archivio" = si ] || F_archivio=no
-		out=$(sweetspot-installa avvia "$F_disco" "$F_archivio") || done_to sistema "Installazione non avviata: $out."
+		out=$(priv sweetspot-installa avvia "$F_disco" "$F_archivio") || done_to sistema "Installazione non avviata: $out."
 		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
 
 	ripristina)
 		[ "$F_conferma" = si ] || done_to sistema "Per ripristinare conferma che tutte le impostazioni torneranno quelle iniziali."
-		sweetspot-config ripristina
+		priv sweetspot-config ripristina
 		rc=$?
 		[ $rc -eq 1 ] && done_to sistema "Ripristino non riuscito."
 		# Senza chiavetta un riavvio riporterebbe le impostazioni di prima.
 		[ $rc -eq 2 ] && done_to sistema "Chiavetta non trovata: le impostazioni iniziali valgono solo fino al riavvio."
-		sweetspot-accesso applica
-		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
+		priv sweetspot-accesso applica
+		reboot_later
 		done_to stato "Impostazioni iniziali ripristinate: Sweetspot si riavvia (circa un minuto)." ;;
 
 	riavvia)
-		( sleep 2; setsid sweetspot-riavvia ) >/dev/null 2>&1 &
+		reboot_later
 		done_to stato "Riavvio in corso: la pagina tornerà disponibile tra circa un minuto." ;;
 
 	spegni)
-		( sleep 2; poweroff ) >/dev/null 2>&1 &
+		poweroff_later
 		done_to stato "Spegnimento in corso. Puoi staccare la corrente quando il computer si è spento." ;;
 
 	*) done_to audio "Azione sconosciuta." ;;

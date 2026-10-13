@@ -5,7 +5,7 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
-if out=$(sweetspot-rapporto); then
+if out=$(priv sweetspot-rapporto); then
 	printf 'Content-Type: application/json\r\nContent-Disposition: attachment; filename="sweetspot-rapporto.json"\r\nCache-Control: no-store\r\n\r\n'
 	printf '%s\n' "$out"
 else

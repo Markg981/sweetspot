@@ -73,7 +73,7 @@ $(option no "Spente: per provare se un problema dipende da loro" "$(conf OTTIMIZ
 HTML
 
 # --- Versione e aggiornamenti -------------------------------------------------------
-st=$(sweetspot-aggiorna stato)
+st=$(priv sweetspot-aggiorna stato)
 sv() { printf '%s\n' "$st" | sed -n "s/^$1=//p" | tail -n 1; }
 ver=$(sv versione)
 slot=$(sv copia)
@@ -127,7 +127,7 @@ if [ "$jstate" != scarica ] && [ "$jstate" != controlla ] && [ "$jstate" != pron
 	elif [ -n "$avail" ]; then
 		info_row OK "Hai l'ultima versione" "Nessun aggiornamento disponibile."
 	fi
-	sweetspot-aggiorna pacchetti | while IFS= read -r f; do
+	priv sweetspot-aggiorna pacchetti | while IFS= read -r f; do
 		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">Pacchetto di aggiornamento su disco</div><div class="v">%s</div></div>' "$(esc "${f#"$MEDIA_DIR"/}")"
 		button aggiorna_file "Installa" file "$f"
 		echo '</div>'
@@ -151,7 +151,7 @@ echo '</div>'
 # dalla sua scheda SD) ------------------------------------------------------------
 installed=""
 if [ "$(boot_type)" = grub ]; then
-ist=$(sweetspot-installa stato)
+ist=$(priv sweetspot-installa stato)
 istate=${ist%%|*}; irest=${ist#*|}
 istep=${irest%%|*}; irest=${irest#*|}
 itot=${irest%%|*}; imsg=${irest#*|}
@@ -190,7 +190,7 @@ Il resto del disco può diventare l'archivio musicale, per i CD copiati e la mus
 <b>Tutto ciò che c'è ora sul disco scelto viene cancellato.</b></p>
 HTML
 n=0
-disks=$(sweetspot-installa dischi)
+disks=$(priv sweetspot-installa dischi)
 while IFS='|' read -r d gb model bus contents arch; do
 	[ -n "$d" ] || continue
 	n=$((n + 1))

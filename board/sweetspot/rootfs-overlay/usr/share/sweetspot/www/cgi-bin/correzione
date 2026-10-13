@@ -9,24 +9,26 @@
 page_start "Correzione ambientale" audio
 
 DIR=$RUN/correzione
+# Bozze non valide appena inviate: le scrive la pagina (utente "web").
+BOZZE=$WEBDIR/correzione
 mode_now=$(lower "$(conf CORREZIONE no)")
 case "$mode_now" in si|confronto) ;; *) mode_now=no ;; esac
 
 # Testo di un canale: la bozza non valida appena inviata, altrimenti i filtri salvati.
 text_of() {
-	if [ -f "$DIR/bozza-$1.txt" ]; then cat "$DIR/bozza-$1.txt"; else cat "$DIR/$1.txt" 2>/dev/null; fi
+	if [ -f "$BOZZE/bozza-$1.txt" ]; then cat "$BOZZE/bozza-$1.txt"; else cat "$DIR/$1.txt" 2>/dev/null; fi
 }
 
 count_filters() { # canale
 	local f=$DIR/$1.txt
 	[ "$1" = destro ] && [ ! -s "$f" ] && f=$DIR/sinistro.txt
 	[ -s "$f" ] || { echo 0; return; }
-	sweetspot-dsp leggi "$f" 2>/dev/null | grep -vc '^errore|'
+	priv sweetspot-dsp leggi "$f" 2>/dev/null | grep -vc '^errore|'
 }
 
 # Curva della correzione (SVG disegnato qui, niente script nel browser).
 curve_svg() {
-	sweetspot-dsp risposta | $AWK '
+	priv sweetspot-dsp risposta | $AWK '
 	function x(f) { return 40 + (log(f / 20) / log(1000)) * 580 }
 	function y(d) { return 10 + (top - d) / (top - bot) * 200 }
 	{ hz[NR] = $1; sx[NR] = $2; dx[NR] = ($3 == "" ? $2 : $3); n = NR
@@ -64,7 +66,7 @@ HTML
 # --- Stato -------------------------------------------------------------------------
 nsx=$(count_filters sinistro)
 ndx=$(count_filters destro)
-fir=$(sweetspot-dsp fir) || fir=""
+fir=$(priv sweetspot-dsp fir) || fir=""
 echo '<h2>Stato</h2><div class="card">'
 # Impulsi FIR (rePhase, Acourate, REW) copiati dal computer sulla chiavetta.
 if [ -n "$fir" ]; then
@@ -78,7 +80,7 @@ if [ "$nsx" = 0 ] && [ -z "$fir" ]; then
 	info_row "" "Nessun filtro" "Misura la stanza con REW (guida qui sotto) e incolla i filtri: poi potrai accendere la correzione."
 else
 	# Attenuazione scritta all'italiana: "2,9 dB".
-	gain=$(sweetspot-dsp guadagno | sed 's/^-//; s/\./,/')
+	gain=$(priv sweetspot-dsp guadagno | sed 's/^-//; s/\./,/')
 	if [ -s "$RUN/correzione.errore" ]; then
 		info_row ATTENZIONE "Correzione non applicata" "$(cat "$RUN/correzione.errore"): il DAC riceve il segnale diretto."
 	fi
@@ -102,11 +104,11 @@ echo '</div>'
 
 # --- Filtri ------------------------------------------------------------------------
 echo '<h2>Filtri da REW</h2><div class="card formcard">'
-if [ -s "$DIR/bozza.errori" ]; then
+if [ -s "$BOZZE/bozza.errori" ]; then
 	echo '<p class="msg">Filtri non salvati, correggi queste righe:<br>'
 	while IFS='|' read -r side _ line msg; do
 		printf '%s, riga %s: %s<br>' "$(esc "$side")" "$(esc "$line")" "$(esc "$msg")"
-	done < "$DIR/bozza.errori"
+	done < "$BOZZE/bozza.errori"
 	echo '</p>'
 fi
 form_start correzione_salva
