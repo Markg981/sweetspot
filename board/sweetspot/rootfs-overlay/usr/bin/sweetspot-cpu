@@ -56,6 +56,29 @@ snap_freq() {
 	echo "${best:-$want}"
 }
 
+# Profilo energetico conservativo: governor che segue il carico, intervallo
+# di frequenza intero, SMT attivo e stati C tutti abilitati (a runtime).
+set_policy_conservativo() {
+	local pol=$1 g=""
+	for g in schedutil ondemand; do
+		grep -qw "$g" "$pol/scaling_available_governors" 2>/dev/null && break
+		g=""
+	done
+	[ -n "$g" ] && put "$g" "$pol/scaling_governor"
+	put "$(cat "$pol/cpuinfo_min_freq")" "$pol/scaling_min_freq"
+	put "$(cat "$pol/cpuinfo_max_freq")" "$pol/scaling_max_freq"
+	echo "${g:-auto}"
+}
+
+conservativo_runtime() {
+	local d
+	[ -f "$SYS/devices/system/cpu/smt/control" ] &&
+		put on "$SYS/devices/system/cpu/smt/control"
+	for d in "$SYS"/devices/system/cpu/cpu*/cpuidle/state*/disable; do
+		[ -f "$d" ] && put 0 "$d"
+	done
+}
+
 set_policy() {
 	local pol=$1 min base target
 	min=$(cat "$pol/cpuinfo_min_freq")
@@ -93,6 +116,17 @@ pm_qos() {
 mkdir -p "$RUN"
 if safe_mode; then
 	log "cpu: avvio senza ottimizzazioni, frequenza gestita dal kernel"
+	exit 0
+fi
+if [ "$(energia)" = conservativo ]; then
+	for pol in "$CPUFREQ"/policy*; do
+		[ -d "$pol" ] || continue
+		f=$(set_policy_conservativo "$pol")
+	done
+	conservativo_runtime
+	pm_qos
+	echo "$PROFILE conservativo:${f:-?}" > "$RUN/cpu.stato"
+	log "cpu: energia conservativa, governor ${f:-?}"
 	exit 0
 fi
 turbo_off

@@ -59,7 +59,7 @@ check_cpu() {
 	fi
 	smt=$(cpu_smt_state)
 	case "$smt" in
-		on) emit ATTENZIONE "Hyper-Threading" "attivo" ;;
+		on) if [ "$(energia)" = conservativo ]; then emit INFO "Hyper-Threading" "attivo (profilo energetico conservativo)"; else emit ATTENZIONE "Hyper-Threading" "attivo"; fi ;;
 		off|forceoff) emit OK "Hyper-Threading" "spento" ;;
 		*) emit OK "Hyper-Threading" "non presente" ;;
 	esac
@@ -73,6 +73,8 @@ check_cpu() {
 	done
 	if [ -n "$min" ] && [ "$min" = "$max" ]; then
 		emit OK "Frequenza CPU" "fissa a $((min / 1000)) MHz (profilo $(cut -d' ' -f1 "$RUN/cpu.stato" 2>/dev/null), governor $gov)"
+	elif [ -n "$min" ] && [ "$(energia)" = conservativo ]; then
+		emit INFO "Frequenza CPU" "governor $gov, $((min / 1000))-$((max / 1000)) MHz (profilo energetico conservativo)"
 	elif [ -n "$min" ]; then
 		emit ATTENZIONE "Frequenza CPU" "variabile $((min / 1000))-$((max / 1000)) MHz, ora $((cur / 1000)) MHz"
 	else
@@ -88,7 +90,9 @@ check_cpu() {
 		on) emit ATTENZIONE "Turbo" "attivo" ;;
 	esac
 	states=$(cat "$SYS"/devices/system/cpu/cpu0/cpuidle/state*/name 2>/dev/null | tr '\n' ' ')
-	if cmdline_has intel_idle.max_cstate || cmdline_has processor.max_cstate; then
+	if [ "$(energia)" = conservativo ]; then
+		emit INFO "Stati di risparmio" "liberi (profilo energetico conservativo; ${states:-nessuno})"
+	elif cmdline_has intel_idle.max_cstate || cmdline_has processor.max_cstate; then
 		emit OK "Stati di risparmio" "limitati a C1 (disponibili: ${states:-nessuno})"
 	else
 		emit ATTENZIONE "Stati di risparmio" "non limitati (${states:-nessuno})"

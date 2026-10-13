@@ -21,16 +21,17 @@ tune_params() {
 		return
 	fi
 	cpu_layout
-	[ "$LAYOUT_NOSMT" = 1 ] && p="nosmt"
+	# Profilo conservativo: SMT attivo e stati C liberi (niente parametri).
+	[ "$(energia)" = fisso ] && [ "$LAYOUT_NOSMT" = 1 ] && p="nosmt"
 	# Solo lo stato C1: la CPU non scende negli stati profondi, che fanno
 	# variare continuamente l'assorbimento. Su ARM (Raspberry Pi) niente
 	# stati di risparmio oltre all'attesa semplice (WFI).
 	if [ "$(boot_type)" = rpi ]; then
-		p="$p cpuidle.off=1"
+		[ "$(energia)" = fisso ] && p="$p cpuidle.off=1"
 		# La scheda DAC I2S la carica il firmware: entra nei parametri, cosi'
 		# cambiarla porta allo stesso unico riavvio.
 		[ -n "$(conf SCHEDA_I2S)" ] && p="$p sweetspot.i2s=$(conf SCHEDA_I2S)"
-	else
+	elif [ "$(energia)" = fisso ]; then
 		p="$p intel_idle.max_cstate=1 processor.max_cstate=1"
 	fi
 	if [ -n "$LAYOUT_ISO" ]; then
