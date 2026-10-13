@@ -1061,3 +1061,62 @@ mbr_read() { # dispositivo
 		}
 	}'
 }
+
+# --- Controllo dell'header Host delle pagine web ------------------------------------
+# Difesa dal DNS rebinding: una pagina esterna che fa risolvere il proprio
+# nome all'indirizzo di Sweetspot arriverebbe con un Host diverso e potrebbe
+# leggere il gettone anti-CSRF. Si accettano solo i nomi e gli indirizzi
+# con cui l'utente raggiunge davvero il player.
+
+# Host senza la porta, in minuscolo ("[fe80::1]:80" -> "fe80::1").
+host_bare() {
+	local h
+	h=$(lower "$1")
+	case "$h" in
+		'['*) h=${h#\[}; h=${h%%\]*} ;;
+		*:*:*) ;; # IPv6 senza parentesi: nessuna porta da togliere
+		*) h=${h%%:*} ;;
+	esac
+	printf '%s' "$h"
+}
+
+# Indirizzi IPv4 e IPv6 assegnati al computer, uno per riga.
+host_addresses() {
+	ip -o addr show 2>/dev/null | awk '$3 == "inet" || $3 == "inet6" { sub("/.*", "", $4); print $4 }'
+}
+
+# host_allowed HOST [INDIRIZZO_CLIENT]: vero se HOST e' un nome o un
+# indirizzo di questo player. Senza Host (HTTP/1.0) passa solo chi arriva
+# dal computer stesso: un browser manda sempre l'Host, quindi il rebinding
+# non puo' sfruttare l'assenza.
+host_allowed() {
+	local h net a
+	h=$(host_bare "$1")
+	if [ -z "$h" ]; then
+		case "$2" in 127.*|::1) return 0 ;; esac
+		return 1
+	fi
+	case "$h" in localhost|127.0.0.1|::1) return 0 ;; esac
+	net=$(lower "$(conf NOME_RETE sweetspot)" | tr -c 'a-z0-9-' '-' | cut -c1-32)
+	if [ -n "$net" ]; then
+		case "$h" in "$net"|"$net.local") return 0 ;; esac
+	fi
+	a=$(lower "$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)")
+	if [ -n "$a" ]; then
+		case "$h" in "$a"|"$a.local") return 0 ;; esac
+	fi
+	# Lettura fino in fondo (niente grep -q: chiuderebbe la pipe in anticipo).
+	a=$(host_addresses | awk -v h="$h" 'tolower($0) == h { print "si" }')
+	[ -n "$a" ]
+}
+
+# Chiamato all'inizio di ogni pagina (CGI): Host non riconosciuto -> 403 e
+# nessuna azione. Fuori da una richiesta web (script di sistema, test) non fa nulla.
+host_guard() {
+	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
+	host_allowed "${HTTP_HOST:-}" "${REMOTE_ADDR:-}" && return 0
+	printf 'Status: 403 Forbidden\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\nindirizzo non valido: usa http://%s.local/\n' \
+		"$(conf NOME_RETE sweetspot)"
+	exit 0
+}
+host_guard

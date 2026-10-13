@@ -434,6 +434,51 @@ expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-
 expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
 acc '' > /dev/null
 expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
+
+echo "Controllo dell'header Host (DNS rebinding)"
+# Come una richiesta web (GATEWAY_INTERFACE impostata): la pagina vivo e'
+# la CGI piu' semplice. $2 = Host ("-" = assente), $3 = indirizzo del client.
+mkdir -p "$WEB/hbin"
+printf '#!/bin/sh\nprintf "2: eth0    inet 192.168.1.50/24 brd 192.168.1.255 scope global eth0\\n2: eth0    inet6 fe80::1234:abcd/64 scope link\\n"\n' > "$WEB/hbin/ip"
+chmod +x "$WEB/hbin/ip"
+hostcall() { # impostazioni host client
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	if [ "$2" = "-" ]; then unset HTTP_HOST; else export HTTP_HOST=$2; fi
+	GATEWAY_INTERFACE=CGI/1.1 REMOTE_ADDR=${3:-192.168.1.9} \
+		SWEETSPOT_RUN=$WEB/run SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$WEB/hbin:$SWEETSPOT_PATH" \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/vivo" 2>&1
+	unset HTTP_HOST
+}
+hostcode() { case "$(hostcall "$@")" in *"403 Forbidden"*) echo 403 ;; *"ok "*) echo ok ;; *) echo altro ;; esac; }
+for h in sweetspot.local sweetspot.local:80 SweetSpot.LOCAL localhost 127.0.0.1:80 192.168.1.50 192.168.1.50:80 '[fe80::1234:abcd]:80' '[fe80::1234:abcd]'; do
+	expect "Host $h accettato" ok "$(hostcode '' "$h")"
+done
+for h in evil.example.com evil.example.com:80 192.168.1.51 sweetspot.local.evil.com 10.0.0.1; do
+	expect "Host $h rifiutato con 403" 403 "$(hostcode '' "$h")"
+done
+expect "NOME_RETE personalizzato: salotto.local accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto.local)"
+expect "NOME_RETE personalizzato: nome breve accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto:80)"
+expect "NOME_RETE personalizzato: il vecchio nome non vale" 403 "$(hostcode 'NOME_RETE=salotto' sweetspot.local)"
+expect "Host assente dal computer stesso accettato" ok "$(hostcode '' - 127.0.0.1)"
+expect "Host assente dalla rete rifiutato" 403 "$(hostcode '' - 192.168.1.9)"
+out=$(hostcall '' evil.example.com)
+case "$out" in *"Status: 403"*"Content-Type: text/plain"*) ok "403 prima di qualunque altro output" ;; *) ko "403 senza altro output" "solo la risposta 403" "$out" ;; esac
+expect "fuori da una richiesta web nessun controllo" "ok" "$(HTTP_HOST=evil SWEETSPOT_RUN=$WEB/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; echo ok")"
+
+echo "Protezione CSRF di Lyrion"
+lmsprefs() { # contenuto iniziale di server.prefs ("-" = file assente)
+	rm -rf "$WEB/lmsdata"; mkdir -p "$WEB/lmsdata/prefs"
+	[ "$1" = "-" ] || printf '%s\n' "$1" > "$WEB/lmsdata/prefs/server.prefs"
+	SWEETSPOT_TEST=1 SWEETSPOT_LMS_DATA=$WEB/lmsdata SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-lms; [ -s \$PREFS/server.prefs ] || first_prefs > \$PREFS/server.prefs; ensure_csrf" > /dev/null 2>&1
+	grep '^csrfProtectionLevel' "$WEB/lmsdata/prefs/server.prefs" | tr '\n' '|'
+}
+expect "CSRF Lyrion: primo avvio a livello 1" "csrfProtectionLevel: 1|" "$(lmsprefs -)"
+expect "CSRF Lyrion: assente nelle preferenze esistenti -> 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'language: IT')"
+expect "CSRF Lyrion: livello 0 riportato a 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'csrfProtectionLevel: 0')"
+expect "CSRF Lyrion: livello 2 scelto dall'utente resta" "csrfProtectionLevel: 2|" "$(lmsprefs 'csrfProtectionLevel: 2')"
 printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
