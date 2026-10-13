@@ -112,6 +112,16 @@ do_prepare() {
 	chown -R "$LMS_USER:$LMS_USER" "$LMS_DATA" "$LMS_LOG" 2>/dev/null
 }
 
+# Finche' Lyrion vive, ogni 20 secondi porta lo scanner (figlio del server,
+# nasce con il valore di Lyrion) tra i primi candidati dell'OOM killer.
+# Un giro leggero sulle righe di comando; niente scanner, niente scritture.
+oom_watch() {
+	while kill -0 "$1" 2>/dev/null; do
+		oom_adj_cmd 500 scanner.pl
+		sleep 20
+	done
+}
+
 do_service() {
 	local restarts=0 started rc hk
 	rm -f "$STOPFLAG"
@@ -128,8 +138,13 @@ do_service() {
 		taskset -c "$hk" nice -n 10 \
 			su -s /bin/sh "$LMS_USER" -c "exec perl $LMS_DIR/slimserver.pl --prefsdir $PREFS --cachedir $CACHE --logdir $LMS_LOG --charset utf8" \
 				>> "$LMS_LOG/avvio.log" 2>&1 &
-		echo $! > "$RUN/lms.pid"
-		wait $!
+		lmspid=$!
+		echo "$lmspid" > "$RUN/lms.pid"
+		# OOM killer: Lyrion poco protetto, lo scanner (figlio, lo eredita)
+		# tra i primi a cadere; il player (-1000) mai.
+		oom_adj -100 "$lmspid"
+		oom_watch "$lmspid" &
+		wait "$lmspid"
 		rc=$?
 		[ -f "$STOPFLAG" ] && break
 		# Fermate ripetute subito dopo l'avvio: si aspetta di piu'.

@@ -69,6 +69,9 @@ do_start() {
 	# Gruppo di processi proprio: la modalita' ascolto lo sospende intero.
 	setsid sh -c '
 		job=$1; src=$2; a=$3
+		# Lavoro sospendibile: per l'OOM killer e' tra i primi (la shell
+		# e il cp figlio ereditano il valore).
+		{ echo 500 > /proc/$$/oom_score_adj; } 2>/dev/null
 		if cp -a "$src" "$a/"; then echo finita > "$job.stato"
 		else [ "$(cat "$job.stato")" = annullata ] || echo errore > "$job.stato"; fi
 		sync

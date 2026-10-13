@@ -318,6 +318,35 @@ machine_class() {
 	fi
 }
 
+# Protezione dall'OOM killer: oom_adj VALORE PID... scrive oom_score_adj
+# (-1000 = mai ucciso, +1000 = il primo). Senza swap, sotto pressione di
+# memoria il kernel uccide chi ha il punteggio piu' alto: il player deve
+# essere l'ultimo, scanner e lavori sospendibili i primi. Scrive solo se il
+# valore cambia; ignora in silenzio i processi gia' terminati.
+oom_adj() {
+	local v=$1 p
+	shift
+	for p in "$@"; do
+		[ "$(cat "$PROC/$p/oom_score_adj" 2>/dev/null)" = "$v" ] && continue
+		put "$v" "$PROC/$p/oom_score_adj"
+	done
+	return 0
+}
+
+# oom_adj_cmd VALORE TESTO: come oom_adj, per i processi la cui riga di
+# comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+oom_adj_cmd() {
+	local v=$1 pat=$2 d p
+	for d in "$PROC"/[0-9]*; do
+		[ -r "$d/cmdline" ] || continue
+		p=${d##*/}
+		case "$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null)" in
+			*"$pat"*) oom_adj "$v" "$p" ;;
+		esac
+	done
+	return 0
+}
+
 # Buffer di squeezelite in KB: "stream:output".
 # Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
 # i campioni gia' decodificati: con un output grande la decodifica finisce

@@ -123,6 +123,7 @@ pin_dsp() {
 	[ -f "$RUN/correzione.attiva" ] || return 0
 	prio=$(dsp_priority)
 	for p in $(pidof camilladsp 2>/dev/null); do
+		oom_adj -1000 "$p"
 		named=0
 		for t in "$PROC/$p"/task/*; do
 			[ "$(cat "$t/comm" 2>/dev/null)" = Processing ] && named=1
@@ -482,6 +483,9 @@ run_player() {
 	taskset -c "$HK" squeezelite "$@" &
 	PID=$!
 	echo "$PID" > "$RUN/squeezelite.pid"
+	# Mai ucciso dall'OOM killer: senza swap, sotto pressione di memoria
+	# cadrebbero prima gli altri (vedi oom_adj in common.sh).
+	oom_adj -1000 "$PID"
 	PREFS_SET=0
 }
 

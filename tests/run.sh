@@ -166,6 +166,27 @@ expect "buffer 16 GB" "1048576:2000000" "$(run "$N550" player_buffers)"
 expect "buffer 2 GB" "203094:406189" "$(run "$DUAL" player_buffers)"
 expect "buffer 1 GB" "33928:67856" "$(run "$ONE" player_buffers)"
 
+echo "Protezione dall'OOM killer"
+OOM=$WORK/oom
+mkdir -p "$OOM/proc/100" "$OOM/proc/200" "$OOM/proc/300"
+for p in 100 200 300; do echo 0 > "$OOM/proc/$p/oom_score_adj"; done
+printf 'perl\0/usr/lib/lyrion/scanner.pl\0--rescan\0' > "$OOM/proc/200/cmdline"
+printf 'perl\0/usr/lib/lyrion/slimserver.pl\0' > "$OOM/proc/300/cmdline"
+printf 'squeezelite\0' > "$OOM/proc/100/cmdline"
+run "$OOM" oom_adj -1000 100 999
+expect "player mai ucciso (-1000)" "-1000" "$(cat "$OOM/proc/100/oom_score_adj")"
+expect "pid inesistente ignorato" "0" "$(run "$OOM" 'oom_adj 500 999; echo $?')"
+run "$OOM" oom_adj_cmd 500 scanner.pl
+expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
+expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
+grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
+grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
+grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
+grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
+grep -q 'oom_score_adj' "$OVERLAY/usr/bin/sweetspot-copia" && ok "copia: lavoro sospendibile a +500" || ko "copia: lavoro sospendibile a +500" "presente" "assente"
+grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
+grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-precarico" && ok "precarico a +500" || ko "precarico a +500" "presente" "assente"
+
 echo "DAC"
 expect "trova il DAC USB, non la scheda integrata" "1" "$(run "$N550" dac_find)"
 expect "nome" "GUSTARD R26" "$(run "$N550" "dac_name 1")"
