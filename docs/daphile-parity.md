@@ -51,10 +51,13 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
    release, computer, DAC, firmware e adattatori di rete. Separare riconoscimento,
    funzionamento verificato e certificazione audio. Non promettere ogni dispositivo.
 2. **Recupero verificato.** A/B, firme e backup sono presenti. La conferma
-   attuale controlla soltanto `/cgi-bin/vivo`: va estesa a integrità delle
-   impostazioni, avvio di Lyrion e supervisore, accesso alla libreria e
-   inizializzazione del percorso richiesto. L'assenza di un DAC opzionale non
-   deve provocare un ciclo di rollback. Provare anche aggiornamenti interrotti,
+   controlla ora impostazioni leggibili, `/cgi-bin/vivo`, supervisore del
+   player in esecuzione, Lyrion che risponde (solo in modalità completa, con
+   attesa fino a 10 minuti per il primo avvio su Raspberry Pi) e accesso a
+   musica e dati di Lyrion; il controllo fallito è registrato (pagina Sistema,
+   rapporto, registro). L'assenza di un DAC opzionale ("in attesa del DAC")
+   non provoca un ciclo di rollback. Restano da fare: inizializzazione del
+   percorso audio richiesto. Provare anche aggiornamenti interrotti,
    database corrotti e perdita di alimentazione. Il ritorno attuale avviene
    al prossimo avvio, non tramite un watchdog che riavvia una macchina bloccata.
 3. **Audio diagnosticabile.** Mostrare trasformazioni del server, volume,
