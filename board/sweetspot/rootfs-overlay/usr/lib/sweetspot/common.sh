@@ -326,6 +326,35 @@ machine_class() {
 	fi
 }
 
+# Protezione dall'OOM killer: oom_adj VALORE PID... scrive oom_score_adj
+# (-1000 = mai ucciso, +1000 = il primo). Senza swap, sotto pressione di
+# memoria il kernel uccide chi ha il punteggio piu' alto: il player deve
+# essere l'ultimo, scanner e lavori sospendibili i primi. Scrive solo se il
+# valore cambia; ignora in silenzio i processi gia' terminati.
+oom_adj() {
+	local v=$1 p
+	shift
+	for p in "$@"; do
+		[ "$(cat "$PROC/$p/oom_score_adj" 2>/dev/null)" = "$v" ] && continue
+		put "$v" "$PROC/$p/oom_score_adj"
+	done
+	return 0
+}
+
+# oom_adj_cmd VALORE TESTO: come oom_adj, per i processi la cui riga di
+# comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+oom_adj_cmd() {
+	local v=$1 pat=$2 d p
+	for d in "$PROC"/[0-9]*; do
+		[ -r "$d/cmdline" ] || continue
+		p=${d##*/}
+		case "$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null)" in
+			*"$pat"*) oom_adj "$v" "$p" ;;
+		esac
+	done
+	return 0
+}
+
 # Buffer di squeezelite in KB: "stream:output".
 # Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
 # i campioni gia' decodificati: con un output grande la decodifica finisce
@@ -1073,3 +1102,66 @@ mbr_read() { # dispositivo
 		}
 	}'
 }
+
+# --- Controllo dell'header Host delle pagine web ------------------------------------
+# Difesa dal DNS rebinding: una pagina esterna che fa risolvere il proprio
+# nome all'indirizzo di Sweetspot arriverebbe con un Host diverso e potrebbe
+# leggere il gettone anti-CSRF. Si accettano solo i nomi e gli indirizzi
+# con cui l'utente raggiunge davvero il player.
+
+# Host senza la porta, in minuscolo ("[fe80::1]:80" -> "fe80::1").
+host_bare() {
+	local h
+	h=$(lower "$1")
+	case "$h" in
+		'['*) h=${h#\[}; h=${h%%\]*} ;;
+		*:*:*) ;; # IPv6 senza parentesi: nessuna porta da togliere
+		*) h=${h%%:*} ;;
+	esac
+	printf '%s' "$h"
+}
+
+# Indirizzi IPv4 e IPv6 assegnati al computer, uno per riga.
+host_addresses() {
+	local n dev fam addr rest
+	${SWEETSPOT_IP:-ip} -o addr show 2>/dev/null | while read -r n dev fam addr rest; do
+		case "$fam" in inet|inet6) printf '%s\n' "${addr%%/*}" ;; esac
+	done
+}
+
+# host_allowed HOST [INDIRIZZO_CLIENT]: vero se HOST e' un nome o un
+# indirizzo di questo player. Senza Host (HTTP/1.0) passa solo chi arriva
+# dal computer stesso: un browser manda sempre l'Host, quindi il rebinding
+# non puo' sfruttare l'assenza.
+host_allowed() {
+	local h net a
+	h=$(host_bare "$1")
+	if [ -z "$h" ]; then
+		case "$2" in 127.*|::1) return 0 ;; esac
+		return 1
+	fi
+	case "$h" in localhost|127.0.0.1|::1) return 0 ;; esac
+	net=$(lower "$(conf NOME_RETE sweetspot)" | tr -c 'a-z0-9-' '-' | cut -c1-32)
+	if [ -n "$net" ]; then
+		case "$h" in "$net"|"$net.local") return 0 ;; esac
+	fi
+	a=$(lower "$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)")
+	if [ -n "$a" ]; then
+		case "$h" in "$a"|"$a.local") return 0 ;; esac
+	fi
+	for a in $(host_addresses); do
+		[ "$(lower "$a")" = "$h" ] && return 0
+	done
+	return 1
+}
+
+# Chiamato all'inizio di ogni pagina (CGI): Host non riconosciuto -> 403 e
+# nessuna azione. Fuori da una richiesta web (script di sistema, test) non fa nulla.
+host_guard() {
+	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
+	host_allowed "${HTTP_HOST:-}" "${REMOTE_ADDR:-}" && return 0
+	printf 'Status: 403 Forbidden\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\nindirizzo non valido: usa http://%s.local/\n' \
+		"$(conf NOME_RETE sweetspot)"
+	exit 0
+}
+host_guard

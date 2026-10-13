@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - stato in JSON, in sola lettura: restituisce la cache del
+# demone sweetspot-stato. Protetto dalla stessa password del pannello (la
+# regola "/" di httpd.conf copre anche questo percorso).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+if [ -s "$RUN/stato.json" ]; then
+	printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+	cat "$RUN/stato.json"
+else
+	printf 'Status: 503 Service Unavailable\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+	echo '{"errore":"stato non ancora disponibile"}'
+fi
