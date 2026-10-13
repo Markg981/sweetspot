@@ -356,6 +356,36 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 5. Collega un disco con la musica o aggiungi la cartella del NAS in
    *Impostazioni Sweetspot → Musica*: la libreria si crea da sola.
 
+### Hotspot di configurazione Wi-Fi
+
+Senza cavo e senza aver scritto `WIFI_NOME` in `sweetspot.txt`, il primo avvio
+non resta senza rete. Se dopo `HOTSPOT_ATTESA` secondi (60) non c'è nessuna
+connessione (nessun cavo con collegamento, nessun indirizzo, Wi-Fi non
+configurato o non collegato) e c'è un adattatore Wi-Fi che sa fare da access
+point, Sweetspot accende la rete **`Sweetspot-XXXX`** (XXXX = ultime cifre del
+MAC), WPA2, canale 6 (2,4 GHz), con DHCP e DNS minimi (`udhcpd`, `dnsd` di
+BusyBox):
+
+1. Il nome e la **password** compaiono sullo schermo (console). La password è
+   casuale a ogni accensione e non finisce nel registro; per un player senza
+   schermo scrivine una tua (8-63 caratteri) in `HOTSPOT_PASSWORD`.
+2. Collega il telefono a quella rete e apri `http://192.168.4.1/` (anche
+   `http://sweetspot.local/`, se il telefono usa il DNS dell'hotspot): si apre
+   la pagina **Rete**.
+3. In *Collega Sweetspot al Wi-Fi di casa* scegli la rete dall'elenco (o scrivi
+   il nome) e la password, poi **Collega**. Il nome e la password sono salvati
+   con `sweetspot-config` (chiavetta), l'hotspot si spegne e Sweetspot si
+   collega.
+4. **Recupero**: se entro `HOTSPOT_PROVA` secondi (40) la rete scelta non dà un
+   indirizzo (password sbagliata, router spento) l'hotspot riparte e puoi
+   riprovare. La stessa cosa succede a un avvio con `WIFI_NOME` sbagliato.
+
+L'hotspot non si accende mai con la rete funzionante e si spegne da solo se
+arriva un cavo. Con `HOTSPOT=no` non si accende mai; le radio Wi-Fi restano
+spente come negli altri casi (`radios_off` in `S20sweetspot-tune`) e vengono
+accese solo per l'hotspot. Servono i pacchetti `hostapd` e `iw` (già nelle
+immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
+
 ## Impostazioni (`sweetspot.txt`)
 
 | Voce | Valori | Predefinito |
@@ -379,6 +409,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio | 500, 0 |
 | `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
+| `HOTSPOT`, `HOTSPOT_ATTESA`, `HOTSPOT_PROVA`, `HOTSPOT_PASSWORD` | hotspot di configurazione del primo avvio (vedi [sotto](#hotspot-di-configurazione-wi-fi)): `si`/`no`, secondi di attesa senza rete prima di accenderlo, secondi concessi alla rete scelta prima che riparta, password scelta da te (8-63 caratteri; vuoto = casuale a ogni accensione, mostrata sullo schermo) | si, 60, 40, vuoto |
 | `IP_FISSO`, `GATEWAY`, `DNS` | indirizzo fisso, es. `192.168.1.50/24` | vuoto |
 | `RISPARMIO_RETE` | risparmio energetico Ethernet (EEE) | no |
 | `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |

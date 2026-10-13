@@ -30,7 +30,7 @@ e [FAQ ufficiale](https://www.daphile.com/download/FAQ.txt).
 | Convoluzione FIR/DRC | `sweetspot-dsp` importa biquad REW stereo; CamillaDSP è presente, ma non esiste il caricamento di impulsi FIR. | FIR importabili e validati, gestione delle frequenze, headroom, latenza e confronto a pari volume; mantenere il percorso originale. |
 | Più DAC locali | Un supervisore, un PID e una MAC Squeezelite; i player remoti di Lyrion non risolvono questa lacuna. | Più uscite indipendenti sullo stesso host, con configurazioni e recupero separati; sincronizzazione verificata quando richiesta. |
 | PCM→DSD | `-R` configura ricampionamento PCM; le opzioni DSD gestiscono sorgenti già DSD. | Conversione opzionale esplicita, backend e modulatore definiti, limiti di CPU e DAC verificati. |
-| Primo avvio Wi-Fi | Senza `WIFI_NOME` le interfacce wireless sono ignorate; non c'è un hotspot di configurazione. | Configurazione senza cavo su adattatori compatibili, credenziali sicure e recupero dopo impostazioni errate. |
+| Primo avvio Wi-Fi | Hotspot di configurazione `Sweetspot-XXXX` (`sweetspot-hotspot`, `hostapd`, `udhcpd`/`dnsd`) quando dopo `HOTSPOT_ATTESA` non c'è rete e un adattatore supporta AP; scelta della rete dalla pagina Rete, recupero se la rete salvata non si collega. | Prova su hardware reale (Intel, Realtek, Broadcom del Pi) e rilevamento portale captive dei telefoni. |
 | Ambito hardware | Target x86_64 e Pi 4/5 e varianti; manca il target CPU x86 a 32 bit presente fra i download Daphile. | Matrice di supporto e decisione esplicita sul target x86 a 32 bit; ampliare driver e firmware in base a prove. |
 
 Evidenze nel codice:
