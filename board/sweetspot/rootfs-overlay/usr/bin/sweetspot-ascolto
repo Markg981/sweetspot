@@ -70,11 +70,14 @@ cg_ready() {
 # uno spostato.
 slow_pids() {
 	local pid ok=1
-	for pid in "$@"; do
+	while read -r pid; do
+		[ -n "$pid" ] || continue
 		echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue
 		ok=0
 		command -v ionice >/dev/null 2>&1 && ionice -c 3 -p "$pid" 2>/dev/null
-	done
+	done <<EOF
+$1
+EOF
 	return $ok
 }
 
@@ -92,9 +95,8 @@ unslow_all() {
 # Rallenta (cgroup) o, in mancanza, sospende (SIGSTOP) un lavoro.
 # $1 = voce da annotare ("-GRUPPO" o PID), $2 = descrizione, poi i PID.
 throttle() {
-	local entry=$1 what=$2
-	shift 2
-	if cg_ready && slow_pids "$@"; then
+	local entry=$1 what=$2 pids=$3
+	if cg_ready && slow_pids "$pids"; then
 		grep -qx -- "$entry" "$SLOWED" 2>/dev/null && return 0
 		echo "$entry" >> "$SLOWED" && log "ascolto: $what rallentato durante l'ascolto"
 		return 0
@@ -110,7 +112,7 @@ pause_work() {
 		[ -f "$f" ] || continue
 		g=$(cat "$f" 2>/dev/null)
 		case "$g" in ''|*[!0-9]*) continue ;; esac
-		throttle "-$g" "${f##*/}" $(group_pids "$g")
+		throttle "-$g" "${f##*/}" "$(group_pids "$g")"
 	done
 	for pid in $(scanner_pids); do
 		throttle "$pid" "lettura della libreria" "$pid"
