@@ -520,7 +520,7 @@ tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per A
 tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
-Basato su Buildroot 2026.08 e sul kernel LTS 6.18 con PREEMPT_RT: 6.18.55 sul
+Basato su Buildroot 2026.08 e sul kernel LTS 6.18 con PREEMPT_RT: 6.18.56 sul
 PC, il ramo rpi-6.18.y della Raspberry Pi Foundation sul Raspberry Pi.
 
 ## Licenza
