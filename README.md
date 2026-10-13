@@ -325,7 +325,14 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
   sceglie la copia in uso (`os_prefix`); un aggiornamento si prova con il
   riavvio *tryboot* del firmware, che usa `tryboot.txt` una volta sola. Se la
   nuova versione non si conferma, al riavvio successivo (o staccando la
-  corrente) riparte quella di prima.
+  corrente) riparte quella di prima. La conferma a fine avvio
+  (`sweetspot-aggiorna conferma`) verifica in ordine: impostazioni
+  leggibili, pagina locale `/cgi-bin/vivo`, supervisore del player in
+  esecuzione, Lyrion che risponde (solo in modalità completa; fino a 10
+  minuti di attesa, `SWEETSPOT_CONFERMA_ATTESA_LMS`), musica e dati di Lyrion
+  accessibili. Un DAC assente o scollegato ("in attesa del DAC") non è un
+  guasto e non causa il ritorno alla versione precedente. Il controllo
+  fallito resta nel registro e compare nella pagina Sistema e nel rapporto.
 - **Lyrion**: Lyrion non fornisce i suoi moduli compilati per ARM con Perl 5.42.
   Li compila il workflow *Moduli di Lyrion* (`.github/workflows/moduli-lyrion.yml`)
   con lo script ufficiale di Lyrion, in Fedora 43 su un server ARM di GitHub, e

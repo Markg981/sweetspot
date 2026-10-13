@@ -86,6 +86,7 @@ echo '<h2>Versione e aggiornamenti</h2><div class="card">'
 info_row OK "Sweetspot $ver" "in uso la copia $(upper "$slot") del sistema"
 if [ -n "$(sv fallita)" ]; then
 	info_row ATTENZIONE "L'aggiornamento a $(sv fallita) non è partito" "Sweetspot è tornato da solo alla versione di prima: la musica e le impostazioni sono al loro posto. Puoi riprovare più tardi."
+	[ -n "$(sv fallita_controllo)" ] && info_row ATTENZIONE "Controllo fallito: $(sv fallita_controllo | cut -d'|' -f1)" "$(sv fallita_controllo | cut -d'|' -f2-)"
 fi
 [ -n "$(sv riuscita)" ] && info_row OK "Aggiornamento riuscito" "Questa versione si è avviata correttamente ed è ora quella in uso."
 if [ -n "$(sv predefinita)" ] && [ "$(sv predefinita)" != "$slot" ] && [ -z "$(sv prova)" ]; then

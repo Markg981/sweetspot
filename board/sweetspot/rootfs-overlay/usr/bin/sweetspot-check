@@ -621,6 +621,10 @@ check_system() {
 	elif [ -s "$RUN/aggiornamento/watchdog.riavvii" ]; then
 		emit ATTENZIONE "Riavvii del watchdog" "l'ultimo avvio e' finito con un blocco totale; al secondo di seguito parte l'altra copia"
 	fi
+	if [ -s "$RUN/aggiornamento/fallita.motivo" ]; then
+		m=$(cat "$RUN/aggiornamento/fallita.motivo")
+		emit ATTENZIONE "Aggiornamento non confermato" "controllo fallito: ${m%%|*} (${m#*|})"
+	fi
 	ip=$(net_ipv4)
 	if [ -n "$ip" ]; then emit OK "Rete" "indirizzo $ip"; else emit ATTENZIONE "Rete" "nessun indirizzo: il cavo e' collegato?"; fi
 	if [ "$(mode)" = player ]; then

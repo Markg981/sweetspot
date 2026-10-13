@@ -940,7 +940,17 @@ echo A-rootfs > "$UPD/stick/rootfs.cpio.zst"
 echo v1.0.0 > "$UPD/stick/boot/versioni/a"
 echo "menu vecchio" > "$UPD/stick/boot/grub/grub.cfg"
 echo "menu nuovo" > "$UPD/avvio/grub.cfg"
-printf '#!/bin/sh\nexit 0\n' > "$UPD/bin/wget-ok"
+# wget finto: risponde anche alle richieste JSON di Lyrion; jq finto (in
+# testa al PATH) accetta la risposta e restituisce una versione.
+printf '#!/bin/sh\ncase "$*" in *jsonrpc*) echo "{\\"result\\":{\\"_version\\":\\"9\\"}}" ;; esac\nexit 0\n' > "$UPD/bin/wget-ok"
+printf '#!/bin/sh\ncase "$*" in *jsonrpc*) exit 1 ;; esac\nexit 0\n' > "$UPD/bin/wget-nolms"
+mkdir -p "$UPD/jq" "$UPD/musica" "$UPD/lmsdati"
+printf '#!/bin/sh\nin=$(cat)\n[ -n "$in" ] || exit 1\ncase "$*" in *-e*) exit 0 ;; esac\necho 9\n' > "$UPD/jq/jq"
+chmod +x "$UPD/jq/jq"
+echo "MODALITA=completa" > "$UPD/run/sweetspot.conf"
+sleep 600 &
+UPD_SUP=$!
+echo "$UPD_SUP" > "$UPD/run/supervisore.pid"
 printf '#!/bin/sh\nexit 1\n' > "$UPD/bin/wget-ko"
 chmod +x "$UPD/bin"/*
 mkpkg() { # versione architettura [rovina]
@@ -958,6 +968,7 @@ upd() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$UPD/stick \
 		SWEETSPOT_MEDIA=$UPD/media SWEETSPOT_ARCH=x86_64 SWEETSPOT_VERSION_FILE=$UPD/version \
 		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
+		SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati SWEETSPOT_PATH=${UPD_PATH:-$UPD/jq:$SWEETSPOT_PATH} \
 		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
 }
@@ -988,7 +999,7 @@ expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riu
 expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
 # Con la password delle pagine l'httpd risponde 401 a chi non si presenta:
 # la conferma usa l'utente sweetspot con la chiave di questo avvio.
-printf '#!/bin/sh\nfor a; do case "$a" in http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
+printf '#!/bin/sh\nfor a; do case "$a" in *jsonrpc*) echo "{\\"result\\":{\\"_version\\":\\"9\\"}}"; exit 0 ;; http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
 chmod +x "$UPD/bin/wget-401"
 setenv prova= tentato=b
 UPD_WGET=$UPD/bin/wget-401 upd conferma
@@ -997,6 +1008,33 @@ echo 0123456789abcdef0123456789abcdef > "$UPD/run/vivo.chiave"
 UPD_WGET=$UPD/bin/wget-401 upd conferma
 expect "con la password la conferma passa con la chiave della pagina vivo" "b|" "$(genv slot)|$(genv tentato)"
 rm -f "$UPD/run/vivo.chiave"
+# Controlli ulteriori della conferma: ognuno registra quale e' fallito
+conferma_ko() { # nome comando-che-rompe comando-che-ripara [wget]
+	setenv prova= tentato=b
+	rm -f "$UPD/stick/boot/conferma-fallita"
+	eval "$2"
+	UPD_WGET=${4:-$UPD/bin/wget-ok} upd conferma
+	expect "$1: non si conferma" "b" "$(genv tentato)"
+	expect "$1: controllo registrato sulla chiavetta" "$1" "$(cut -d'|' -f1 "$UPD/stick/boot/conferma-fallita")"
+	eval "$3"
+}
+conferma_ko lyrion : : "$UPD/bin/wget-nolms"
+conferma_ko supervisore 'rm -f "$UPD/run/supervisore.pid"' 'echo $UPD_SUP > "$UPD/run/supervisore.pid"'
+conferma_ko libreria 'rmdir "$UPD/lmsdati"' 'mkdir "$UPD/lmsdati"'
+conferma_ko impostazioni 'mv "$UPD/run/sweetspot.conf" "$UPD/run/sc"' 'mv "$UPD/run/sc" "$UPD/run/sweetspot.conf"'
+# Modalita' player: Lyrion non e' di questa macchina e non conta
+echo "MODALITA=player" > "$UPD/run/sweetspot.conf"
+rmdir "$UPD/lmsdati"
+setenv prova= tentato=b
+UPD_WGET=$UPD/bin/wget-nolms upd conferma
+expect "modalita' player: senza Lyrion locale la conferma passa" "b|" "$(genv slot)|$(genv tentato)"
+echo "MODALITA=completa" > "$UPD/run/sweetspot.conf"; mkdir "$UPD/lmsdati"
+# Senza DAC (player in attesa del DAC) la nuova versione e' valida
+echo "in attesa del DAC" > "$UPD/run/player.stato"
+setenv prova= tentato=b
+upd conferma
+expect "in attesa del DAC non e' un guasto: si conferma" "b|" "$(genv slot)|$(genv tentato)"
+rm -f "$UPD/run/player.stato" "$UPD/stick/boot/conferma-fallita"
 # Secondo aggiornamento (va nella copia A), che non parte: si torna a B
 rm -f "$UPD/run/aggiornamento/riuscita"
 mkpkg v1.2.0 x86_64
@@ -1006,6 +1044,12 @@ setenv prova= tentato=a
 upd conferma
 expect "versione non partita: si resta su B" "b|" "$(genv slot)|$(genv tentato)"
 expect "versione non partita segnalata" "fallita=v1.2.0" "$(upd stato | grep '^fallita=')"
+# La versione che torna mostra il controllo fallito lasciato dalla nuova
+echo "lyrion|Lyrion non risponde" > "$UPD/stick/boot/conferma-fallita"
+setenv prova= tentato=a
+upd conferma
+expect "motivo del ritorno nello stato" "fallita_controllo=lyrion|Lyrion non risponde" "$(upd stato | grep '^fallita_controllo=')"
+expect "motivo ritirato dalla chiavetta" "no" "$([ -f "$UPD/stick/boot/conferma-fallita" ] && echo si || echo no)"
 # Pacchetti sbagliati
 mkpkg v1.3.0 x86_64 rovina
 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
@@ -1030,7 +1074,7 @@ JSON
 EOF2
 chmod +x "$UPD/bin/curl"
 expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
-	"$(SWEETSPOT_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+	"$(UPD_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
 
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
