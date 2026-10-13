@@ -920,6 +920,27 @@ expect "disco dati: tutto il disco" "Archivio" "$(links Archivio)"
 expect "collegamenti nella libreria" "Archivio Linux - anna Win - marco" "$(ls "$DSK/musica" | tr '\n' ' ' | sed 's/ $//')"
 expect "collegamento al disco" "$DSK/media/Archivio" "$(readlink "$DSK/musica/Archivio")"
 
+echo "Standby dei dischi interni"
+SB=$WORK/standby
+mkdir -p "$SB/run" "$SB/bin"
+for d in sda sdb sdc sdd; do
+	mkdir -p "$SB/sys/block/$d/queue" "$SB/sys/block/$d/${d}1" "$SB/sys/block/$d/dev"
+	echo 0 > "$SB/sys/block/$d/removable"
+	echo 1 > "$SB/sys/block/$d/queue/rotational"
+done
+echo 0 > "$SB/sys/block/sdd/queue/rotational"
+# sda: musica; sdb: archivio; sdc: nessuna musica; sdd: SSD
+printf 'Musica|/dev/sda1|ext4|500|1|ro|UUID=a\nArchivio|/dev/sdb1|ext4|900|1|rw|UUID=b\n' > "$SB/run/dischi.list"
+printf '#!/bin/sh\necho "$@" >> "$HDPARM_LOG"\n' > "$SB/bin/hdparm"
+chmod +x "$SB/bin/hdparm"
+SWEETSPOT_TEST=1 SWEETSPOT_SYSFS=$SB/sys SWEETSPOT_RUN=$SB/run SWEETSPOT_LOG=$SB/log SWEETSPOT_HDPARM=$SB/bin/hdparm HDPARM_LOG=$SB/hdparm.log \
+	$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-dischi; do_standby"
+expect "standby: dischi con musica e archivio solo timeout lungo" "-S 241 /dev/sda|-S 241 /dev/sdb" "$(grep -E '/dev/sd[ab]$' "$SB/hdparm.log" | sort -u | tr '\n' '|' | sed 's/|$//')"
+expect "standby: disco senza musica fermato subito" "-S 12 /dev/sdc|-y /dev/sdc" "$(grep '/dev/sdc$' "$SB/hdparm.log" | tr '\n' '|' | sed 's/|$//')"
+expect "standby: nessun -y sui dischi con musica" "0" "$(grep -c -- '^-y /dev/sd[ab]$' "$SB/hdparm.log")"
+expect "standby: SSD ignorato" "0" "$(grep -c '/dev/sdd' "$SB/hdparm.log")"
+expect "standby: non piu' in S20 (gira prima del montaggio)" "0" "$(grep -c 'hdparm' "$OVERLAY/etc/init.d/S20sweetspot-tune")"
+
 echo "Blocchi"
 LK=$WORK/lk
 mkdir -p "$LK/run" "$LK/proc"
