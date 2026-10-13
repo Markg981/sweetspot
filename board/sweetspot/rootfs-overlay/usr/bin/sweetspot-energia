@@ -80,8 +80,8 @@ misura() {
 	i=0
 	while [ "$i" -lt "$n" ]; do
 		[ "$sec" -gt 0 ] && sleep "$sec"
-		set -- $(alsa_stato)
-		st=$1; dl=$2
+		st=$(alsa_stato)
+		dl=${st#* }; st=${st%% *}
 		[ "$st" = XRUN ] && xr=$((xr + 1))
 		[ "$dl" -gt "$dmax" ] && dmax=$dl
 		t=$(temp_max)
