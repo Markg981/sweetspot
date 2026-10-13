@@ -13,7 +13,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OVERLAY=$ROOT/board/sweetspot/rootfs-overlay
 export SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+trap 'kill ${UPD_SUP:-} 2>/dev/null; rm -rf "$WORK"' EXIT
 FAIL=0
 PASS=0
 
@@ -948,7 +948,7 @@ mkdir -p "$UPD/jq" "$UPD/musica" "$UPD/lmsdati"
 printf '#!/bin/sh\nin=$(cat)\n[ -n "$in" ] || exit 1\ncase "$*" in *-e*) exit 0 ;; esac\necho 9\n' > "$UPD/jq/jq"
 chmod +x "$UPD/jq/jq"
 echo "MODALITA=completa" > "$UPD/run/sweetspot.conf"
-sleep 600 &
+sleep 7200 &
 UPD_SUP=$!
 echo "$UPD_SUP" > "$UPD/run/supervisore.pid"
 printf '#!/bin/sh\nexit 1\n' > "$UPD/bin/wget-ko"
@@ -1221,12 +1221,16 @@ mkpkg_pi() { # versione scheda
 updpi() {
 	local s=$1
 	shift
-	SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
+	mkdir -p "$PI/run" "$UPD/musica" "$UPD/lmsdati"
+	[ -s "$PI/run/sweetspot.conf" ] || echo "MODALITA=completa" > "$PI/run/sweetspot.conf"
+	echo "$UPD_SUP" > "$PI/run/supervisore.pid"
+	SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati \
+		SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$PI/stick \
 		SWEETSPOT_MEDIA=$PI/media SWEETSPOT_VERSION_FILE=$PI/version SWEETSPOT_AVVIO=$PI/avvio \
 		SWEETSPOT_WGET=$UPD/bin/wget-ok SWEETSPOT_CONFERMA_ATTESA=2 SWEETSPOT_RCK=$PI/bin/rcK SWEETSPOT_REBOOT=$PI/bin/reboot \
 		SWEETSPOT_CHIAVE_FIRMA=${PI_PUB:-$PI/nessuna-chiave} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
-		SWEETSPOT_PATH="$PI/bin:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/$s" "$@"
+		SWEETSPOT_PATH="$PI/bin:$UPD/jq:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/$s" "$@"
 }
 penv() { pi "grubenv_get $PI/stick/sweetspot-avvio.env $1"; }
 mkpkg_pi v1.1.0 rpi
