@@ -359,19 +359,48 @@ oom_adj_cmd() {
 # Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
 # i campioni gia' decodificati: con un output grande la decodifica finisce
 # molto prima dell'ascolto e durante la riproduzione la CPU resta ferma.
-# Si lasciano 768 MB al sistema e a Lyrion; squeezelite accetta al massimo
-# ~2 GB per buffer.
+# La misura e' l'autonomia in secondi del caso peggiore del formato
+# (384 kHz / 32 bit / 2 canali = 3000 KB/s; DSD512 in DoP ha lo stesso ordine
+# di grandezza): stream 60 s, output 120 s. Il tetto viene dalla memoria
+# DISPONIBILE (MemAvailable, non il totale), tolta una riserva che dipende
+# dalla modalita': 512 MB di base, +512 MB con Lyrion locale (libreria,
+# scansione, cache), +256 MB con la correzione DSP. I buffer non superano
+# meta' di quello che resta. Minimi e massimi fissi: squeezelite accetta al
+# massimo ~2 GB per buffer. Con PLAYER_BUFFERS_LOG=1 scrive nel log i valori
+# e il motivo (lo fa il player all'avvio, non chi li interroga soltanto).
 player_buffers() {
-	local kb avail s o
-	kb=$(mem_total_kb)
-	avail=$((kb - 786432))
-	s=$((avail / 6))
-	o=$((avail / 3))
-	[ "$s" -lt 32768 ] && s=32768
-	[ "$o" -lt 65536 ] && o=65536
+	local total avail rate=3000 s o riserva budget motivo
+	local rsv_base=524288 rsv_lms=524288 rsv_dsp=262144
+	total=$(mem_total_kb)
+	avail=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo")
+	# Senza MemAvailable (kernel vecchi): il totale meno 768 MB.
+	[ -n "$avail" ] || avail=$((total - 786432))
+	[ "$avail" -gt "$total" ] && avail=$total
+	riserva=$rsv_base
+	motivo="base"
+	if [ "$(mode)" = completa ]; then
+		riserva=$((riserva + rsv_lms)); motivo="$motivo+Lyrion locale"
+	fi
+	if [ "$(lower "$(conf CORREZIONE no)")" != no ]; then
+		riserva=$((riserva + rsv_dsp)); motivo="$motivo+DSP"
+	fi
+	budget=$(((avail - riserva) / 2))
+	s=$((rate * 60))
+	o=$((rate * 120))
+	if [ "$budget" -lt $((s + o)) ]; then
+		# Stesse proporzioni (1:2) dentro il budget.
+		s=$((budget / 3))
+		o=$((budget * 2 / 3))
+		motivo="$motivo, limitati dalla memoria disponibile"
+	else
+		motivo="$motivo, autonomia piena (60 s stream, 120 s output)"
+	fi
+	[ "$s" -lt 32768 ] && s=32768 && motivo="$motivo, stream al minimo"
+	[ "$o" -lt 65536 ] && o=65536 && motivo="$motivo, output al minimo"
 	[ "$s" -gt 1048576 ] && s=1048576
 	[ "$o" -gt 2000000 ] && o=2000000
-	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$o" -gt 524288 ] && o=524288
+	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$o" -gt 524288 ] && o=524288 && motivo="$motivo, output limitato a 512 MB (32 bit)"
+	[ -n "${PLAYER_BUFFERS_LOG:-}" ] && log "player: buffer stream ${s} KB, output ${o} KB (memoria disponibile ${avail} KB di ${total} KB, riserva ${riserva} KB: $motivo)"
 	echo "$s:$o"
 }
 
