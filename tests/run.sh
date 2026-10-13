@@ -1966,6 +1966,56 @@ expect "stato: modalita' ascolto spenta" \
 	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
 
+echo "Modalita' ascolto: ripresa all'avvio e rallentamento con cgroup v2"
+ASC=$WORK/ascolto
+mkdir -p "$ASC/run/sospendibili" "$ASC/cg"
+# ascrun CGROUP_DIR COMANDI: kill e ionice finti scrivono in $ASC/calls, ps e
+# pgrep restituiscono processi finti (job con gruppo 700 = PID 701 e 702,
+# scanner = PID 800).
+ascrun() {
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_CGROUP=$1 $TEST_SH -c "
+		. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-ascolto
+		kill() { echo \"kill \$*\" >> $ASC/calls; }
+		ionice() { echo \"ionice \$*\" >> $ASC/calls; }
+		group_pids() { [ \"\$1\" = 700 ] && printf '701\n702\n'; }
+		scanner_pids() { echo 800; }
+		$2"
+}
+# a) all'avvio i processi elencati in ascolto.fermi ripartono (SIGCONT) prima
+# che l'elenco venga svuotato.
+printf -- '-700\n800\n' > "$ASC/run/ascolto.fermi"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "start_clean"
+expect "ascolto: all'avvio i sospesi ricevono SIGCONT" "kill -CONT -- -700|kill -CONT -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: all'avvio l'elenco dei sospesi e' vuoto" "0" "$(grep -c . "$ASC/run/ascolto.fermi")"
+# b) senza cgroup v2 si ripiega su SIGSTOP (comportamento di prima).
+echo 700 > "$ASC/run/sospendibili/copia"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "pause_work"
+expect "ascolto: senza cgroup si ripiega su SIGSTOP" "kill -STOP -- -700|kill -STOP -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: senza cgroup i sospesi sono annotati" "-700 800" "$(tr '\n' ' ' < "$ASC/run/ascolto.fermi" | sed 's/ $//')"
+ascrun "$ASC/nessuno" "pause_work; resume_work"
+# c) con cgroup v2 (cpu disponibile) niente SIGSTOP: limiti e ionice idle.
+: > "$ASC/run/ascolto.fermi"
+printf 'cpu io memory\n' > "$ASC/cg/cgroup.controllers"
+: > "$ASC/cg/cgroup.subtree_control"
+rm -f "$ASC/calls"
+ascrun "$ASC/cg" "pause_work"
+expect "ascolto: cgroup, limite di CPU" "5000 100000" "$(cat "$ASC/cg/sweetspot-ascolto/cpu.max")"
+expect "ascolto: cgroup, peso minimo" "1" "$(cat "$ASC/cg/sweetspot-ascolto/cpu.weight")"
+expect "ascolto: cgroup, controller cpu attivato" "+cpu" "$(cat "$ASC/cg/cgroup.subtree_control")"
+expect "ascolto: cgroup, processi del job e scanner spostati" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/sweetspot-ascolto/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: cgroup, ionice idle e nessun SIGSTOP" "ionice -c 3 -p 701|ionice -c 3 -p 702|ionice -c 3 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: cgroup, nessun sospeso e due lenti" "0|2" "$(grep -c . "$ASC/run/ascolto.fermi")|$(grep -c . "$ASC/run/ascolto.lenti")"
+expect "ascolto: stato conta i lavori rallentati" "OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): ora 2 lavori sospesi" \
+	"$(printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"; cp "$ASC/run/ascolto.lenti" "$Q/run/ascolto.lenti"; qcheck Ascolto; rm -f "$Q/run/ascolto.lenti")"
+# d) a fine ascolto i processi tornano nel gruppo radice, ionice normale.
+rm -f "$ASC/calls"
+ascrun "$ASC/cg" "resume_work"
+expect "ascolto: cgroup, a fine ascolto tornano nel gruppo radice" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: cgroup, ionice di nuovo normale" "ionice -c 2 -n 4 -p 701|ionice -c 2 -n 4 -p 702|ionice -c 2 -n 4 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: cgroup, elenco dei rallentati svuotato" "0" "$(grep -c . "$ASC/run/ascolto.lenti")"
+
 echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
 # Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
 # scheda di rete e lo.

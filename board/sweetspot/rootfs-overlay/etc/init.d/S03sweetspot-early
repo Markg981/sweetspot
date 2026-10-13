@@ -50,6 +50,11 @@ tune_sysctl() {
 case "$1" in
 	start)
 		mkdir -p "$RUN" /var/log /etc/modprobe.d
+		# cgroup v2 per sweetspot-ascolto (rallenta i lavori di fondo senza
+		# congelarli); se il kernel non lo ha, l'ascolto ripiega su SIGSTOP.
+		if [ -d /sys/fs/cgroup ] && ! grep -q ' /sys/fs/cgroup cgroup2 ' /proc/mounts 2>/dev/null; then
+			mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
+		fi
 		printf 'Sweetspot: lettura impostazioni... '
 		# La chiavetta puo' impiegare qualche secondo a comparire.
 		i=0

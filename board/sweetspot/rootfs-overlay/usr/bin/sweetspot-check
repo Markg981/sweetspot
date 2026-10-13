@@ -576,7 +576,9 @@ check_listening() {
 		puro) kind="ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi)" ;;
 		*) kind="lavori di fondo sospesi durante la musica" ;;
 	esac
+	# Sospesi (SIGSTOP) e rallentati (cgroup) contano allo stesso modo.
 	[ -s "$RUN/ascolto.fermi" ] && n=$(grep -c . "$RUN/ascolto.fermi")
+	[ -s "$RUN/ascolto.lenti" ] && n=$((n + $(grep -c . "$RUN/ascolto.lenti")))
 	if dac_playing; then
 		emit OK "Ascolto" "$kind: ora $n lavori sospesi"
 	else

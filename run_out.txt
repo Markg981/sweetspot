@@ -1,0 +1,2 @@
+busybox non trovato: uso la shell di sistema
+Impostazioni
