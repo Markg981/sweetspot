@@ -1628,6 +1628,29 @@ dspfn 1 'remember_main_dac 1'
 expect "due DAC uguali: il principale e' quello con il suo numero di serie" "292b:0a26 AAA111|2 4" \
 	"$(cat "$DSP/run/dac.principale")|$(dspfn 1 'other_dacs 1' | tr '\n' ' ' | sed 's/ $//')"
 expect "due DAC uguali: MAC diversi per le zone" "diversi" "$([ "$(dspfn 1 'zone_mac 1')" != "$(dspfn 1 'zone_mac 4')" ] && echo diversi)"
+# Ricollegamento rapido: stesso indice e stesso id ALSA, ma il kernel assegna
+# un nuovo devnum al dispositivo USB; l'istanza del DAC cambia.
+echo 1 > "$DSP/sys/devices/usb1/1-2/busnum"; echo 5 > "$DSP/sys/devices/usb1/1-2/devnum"
+expect "istanza del DAC USB: id, busnum e devnum" "R26 1:5" "$(dspfn 1 'dac_instance 1')"
+echo 6 > "$DSP/sys/devices/usb1/1-2/devnum"
+expect "ricollegamento rapido (stesso id): l'istanza cambia" "R26 1:6" "$(dspfn 1 'dac_instance 1')"
+expect "l'identita' del DAC principale non cambia col devnum" "292b:0a26 AAA111" "$(dspfn 1 'dac_identity 1')"
+mkdir -p "$DSP/proc/asound/card5"; echo I2S > "$DSP/proc/asound/card5/id"
+expect "scheda senza USB (I2S): l'istanza e' il solo id" "I2S" "$(dspfn 1 'dac_instance 5')"
+rm -rf "$DSP/proc/asound/card5"
+
+echo "Supervisore: segnale di udev e backoff"
+expect "backoff: primo errore subito dopo l'avvio" "2" "$(dspfn 1 'backoff_next 0 1')"
+expect "backoff: raddoppia fino a 60 s" "4|8|16|32|60|60" \
+	"$(dspfn 1 'backoff_next 2 1; backoff_next 4 1; backoff_next 8 1; backoff_next 16 1; backoff_next 32 1; backoff_next 60 1' | tr '\n' '|' | sed 's/|$//')"
+expect "backoff: azzerato dopo un funzionamento stabile" "0" "$(dspfn 1 'backoff_next 60 30')"
+expect "regola udev: eventi add/remove della scheda audio" "1" \
+	"$(grep -c 'SUBSYSTEM=="sound".*ACTION=="add|remove".*sweetspot-evento-audio' "$OVERLAY/etc/udev/rules.d/92-sweetspot-audio.rules")"
+# nap deve terminare subito quando arriva SIGUSR1 (evento udev).
+nap_t0=$(date +%s)
+dspfn 1 "trap ':' USR1; ( sleep 1; kill -USR1 \$\$ ) & nap 20" 2>/dev/null
+nap_dt=$(( $(date +%s) - nap_t0 ))
+expect "nap: SIGUSR1 interrompe l'attesa" "si" "$([ "$nap_dt" -lt 10 ] && echo si)"
 kill "$zpid" 2>/dev/null
 rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3" "$DSP/proc/asound/card4" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone" "$DSP/sys" "$DSP/run/dac.principale"
 rm -f "$DSP/run/sweetspot.conf"

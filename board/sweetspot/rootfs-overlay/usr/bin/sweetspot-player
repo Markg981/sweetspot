@@ -20,6 +20,24 @@
 SQLOG=/var/log/squeezelite.log
 STATE=$RUN/player.stato
 
+# Attesa interrompibile: udev (sweetspot-evento-audio) manda SIGUSR1 quando una
+# scheda audio compare o sparisce e il ciclo reagisce subito; il polling resta
+# come rete di sicurezza.
+nap() { # secondi
+	sleep "$1" &
+	wait $!
+}
+
+# Ritardo prima di riavviare squeezelite terminato da solo: raddoppia
+# (2, 4, 8... fino a 60 s) se e' durato meno di STABILE secondi, si azzera dopo
+# un periodo di funzionamento stabile.
+STABILE=30
+backoff_next() { # ritardo precedente, secondi di vita
+	if [ "$2" -ge "$STABILE" ]; then echo 0; return; fi
+	if [ "$1" -lt 2 ]; then echo 2; return; fi
+	if [ "$1" -ge 30 ]; then echo 60; else echo $(( $1 * 2 )); fi
+}
+
 say() { echo "$1" > "$STATE"; log "player: $1"; }
 
 is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
@@ -514,20 +532,23 @@ apply_player_prefs() {
 }
 
 player_loop() {
+	BACKOFF=0
 	while true; do
 		card=$(dac_find)
 		if [ -z "$card" ]; then
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
 			# Le zone continuano anche senza il DAC principale.
 			zones_sync ""
-			sleep 3
+			nap 3
 			continue
 		fi
-		id=$(dac_id "$card")
+		inst=$(dac_instance "$card")
 		remember_main_dac "$card"
 		setup_usb_irq "$card"
 		[ "$(lower "$(conf VOLUME fisso)")" = dac ] || dac_unity_gain "$card"
-		run_player "$card" || { sleep 2; continue; }
+		run_player "$card" || { nap 2; continue; }
+		t0=$(date +%s)
+		LOST=0
 		say "attivo su $(dac_name "$card")"
 		start_latency_watch
 		start_volume_watch
@@ -536,23 +557,36 @@ player_loop() {
 		while kill -0 "$PID" 2>/dev/null; do
 			# Con CamillaDSP nel percorso si guarda piu' spesso: ogni nuovo
 			# processo nasce con la priorita' del player e va sistemato.
-			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then sleep 5; else sleep 2; fi
+			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then nap 5; else nap 2; fi
 			pin_output_thread "$PID"
 			pin_dsp
 			dsp_clip_poll
 			zones_sync "$card"
 			apply_player_prefs
-			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_id "$card")" != "$id" ]; then
-				log "player: DAC scollegato"
+			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_instance "$card")" != "$inst" ]; then
+				log "player: DAC scollegato o ricollegato"
+				LOST=1
 				kill "$PID" 2>/dev/null
 			fi
 		done
 		wait "$PID" 2>/dev/null
 		stop_watch "$LATPID"
 		stop_watch "$VOLPID"
-		say "riavvio del player"
 		rm -f "$RUN/audio.tid"
-		sleep 2
+		if [ "$LOST" = 1 ]; then
+			BACKOFF=0
+			say "riavvio del player"
+			nap 2
+		else
+			BACKOFF=$(backoff_next "$BACKOFF" $(( $(date +%s) - t0 )))
+			if [ "$BACKOFF" -gt 0 ]; then
+				say "squeezelite terminato subito, nuovo tentativo tra $BACKOFF s"
+				nap "$BACKOFF"
+			else
+				say "riavvio del player"
+				nap 2
+			fi
+		fi
 	done
 }
 
@@ -569,5 +603,8 @@ for f in "$ZONE_DIR"/*; do
 	kill -0 "$zpid" 2>/dev/null || rm -f "$f"
 done
 setup_layout
+# SIGUSR1 serve solo a interrompere l'attesa (vedi nap).
+trap ':' USR1
+echo $$ > "$RUN/player.pid"
 log "player: modalita' $(mode), core di sistema $HK, riproduzione ${LAYOUT_AUDIO}, interruzioni USB ${LAYOUT_IRQ} (isolamento: $PIN)"
 player_loop
