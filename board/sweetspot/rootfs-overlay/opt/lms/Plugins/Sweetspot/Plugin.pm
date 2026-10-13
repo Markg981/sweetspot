@@ -23,7 +23,7 @@ use Slim::Utils::Log;
 use Slim::Utils::PluginDownloader;
 use Slim::Utils::PluginManager;
 use Slim::Utils::Prefs;
-use JSON::XS::VersionOne;
+use JSON::XS::VersionOneAndTwo;
 
 my $log = Slim::Utils::Log->addLogCategory({
 	category     => 'plugin.sweetspot',
