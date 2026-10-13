@@ -1926,7 +1926,7 @@ plugevent 1-7; plugevent 1-8
 expect "USB collegate dopo: webcam scollegata, webcam con microfono intatta" "0auto 1on" \
 	"$(cat "$Q/sys/bus/usb/devices/1-7/authorized")$(cat "$Q/sys/bus/usb/devices/1-7/power/control") $(cat "$Q/sys/bus/usb/devices/1-8/authorized")$(cat "$Q/sys/bus/usb/devices/1-8/power/control")"
 qcheck() { # voce
-	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_NOW=${QNOW:-} SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep "^[A-Z]*|$1|"
 }
@@ -2067,7 +2067,7 @@ iostat() { # settori_letti byte_rx byte_tx
 	printf 'Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  eth0: %s 10 0 0 0 0 0 0 %s 10 0 0 0 0 0 0\n' "$2" "$3" > "$Q/proc/net/dev"
 }
 ascfn() { # funzione
-	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_NOW=${QNOW:-} SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
 		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-ascolto; $1"
 }
@@ -2076,8 +2076,10 @@ expect "contatori: disco con la musica (intero) e rete senza lo" "disco sdb 2048
 ascfn io_start
 expect "inizio dell'ascolto annotato" "1|disco sdb 20480|rete 3000" \
 	"$(grep -c '^inizio [0-9]' "$Q/run/ascolto.io")|$(grep '^disco' "$Q/run/ascolto.io")|$(grep '^rete' "$Q/run/ascolto.io")"
-# L'ascolto e' iniziato un minuto fa.
-sed -i "s/^inizio .*/inizio $(( $(date +%s) - 60 ))/" "$Q/run/ascolto.io"
+# L'ascolto e' iniziato un minuto fa. Orologio fisso (SWEETSPOT_NOW): la
+# durata non dipende dal tempo reale impiegato dal test.
+QNOW=1700000060
+sed -i "s/^inizio .*/inizio $(( QNOW - 60 ))/" "$Q/run/ascolto.io"
 expect "stato: nessuna lettura e solo controllo durante l'ascolto in corso" \
 	"OK|Letture dal disco durante l'ascolto|nessuna durante l'ascolto in corso (1 min) da sdb: la musica suona dalla RAM|OK|Rete durante l'ascolto|0 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
 	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
