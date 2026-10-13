@@ -1667,7 +1667,10 @@ printf '[12:02:00] _output_frames:5 XRUN\n' >> "$DSP/squeezelite.log"
 dspfn 1 "SQLOG=$DSP/squeezelite.log; sqlog_rotate \$SQLOG"
 expect "rotazione: sotto soglia non ruota" "1" "$(wc -l < "$DSP/squeezelite.log" | tr -d ' ')"
 expect "rotazione: storico = contatori + registro" "4 1" "$(dspfn 1 "xrun_total $DSP/squeezelite.log")"
-rm -f "$DSP/run/sweetspot.conf"
+# Ripristina lo stato che i test seguenti si aspettano.
+rm -f "$DSP/run/sweetspot.conf" "$DSP/run/xrun.totale" "$DSP/run/sessione.xrun"
+printf '[12:00:00] _output_frames:123 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
 mkdir -p "$DSP/bin"
 printf '#!/bin/sh\n[ -s "%s" ] || exit 1\nprintf '"'"'{"GetClippedSamples":{"result":"Ok","value":%%s}}\\n'"'"' "$(cat "%s")"\n' \
 	"$DSP/run/camilla.valore" "$DSP/run/camilla.valore" > "$DSP/bin/sweetspot-camilla"
