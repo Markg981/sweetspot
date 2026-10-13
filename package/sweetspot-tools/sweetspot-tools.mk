@@ -22,7 +22,8 @@ define SWEETSPOT_TOOLS_BUILD_CMDS
 		-o $(@D)/sweetspot-prova-dop $(@D)/sweetspot-prova-dop.c -lm
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
 		-o $(@D)/sweetspot-camilla $(@D)/sweetspot-camilla.c
-	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall -Wextra \n		-o $(@D)/sweetspot-priv $(@D)/sweetspot-priv.c
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall -Wextra \
+		-o $(@D)/sweetspot-priv $(@D)/sweetspot-priv.c
 endef
 
 define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
