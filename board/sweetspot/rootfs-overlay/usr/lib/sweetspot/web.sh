@@ -59,6 +59,138 @@ token() {
 	cat "$RUN/web.token"
 }
 
+# --- Autenticazione dell'amministratore ------------------------------------------
+# Con PASSWORD_WEB le pagine chiedono l'accesso (/cgi-bin/accesso): password
+# verificata da root (sweetspot-accesso verifica, impronta salata MD5-crypt),
+# poi una sessione con cookie HttpOnly e SameSite=Strict. Il gettone anti-CSRF
+# resta richiesto a ogni azione: la sessione dice CHI e', il gettone che la
+# richiesta viene dalle nostre pagine. Senza PASSWORD_WEB (predefinito, come
+# prima) le pagine restano aperte a chi e' nella rete di casa.
+# Le sessioni sono file in $WEBDIR/sessioni (nome = ID casuale da /dev/urandom,
+# contenuto = scadenza): spariscono al riavvio.
+SESSION_DIR=$WEBDIR/sessioni
+SESSION_TTL=${SWEETSPOT_SESSIONE_DURATA:-28800}
+SESSION_COOKIE=sweetspot_sid
+LOGIN_DIR=$WEBDIR/tentativi
+LOGIN_FREE=${SWEETSPOT_TENTATIVI_LIBERI:-5}
+
+auth_enabled() { [ -n "$(conf PASSWORD_WEB)" ]; }
+
+# ID della sessione dal cookie (solo 32 cifre esadecimali, altrimenti niente).
+session_id() {
+	local c id
+	c=$(printf ';%s;' "${HTTP_COOKIE:-}" | tr -d ' ')
+	case "$c" in *";$SESSION_COOKIE="*) ;; *) return 1 ;; esac
+	id=${c#*";$SESSION_COOKIE="}
+	id=${id%%;*}
+	case "$id" in *[!0-9a-f]*|'') return 1 ;; esac
+	[ ${#id} -eq 32 ] || return 1
+	printf '%s' "$id"
+}
+
+session_valid() {
+	local id exp
+	id=$(session_id) || return 1
+	exp=$(cat "$SESSION_DIR/$id" 2>/dev/null)
+	case "$exp" in *[!0-9]*|'') return 1 ;; esac
+	if [ "$exp" -le "$(date +%s)" ]; then
+		rm -f "$SESSION_DIR/$id"
+		return 1
+	fi
+	return 0
+}
+
+# Crea una sessione e stampa l'ID. Toglie quelle scadute e tiene al massimo 16
+# sessioni: se sono piene, la piu' vecchia lascia posto.
+session_new() {
+	local id now f e n=0 oldest="" oldest_exp=0
+	now=$(date +%s)
+	mkdir -p "$SESSION_DIR" 2>/dev/null
+	chmod 700 "$SESSION_DIR" 2>/dev/null
+	for f in "$SESSION_DIR"/*; do
+		[ -f "$f" ] || continue
+		e=$(cat "$f" 2>/dev/null)
+		case "$e" in *[!0-9]*|'') rm -f "$f"; continue ;; esac
+		if [ "$e" -le "$now" ]; then rm -f "$f"; continue; fi
+		n=$((n + 1))
+		if [ -z "$oldest" ] || [ "$e" -lt "$oldest_exp" ]; then oldest=$f; oldest_exp=$e; fi
+	done
+	[ "$n" -ge 16 ] && [ -n "$oldest" ] && rm -f "$oldest"
+	id=$(od -An -N16 -tx1 "${SWEETSPOT_URANDOM:-/dev/urandom}" | tr -d ' \n')
+	[ ${#id} -eq 32 ] || return 1
+	( umask 077; printf '%s\n' "$((now + SESSION_TTL))" > "$SESSION_DIR/$id" ) || return 1
+	printf '%s' "$id"
+}
+
+session_end() {
+	local id
+	id=$(session_id) && rm -f "$SESSION_DIR/$id"
+	return 0
+}
+
+# Intestazione per impostare (ID) o cancellare (vuoto) il cookie.
+session_cookie() {
+	if [ -n "$1" ]; then
+		printf 'Set-Cookie: %s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%s\r\n' "$SESSION_COOKIE" "$1" "$SESSION_TTL"
+	else
+		printf 'Set-Cookie: %s=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0\r\n' "$SESSION_COOKIE"
+	fi
+}
+
+# Limitazione dei tentativi di accesso, per indirizzo di chi li fa e in
+# totale. Dopo la soglia di errori di fila si aspetta 30 secondi per ogni
+# errore in piu' (al massimo 15 minuti). login_wait stampa i secondi da
+# attendere (0 = si puo' provare).
+login_key() {
+	case "$1" in
+		globale) printf globale ;;
+		*) printf 'ip-%s' "${REMOTE_ADDR:-locale}" | tr -c 'a-zA-Z0-9.:-' '_' ;;
+	esac
+}
+
+login_wait() { # chiave soglia
+	local f n last w
+	f=$LOGIN_DIR/$(login_key "$1")
+	n="" last=""
+	[ -f "$f" ] && read -r n last < "$f"
+	case "$n$last" in *[!0-9]*|'') echo 0; return 0 ;; esac
+	[ -n "$last" ] || { echo 0; return 0; }
+	[ "$n" -ge "$2" ] || { echo 0; return 0; }
+	w=$(( (n - $2 + 1) * 30 ))
+	[ "$w" -gt 900 ] && w=900
+	w=$((last + w - $(date +%s)))
+	[ "$w" -lt 0 ] && w=0
+	echo "$w"
+}
+
+login_fail() { # chiave
+	local f n="" last=""
+	mkdir -p "$LOGIN_DIR" 2>/dev/null
+	f=$LOGIN_DIR/$(login_key "$1")
+	[ -f "$f" ] && read -r n last < "$f"
+	case "$n" in *[!0-9]*|'') n=0 ;; esac
+	printf '%s %s\n' "$((n + 1))" "$(date +%s)" > "$f"
+}
+
+login_ok() { rm -f "$LOGIN_DIR/$(login_key "$1")"; }
+
+# Chiamato quando si carica una pagina (CGI): con la password e senza sessione
+# valida le pagine rimandano all'accesso e le richieste di dati rispondono 401.
+# Fuori da una richiesta web (script di sistema, test) non fa nulla. Le pagine
+# che devono restare pubbliche (accesso, vivo) impostano WEB_PUBLIC=1 prima.
+auth_gate() {
+	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
+	[ "${WEB_PUBLIC:-}" = 1 ] && return 0
+	auth_enabled || return 0
+	session_valid && return 0
+	case "${SCRIPT_NAME:-}" in
+		*.json) printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\naccesso richiesto\n' ;;
+		*) printf 'Status: 303 See Other\r\nLocation: /cgi-bin/accesso\r\nCache-Control: no-store\r\n\r\n' ;;
+	esac
+	exit 0
+}
+auth_gate
+
 # Legge i campi di un modulo inviato (POST) in variabili F_nome.
 read_form() {
 	local body pair k v
@@ -88,7 +220,10 @@ query_param() {
 
 # Risposta di reindirizzamento dopo un'azione (POST -> GET).
 redirect() {
-	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n\r\n' "$1"
+	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n' "$1"
+	# Sessione nuova da consegnare con la risposta (REDIRECT_COOKIE = ID).
+	[ -n "${REDIRECT_COOKIE:-}" ] && session_cookie "$REDIRECT_COOKIE"
+	printf '\r\n'
 }
 
 # Indirizzo con cui il browser ha raggiunto Sweetspot (nome o IP).
@@ -140,6 +275,9 @@ HTML
 			printf '<a href="/cgi-bin/%s">%s</a>\n' "${p%%:*}" "${p#*:}"
 		fi
 	done
+	if auth_enabled && [ "$active" != accesso ]; then
+		printf '<form method="post" action="/cgi-bin/accesso" class="inline"><input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="esci"><button>Esci</button></form>\n' "$(token)"
+	fi
 	echo '</nav></header>'
 	msg=$(query_param msg)
 	[ -n "$msg" ] && printf '<p class="msg">%s</p>\n' "$(esc "$msg")"

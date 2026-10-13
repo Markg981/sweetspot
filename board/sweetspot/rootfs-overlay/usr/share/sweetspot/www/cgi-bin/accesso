@@ -1,0 +1,98 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - accesso dell'amministratore alle pagine (con PASSWORD_WEB) e
+# uscita. Sessione con cookie HttpOnly e SameSite=Strict (vedi web.sh); la
+# password la verifica root (sweetspot-accesso verifica), con limite ai tentativi.
+
+WEB_PUBLIC=1 # e' la pagina che serve per entrare
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+F_t="" F_a="" F_password="" F_next=""
+
+# Dopo l'accesso si torna solo a una pagina di Sweetspot.
+safe_next() {
+	case "$1" in
+		/cgi-bin/*[!A-Za-z0-9_./?=%-]*|*//*|*..*) echo /cgi-bin/audio ;;
+		/cgi-bin/accesso*) echo /cgi-bin/audio ;;
+		/cgi-bin/*) echo "$1" ;;
+		*) echo /cgi-bin/audio ;;
+	esac
+}
+
+reply_login() { # codice-stato messaggio
+	printf 'Status: %s\r\n' "$1"
+	login_page "$2"
+}
+
+login_page() {
+	page_start "Accesso" accesso
+	[ -n "$1" ] && printf '<p class="msg">%s</p>\n' "$(esc "$1")"
+	cat <<HTML
+<form method="post" action="/cgi-bin/accesso" class="card">
+<div class="row"><div class="grow">
+<label for="pw">Password dell'amministratore</label>
+<input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
+<input type="hidden" name="next" value="$(esc "$(safe_next "$F_next")")">
+</div></div>
+<button class="primary">Entra</button>
+</form>
+HTML
+	page_end
+}
+
+if [ "$REQUEST_METHOD" != POST ]; then
+	F_next=$(query_param next)
+	auth_enabled || { redirect /cgi-bin/audio; exit 0; }
+	session_valid && { redirect "$(safe_next "$F_next")"; exit 0; }
+	login_page ""
+	exit 0
+fi
+
+read_form
+
+# --- Uscita: serve la sessione e il gettone della pagina ---------------------------
+if [ "$F_a" = esci ]; then
+	if session_valid && [ -n "$F_t" ] && [ "$F_t" = "$(token)" ]; then
+		session_end
+		printf 'Status: 303 See Other\r\nLocation: /cgi-bin/accesso\r\nCache-Control: no-store\r\n'
+		session_cookie ""
+		printf '\r\n'
+	else
+		redirect /cgi-bin/accesso
+	fi
+	exit 0
+fi
+
+# --- Entrata -------------------------------------------------------------------
+auth_enabled || { redirect /cgi-bin/audio; exit 0; }
+
+# Per indirizzo e in totale (soglia piu' larga): chi e' bloccato aspetta senza
+# nemmeno far verificare la password.
+w=$(login_wait ip "$LOGIN_FREE")
+wg=$(login_wait globale $((LOGIN_FREE * 6)))
+[ "$wg" -gt "$w" ] && w=$wg
+if [ "$w" -gt 0 ]; then
+	reply_login "429 Too Many Requests" "Troppi tentativi: riprova tra $w secondi."
+	exit 0
+fi
+
+if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso verifica; then
+	id=$(session_new)
+	if [ -z "$id" ]; then
+		reply_login "500 Internal Server Error" "Non riesco a creare la sessione: riprova."
+		exit 0
+	fi
+	login_ok ip
+	login_ok globale
+	log "accesso alle pagine da ${REMOTE_ADDR:-?}"
+	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n' "$(safe_next "$F_next")"
+	session_cookie "$id"
+	printf '\r\n'
+	exit 0
+fi
+
+login_fail ip
+login_fail globale
+log "accesso alle pagine rifiutato da ${REMOTE_ADDR:-?}"
+reply_login "401 Unauthorized" "Password errata."
