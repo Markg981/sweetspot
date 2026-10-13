@@ -462,7 +462,7 @@ for h in evil.example.com evil.example.com:80 192.168.1.51 sweetspot.local.evil.
 done
 expect "NOME_RETE personalizzato: salotto.local accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto.local)"
 expect "NOME_RETE personalizzato: nome breve accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto:80)"
-expect "NOME_RETE personalizzato: il vecchio nome non vale" 403 "$(hostcode 'NOME_RETE=salotto' sweetspot.local)"
+expect "NOME_RETE personalizzato: un altro nome non vale" 403 "$(hostcode 'NOME_RETE=salotto' cucina.local)"
 expect "Host assente dal computer stesso accettato" ok "$(hostcode '' - 127.0.0.1)"
 expect "Host assente dalla rete rifiutato" 403 "$(hostcode '' - 192.168.1.9)"
 out=$(hostcall '' evil.example.com)

@@ -1082,7 +1082,10 @@ host_bare() {
 
 # Indirizzi IPv4 e IPv6 assegnati al computer, uno per riga.
 host_addresses() {
-	ip -o addr show 2>/dev/null | awk '$3 == "inet" || $3 == "inet6" { sub("/.*", "", $4); print $4 }'
+	local n dev fam addr rest
+	ip -o addr show 2>/dev/null | while read -r n dev fam addr rest; do
+		case "$fam" in inet|inet6) printf '%s\n' "${addr%%/*}" ;; esac
+	done
 }
 
 # host_allowed HOST [INDIRIZZO_CLIENT]: vero se HOST e' un nome o un
@@ -1105,9 +1108,10 @@ host_allowed() {
 	if [ -n "$a" ]; then
 		case "$h" in "$a"|"$a.local") return 0 ;; esac
 	fi
-	# Lettura fino in fondo (niente grep -q: chiuderebbe la pipe in anticipo).
-	a=$(host_addresses | awk -v h="$h" 'tolower($0) == h { print "si" }')
-	[ -n "$a" ]
+	for a in $(host_addresses); do
+		[ "$(lower "$a")" = "$h" ] && return 0
+	done
+	return 1
 }
 
 # Chiamato all'inizio di ogni pagina (CGI): Host non riconosciuto -> 403 e
