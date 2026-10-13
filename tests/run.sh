@@ -2035,6 +2035,153 @@ if command -v python3 > /dev/null; then
 		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
 fi
 
+echo "Hotspot di configurazione Wi-Fi (primo avvio)"
+HS=$WORK/hotspot
+mkdir -p "$HS/bin"
+# Comandi finti: registrano le chiamate in $HS/calls; 'ip' mostra un indirizzo
+# sul Wi-Fi solo se esiste $HS/ipok; 'sleep' conta i giri e li lascia
+# comandare a $HS/onsleep (cosi' i test non aspettano e hanno una fine).
+cat > "$HS/bin/iw" <<'EOF'
+#!/bin/sh
+echo "iw $*" >> "$HS_DIR/calls"
+case "$*" in
+	"phy phy0 info") printf 'Wiphy phy0\n\tSupported interface modes:\n\t\t * IBSS\n\t\t * managed\n%s\n\t\t * monitor\n' "$(cat "$HS_DIR/apmode" 2>/dev/null)" ;;
+	"dev wlan0 scan") printf 'BSS aa:bb:cc:00:00:01(on wlan0)\n\tsignal: -40.00 dBm\n\tSSID: Casa Rossi\nBSS aa:bb:cc:00:00:02(on wlan0)\n\tsignal: -80.00 dBm\n\tSSID: Vicino\nBSS aa:bb:cc:00:00:03(on wlan0)\n\tsignal: -60.00 dBm\n\tSSID: \n' ;;
+esac
+EOF
+cat > "$HS/bin/ip" <<'EOF'
+#!/bin/sh
+echo "ip $*" >> "$HS_DIR/calls"
+case "$*" in
+	*show*wlan0*) [ -f "$HS_DIR/ipok" ] && echo "3: wlan0    inet 192.168.1.9/24 scope global wlan0" ;;
+esac
+exit 0
+EOF
+for c in hostapd udhcpd dnsd killall flock; do
+	printf '#!/bin/sh\necho "%s $*" >> "$HS_DIR/calls"\nexit 0\n' "$c" > "$HS/bin/$c"
+done
+cat > "$HS/bin/sleep" <<'EOF'
+#!/bin/sh
+n=$(cat "$HS_DIR/n" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$HS_DIR/n"
+[ -f "$HS_DIR/onsleep" ] && . "$HS_DIR/onsleep"
+exit 0
+EOF
+cat > "$HS/net-init" <<'EOF'
+#!/bin/sh
+echo "S40 $*" >> "$HS_DIR/calls"
+EOF
+chmod +x "$HS/bin/"* "$HS/net-init"
+
+# hs_env APMODE: computer finto con cavo scollegato e Wi-Fi spento (rfkill).
+hs_env() {
+	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console"
+	mkdir -p "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
+		"$HS/sys/class/net/wlan0/wireless" "$HS/sys/class/rfkill/rfkill0" "$HS/sys/class/phy"
+	echo 1 > "$HS/sys/class/net/eth0/type"; echo 0 > "$HS/sys/class/net/eth0/carrier"
+	echo 1 > "$HS/sys/class/net/wlan0/type"
+	echo "aa:bb:cc:dd:5e:6f" > "$HS/sys/class/net/wlan0/address"
+	mkdir -p "$HS/sys/class/net/wlan0/phy80211"; echo phy0 > "$HS/sys/class/net/wlan0/phy80211/name"
+	echo wlan > "$HS/sys/class/rfkill/rfkill0/type"; echo 1 > "$HS/sys/class/rfkill/rfkill0/soft"
+	if [ "$1" = ap ]; then echo "$(printf '\t\t * AP')" > "$HS/apmode"; else : > "$HS/apmode"; fi
+	: > "$HS/calls"; : > "$HS/console"
+	cp "$OVERLAY/etc/sweetspot/defaults.conf" "$HS/run/sweetspot.conf"
+}
+# hs_run [ATTESA]: esegue sorveglia con i comandi finti.
+hs_run() {
+	printf 'HOTSPOT_ATTESA=%s\n' "${1:-0}" >> "$HS/run/sweetspot.conf"
+	HS_DIR=$HS SWEETSPOT_SYSFS=$HS/sys SWEETSPOT_PROCFS=$HS/proc SWEETSPOT_RUN=$HS/run \
+		SWEETSPOT_LOG=$HS/log SWEETSPOT_PATH="$HS/bin:$SWEETSPOT_PATH" SWEETSPOT_NET_INIT=$HS/net-init \
+		SWEETSPOT_CONSOLE=$HS/console SWEETSPOT_TTY=$HS/console \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" "${2:-sorveglia}" > /dev/null 2>&1
+}
+hs_calls() { grep -c "^$1" "$HS/calls"; }
+
+# 1. Senza rete e con un adattatore AP: l'hotspot si accende, poi arriva il cavo.
+hs_env ap
+echo '[ "$n" -ge 3 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: senza rete si accende su wlan0 con nome dal MAC" "1|1" \
+	"$(grep -c 'hotspot: acceso su wlan0, rete Sweetspot-5E6F' "$HS/log")|$(hs_calls hostapd)"
+expect "hotspot: indirizzo 192.168.4.1 sulla scheda, DHCP e DNS avviati" "1|1|1" \
+	"$(hs_calls 'ip addr add 192.168.4.1/24 dev wlan0')|$(hs_calls udhcpd)|$(hs_calls dnsd)"
+pw=$(sed -n 's/^Password: //p' "$HS/console" | head -n 1)
+expect "hotspot: password sullo schermo (10 caratteri), non nel registro" "1|0" \
+	"$(grep -c '^Password: [a-z2-9]\{10\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
+expect "hotspot: elenco reti ordinato per segnale, senza nomi vuoti" "100|Casa Rossi,Vicino" \
+	"$(head -n 1 "$HS/run/wifi-scan.list" | cut -d'|' -f1)|$(cut -d'|' -f2 "$HS/run/wifi-scan.list" | tr '\n' ',' | sed 's/,$//')"
+expect "hotspot: arrivato il cavo si spegne e le radio tornano spente" "1|0|1" \
+	"$(grep -c 'hotspot: arrivato il cavo' "$HS/log")|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 2. Password scelta dall'utente in sweetspot.txt.
+hs_env ap
+echo 'HOTSPOT_PASSWORD=la-mia-password' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: HOTSPOT_PASSWORD scelta dall'utente" "1" "$(grep -c '^Password: la-mia-password$' "$HS/console")"
+
+# 3. Cavo collegato: l'hotspot non si accende mai.
+hs_env ap
+echo 1 > "$HS/sys/class/net/eth0/carrier"
+hs_run
+expect "hotspot: con il cavo collegato non parte e la radio resta spenta" "0|0|1" \
+	"$(hs_calls hostapd)|$(hs_calls iw)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 4. Wi-Fi gia' collegato (indirizzo sulla scheda): niente hotspot.
+hs_env ap
+touch "$HS/ipok"
+hs_run
+expect "hotspot: Wi-Fi collegato, nessun hotspot" "0" "$(hs_calls hostapd)"
+
+# 5. HOTSPOT=no.
+hs_env ap
+echo 'HOTSPOT=no' >> "$HS/run/sweetspot.conf"
+hs_run
+expect "hotspot: HOTSPOT=no non fa niente" "0|1" "$(hs_calls hostapd)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 6. Adattatore senza modalita' AP.
+hs_env noap
+hs_run
+expect "hotspot: adattatore senza AP, niente hotspot" "0|1" \
+	"$(hs_calls hostapd)|$(grep -c 'nessun adattatore Wi-Fi capace' "$HS/log")"
+
+# 7. Attesa: la connessione arriva prima del tempo, l'hotspot non parte.
+hs_env ap
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run 60
+expect "hotspot: la rete arriva durante l'attesa, nessun hotspot" "0|2" "$(hs_calls hostapd)|$(cat "$HS/n")"
+
+# 8. Rete scelta dalla pagina ma sbagliata: l'hotspot riparte; poi quella giusta.
+hs_env ap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -ge 12 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"
+EOF
+hs_run
+expect "hotspot: rete salvata che non risponde, l'hotspot riparte (2 accensioni)" "1|2|1" \
+	"$(grep -c 'la rete Wi-Fi non risponde' "$HS/log")|$(hs_calls hostapd)|$(hs_calls 'S40 wifi wlan0')"
+hs_env ap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -eq 3 ] && : > "$HS_DIR/ipok"
+EOF
+hs_run
+expect "hotspot: rete scelta che risponde, hotspot spento e sorveglianza finita" "1|1|0" \
+	"$(grep -c 'collegato alla rete Wi-Fi' "$HS/log")|$(hs_calls hostapd)|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)"
+
+# S40: la scheda Wi-Fi configurata si collega con il nuovo comando 'wifi'.
+expect "S40sweetspot-net: comando wifi e avvio della sorveglianza" "1|1" \
+	"$(grep -c 'wifi) *$' "$OVERLAY/etc/init.d/S40sweetspot-net")|$(grep -c 'sweetspot-hotspot sorveglia' "$OVERLAY/etc/init.d/S40sweetspot-net")"
+expect "defaults.conf: HOTSPOT acceso di serie" "si" "$(sed -n 's/^HOTSPOT=//p' "$OVERLAY/etc/sweetspot/defaults.conf")"
+for cfg in sweetspot_x86_64 sweetspot_rpi; do
+	expect "$cfg: hostapd e iw nel defconfig" "2" "$(grep -c '^BR2_PACKAGE_\(HOSTAPD\|IW\)=y$' "$ROOT/configs/${cfg}_defconfig")"
+done
+expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*

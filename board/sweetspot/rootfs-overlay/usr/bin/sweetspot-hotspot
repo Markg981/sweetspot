@@ -1,0 +1,286 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - hotspot di configurazione per il primo avvio senza cavo.
+#
+#   sweetspot-hotspot sorveglia    (lanciato da S40sweetspot-net, in secondo piano)
+#   sweetspot-hotspot scansiona    cerca le reti Wi-Fi e aggiorna l'elenco
+#   sweetspot-hotspot stato        scrive il nome della scheda se l'hotspot e' acceso
+#
+# Se dopo HOTSPOT_ATTESA secondi dall'avvio non c'e' nessuna connessione
+# (nessun cavo con collegamento, nessun indirizzo, Wi-Fi non configurato o non
+# connesso) e c'e' un adattatore Wi-Fi capace di fare da access point, accende
+# la rete "Sweetspot-XXXX" (WPA2). Il telefono, collegato li', apre la pagina
+# Rete (http://192.168.4.1/), sceglie la rete di casa e ne scrive la password:
+# l'hotspot si spegne e Sweetspot si collega. Se la rete salvata non si collega
+# entro HOTSPOT_PROVA secondi l'hotspot riparte. Con la rete funzionante l'hotspot
+# non e' mai acceso: se arriva un cavo, si spegne.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+AP_IP=192.168.4.1
+AP_PID=$RUN/hotspot
+LIST=$RUN/wifi-scan.list
+RICHIESTA=$RUN/hotspot.richiesta
+NET_INIT=${SWEETSPOT_NET_INIT:-/etc/init.d/S40sweetspot-net}
+
+# Scheda Wi-Fi che sa fare da access point (prima trovata), altrimenti niente.
+ap_iface() {
+	local n i phy
+	for n in "$SYS"/class/net/*; do
+		i=${n##*/}
+		[ -d "$n/wireless" ] || [ -d "$n/phy80211" ] || continue
+		phy=$(cat "$n/phy80211/name" 2>/dev/null)
+		[ -n "$phy" ] || continue
+		if iw phy "$phy" info 2>/dev/null | grep -q '^[[:space:]]*\* AP$'; then
+			printf '%s' "$i"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# C'e' una connessione che non e' l'hotspot? Un cavo con collegamento, oppure un
+# indirizzo IPv4 su una scheda Wi-Fi diversa da $1 (quella dell'hotspot).
+connected() {
+	local n i
+	for n in "$SYS"/class/net/*; do
+		i=${n##*/}
+		[ -e "$n/device" ] || continue
+		[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
+		[ "$i" = "${1:-}" ] && continue
+		if [ -d "$n/wireless" ] || [ -d "$n/phy80211" ]; then
+			[ -n "$(ip -4 -o addr show scope global dev "$i" 2>/dev/null)" ] && return 0
+		else
+			[ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] && return 0
+		fi
+	done
+	return 1
+}
+
+# Solo i cavi, per spegnere l'hotspot quando ne arriva uno.
+wired_up() {
+	local n
+	for n in "$SYS"/class/net/*; do
+		[ -e "$n/device" ] || continue
+		[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
+		if [ -d "$n/wireless" ] || [ -d "$n/phy80211" ]; then continue; fi
+		[ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] && return 0
+	done
+	return 1
+}
+
+# Accende la radio e la scheda (S20sweetspot-tune le tiene spente).
+radio_on() { # scheda
+	local r
+	for r in "$SYS"/class/rfkill/rfkill*; do
+		[ -d "$r" ] || continue
+		[ "$(cat "$r/type" 2>/dev/null)" = wlan ] && put 0 "$r/soft"
+	done
+	put on "$SYS/class/net/$1/device/power/control"
+	return 0
+}
+
+# A hotspot spento, senza WIFI_NOME le radio tornano spente come all'avvio.
+radio_off() {
+	local r
+	[ -n "$(conf WIFI_NOME)" ] && return 0
+	for r in "$SYS"/class/rfkill/rfkill*; do
+		[ -d "$r" ] || continue
+		[ "$(cat "$r/type" 2>/dev/null)" = wlan ] && put 1 "$r/soft"
+	done
+	return 0
+}
+
+# Elenco delle reti vicine, "percentuale|nome", dalla piu' forte.
+scan() { # scheda
+	local out
+	out=$(iw dev "$1" scan 2>/dev/null | awk '
+		/^BSS /      { sig = 0 }
+		/signal:/    { sig = $2 + 0 }
+		/^[ \t]*SSID:/ {
+			s = $0; sub(/^[ \t]*SSID: ?/, "", s)
+			if (s == "" || s ~ /\\x00/) next
+			p = int(2 * (sig + 100)); if (p < 0) p = 0; if (p > 100) p = 100
+			print p "|" s
+		}' | sort -t'|' -k1,1nr | awk '!seen[substr($0, index($0, "|") + 1)]++')
+	[ -n "$out" ] || return 1
+	mkdir -p "$RUN"
+	printf '%s\n' "$out" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
+}
+
+# Password: HOTSPOT_PASSWORD (8-63 caratteri) se scritta in sweetspot.txt,
+# altrimenti casuale a ogni accensione.
+ap_pass() {
+	local p
+	p=$(conf HOTSPOT_PASSWORD)
+	if [ "${#p}" -ge 8 ] && [ "${#p}" -le 63 ] && valid_value "$p"; then
+		printf '%s' "$p"
+	else
+		tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 10
+	fi
+}
+
+# La password si legge sullo schermo del player (nel registro non compare).
+announce() { # nome password
+	local msg t
+	msg=$(printf '\n=== Sweetspot: configurazione Wi-Fi ===\nCollega il telefono alla rete Wi-Fi: %s\nPassword: %s\nPoi apri http://%s/\n' "$1" "$2" "$AP_IP")
+	for t in "${SWEETSPOT_CONSOLE:-/dev/console}" "${SWEETSPOT_TTY:-/dev/tty1}"; do
+		[ -w "$t" ] && printf '%s\n' "$msg" > "$t" 2>/dev/null
+	done
+	return 0
+}
+
+ap_start() { # scheda
+	local i=$1 mac ssid pass h
+	mac=$(tr -d ':' < "$SYS/class/net/$i/address" 2>/dev/null | tr 'a-f' 'A-F')
+	ssid="Sweetspot-$(printf '%s' "${mac:-0000}" | tail -c 4)"
+	pass=$(ap_pass)
+	[ -n "$pass" ] || return 1
+	mkdir -p "$RUN"
+	radio_on "$i"
+	# Nessun collegamento Wi-Fi precedente resta in piedi.
+	[ -f "/run/udhcpc.$i.pid" ] && kill "$(cat "/run/udhcpc.$i.pid")" 2>/dev/null
+	killall wpa_supplicant 2>/dev/null
+	ip link set "$i" up
+	# L'elenco delle reti si fa prima di diventare access point.
+	scan "$i"
+	ip addr flush dev "$i" 2>/dev/null
+	ip addr add "$AP_IP/24" dev "$i" || return 1
+	(
+		umask 077
+		cat > "$AP_PID.conf" <<HOSTAPD
+interface=$i
+driver=nl80211
+ssid=$ssid
+hw_mode=g
+channel=6
+ieee80211n=1
+wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$pass
+HOSTAPD
+	)
+	if ! hostapd -B -P "$AP_PID.hostapd.pid" "$AP_PID.conf" >/dev/null 2>&1; then
+		ip addr flush dev "$i" 2>/dev/null
+		rm -f "$AP_PID.conf"
+		return 1
+	fi
+	rm -f "$AP_PID.conf"
+	cat > "$AP_PID.udhcpd.conf" <<UDHCPD
+start 192.168.4.10
+end 192.168.4.50
+interface $i
+pidfile $AP_PID.udhcpd.pid
+lease_file $AP_PID.leases
+opt router $AP_IP
+opt dns $AP_IP
+opt subnet 255.255.255.0
+opt lease 3600
+UDHCPD
+	: > "$AP_PID.leases"
+	udhcpd "$AP_PID.udhcpd.conf" >/dev/null 2>&1
+	# DNS minimo: i nomi di Sweetspot e le prove "portale" dei telefoni portano qui.
+	{
+		echo "sweetspot $AP_IP"
+		echo "sweetspot.local $AP_IP"
+		echo "$(lower "$(conf NOME_RETE sweetspot)").local $AP_IP"
+		for h in connectivitycheck.gstatic.com clients3.google.com captive.apple.com www.msftconnecttest.com detectportal.firefox.com; do
+			echo "$h $AP_IP"
+		done
+	} > "$AP_PID.dns.conf"
+	dnsd -c "$AP_PID.dns.conf" -i "$AP_IP" -p 53 >/dev/null 2>&1 &
+	echo $! > "$AP_PID.dnsd.pid"
+	echo "$i" > "$RUN/hotspot.attivo"
+	echo "$ssid" > "$RUN/hotspot.ssid"
+	log "hotspot: acceso su $i, rete $ssid"
+	announce "$ssid" "$pass"
+}
+
+ap_stop() {
+	local f p i
+	i=$(cat "$RUN/hotspot.attivo" 2>/dev/null)
+	for f in "$AP_PID".hostapd.pid "$AP_PID".udhcpd.pid "$AP_PID".dnsd.pid; do
+		p=$(cat "$f" 2>/dev/null)
+		[ -n "$p" ] && kill "$p" 2>/dev/null
+		rm -f "$f"
+	done
+	rm -f "$AP_PID".dns.conf "$AP_PID".udhcpd.conf "$AP_PID".leases "$RUN/hotspot.attivo" "$RUN/hotspot.ssid"
+	if [ -n "$i" ]; then
+		ip addr flush dev "$i" 2>/dev/null
+		log "hotspot: spento"
+	fi
+	return 0
+}
+
+# Attende fino a $2 secondi un indirizzo IPv4 sulla scheda $1.
+wait_ip() {
+	local t=0
+	while [ $t -lt "$2" ]; do
+		[ -n "$(ip -4 -o addr show scope global dev "$1" 2>/dev/null)" ] && return 0
+		sleep 2
+		t=$((t + 2))
+	done
+	return 1
+}
+
+sorveglia() {
+	local attesa prova i t=0 step=3
+	is_yes "$(conf HOTSPOT si)" || exit 0
+	if ! command -v iw >/dev/null 2>&1 || ! command -v hostapd >/dev/null 2>&1; then exit 0; fi
+	mkdir -p "$RUN"
+	exec 9> "$RUN/hotspot.lock"
+	flock -n 9 || exit 0
+	attesa=$(conf HOTSPOT_ATTESA 60)
+	case "$attesa" in ''|*[!0-9]*) attesa=60 ;; esac
+	prova=$(conf HOTSPOT_PROVA 40)
+	case "$prova" in ''|*[!0-9]*) prova=40 ;; esac
+
+	# 1. Attesa: appena c'e' una connessione non serve altro.
+	while [ $t -lt "$attesa" ]; do
+		connected && exit 0
+		sleep $step
+		t=$((t + step))
+	done
+	connected && exit 0
+	i=$(ap_iface) || { log "hotspot: nessun adattatore Wi-Fi capace di fare da access point"; exit 0; }
+
+	# 2. Hotspot acceso finche' non arriva una connessione.
+	rm -f "$RICHIESTA"
+	ap_start "$i" || { log "hotspot: avvio non riuscito su $i"; ap_stop; radio_off; exit 0; }
+	while :; do
+		if wired_up; then
+			log "hotspot: arrivato il cavo, spengo"
+			ap_stop
+			radio_off
+			exit 0
+		fi
+		if [ -f "$RICHIESTA" ]; then
+			rm -f "$RICHIESTA"
+			sleep 4	# il tempo di consegnare la risposta al telefono
+			ap_stop
+			log "hotspot: provo la rete Wi-Fi salvata"
+			"$NET_INIT" wifi "$i"
+			if wait_ip "$i" "$prova"; then
+				log "hotspot: collegato alla rete Wi-Fi"
+				exit 0
+			fi
+			log "hotspot: la rete Wi-Fi non risponde, riaccendo l'hotspot"
+			ap_start "$i" || { ap_stop; exit 0; }
+		fi
+		sleep 2
+	done
+}
+
+case "$1" in
+	sorveglia) sorveglia ;;
+	scansiona)
+		i=$(cat "$RUN/hotspot.attivo" 2>/dev/null)
+		[ -n "$i" ] || i=$(ap_iface) || exit 1
+		scan "$i" ;;
+	stato) cat "$RUN/hotspot.attivo" 2>/dev/null ;;
+	*) echo "uso: $0 sorveglia|scansiona|stato" >&2; exit 1 ;;
+esac
