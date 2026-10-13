@@ -335,7 +335,7 @@ check_listening_io() {
 		when="nell'ultimo ascolto"
 		now=$(sed -n 's/^fine_//p' "$io")
 	else
-		secs=$(( $(date +%s) - start ))
+		secs=$(( ${SWEETSPOT_NOW:-$(date +%s)} - start ))
 		when="durante l'ascolto in corso"
 		now=$(io_counters)
 	fi

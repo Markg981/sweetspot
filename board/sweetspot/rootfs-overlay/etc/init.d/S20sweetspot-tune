@@ -3,7 +3,7 @@
 #
 # Sweetspot - ottimizzazioni dopo il riconoscimento dell'hardware:
 # parametri di avvio adattati al computer, frequenza fissa della CPU,
-# radio spente, dischi interni in standby, USB sempre alimentato,
+# radio spente, USB sempre alimentato,
 # LED e periferiche USB e PCI inutilizzate spenti (sweetspot-silenzio; le
 # schede di rete le decide S40sweetspot-net, a rete su).
 
@@ -18,21 +18,6 @@ radios_off() {
 			wlan) [ -n "$(conf WIFI_NOME)" ] && continue ;;
 		esac
 		put 1 "$r/soft"
-	done
-}
-
-# I dischi interni non servono: il sistema e' in RAM e la musica arriva
-# dalla rete. Quelli meccanici vengono fermati.
-disks_standby() {
-	local b dev
-	for b in "$SYS"/block/sd*; do
-		[ -d "$b" ] || continue
-		dev=${b##*/}
-		[ "$(cat "$b/removable" 2>/dev/null)" = 0 ] || continue
-		case "$(readlink -f "$b/device")" in */usb*) continue ;; esac
-		[ "$(cat "$b/queue/rotational" 2>/dev/null)" = 1 ] || continue
-		hdparm -S 12 "/dev/$dev" >/dev/null 2>&1
-		hdparm -y "/dev/$dev" >/dev/null 2>&1 && log "disco $dev in standby"
 	done
 }
 
@@ -52,7 +37,6 @@ case "$1" in
 		radios_off
 		usb_power_on
 		sweetspot-silenzio applica
-		disks_standby &
 		;;
 	stop) ;;
 	*) echo "uso: $0 start" ;;
