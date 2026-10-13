@@ -454,7 +454,8 @@ hostcall() { # impostazioni host client
 }
 hostcode() { case "$(hostcall "$@")" in *"403 Forbidden"*) echo 403 ;; *"ok "*) echo ok ;; *) echo altro ;; esac; }
 for h in sweetspot.local sweetspot.local:80 SweetSpot.LOCAL localhost 127.0.0.1:80 192.168.1.50 192.168.1.50:80 '[fe80::1234:abcd]:80' '[fe80::1234:abcd]'; do
-	expect "Host $h accettato" ok "$(hostcode '' "$h")"done
+	expect "Host $h accettato" ok "$(hostcode '' "$h")"
+done
 for h in evil.example.com evil.example.com:80 192.168.1.51 sweetspot.local.evil.com 10.0.0.1; do
 	expect "Host $h rifiutato con 403" 403 "$(hostcode '' "$h")"
 done
