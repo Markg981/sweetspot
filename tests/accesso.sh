@@ -140,7 +140,7 @@ rm -f "$RUNDIR/web/tentativi/globale"
 out=$(req "$CGI/accesso" POST "" "password=segreta")
 expect "passata l'attesa si puo' entrare" "303" "$(status "$out")"
 expect "l'accesso riuscito azzera i tentativi" "0" "$(ls "$RUNDIR/web/tentativi" | grep -c .)"
-printf '9 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
+printf '40 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
 out=$(req "$CGI/accesso" POST "" "password=segreta")
 expect "limite globale oltre il limite per indirizzo" "429" "$(status "$out")"
 rm -rf "$RUNDIR/web/tentativi"
