@@ -274,6 +274,8 @@ zone_start() { # scheda
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	fmt=$(dac_native_dsd "$card")
 	[ -n "$fmt" ] && set -- "$@" -D "$(num_conf PAUSA_DSD_MS 500):$fmt"
+	# Le zone non ricampionano mai: niente ripiego su plughw: (vedi run_player).
+	set -- "$@" -H
 	mkdir -p "$ZONE_DIR"
 	# Il volume della zona lo fa Lyrion (software): il mixer del DAC a 0 dB.
 	dac_unity_gain "$card"
@@ -455,6 +457,10 @@ run_player() {
 	fi
 	rs=$(resample_args)
 	[ -n "$rs" ] && set -- "$@" -R "$rs"
+	# Originale (niente ricampionamento, uscita diretta hw:): Squeezelite non
+	# deve ripiegare su plughw: se il DAC rifiuta la frequenza, altrimenti ALSA
+	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
+	[ -z "$rs" ] && [ -z "$dsp" ] && set -- "$@" -H
 
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$vol" = dac ]; then

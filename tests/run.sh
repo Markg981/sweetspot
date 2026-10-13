@@ -180,6 +180,7 @@ run "$OOM" oom_adj_cmd 500 scanner.pl
 expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
 expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
 grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
+grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && set -- "\$@" -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
 grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
 grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
@@ -1744,6 +1745,7 @@ echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
 dspfn 1 "HK=0; zones_sync 1"
 zcall=$(calls taskset)
 case "$zcall" in "-c 0 squeezelite -o hw:CARD=Zona,DEV=0 "*"-n Sweetspot - Zona DAC -M Sweetspot -m 02:"*"-p 75 "*"-s 127.0.0.1"*) ok "zona: Squeezelite sul secondo DAC, sui core di sistema" ;; *) ko "zona avviata" "squeezelite su Zona" "$zcall" ;; esac
+case "$zcall" in *" -H"*) ok "zona: niente ripiego su plughw: (-H)" ;; *) ko "zona: -H" "presente" "$zcall" ;; esac
 case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "solo Zona" "$zcall" ;; *) ok "zona: niente microfono ne' DAC principale" ;; esac
 expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
 expect "zona: MAC stabile e locale" "1|02" \
@@ -2464,6 +2466,7 @@ sh "$ROOT/tests/ops-safety.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
+python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

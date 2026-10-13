@@ -1,0 +1,66 @@
+Subject: [PATCH] alsa: -H forbids the plughw: fallback (strict bit-perfect)
+
+When the sample rate cannot be set on a hw: device, squeezelite reopens it
+as plughw: and lets ALSA resample silently. In Sweetspot's "Originale"
+(bit-perfect) mode this must never happen: the samples would no longer
+reach the DAC unchanged and nobody would notice.
+
+Add -H: if the rate is refused by a hw: device, log an explicit error and
+fail the open (the output thread retries every 5 seconds and the track
+does not play) instead of reopening in plug mode. Nothing changes without
+the option.
+
+Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+Upstream: Not submitted (local option)
+
+--- a/main.c
++++ b/main.c
+@@ -105,5 +105,6 @@
+ #if ALSA
+ 		   "  -p <priority>\t\tSet real time priority of output thread (1-99)\n"
++		   "  -H\t\t\tStrict hw: if the DAC refuses the sample rate, stop with an error instead of falling back to plughw: (no automatic resampling)\n"
+ #endif
+ #if LINUX || FREEBSD || SUN
+ 		   "  -P <filename>\t\tStore the process id (PID) in filename\n"
+@@ -373,5 +374,5 @@
+ #if ALSA
+-						  "LX"
++						  "LXH"
+ #endif
+ #if RESAMPLE
+ 						  "uR"
+@@ -597,6 +598,12 @@
+ 		case 'X':
+ 			linear_volume = true;
+ 			break;
++		case 'H':
++			{
++				extern bool alsa_strict_hw;
++				alsa_strict_hw = true;
++			}
++			break;
+ 		case 'U':
+ 			output_mixer_unmute = true;
+ 		case 'V':
+--- a/output_alsa.c
++++ b/output_alsa.c
+@@ -69,5 +69,8 @@
+ } alsa;
+
+ static snd_pcm_t *pcmp = NULL;
++
++// -H: never fall back to plughw: (no automatic resampling)
++bool alsa_strict_hw = false;
+
+ extern u8_t *silencebuf;
+@@ -378,6 +381,10 @@
+ 		}
+
+ 		if ((err = snd_pcm_hw_params_set_rate(pcmp, hw_params, sample_rate, 0)) < 0) {
++			if (hw && alsa_strict_hw) {
++				LOG_ERROR("device %s refuses %u Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: %s", device, sample_rate, snd_strerror(err));
++				return err;
++			}
+ 			if (hw) {
+ 				strcpy(alsa.device + 4, device);
+ 				memcpy(alsa.device, "plug", 4);
