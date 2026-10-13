@@ -81,14 +81,23 @@ case "$1" in
 			log "chiavetta non trovata: impostazioni predefinite"
 			echo "chiavetta non trovata, uso i valori predefiniti"
 		fi
+		chmod 600 "$RUN/sweetspot.txt" 2>/dev/null # password in chiaro: solo root
 		config_build "$RUN/sweetspot.txt"
 		write_blacklist
 		tune_sysctl
 		# Impostazioni e stato di Sweetspot sulla porta 80 (Lyrion e' sulla 9000).
 		# Con PASSWORD_WEB le pagine chiedono utente e password (sweetspot-accesso).
 		sweetspot-accesso applica
+		# Cartella scrivibile dalle pagine (utente "web"): bozze dei filtri e
+		# stato della prova DoP. Il gettone anti-CSRF lo crea root: le pagine
+		# lo leggono soltanto.
+		mkdir -p "$RUN/web/correzione"
+		chown -R web:web "$RUN/web" 2>/dev/null
+		chmod 700 "$RUN/web" "$RUN/web/correzione"
+		head -c 16 /dev/urandom | md5sum | cut -c1-24 > "$RUN/web.token"
+		chmod 644 "$RUN/web.token"
 		mkdir -p /etc/default
-		echo 'HTTPD_ARGS="-p 80 -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"' > /etc/default/httpd
+		echo 'HTTPD_ARGS="-p 80 -u web:web -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"' > /etc/default/httpd
 		;;
 	stop) ;;
 	*) echo "uso: $0 start" ;;

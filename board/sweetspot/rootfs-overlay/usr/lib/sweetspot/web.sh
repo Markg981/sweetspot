@@ -4,12 +4,54 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
+# --- Privilegi -----------------------------------------------------------------
+# Le pagine girano come utente "web" (httpd -u web:web). Quello che richiede
+# root passa da sweetspot-priv (setuid, elenco chiuso di comandi): priv
+# COMANDO ARGOMENTI... Senza l'helper (test, sviluppo) il comando e' eseguito
+# direttamente.
+SWEETSPOT_PRIV=${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}
+# shellcheck disable=SC2034
+WEBDIR=$RUN/web
+
+priv() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" "$@"
+	else
+		"$@"
+	fi
+}
+
+# Con l'helper le pagine leggono la configurazione senza password.
+# shellcheck disable=SC2034
+[ -x "$SWEETSPOT_PRIV" ] && CONF=$CONF_WEB
+
+# Registro: lo scrive root (il file non e' delle pagine).
+log() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @log "$*"
+	else
+		mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
+		echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"
+	fi
+}
+
+# Lyrion: le credenziali stanno in CONF (solo root), quindi la richiesta
+# la fa l'helper, e solo per i pochi comandi che le pagine usano.
+lms_json() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" sweetspot-lms json "$@"
+	else
+		lms_json_locale "$@"
+	fi
+}
+
 # Testo sicuro dentro l'HTML (anche tra virgolette negli attributi).
 esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'; }
 
 # Gettone anti-CSRF valido fino al riavvio: una pagina esterna non puo'
 # leggerlo, quindi non puo' inviare comandi al player al posto dell'utente.
 token() {
+	# Sull'immagine lo crea root all'avvio (S03); qui solo se manca (test).
 	if [ ! -s "$RUN/web.token" ]; then
 		mkdir -p "$RUN"
 		head -c 16 /dev/urandom | md5sum | cut -c1-24 > "$RUN/web.token"

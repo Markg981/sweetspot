@@ -28,7 +28,7 @@ dop_test_card() {
 		info_row ATTENZIONE "Prova non disponibile" "Adesso $blocker."
 	else
 		button prova_dop "Avvia la prova (6 secondi)" "" "" primary
-		if [ -f "$RUN/prova-dop.avviata" ]; then
+		if [ -f "$WEBDIR/prova-dop.avviata" ]; then
 			echo '<p class="sub">Com&#39;è andata?</p>'
 			button prova_dop_esito "Il DAC ha mostrato DSD/DoP e ho sentito il tono: usa DoP" esito si primary
 			button prova_dop_esito "Il DAC ha mostrato PCM o ho sentito fruscio: lascia la conversione" esito no

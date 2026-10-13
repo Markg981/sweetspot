@@ -249,6 +249,10 @@ case "$1" in
 	primo-controllo) do_first_check ;;
 	aggiorna) lms_json '' rescan > /dev/null ;;
 	ricostruisci) lms_json '' wipecache > /dev/null ;;
+	# json PLAYER PAROLA...: richiesta a Lyrion con le credenziali di
+	# Sweetspot, per le pagine web (che non le conoscono); sweetspot-priv
+	# lascia passare solo i comandi che le pagine usano.
+	json) shift; lms_json_locale "$@" ;;
 	plugin) shift; do_plugin "$@" ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
 	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|plugin|riavvia" >&2; exit 1 ;;

@@ -14,6 +14,9 @@ SYS=${SWEETSPOT_SYSFS:-/sys}
 PROC=${SWEETSPOT_PROCFS:-/proc}
 RUN=${SWEETSPOT_RUN:-/run/sweetspot}
 CONF=$RUN/sweetspot.conf
+# Copia di CONF senza le password (valore "*"): e' quella che leggono le
+# pagine web, che girano come utente "web" e non devono vedere i segreti.
+CONF_WEB=$RUN/sweetspot.web
 DEFAULTS=${SWEETSPOT_DEFAULTS:-/etc/sweetspot/defaults.conf}
 LOGFILE=${SWEETSPOT_LOG:-/var/log/sweetspot.log}
 # awk con le funzioni matematiche (curve dei filtri); nei test quello del sistema.
@@ -69,7 +72,12 @@ config_build() {
 		[ -f "$DEFAULTS" ] && config_normalize "$DEFAULTS"
 		[ -n "$1" ] && [ -f "$1" ] && config_normalize "$1"
 	} > "$CONF.tmp"
+	chmod 600 "$CONF.tmp"
 	mv "$CONF.tmp" "$CONF"
+	# Le pagine sanno solo SE una password e' impostata, non il suo valore.
+	sed 's/^\([A-Z0-9_]*PASSWORD[A-Z0-9_]*\)=..*$/\1=*/' "$CONF" > "$CONF_WEB.tmp"
+	chmod 644 "$CONF_WEB.tmp"
+	mv "$CONF_WEB.tmp" "$CONF_WEB"
 }
 
 # conf CHIAVE [predefinito]: l'ultima riga vince.
@@ -664,7 +672,11 @@ lms_auth_header() {
 	printf 'Authorization: Basic %s' "$(printf '%s:%s' "$u" "$(conf LYRION_PASSWORD)" | base64 | tr -d '\n')"
 }
 
-lms_json() {
+lms_json() { lms_json_locale "$@"; }
+
+# Le pagine web (utente "web") la ridefiniscono in web.sh: non conoscono la
+# password di Lyrion, quindi passano dall'helper privilegiato.
+lms_json_locale() {
 	local player=$1 args="" w out auth
 	shift
 	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done

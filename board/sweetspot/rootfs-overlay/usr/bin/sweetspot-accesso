@@ -23,6 +23,10 @@
 # stato annullato. Per quella sola pagina vale anche un utente "sweetspot"
 # con una chiave casuale di questo avvio, in $RUN/vivo.chiave (solo root):
 # l'httpd di BusyBox applica la regola con il percorso piu' lungo.
+#
+# L'httpd e le pagine girano come utente "web": httpd.conf e' root:web 0640
+# (l'httpd lo rilegge dopo aver lasciato root), la chiave di vivo resta
+# 0600 root perche' la legge solo sweetspot-aggiorna.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -55,7 +59,15 @@ apply() {
 		mv "$VIVO_KEY.nuovo" "$VIVO_KEY"
 		printf '/cgi-bin/vivo:sweetspot:%s\n/:admin:%s\n' "$key" "$h" > "$HTTPD_CONF.nuovo"
 	fi
-	chmod 600 "$HTTPD_CONF.nuovo"
+	# L'httpd gira come "web" (httpd -u) e rilegge questo file con SIGHUP:
+	# gruppo web in sola lettura. Contiene l'impronta MD5-crypt della
+	# password (non la password) e la chiave di /cgi-bin/vivo, che da sola
+	# non apre altro. Senza il gruppo web (test) resta solo di root.
+	if chgrp web "$HTTPD_CONF.nuovo" 2>/dev/null; then
+		chmod 640 "$HTTPD_CONF.nuovo"
+	else
+		chmod 600 "$HTTPD_CONF.nuovo"
+	fi
 	mv "$HTTPD_CONF.nuovo" "$HTTPD_CONF"
 	killall -HUP httpd 2>/dev/null
 	return 0

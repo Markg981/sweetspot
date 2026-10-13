@@ -636,7 +636,7 @@ run "$WEB" "config_build $WEB/s.txt"
 rm -f "$WEB/run/wget.post"
 out=$(dop_action prova_dop)
 expect "prova DoP: tono di 6 secondi generato sul player" "$WEB/prova-dop/prova-dop.wav 6" "$(cat "$WEB/run/prova-dop.call" 2>/dev/null)"
-expect "prova DoP: esito atteso dopo l'avvio" "si" "$([ -f "$WEB/run/prova-dop.avviata" ] && echo si || echo no)"
+expect "prova DoP: esito atteso dopo l'avvio" "si" "$([ -f "$WEB/run/web/prova-dop.avviata" ] && echo si || echo no)"
 expect "prova DoP: la coda di ascolto e' messa da parte (preview), non cancellata" "1|0" \
 	"$(grep -c "\"playlist\",\"preview\",\"url:file://$WEB/prova-dop/prova-dop.wav\",\"title:Prova DoP\"" "$WEB/run/wget.post")|$(grep -c '"playlist","play"' "$WEB/run/wget.post")"
 case "$out" in *"%50%72%6f%76%61%20%44%6f%50%20%61%76%76%69%61%74%61"*) ok "prova DoP: pagina con le istruzioni" ;; *) ko "prova DoP messaggio" "Prova DoP avviata" "$(printf '%s' "$out" | head -c 200)" ;; esac
@@ -644,9 +644,9 @@ case "$(page audio)" in *"usa DoP"*"lascia la conversione"*) ok "audio: dopo la 
 rm -f "$WEB/run/config.call" "$WEB/run/wget.post"
 dop_action prova_dop_esito no > /dev/null
 expect "esito negativo: nessuna impostazione cambiata" "no|no" \
-	"$([ -e "$WEB/run/config.call" ] && echo si || echo no)|$([ -f "$WEB/run/prova-dop.avviata" ] && echo si || echo no)"
+	"$([ -e "$WEB/run/config.call" ] && echo si || echo no)|$([ -f "$WEB/run/web/prova-dop.avviata" ] && echo si || echo no)"
 expect "esito: la coda di ascolto torna com'era" "1" "$(grep -c '"playlist","preview","cmd:stop"' "$WEB/run/wget.post")"
-touch "$WEB/run/prova-dop.avviata"
+touch "$WEB/run/web/prova-dop.avviata"
 rm -f "$WEB/run/wget.post"
 dop_action prova_dop_esito si > /dev/null
 expect "esito positivo: DSD tramite DoP, coda tornata com'era" "imposta DSD dop|1" "$(cat "$WEB/run/config.call" 2>/dev/null)|$(grep -c '"playlist","preview","cmd:stop"' "$WEB/run/wget.post")"
@@ -663,7 +663,7 @@ dop_action prova_dop > /dev/null
 expect "prova DoP rifiutata con il volume software" "no" "$([ -e "$WEB/run/prova-dop.call" ] && echo si || echo no)"
 mkdac "$WEB" si
 case "$(page audio)" in *"<h2>Prova DoP</h2>"*) ko "audio: nessuna prova con DSD nativo" "nessuna prova" "prova presente" ;; *) ok "audio: nessuna prova con DSD nativo" ;; esac
-rm -f "$WEB/s.txt" "$WEB/run/config.call" "$WEB/run/prova-dop.avviata" "$WEB/run/prova-dop.call"
+rm -f "$WEB/s.txt" "$WEB/run/config.call" "$WEB/run/web/prova-dop.avviata" "$WEB/run/prova-dop.call"
 rm -rf "$WEB/prova-dop"
 
 echo "Diagnostica del percorso"
@@ -2443,6 +2443,7 @@ echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 sh "$ROOT/tests/audio-quality.sh" || exit 1
+sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1

@@ -29,6 +29,8 @@ CONFIG_WATCHDOG=y
 # Password delle pagine web (sweetspot-accesso).
 CONFIG_FEATURE_HTTPD_BASIC_AUTH=y
 CONFIG_FEATURE_HTTPD_AUTH_MD5=y
+# httpd e CGI come utente "web", non root (httpd -u web:web).
+CONFIG_FEATURE_HTTPD_SETUID=y
 # Precarico della coda dietro a tutti (ionice idle).
 CONFIG_IONICE=y
 # Gruppo di processi proprio per i sorveglianti del player (setsid).
