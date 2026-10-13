@@ -388,12 +388,76 @@ non disponibile. Zero eventi registrati non certifica l'assenza di interruzioni.
 Le regressioni con `/proc` simulato verificano la diagnostica, mentre il
 collaudo ALSA su dispositivi reali rimane da completare.
 
+## Matrice di verifica del segnale
+
+`tools/matrice-segnale.py` esegue la matrice dichiarata in
+`tools/matrice-segnale.json` sopra i confrontatori di
+`tools/audio_verification.py` (nessun confronto duplicato). Casi: FLAC, ALAC e
+WAV a 16/24/32 bit da 44,1 a 384 kHz (ALAC e FLAC a 32 bit non sono
+nella matrice: l'encoder di ffmpeg non li garantisce lossless), WAV DoP e
+DSF/DFF da DSD64 a DSD256 (portante DoP 176,4/352,8/705,6 kHz), profondità miste
+16/24/32 in coda, cambi PCM↔DSD e DSD64→DSD256, cambio 384→44,1 kHz, hotplug del
+DAC (PCM e DSD) e carico prolungato.
+
+Esito per caso:
+
+- **PASS**: la cattura digitale è identica bit a bit alla sorgente decodificata
+  (per FLAC/ALAC il riferimento è la decodifica riletta e verificata uguale al
+  WAV d'origine; per DSD il payload DoP). L'allineamento ammette solo silenzio
+  iniziale; niente ricerca di marcatori interni.
+- **FAIL**: cattura presente ma con campioni diversi, troncata o non valida
+  (il report riporta il primo scarto).
+- **NON ESEGUITO**: con il motivo, per esempio cattura o evidenza assente,
+  ffmpeg mancante per FLAC/ALAC. Non è mai un PASS.
+
+Il display del DAC e l'ascolto non dimostrano l'identità dei campioni e non
+sono accettati come evidenza.
+
+### Procedura hardware
+
+1. Su un computer di sviluppo: `python3 tools/matrice-segnale.py prepara
+   --output prova` (richiede ffmpeg per FLAC/ALAC; `--filtro` seleziona un caso
+   o una categoria: `pcm`, `dsd`, `dop`, `profondita-miste`, `cambi-pcm-dsd`,
+   `hotplug`, `carico`; `--frames` accorcia i brani). Per il carico il default
+   è un'ora e la generazione è lunga.
+2. Copiare `prova/sorgenti` sul NAS o sul player e mettere in coda su Lyrion i
+   file `sorgenti/<tipo>-<formato>-<freq>-<bit>/` (due brani per segmento;
+   `manifesto.json` elenca le sorgenti di ogni caso nell'ordine).
+3. Collegare l'uscita digitale del player al registratore: loopback S/PDIF
+   (ingresso digitale di una scheda di acquisizione con clock indipendente
+   dall'uscita) oppure USB con un secondo DAC/analizzatore che catturi lo stream
+   così com'è; volume digitale, ReplayGain e ricampionamento spenti. In test si
+   usa `snd-aloop` (`--ambito alsa_loopback`).
+4. Catturare un file grezzo per segmento, senza gain né conversioni:
+   PCM nel formato nativo (`s16_le`, `s24_3le`, `s32_le`), DoP in `s24_3le`.
+   Nome: `<id>.raw` per un segmento, `<id>.<n>.raw` (n da 1) per più segmenti.
+   Un segmento per ogni cambio di frequenza o formato: ciascuno è confrontato
+   col proprio riferimento, la continuità attraverso il cambio di clock non è
+   misurata.
+5. Hotplug: catturare il brano prima e dopo lo scollegamento/ricollegamento del
+   DAC (segmenti 1 e 2) e salvare in `<id>.eventi.txt` l'estratto di
+   `dmesg`/registro con l'orario dell'evento. Carico prolungato: stessa cosa
+   con il carico (CPU, rete) attivo, in `carico-prolungato.eventi.txt` il
+   carico applicato.
+6. `python3 tools/matrice-segnale.py verifica --dir prova --catture catture
+   --ambito digitale_spdif --report esito.json [--completa]`. L'ambito
+   (`digitale_spdif`, `digitale_usb`, `digitale_i2s`, `alsa_loopback`,
+   `software_stdout`) va dichiarato onestamente: va nel report. Con
+   `--completa` l'uscita è 1 anche se resta un NON ESEGUITO.
+
+I test della matrice (`python3 tests/audio-verification.py`) usano catture
+sintetiche e non sostituiscono la prova hardware. La generazione di FLAC/ALAC
+non è coperta dai test se ffmpeg non è installato.
+
 ## Copertura ancora da completare
 
 Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
 frequenza costante e due brani consecutivi nel backend software e sul
 percorso ALSA di snd-aloop, più sei cambi fra 44,1/48/96 kHz nel backend
-software. Restano aperti DSD nativo, DFF compressi DST, mono/multicanale,
+software. La [matrice del segnale](#matrice-di-verifica-del-segnale) dichiara
+ora anche formati, frequenze fino a 384 kHz, DSD256, cambi PCM/DSD, hotplug e
+carico, ma ogni caso resta NON ESEGUITO finché non c'è una cattura digitale
+reale. Restano aperti DSD nativo, DFF compressi DST, mono/multicanale,
 seek, cambi PCM/DSD, cambi di frequenza su ALSA e sui DAC, USB/I2S/S/PDIF
 reali (a partire da N550JV + R26 con registro pubblicato per release),
 hotplug, rete/NAS, carico prolungato e la matrice computer/DAC/firmware per
