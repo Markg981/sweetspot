@@ -30,10 +30,10 @@ expect "helper setuid installato (4755)" "1" "$(grep -c 'sweetspot-priv f 4755 0
 
 echo "Le pagine non chiamano piu' direttamente le operazioni di root"
 # Ogni chiamata a uno script privilegiato, nelle pagine, passa da priv.
-direct=$(grep -nE '(^|[^a-z-])sweetspot-(config|lms|rete|dischi|nas|copia|cd|spazio|aggiorna|installa|dsp|accesso|check)( |$|\))' \
+direct=$(grep -nE '(^|[^a-z-])sweetspot-(config|lms|rete|dischi|nas|copia|cd|spazio|aggiorna|installa|dsp|accesso|check|hotspot)( |$|\))' \
 	"$OVERLAY"/usr/share/sweetspot/www/cgi-bin/* | grep -v 'priv sweetspot-' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -v '[<>]' || true)
 expect "nessuna chiamata diretta" "" "$direct"
-expect "azione non scrive piu' in \$RUN" "0" "$(grep -c '>> *"\$RUN/\|touch "\$RUN/\|mkdir -p "\$RUN' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione")"
+expect "azione non scrive piu' in \$RUN" "0" "$(grep -c '>> *"\$RUN/\|: > *"\$RUN/\|touch "\$RUN/\|mkdir -p "\$RUN' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione")"
 
 echo "Configurazione per le pagine senza password"
 CFG=$WORK/cfg
@@ -56,7 +56,7 @@ else
 	B=$WORK/bin
 	W=$WORK/web
 	mkdir -p "$B" "$W"
-	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto; do
+	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot; do
 		printf '#!/bin/sh\nprintf "%%s" "sweetspot-%s" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\nprintf "\\n" >> "%s/chiamata"\n' "$s" "$WORK" "$WORK" "$WORK" > "$B/sweetspot-$s"
 		chmod +x "$B/sweetspot-$s"
 	done
@@ -99,6 +99,9 @@ SSH=si")"
 		expect "rete: 10 rifiutato" "NIENTE(126)" "$(priv sweetspot-rete prova 10)"
 		expect "rete: testo rifiutato" "NIENTE(126)" "$(priv sweetspot-rete smonta-una '1;id')"
 		expect "installa avvia ammesso" "sweetspot-installa|avvia|sda|si" "$(priv sweetspot-installa avvia sda si)"
+		expect "hotspot richiesta ammessa" "sweetspot-hotspot|richiesta" "$(priv sweetspot-hotspot richiesta)"
+		expect "hotspot scansiona ammessa" "sweetspot-hotspot|scansiona" "$(priv sweetspot-hotspot scansiona)"
+		expect "hotspot sorveglia non ammessa" "NIENTE(126)" "$(priv sweetspot-hotspot sorveglia)"
 		expect "carattere di controllo rifiutato" "NIENTE(126)" "$(priv sweetspot-copia avvia "$(printf 'a\001b')")"
 		expect "argomento troppo lungo rifiutato" "NIENTE(126)" "$(priv sweetspot-copia avvia "$(head -c 2000 /dev/zero | tr '\0' a)")"
 		expect "nessun argomento" "NIENTE(126)" "$(priv)"

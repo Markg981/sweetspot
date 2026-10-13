@@ -93,6 +93,8 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-dsp", "leggi", "p", ""},
 	{"sweetspot-dsp", "risposta", "", ""},
 	{"sweetspot-dsp", "salva", "pp", ""},
+	{"sweetspot-hotspot", "richiesta", "", ""},
+	{"sweetspot-hotspot", "scansiona", "", ""},
 	{"sweetspot-installa", "avvia", "ss", ""},
 	{"sweetspot-installa", "dischi", "", ""},
 	{"sweetspot-installa", "stato", "", ""},
