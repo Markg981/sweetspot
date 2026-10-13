@@ -33,9 +33,14 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      streaming e le radio possono continuare a usare la rete;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
      interruzioni del controller USB del DAC (priorità 90) sull'altro.
-8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
-   sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
-   aspetta la fine dell'ascolto.
+8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
+   lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
+   normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
+   fine dell'ascolto. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
+   `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner
+   non resta congelato con una transazione del database aperta. Se il kernel
+   non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
+   riprende comunque quanto un'esecuzione precedente aveva lasciato fermo.
 8b. **Memoria sotto pressione**: il sistema non ha swap (e non si aggiunge, nemmeno
    zram: riempirebbe di compressione e latenza il percorso del suono e
    richiederebbe un kernel con swap). Per questo, se la RAM finisse (tipico
