@@ -376,5 +376,23 @@ rm -f "$E/rpc-log"
 expect "volume a 64 bit non disponibile: volume software di Lyrion" 'playerpref digitalVolumeControl 1|0' \
 	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 rm -f "$E/run/volume.modo"
+# Modalita' effettiva del volume: VOLUME=dac senza mixer nel DAC e' fisso
+# per Squeezelite (niente -V), per Lyrion (cursore spento, 100%) e per il web.
+printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
+printf 'DAC=auto\nVOLUME=dac\nMODALITA=completa\n' > "$E/settings"
+common "config_build '$E/settings'"
+rm -f "$E/run/volume.effettivo" "$E/rpc-log"
+player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
+expect "volume dac senza mixer: modalita' effettiva fissa, senza -V" 'fisso|0' \
+	"$(cat "$E/run/volume.effettivo")|$(grep -c -- ' -V ' "$E/run/player.args")"
+player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
+expect "volume dac senza mixer: Lyrion a volume fisso" 'playerpref digitalVolumeControl 0|1' \
+	"$(grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+expect "volume dac senza mixer: il web legge la modalita' effettiva" fisso "$(common 'volume_effettivo')"
+echo hardware > "$E/run/volume.effettivo"
+expect "modalita' effettiva hardware letta dal file di stato" hardware "$(common 'volume_effettivo')"
+rm -f "$E/run/volume.effettivo"
+expect "senza file di stato la modalita' deriva da VOLUME" hardware "$(common 'volume_effettivo')"
+rm -f "$E/run/volume.modo"
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ]

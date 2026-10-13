@@ -456,15 +456,22 @@ run_player() {
 	rs=$(resample_args)
 	[ -n "$rs" ] && set -- "$@" -R "$rs"
 
+	# Modalita' effettiva del volume, calcolata una volta (hardware, fisso,
+	# digitale) e condivisa con Lyrion e con l'interfaccia web.
 	vol=$(lower "$(conf VOLUME fisso)")
-	if [ "$vol" = dac ]; then
-		ctl=$(dac_volume_control "$card")
-		if [ -n "$ctl" ]; then
-			set -- "$@" -V "$ctl"
-		else
-			log "player: il DAC non ha un controllo del volume, volume fisso"
-		fi
-	fi
+	case "$vol" in
+		dac)
+			ctl=$(dac_volume_control "$card")
+			if [ -n "$ctl" ]; then
+				set -- "$@" -V "$ctl"
+				echo hardware > "$RUN/volume.effettivo"
+			else
+				log "player: il DAC non ha un controllo del volume, volume fisso"
+				echo fisso > "$RUN/volume.effettivo"
+			fi ;;
+		software|dsp) echo digitale > "$RUN/volume.effettivo" ;;
+		*) echo fisso > "$RUN/volume.effettivo" ;;
+	esac
 	# Volume a 64 bit: Lyrion tiene il controllo digitale del volume (cosi'
 	# Material e le app mostrano il cursore) e manda il guadagno a
 	# Squeezelite, che con -F lo ignora: i campioni escono invariati e il
@@ -512,9 +519,9 @@ apply_player_prefs() {
 	# Lyrion (senza, Material e le app mostrano il player a volume fisso e
 	# nascondono il cursore); Squeezelite lo ignora (-F) e il cursore lo
 	# segue sweetspot-volume. Se CamillaDSP manca, volume software.
-	case "$(lower "$(conf VOLUME fisso)")" in
-		software|dac) digital=1 ;;
-		dsp) digital=1; [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && vol_dsp=1 ;;
+	case "$(volume_effettivo)" in
+		hardware) digital=1 ;;
+		digitale) digital=1; [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && vol_dsp=1 ;;
 	esac
 	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
@@ -524,7 +531,7 @@ apply_player_prefs() {
 		lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null || return 1
 	fi
 	PREFS_SET=1
-	log "player: impostazioni in Lyrion applicate (volume $(lower "$(conf VOLUME fisso)"))"
+	log "player: impostazioni in Lyrion applicate (volume $(volume_effettivo))"
 }
 
 player_loop() {
