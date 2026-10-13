@@ -462,6 +462,18 @@ dac_identity() { # indice
 	printf '%s %s' "$(dac_usbid "$1")" "$(dac_usb_serial "$1")"
 }
 
+# Istanza del DAC: cambia anche se la scheda ricompare con lo stesso indice e
+# lo stesso id (ricollegamento rapido, reset USB). Per USB si aggiungono
+# busnum e devnum del dispositivo, che il kernel riassegna a ogni enumerazione;
+# per le schede senza USB (I2S) resta il solo id ALSA.
+dac_instance() { # indice
+	local p
+	printf '%s' "$(dac_id "$1")"
+	p=$(dac_usb_device "$1") || return 0
+	[ -f "$p/devnum" ] || return 0
+	printf ' %s:%s' "$(cat "$p/busnum" 2>/dev/null)" "$(cat "$p/devnum" 2>/dev/null)"
+}
+
 dac_id() { cat "$PROC/asound/card$1/id" 2>/dev/null; }
 dac_usbid() { lower "$(cat "$PROC/asound/card$1/usbid" 2>/dev/null)"; }
 dac_name() {
