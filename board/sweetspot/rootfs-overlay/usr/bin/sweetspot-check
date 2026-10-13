@@ -257,18 +257,6 @@ EOF
 
 }
 
-# XRUN e recuperi falliti nel registro di Squeezelite: "EVENTI RECUPERI".
-# Il messaggio di output_alsa.c segue il prefisso del logger oppure e' nudo.
-# Confrontare il messaggio intero evita sottostringhe e doppi conteggi.
-xrun_counts() { # [file], altrimenti lo standard input
-	awk '
-		{ message=$0; sub(/^\[[^]]*\][[:space:]]+[[:alnum:]_]+:[0-9]+[[:space:]]+/, "", message) }
-		message == "XRUN" { events++ }
-		message ~ /^XRUN recover failed: / { recovery++ }
-		END { printf "%d %d", events, recovery }
-	' "$@"
-}
-
 # Valore di una riga CHIAVE=VALORE del file della sessione del player.
 session_value() { sed -n "s/^$1=//p" "$RUN/sessione" 2>/dev/null; }
 
@@ -290,7 +278,7 @@ check_session() {
 		size=$(wc -c < "$SQLOG" | tr -d ' ')
 		# Registro ricominciato da capo: conta tutto.
 		[ "${off:-0}" -le "$size" ] || off=0
-		counts=$(tail -c +"$((${off:-0} + 1))" "$SQLOG" | xrun_counts)
+		counts=$(xrun_sum "$(xrun_saved "$RUN/sessione.xrun")" "$(tail -c +"$((${off:-0} + 1))" "$SQLOG" | xrun_counts)")
 		xr=${counts% *}; rec=${counts#* }
 		if [ "$xr" = 0 ] && [ "$rec" = 0 ]; then
 			emit OK "XRUN nella sessione" "nessuno in $mins minuti"
@@ -438,7 +426,7 @@ check_zones() {
 check_player() {
 	local pid xr recovery counts bufs state vol hist=ATTENZIONE
 	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
-	counts=$(xrun_counts "$SQLOG" 2>/dev/null) || counts=""
+	counts=$(xrun_total "$SQLOG") || counts=""
 	xr=${counts% *}; recovery=${counts#* }
 	# Con i contatori della sessione lo storico e' solo un'informazione.
 	[ -s "$RUN/sessione" ] && hist=INFO
