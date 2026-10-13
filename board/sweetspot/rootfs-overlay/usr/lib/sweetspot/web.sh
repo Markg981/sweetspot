@@ -10,6 +10,7 @@
 # COMANDO ARGOMENTI... Senza l'helper (test, sviluppo) il comando e' eseguito
 # direttamente.
 SWEETSPOT_PRIV=${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}
+# shellcheck disable=SC2034
 WEBDIR=$RUN/web
 
 priv() {
@@ -21,6 +22,7 @@ priv() {
 }
 
 # Con l'helper le pagine leggono la configurazione senza password.
+# shellcheck disable=SC2034
 [ -x "$SWEETSPOT_PRIV" ] && CONF=$CONF_WEB
 
 # Registro: lo scrive root (il file non e' delle pagine).
