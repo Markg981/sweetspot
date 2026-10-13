@@ -23,6 +23,13 @@ AP_PID=$RUN/hotspot
 LIST=$RUN/wifi-scan.list
 RICHIESTA=$RUN/hotspot.richiesta
 NET_INIT=${SWEETSPOT_NET_INIT:-/etc/init.d/S40sweetspot-net}
+# Sostituibili nei test: la shell di BusyBox preferisce le sue applet al PATH.
+IW=${SWEETSPOT_IW:-iw}
+IPC=${SWEETSPOT_IP:-ip}
+HOSTAPD=${SWEETSPOT_HOSTAPD:-hostapd}
+UDHCPD=${SWEETSPOT_UDHCPD:-udhcpd}
+DNSD=${SWEETSPOT_DNSD:-dnsd}
+SLEEP=${SWEETSPOT_SLEEP:-sleep}
 
 # Scheda Wi-Fi che sa fare da access point (prima trovata), altrimenti niente.
 ap_iface() {
@@ -32,7 +39,7 @@ ap_iface() {
 		[ -d "$n/wireless" ] || [ -d "$n/phy80211" ] || continue
 		phy=$(cat "$n/phy80211/name" 2>/dev/null)
 		[ -n "$phy" ] || continue
-		if iw phy "$phy" info 2>/dev/null | grep -q '^[[:space:]]*\* AP$'; then
+		if "$IW" phy "$phy" info 2>/dev/null | grep -q '^[[:space:]]*\* AP$'; then
 			printf '%s' "$i"
 			return 0
 		fi
@@ -50,7 +57,7 @@ connected() {
 		[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
 		[ "$i" = "${1:-}" ] && continue
 		if [ -d "$n/wireless" ] || [ -d "$n/phy80211" ]; then
-			[ -n "$(ip -4 -o addr show scope global dev "$i" 2>/dev/null)" ] && return 0
+			[ -n "$("$IPC" -4 -o addr show scope global dev "$i" 2>/dev/null)" ] && return 0
 		else
 			[ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] && return 0
 		fi
@@ -95,7 +102,7 @@ radio_off() {
 # Elenco delle reti vicine, "percentuale|nome", dalla piu' forte.
 scan() { # scheda
 	local out
-	out=$(iw dev "$1" scan 2>/dev/null | awk '
+	out=$("$IW" dev "$1" scan 2>/dev/null | awk '
 		/^BSS /      { sig = 0 }
 		/signal:/    { sig = $2 + 0 }
 		/^[ \t]*SSID:/ {
@@ -142,11 +149,11 @@ ap_start() { # scheda
 	# Nessun collegamento Wi-Fi precedente resta in piedi.
 	[ -f "/run/udhcpc.$i.pid" ] && kill "$(cat "/run/udhcpc.$i.pid")" 2>/dev/null
 	killall wpa_supplicant 2>/dev/null
-	ip link set "$i" up
+	"$IPC" link set "$i" up
 	# L'elenco delle reti si fa prima di diventare access point.
 	scan "$i"
-	ip addr flush dev "$i" 2>/dev/null
-	ip addr add "$AP_IP/24" dev "$i" || return 1
+	"$IPC" addr flush dev "$i" 2>/dev/null
+	"$IPC" addr add "$AP_IP/24" dev "$i" || return 1
 	(
 		umask 077
 		cat > "$AP_PID.conf" <<HOSTAPD
@@ -164,8 +171,8 @@ rsn_pairwise=CCMP
 wpa_passphrase=$pass
 HOSTAPD
 	)
-	if ! hostapd -B -P "$AP_PID.hostapd.pid" "$AP_PID.conf" >/dev/null 2>&1; then
-		ip addr flush dev "$i" 2>/dev/null
+	if ! "$HOSTAPD" -B -P "$AP_PID.hostapd.pid" "$AP_PID.conf" >/dev/null 2>&1; then
+		"$IPC" addr flush dev "$i" 2>/dev/null
 		rm -f "$AP_PID.conf"
 		return 1
 	fi
@@ -182,7 +189,7 @@ opt subnet 255.255.255.0
 opt lease 3600
 UDHCPD
 	: > "$AP_PID.leases"
-	udhcpd "$AP_PID.udhcpd.conf" >/dev/null 2>&1
+	"$UDHCPD" "$AP_PID.udhcpd.conf" >/dev/null 2>&1
 	# DNS minimo: i nomi di Sweetspot e le prove "portale" dei telefoni portano qui.
 	{
 		echo "sweetspot $AP_IP"
@@ -192,7 +199,7 @@ UDHCPD
 			echo "$h $AP_IP"
 		done
 	} > "$AP_PID.dns.conf"
-	dnsd -c "$AP_PID.dns.conf" -i "$AP_IP" -p 53 >/dev/null 2>&1 &
+	"$DNSD" -c "$AP_PID.dns.conf" -i "$AP_IP" -p 53 >/dev/null 2>&1 &
 	echo $! > "$AP_PID.dnsd.pid"
 	echo "$i" > "$RUN/hotspot.attivo"
 	echo "$ssid" > "$RUN/hotspot.ssid"
@@ -210,7 +217,7 @@ ap_stop() {
 	done
 	rm -f "$AP_PID".dns.conf "$AP_PID".udhcpd.conf "$AP_PID".leases "$RUN/hotspot.attivo" "$RUN/hotspot.ssid"
 	if [ -n "$i" ]; then
-		ip addr flush dev "$i" 2>/dev/null
+		"$IPC" addr flush dev "$i" 2>/dev/null
 		log "hotspot: spento"
 	fi
 	return 0
@@ -220,8 +227,8 @@ ap_stop() {
 wait_ip() {
 	local t=0
 	while [ $t -lt "$2" ]; do
-		[ -n "$(ip -4 -o addr show scope global dev "$1" 2>/dev/null)" ] && return 0
-		sleep 2
+		[ -n "$("$IPC" -4 -o addr show scope global dev "$1" 2>/dev/null)" ] && return 0
+		"$SLEEP" 2
 		t=$((t + 2))
 	done
 	return 1
@@ -230,7 +237,7 @@ wait_ip() {
 sorveglia() {
 	local attesa prova i t=0 step=3
 	is_yes "$(conf HOTSPOT si)" || exit 0
-	if ! command -v iw >/dev/null 2>&1 || ! command -v hostapd >/dev/null 2>&1; then exit 0; fi
+	if ! command -v "$IW" >/dev/null 2>&1 || ! command -v "$HOSTAPD" >/dev/null 2>&1; then exit 0; fi
 	mkdir -p "$RUN"
 	exec 9> "$RUN/hotspot.lock"
 	flock -n 9 || exit 0
@@ -242,7 +249,7 @@ sorveglia() {
 	# 1. Attesa: appena c'e' una connessione non serve altro.
 	while [ $t -lt "$attesa" ]; do
 		connected && exit 0
-		sleep $step
+		"$SLEEP" $step
 		t=$((t + step))
 	done
 	connected && exit 0
@@ -260,7 +267,7 @@ sorveglia() {
 		fi
 		if [ -f "$RICHIESTA" ]; then
 			rm -f "$RICHIESTA"
-			sleep 4	# il tempo di consegnare la risposta al telefono
+			"$SLEEP" 4	# il tempo di consegnare la risposta al telefono
 			ap_stop
 			log "hotspot: provo la rete Wi-Fi salvata"
 			"$NET_INIT" wifi "$i"
@@ -271,7 +278,7 @@ sorveglia() {
 			log "hotspot: la rete Wi-Fi non risponde, riaccendo l'hotspot"
 			ap_start "$i" || { ap_stop; exit 0; }
 		fi
-		sleep 2
+		"$SLEEP" 2
 	done
 }
 

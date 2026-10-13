@@ -2092,7 +2092,9 @@ hs_env() {
 hs_run() {
 	printf 'HOTSPOT_ATTESA=%s\n' "${1:-0}" >> "$HS/run/sweetspot.conf"
 	HS_DIR=$HS SWEETSPOT_SYSFS=$HS/sys SWEETSPOT_PROCFS=$HS/proc SWEETSPOT_RUN=$HS/run \
-		SWEETSPOT_LOG=$HS/log SWEETSPOT_PATH="$HS/bin:$SWEETSPOT_PATH" SWEETSPOT_NET_INIT=$HS/net-init \
+		SWEETSPOT_LOG=$HS/log SWEETSPOT_PATH="$HS/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_IW=$HS/bin/iw SWEETSPOT_IP=$HS/bin/ip SWEETSPOT_HOSTAPD=$HS/bin/hostapd \
+		SWEETSPOT_UDHCPD=$HS/bin/udhcpd SWEETSPOT_DNSD=$HS/bin/dnsd SWEETSPOT_SLEEP=$HS/bin/sleep SWEETSPOT_NET_INIT=$HS/net-init \
 		SWEETSPOT_CONSOLE=$HS/console SWEETSPOT_TTY=$HS/console \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" "${2:-sorveglia}" > /dev/null 2>&1
