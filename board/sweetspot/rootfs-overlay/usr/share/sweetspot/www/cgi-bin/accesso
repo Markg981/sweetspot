@@ -5,6 +5,7 @@
 # uscita. Sessione con cookie HttpOnly e SameSite=Strict (vedi web.sh); la
 # password la verifica root (sweetspot-accesso verifica), con limite ai tentativi.
 
+# shellcheck disable=SC2034
 WEB_PUBLIC=1 # e' la pagina che serve per entrare
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 

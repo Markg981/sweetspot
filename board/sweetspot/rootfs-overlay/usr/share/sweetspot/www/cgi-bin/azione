@@ -447,6 +447,7 @@ case "$F_a" in
 		# cambiata resta dentro con una sessione nuova.
 		if [ -n "$F_web_password" ]; then
 			rm -f "$SESSION_DIR"/* 2>/dev/null
+			# shellcheck disable=SC2034
 			REDIRECT_COOKIE=$(session_new) || REDIRECT_COOKIE=""
 		elif [ "$F_web_libero" = si ]; then
 			rm -f "$SESSION_DIR"/* 2>/dev/null

@@ -72,6 +72,7 @@ SESSION_DIR=$WEBDIR/sessioni
 SESSION_TTL=${SWEETSPOT_SESSIONE_DURATA:-28800}
 SESSION_COOKIE=sweetspot_sid
 LOGIN_DIR=$WEBDIR/tentativi
+# shellcheck disable=SC2034
 LOGIN_FREE=${SWEETSPOT_TENTATIVI_LIBERI:-5}
 
 auth_enabled() { [ -n "$(conf PASSWORD_WEB)" ]; }
