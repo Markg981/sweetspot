@@ -30,7 +30,7 @@ e [FAQ ufficiale](https://www.daphile.com/download/FAQ.txt).
 | Convoluzione FIR/DRC | `sweetspot-dsp` importa biquad REW stereo; CamillaDSP è presente, ma non esiste il caricamento di impulsi FIR. | FIR importabili e validati, gestione delle frequenze, headroom, latenza e confronto a pari volume; mantenere il percorso originale. |
 | Più DAC locali | Un supervisore, un PID e una MAC Squeezelite; i player remoti di Lyrion non risolvono questa lacuna. | Più uscite indipendenti sullo stesso host, con configurazioni e recupero separati; sincronizzazione verificata quando richiesta. |
 | PCM→DSD | `-R` configura ricampionamento PCM; le opzioni DSD gestiscono sorgenti già DSD. | Conversione opzionale esplicita, backend e modulatore definiti, limiti di CPU e DAC verificati. |
-| Primo avvio Wi-Fi | Senza `WIFI_NOME` le interfacce wireless sono ignorate; non c'è un hotspot di configurazione. | Configurazione senza cavo su adattatori compatibili, credenziali sicure e recupero dopo impostazioni errate. |
+| Primo avvio Wi-Fi | Hotspot di configurazione `Sweetspot-XXXX` (`sweetspot-hotspot`, `hostapd`, `udhcpd`/`dnsd`) quando dopo `HOTSPOT_ATTESA` non c'è rete e un adattatore supporta AP; scelta della rete dalla pagina Rete, recupero se la rete salvata non si collega. | Prova su hardware reale (Intel, Realtek, Broadcom del Pi) e rilevamento portale captive dei telefoni. |
 | Ambito hardware | Target x86_64 e Pi 4/5 e varianti; manca il target CPU x86 a 32 bit presente fra i download Daphile. | Matrice di supporto e decisione esplicita sul target x86 a 32 bit; ampliare driver e firmware in base a prove. |
 
 Evidenze nel codice:
@@ -51,10 +51,13 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
    release, computer, DAC, firmware e adattatori di rete. Separare riconoscimento,
    funzionamento verificato e certificazione audio. Non promettere ogni dispositivo.
 2. **Recupero verificato.** A/B, firme e backup sono presenti. La conferma
-   attuale controlla soltanto `/cgi-bin/vivo`: va estesa a integrità delle
-   impostazioni, avvio di Lyrion e supervisore, accesso alla libreria e
-   inizializzazione del percorso richiesto. L'assenza di un DAC opzionale non
-   deve provocare un ciclo di rollback. Provare anche aggiornamenti interrotti,
+   controlla ora impostazioni leggibili, `/cgi-bin/vivo`, supervisore del
+   player in esecuzione, Lyrion che risponde (solo in modalità completa, con
+   attesa fino a 10 minuti per il primo avvio su Raspberry Pi) e accesso a
+   musica e dati di Lyrion; il controllo fallito è registrato (pagina Sistema,
+   rapporto, registro). L'assenza di un DAC opzionale ("in attesa del DAC")
+   non provoca un ciclo di rollback. Restano da fare: inizializzazione del
+   percorso audio richiesto. Provare anche aggiornamenti interrotti,
    database corrotti e perdita di alimentazione. Il ritorno attuale avviene
    al prossimo avvio, non tramite un watchdog che riavvia una macchina bloccata.
 3. **Audio diagnosticabile.** Mostrare trasformazioni del server, volume,
@@ -79,6 +82,10 @@ confini fra due brani locali a frequenza costante, incluse profondità PCM
 miste, del payload WAV DoP a 176,4/352,8 kHz e delle sorgenti DSF/DFF DSD64/128
 nel backend stdout del Squeezelite compilato. Il
 [protocollo di verifica](audio-verification.md) descrive report e limiti.
+La matrice aggiunge sei transizioni WAV24 fra 44,1, 48 e 96 kHz, confrontando
+la sequenza completa dei frame e gli annunci di rate del motore. Il pacing
+del consumer stdout resta distinto dalla frequenza delle tracce e dal clock
+del DAC; la nuova estensione richiede la propria evidenza di esecuzione.
 Le nuove fixture DFF hanno individuato un errore di allineamento dei chunk
 dispari nel decoder, corretto con una patch comune alle due piattaforme.
 Le immagini complete x86 e ARM hanno superato i 18 casi software nella
@@ -88,8 +95,16 @@ gli stati ALSA di riproduzione, preparazione e guasto e segnala dati mancanti
 o più substream aperti. Gli eventi XRUN e i recuperi falliti sono conteggiati
 separatamente nel registro storico. Queste osservazioni aiutano a individuare
 un guasto, ma non certificano i campioni né l'uscita del DAC.
-Il traguardo resta parziale: DSD nativo, ALSA e DAC reali,
-cambi frequenza, hotplug, rete e carico prolungato richiedono ancora prove.
+La [CI della PR #16](https://github.com/Markg981/sweetspot/actions/runs/38056065758)
+ha confermato le compilazioni e i 18 casi precedenti su x86 e ARM, pubblicando
+anche entrambi gli archivi di evidenza audio.
+I 18 casi a frequenza costante si ripetono ora sul driver ALSA del kernel x86
+di Sweetspot (PREEMPT_RT, avviato in QEMU nella CI), su `hw:Loopback` di
+snd-aloop, con i parametri `hw:`, mmap e periodi del player. Un XRUN o un
+campione diverso blocca la release. Su ARM resta la sola prova stdout.
+Il traguardo resta parziale: DSD nativo, DAC reali, cambi PCM/DSD, cambi
+frequenza su ALSA e sui DAC, hotplug, rete e carico prolungato richiedono
+ancora prove.
 
 Il confronto di ascolto con Daphile usa la stessa sorgente, DAC, uscita,
 livello e impostazioni equivalenti. La correzione ambientale può migliorare

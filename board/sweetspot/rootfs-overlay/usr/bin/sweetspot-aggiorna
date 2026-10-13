@@ -13,6 +13,15 @@
 #   sweetspot-aggiorna altra           al prossimo avvio prova l'altra versione
 #   sweetspot-aggiorna predefinita     la versione in uso diventa quella predefinita
 #   sweetspot-aggiorna conferma        a fine avvio: questa versione funziona
+#                                      (impostazioni, pagina web, supervisore
+#                                      del player, Lyrion, libreria; il DAC
+#                                      opzionale non conta)
+#   sweetspot-aggiorna watchdog        all'avvio dopo un riavvio del watchdog
+#                                      (S21): conta i riavvii consecutivi e,
+#                                      al secondo, al prossimo avvio parte
+#                                      l'altra copia
+#   sweetspot-aggiorna stabile         dopo 10 minuti di funzionamento (S99):
+#                                      azzera il conteggio
 #
 # Sulla partizione SWEETSPOT ci sono due copie del sistema (vedi common.sh):
 # l'aggiornamento va sempre in quella non in uso, poi GRUB la avvia una
@@ -72,6 +81,9 @@ do_status() {
 	fi
 	[ -f "$DIR/fallita" ] && echo "fallita=$(cat "$DIR/fallita")"
 	[ -f "$DIR/riuscita" ] && echo "riuscita=1"
+	[ -s "$DIR/fallita.motivo" ] && echo "fallita_controllo=$(cat "$DIR/fallita.motivo")"
+	[ -f "$DIR/watchdog.riavvii" ] && echo "watchdog_riavvii=$(cat "$DIR/watchdog.riavvii")"
+	[ -f "$DIR/watchdog.ritorno" ] && echo "watchdog_ritorno=$(cat "$DIR/watchdog.ritorno")"
 	if [ -f "$DIR/stato" ]; then
 		job=$(cat "$DIR/stato")
 		if running; then
@@ -386,6 +398,59 @@ do_default() {
 	stick_umount
 }
 
+# --- Riavvii del watchdog ----------------------------------------------------
+#
+# Un blocco totale fa ripartire il computer con il watchdog, ma nella stessa
+# copia: se il blocco si ripete a ogni avvio (una versione che si blocca
+# dopo la conferma, un'impostazione sbagliata) resterebbe cosi' per sempre.
+# Il conteggio dei riavvii consecutivi del watchdog sta nello stato
+# dell'avvio (riavvii=N, con la copia in uso); al secondo, se l'altra copia
+# e' installata, diventa quella predefinita dal prossimo avvio (senza
+# riavviare adesso: se questo avvio regge, l'utente legge l'avviso nella
+# pagina Stato e puo' decidere). Dopo 10 minuti di funzionamento il
+# conteggio si azzera.
+
+WATCHDOG_MAX=2
+
+do_watchdog_reset() {
+	local env slot n other d
+	slot=$(running_slot)
+	other=$(other_slot "$slot")
+	mkdir -p "$DIR"
+	stick_mount rw || return 0
+	env=$(boot_env)
+	n=$(grubenv_get "$env" riavvii)
+	[ "$(grubenv_get "$env" riavvii_copia)" = "$slot" ] || n=0
+	case "$n" in ''|*[!0-9]*) n=0 ;; esac
+	n=$((n + 1))
+	grubenv_set "$env" "riavvii=$n" "riavvii_copia=$slot"
+	echo "$n" > "$DIR/watchdog.riavvii"
+	log "aggiornamento: $n riavvii consecutivi del watchdog con la copia $slot"
+	d=$(slot_dir "$STICK_MNT" "$other")
+	if [ "$n" -ge "$WATCHDOG_MAX" ] && [ -f "$d/$(kernel_file)" ] && [ -f "$d/rootfs.cpio.zst" ] &&
+		[ "$(grubenv_get "$env" slot)" != "$other" ]; then
+		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=
+		[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$other"
+		echo "$other" > "$DIR/watchdog.ritorno"
+		log "aggiornamento: dal prossimo avvio parte la copia $other ($(cat "$STICK_MNT/boot/versioni/$other" 2>/dev/null || echo versione sconosciuta))"
+	fi
+	stick_umount
+}
+
+# Dieci minuti di funzionamento: i riavvii del watchdog non sono piu'
+# consecutivi.
+do_stable() {
+	local env
+	stick_mount rw || return 0
+	env=$(boot_env)
+	if [ -n "$(grubenv_get "$env" riavvii)" ]; then
+		grubenv_set "$env" riavvii= riavvii_copia=
+		log "aggiornamento: funzionamento stabile, conteggio dei riavvii del watchdog azzerato"
+	fi
+	stick_umount
+	rm -f "$DIR/watchdog.riavvii"
+}
+
 # --- Conferma a fine avvio ----------------------------------------------------
 
 # Aggiorna menu e GRUB sulla chiavetta se questa versione ne porta di nuovi
@@ -443,15 +508,83 @@ refresh_boot_grub() {
 	replace_file "$AVVIO/grub.cfg" "$STICK_MNT/boot/grub/grub.cfg"
 }
 
-# Il sistema e' partito: risponde la pagina web locale.
-healthy() {
+# Il sistema e' partito: risponde la pagina web locale. Con la password
+# delle pagine (PASSWORD_WEB) la pagina vivo accetta l'utente "sweetspot" con
+# la chiave di questo avvio, scritta da sweetspot-accesso; senza, un 401
+# annullerebbe ogni aggiornamento.
+check_web() {
+	local url key
+	url="http://127.0.0.1/cgi-bin/vivo"
+	key=$(cat "$RUN/vivo.chiave" 2>/dev/null)
+	[ -n "$key" ] && url="http://sweetspot:$key@127.0.0.1/cgi-bin/vivo"
+	"${SWEETSPOT_WGET:-wget}" -q -T 5 -O /dev/null "$url" 2>/dev/null
+}
+
+# Impostazioni: l'unione tra predefinite e sweetspot.txt (costruita
+# all'avvio) esiste e non e' vuota, e la copia dell'utente si legge. Un
+# sweetspot.txt con valori sbagliati non e' un guasto della versione (la
+# precedente leggerebbe lo stesso file): qui conta solo che questa versione
+# sappia leggere le impostazioni.
+check_settings() {
+	[ -s "$CONF" ] || return 1
+	if [ -f "$RUN/sweetspot.txt" ]; then
+		config_normalize "$RUN/sweetspot.txt" > /dev/null 2>&1 || return 1
+	fi
+	return 0
+}
+
+# Lyrion avviato e che risponde (solo in modalita' completa; in modalita'
+# player il server e' un altro computer e non dipende da questa versione).
+check_lms() {
+	[ "$(mode)" = completa ] || return 0
+	lms_ready
+}
+
+# Supervisore del player in esecuzione. Il DAC e' opzionale: lo stato
+# "in attesa del DAC" e' valido e non e' un guasto.
+check_player() {
+	local pid
+	pid=$(cat "$RUN/supervisore.pid" 2>/dev/null)
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Libreria e cache raggiungibili: cartella della musica leggibile (puo'
+# essere vuota o con un disco ancora da montare: non si pretende contenuto)
+# e dati di Lyrion scrivibili (solo in modalita' completa).
+check_library() {
+	[ -d "$MUSIC_DIR" ] && [ -r "$MUSIC_DIR" ] || return 1
+	if [ "$(mode)" = completa ]; then
+		[ -d "$LMS_DATA" ] && [ -w "$LMS_DATA" ] || return 1
+	fi
+	return 0
+}
+
+# wait_check NOME SECONDI FUNZIONE DESCRIZIONE: ritenta ogni 2 s fino alla
+# scadenza; al fallimento registra quale controllo non e' passato.
+wait_check() {
 	local i=0
-	while [ $i -lt "${SWEETSPOT_CONFERMA_ATTESA:-60}" ]; do
-		"${SWEETSPOT_WGET:-wget}" -q -T 5 -O /dev/null "http://127.0.0.1/cgi-bin/vivo" 2>/dev/null && return 0
+	while :; do
+		"$3" && return 0
+		[ "$i" -ge "$2" ] && break
 		sleep 2
 		i=$((i + 2))
 	done
+	CHECK_FAILED="$1|$4"
 	return 1
+}
+
+# Lyrion al primo avvio su un Raspberry Pi puo' impiegare minuti: attesa
+# lunga (SWEETSPOT_CONFERMA_ATTESA_LMS, 600 s); il watchdog hardware e'
+# alimentato a parte e non scatta durante l'attesa.
+healthy() {
+	local t=${SWEETSPOT_CONFERMA_ATTESA:-60} tl=${SWEETSPOT_CONFERMA_ATTESA_LMS:-600}
+	CHECK_FAILED=
+	wait_check impostazioni 0 check_settings "sweetspot.txt illeggibile o impostazioni non costruite" || return 1
+	wait_check web "$t" check_web "la pagina locale (/cgi-bin/vivo) non risponde" || return 1
+	wait_check supervisore "$t" check_player "il supervisore del player non e' in esecuzione" || return 1
+	wait_check lyrion "$tl" check_lms "Lyrion non risponde" || return 1
+	wait_check libreria "$t" check_library "musica o dati di Lyrion non accessibili" || return 1
+	return 0
 }
 
 do_confirm() {
@@ -467,16 +600,25 @@ do_confirm() {
 		# La copia appena aggiornata non e' arrivata qui: si e' tornati a
 		# questa. La copia rimane, ma non si riprova da sola.
 		cat "$STICK_MNT/boot/versioni/$tried" > "$DIR/fallita" 2>/dev/null || echo "$tried" > "$DIR/fallita"
+		# Il motivo l'ha lasciato sulla chiavetta la nuova versione.
+		if [ -f "$STICK_MNT/boot/conferma-fallita" ]; then
+			cp "$STICK_MNT/boot/conferma-fallita" "$DIR/fallita.motivo" 2>/dev/null
+			rm -f "$STICK_MNT/boot/conferma-fallita"
+		fi
 		grubenv_set "$env" tentato=
 		log "aggiornamento: la nuova versione (copia $tried) non e' partita, si e' tornati alla precedente"
 	elif [ "$tried" = "$slot" ]; then
 		if healthy; then
 			grubenv_set "$env" "slot=$slot" tentato=
 			touch "$DIR/riuscita"
+			rm -f "$STICK_MNT/boot/conferma-fallita"
 			log "aggiornamento: la versione $(current_version) funziona ed e' ora quella in uso"
 			refresh_boot
 		else
-			log "aggiornamento: la nuova versione non risponde, al prossimo avvio riparte la precedente"
+			# Quale controllo e' fallito: resta nel registro e sulla chiavetta,
+			# cosi' la versione di prima lo mostra dopo il ritorno.
+			echo "$CHECK_FAILED" > "$STICK_MNT/boot/conferma-fallita" 2>/dev/null
+			log "aggiornamento: conferma non riuscita (${CHECK_FAILED%%|*}: ${CHECK_FAILED#*|}), al prossimo avvio riparte la precedente"
 		fi
 	elif [ -z "$def" ]; then
 		grubenv_set "$env" "slot=$slot"
@@ -494,6 +636,8 @@ case "$1" in
 	pacchetti) do_packages ;;
 	annulla) do_cancel ;;
 	altra) do_other ;;
+	watchdog) do_watchdog_reset ;;
+	stabile) do_stable ;;
 	predefinita) do_default ;;
 	conferma) do_confirm ;;
 	_lavoro) install_job "$2" "$3"; rc=$?; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"; exit "$rc" ;;

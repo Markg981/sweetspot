@@ -1,0 +1,22 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - demone dello stato: cache per la pagina Stato e per Lyrion.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+PIDFILE=$RUN/stato.pid
+
+case "$1" in
+	start)
+		cpu_layout
+		hk=$(join_list "$LAYOUT_HK")
+		[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
+		# Core di sistema e priorita' minima: mai sui core dell'audio.
+		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/taskset -- -c "$hk" nice -n 19 /usr/bin/sweetspot-stato sorveglia
+		;;
+	stop)
+		start-stop-daemon -K -p "$PIDFILE" 2>/dev/null
+		rm -f "$PIDFILE"
+		;;
+	*) echo "uso: $0 start|stop" ;;
+esac

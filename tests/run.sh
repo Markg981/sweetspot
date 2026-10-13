@@ -13,7 +13,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OVERLAY=$ROOT/board/sweetspot/rootfs-overlay
 export SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+trap 'kill ${UPD_SUP:-} 2>/dev/null; rm -rf "$WORK"' EXIT
 FAIL=0
 PASS=0
 
@@ -166,6 +166,27 @@ expect "buffer 16 GB" "1048576:2000000" "$(run "$N550" player_buffers)"
 expect "buffer 2 GB" "203094:406189" "$(run "$DUAL" player_buffers)"
 expect "buffer 1 GB" "33928:67856" "$(run "$ONE" player_buffers)"
 
+echo "Protezione dall'OOM killer"
+OOM=$WORK/oom
+mkdir -p "$OOM/proc/100" "$OOM/proc/200" "$OOM/proc/300"
+for p in 100 200 300; do echo 0 > "$OOM/proc/$p/oom_score_adj"; done
+printf 'perl\0/usr/lib/lyrion/scanner.pl\0--rescan\0' > "$OOM/proc/200/cmdline"
+printf 'perl\0/usr/lib/lyrion/slimserver.pl\0' > "$OOM/proc/300/cmdline"
+printf 'squeezelite\0' > "$OOM/proc/100/cmdline"
+run "$OOM" oom_adj -1000 100 999
+expect "player mai ucciso (-1000)" "-1000" "$(cat "$OOM/proc/100/oom_score_adj")"
+expect "pid inesistente ignorato" "0" "$(run "$OOM" 'oom_adj 500 999; echo $?')"
+run "$OOM" oom_adj_cmd 500 scanner.pl
+expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
+expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
+grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
+grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
+grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
+grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
+grep -q 'oom_score_adj' "$OVERLAY/usr/bin/sweetspot-copia" && ok "copia: lavoro sospendibile a +500" || ko "copia: lavoro sospendibile a +500" "presente" "assente"
+grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
+grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-precarico" && ok "precarico a +500" || ko "precarico a +500" "presente" "assente"
+
 echo "DAC"
 expect "trova il DAC USB, non la scheda integrata" "1" "$(run "$N550" dac_find)"
 expect "nome" "GUSTARD R26" "$(run "$N550" "dac_name 1")"
@@ -291,6 +312,7 @@ cat > "$WEB/bin/wget" <<'FINTO'
 #!/bin/sh
 for a; do case "$a" in --post-data=*) d=${a#--post-data=} ;; esac; done
 prev=""; for a; do [ "$prev" = --post-data ] && d=$a; prev=$a; done
+[ -n "$SWEETSPOT_RUN" ] && printf '%s\n' "$d" >> "$SWEETSPOT_RUN/wget.post"
 case "$d" in
 	*serverstatus*) echo '{"result":{"version":"9.1.1","info total songs":1200,"info total albums":100,"info total artists":80}}' ;;
 	*plugin-stato*) echo '{"result":{"plugins_loop":[{"nome":"MaterialSkin","versione":"6.4.12","stato":"enabled","errore":""},{"nome":"Qobuz","versione":"3.7.2","stato":"enabled","errore":""},{"nome":"Altro","versione":"1.0","stato":"enabled","errore":""}],"scaricamenti":0,"riavvio":1}}' ;;
@@ -324,11 +346,58 @@ for p in audio musica archivio plugin rete sistema; do
 done
 out=$(page audio)
 case "$out" in *"Percorso originale configurato"*"integrità dei campioni non verificata"*) ok "audio: formato compatibile non certifica i campioni" ;; *) ko "audio integrita'" "Percorso originale configurato, integrita' non verificata" "-" ;; esac
+case "$out" in *'name="dac"'*'<option value="auto" selected>'*'<option value="292b:0a26">GUSTARD R26 (USB 292b:0a26)</option>'*) ok "audio: scelta del DAC principale tra i DAC USB collegati" ;; *) ko "audio DAC principale" "auto selezionato e R26 per identificativo USB" "-" ;; esac
+case "$(page audio 'DAC=R26')" in *'<option value="r26" selected>r26 (da sweetspot.txt)</option>'*) ok "audio: DAC scritto a mano in sweetspot.txt resta scelto" ;; *) ko "audio DAC da sweetspot.txt" "opzione r26 selezionata" "-" ;; esac
 case "$out" in *"esattamente i campioni"*) ko "audio: nessuna prova campioni inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "audio: nessuna prova campioni inventata" ;; esac
+
+# Demone dello stato: cache, pagina e endpoint JSON.
+echo "Stato in cache (demone, pagina, JSON)"
+ST=$WORK/stato
+mkdir -p "$ST/bin" "$ST/run" "$ST/proc/net" "$ST/proc/asound"
+printf 'OK|Prova "uno"|tutto \\ bene\nATTENZIONE|Due|da guardare\n' > "$ST/righe"
+printf '#!/bin/sh\ncat "%s/righe"\n' "$ST" > "$ST/bin/sweetspot-check"
+chmod +x "$ST/bin/sweetspot-check"
+printf 'h\nh\n  eth0: 1000 1 0 0 0 0 0 0 1000 1 0 0 0 0 0 0\n' > "$ST/proc/net/dev"
+stato_env() { env SWEETSPOT_RUN=$ST/run SWEETSPOT_PROCFS=$ST/proc SWEETSPOT_LOG=$ST/log SWEETSPOT_PATH="$ST/bin:$SWEETSPOT_PATH" \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf PATH="$ST/bin:$PATH" "$@"; }
+stato_cgi() { stato_env REQUEST_METHOD=GET QUERY_STRING="" HTTP_HOST=sweetspot.local $TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/$1" 2>&1; }
+out=$(stato_cgi stato)
+case "$out" in *"Stato non ancora disponibile"*) ok "stato: senza cache avvisa e non blocca" ;; *) ko "stato senza cache" "avviso" "$out" ;; esac
+case "$(stato_cgi stato.json)" in "Status: 503"*) ok "stato.json: senza cache risponde 503" ;; *) ko "stato.json senza cache" "503" "-" ;; esac
+stato_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" aggiorna
+printf 'h\nh\n  eth0: 9000000 1 0 0 0 0 0 0 9000000 1 0 0 0 0 0 0\n' > "$ST/proc/net/dev"
+sleep 1
+stato_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" aggiorna
+expect "demone: file di cache scritti, nessun residuo temporaneo" "4|0" "$(ls "$ST/run"/stato.* | grep -vc nuovo)|$(ls "$ST/run" | grep -c nuovo)"
+expect "demone: cache leggibile da tutti (la legge lms)" "644|644" "$(stat -c %a "$ST/run/stato.json")|$(stat -c %a "$ST/run/stato.dati")"
+case "$(cat "$ST/run/stato.dati")" in *"Due|da guardare"*"INFO|Traffico di rete ora|"*) ok "demone: righe del check e del traffico" ;; *) ko "demone righe" "righe + traffico" "$(cat "$ST/run/stato.dati")" ;; esac
+case "$(cat "$ST/run/stato.json")" in '{"ts":'*'"voci":[{"esito":"OK","voce":"Prova \"uno\"","dettaglio":"tutto \\ bene"}'*']}') ok "demone: JSON con escape corretto" ;; *) ko "demone JSON" "JSON valido" "$(cat "$ST/run/stato.json")" ;; esac
+out=$(stato_cgi stato)
+case "$out" in *"Due"*"da guardare"*"Traffico di rete ora"*) ok "stato: la pagina rende la cache" ;; *) ko "stato da cache" "righe in cache" "$out" ;; esac
+case "$out" in *"Dati non aggiornati"*) ko "stato: cache fresca" "nessun avviso" "avviso" ;; *) ok "stato: cache fresca senza avviso" ;; esac
+printf '1000 10\n' > "$ST/run/stato.ts"
+case "$(stato_cgi stato)" in *"Dati non aggiornati"*) ok "stato: cache vecchia mostra l'avviso" ;; *) ko "stato cache vecchia" "avviso" "-" ;; esac
+out=$(stato_cgi stato.json)
+case "$out" in "Content-Type: application/json"*'{"ts":'*) ok "stato.json: restituisce la cache" ;; *) ko "stato.json con cache" "JSON" "$out" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
-case "$(page audio 'VOLUME=software')" in *"Non bit-perfect"*"regolato dal software"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect" "-" ;; esac
+out=$(page audio 'VOLUME=software')
+case "$out" in *"Non bit-perfect"*"abbassato dal software, che tronca i bit bassi senza dither"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, senza dither" "-" ;; esac
+case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota senza dither" "-" ;; esac
+case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
+volcheck() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Volume|'
+}
+expect "stato: volume software e' un avviso" \
+	"ATTENZIONE|Volume|dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC" \
+	"$(volcheck VOLUME=software)"
+expect "stato: volume del DAC resta informativo" \
+	"INFO|Volume|regolabile (dac): sotto il 100% il segnale non e' piu' bit-perfect" "$(volcheck VOLUME=dac)"
+rm -f "$WEB/s.txt"
 printf 'access: MMAP_INTERLEAVED\nformat: DSD_U32_BE\nsubformat: STD\nchannels: 2\nrate: 88200 (88200/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"DSD nativo"*"DSD64"*) ok "audio: DSD64 nativo riconosciuto" ;; *) ko "audio DSD nativo" "DSD64" "-" ;; esac
 out=$(page plugin)
@@ -378,11 +447,224 @@ expect "archivio web: PARTUUID stabile" "imposta ARCHIVIO PARTUUID=partizione" "
 rm -f "$WEB/run/dischi.call"
 archive_action 2 > /dev/null
 expect "archivio web: salvataggio fallito non rimonta" "no" "$([ -e "$WEB/run/dischi.call" ] && echo si || echo no)"
+system_action() { # ascolto
+	local body
+	body="t=$(cat "$WEB/run/web.token")&a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=$1&ssh=no&ottimizzazioni=si"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione" > /dev/null
+	grep -o 'MODALITA_ASCOLTO [a-z]* PRECARICO [a-z]*' "$WEB/run/config.call"
+}
+expect "sistema: ascolto puro = lavori sospesi + precarico" "MODALITA_ASCOLTO si PRECARICO si" "$(system_action puro)"
+expect "sistema: solo lavori sospesi" "MODALITA_ASCOLTO si PRECARICO no" "$(system_action si)"
+expect "sistema: modalita' ascolto spenta" "MODALITA_ASCOLTO no PRECARICO no" "$(system_action no)"
+expect "sistema: valore sconosciuto = solo lavori sospesi" "MODALITA_ASCOLTO si PRECARICO no" "$(system_action xyz)"
+case "$(page sistema)" in *'<option value="puro" selected'*) ok "sistema: ascolto puro di serie" ;; *) ko "sistema ascolto puro" "puro selezionato" "-" ;; esac
+case "$(page sistema 'PRECARICO=no')" in *'<option value="si" selected'*) ok "sistema: senza precarico solo lavori sospesi" ;; *) ko "sistema ascolto si" "si selezionato" "-" ;; esac
+case "$(page sistema "$(printf 'MODALITA_ASCOLTO=no\nPRECARICO=si')")" in *'<option value="no" selected'*) ok "sistema: ascolto spento" ;; *) ko "sistema ascolto no" "no selezionato" "-" ;; esac
+
+
+echo "Password delle pagine e impostazioni iniziali"
+acc() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c "killall() { :; }; . $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- applica; . $OVERLAY/usr/bin/sweetspot-accesso"
+	cat "$WEB/run/httpd.conf"
+}
+expect "pagine aperte senza password" "" "$(acc '')"
+expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | tail -n 1)"
+case "$(acc 'PASSWORD_WEB=segreta' | tail -n 1)" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
+# La pagina vivo resta raggiungibile dall'aggiornamento: utente sweetspot
+# con la chiave casuale dell'avvio, regola prima di quella generale.
+vivo_key=$(cat "$WEB/run/vivo.chiave")
+expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#vivo_key}|$(stat -c %a "$WEB/run/vivo.chiave")"
+case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
+expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
+# stato.json non ha eccezioni: ricade nella regola generale "/" con password.
+expect "stato.json protetto dalla regola generale (nessuna eccezione)" "0|/:admin" "$(grep -c 'stato' "$WEB/run/httpd.conf")|$(tail -n 1 "$WEB/run/httpd.conf" | cut -d: -f1-2)"
+expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
+acc '' > /dev/null
+expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
+
+echo "Controllo dell'header Host (DNS rebinding)"
+# Come una richiesta web (GATEWAY_INTERFACE impostata): la pagina vivo e'
+# la CGI piu' semplice. $2 = Host ("-" = assente), $3 = indirizzo del client.
+mkdir -p "$WEB/hbin"
+printf '#!/bin/sh\nprintf "2: eth0    inet 192.168.1.50/24 brd 192.168.1.255 scope global eth0\\n2: eth0    inet6 fe80::1234:abcd/64 scope link\\n"\n' > "$WEB/hbin/ip"
+chmod +x "$WEB/hbin/ip"
+hostcall() { # impostazioni host client
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	if [ "$2" = "-" ]; then unset HTTP_HOST; else export HTTP_HOST=$2; fi
+	# La configurazione si costruisce prima: il controllo scatta quando la
+	# richiesta (GATEWAY_INTERFACE) arriva, a configurazione gia' pronta.
+	REMOTE_ADDR=${3:-192.168.1.9} \
+		SWEETSPOT_RUN=$WEB/run SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$WEB/hbin:$SWEETSPOT_PATH" SWEETSPOT_IP="$WEB/hbin/ip" \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; GATEWAY_INTERFACE=CGI/1.1; export GATEWAY_INTERFACE; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/vivo" 2>&1
+	unset HTTP_HOST
+}
+hostcode() { case "$(hostcall "$@")" in *"403 Forbidden"*) echo 403 ;; *"ok "*) echo ok ;; *) echo altro ;; esac; }
+for h in sweetspot.local sweetspot.local:80 SweetSpot.LOCAL localhost 127.0.0.1:80 192.168.1.50 192.168.1.50:80 '[fe80::1234:abcd]:80' '[fe80::1234:abcd]'; do
+	expect "Host $h accettato" ok "$(hostcode '' "$h")"
+done
+for h in evil.example.com evil.example.com:80 192.168.1.51 sweetspot.local.evil.com 10.0.0.1; do
+	expect "Host $h rifiutato con 403" 403 "$(hostcode '' "$h")"
+done
+expect "NOME_RETE personalizzato: salotto.local accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto.local)"
+expect "NOME_RETE personalizzato: nome breve accettato" ok "$(hostcode 'NOME_RETE=salotto' salotto:80)"
+expect "NOME_RETE personalizzato: un altro nome non vale" 403 "$(hostcode 'NOME_RETE=salotto' cucina.local)"
+expect "Host assente dal computer stesso accettato" ok "$(hostcode '' - 127.0.0.1)"
+expect "Host assente dalla rete rifiutato" 403 "$(hostcode '' - 192.168.1.9)"
+out=$(hostcall '' evil.example.com)
+case "$out" in *"Status: 403"*"Content-Type: text/plain"*) ok "403 prima di qualunque altro output" ;; *) ko "403 senza altro output" "solo la risposta 403" "$out" ;; esac
+expect "fuori da una richiesta web nessun controllo" "ok" "$(HTTP_HOST=evil SWEETSPOT_RUN=$WEB/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; echo ok")"
+
+echo "Protezione CSRF di Lyrion"
+lmsprefs() { # contenuto iniziale di server.prefs ("-" = file assente)
+	rm -rf "$WEB/lmsdata"; mkdir -p "$WEB/lmsdata/prefs"
+	[ "$1" = "-" ] || printf '%s\n' "$1" > "$WEB/lmsdata/prefs/server.prefs"
+	SWEETSPOT_TEST=1 SWEETSPOT_LMS_DATA=$WEB/lmsdata SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-lms; [ -s \$PREFS/server.prefs ] || first_prefs > \$PREFS/server.prefs; ensure_csrf" > /dev/null 2>&1
+	grep '^csrfProtectionLevel' "$WEB/lmsdata/prefs/server.prefs" | tr '\n' '|'
+}
+expect "CSRF Lyrion: primo avvio a livello 1" "csrfProtectionLevel: 1|" "$(lmsprefs -)"
+expect "CSRF Lyrion: assente nelle preferenze esistenti -> 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'language: IT')"
+expect "CSRF Lyrion: livello 0 riportato a 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'csrfProtectionLevel: 0')"
+expect "CSRF Lyrion: livello 2 scelto dall'utente resta" "csrfProtectionLevel: 2|" "$(lmsprefs 'csrfProtectionLevel: 2')"
+printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
+chmod +x "$WEB/actionbin/sweetspot-accesso"
+web_action() { # corpo senza gettone
+	local body
+	body="t=$(cat "$WEB/run/web.token")&$1"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
+}
+rm -f "$WEB/run/config.call"
+web_action "a=audio&volume=fisso&dsd=auto&altri_dac=si&dac=292B:0A26&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500" > /dev/null
+case "$(cat "$WEB/run/config.call")" in *"ALTRI_DAC si DAC 292b:0a26"*) ok "audio: DAC principale salvato per identificativo USB" ;; *) ko "audio DAC salvato" "DAC 292b:0a26" "$(cat "$WEB/run/config.call")" ;; esac
+rm -f "$WEB/run/config.call"
+out=$(web_action "a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=R26;reboot&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500")
+case "$out" in *"Location: /cgi-bin/audio?msg=%44%41%43%20%70%72%69%6e%63%69%70%61%6c%65%20%6e%6f%6e%20%76%61%6c%69%64%6f"*) ok "audio: DAC principale non valido rifiutato" ;; *) ko "audio DAC non valido" "rifiutato (DAC principale non valido)" "$out" ;; esac
+expect "audio: DAC non valido, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
+rm -f "$WEB/run/config.call"
+web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
+expect "sistema: si salva l'impronta, non la password" '1|0' \
+	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.call")|$(grep -c segreta "$WEB/run/config.call")"
+out=$(web_action "a=ripristina")
+case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
+expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si" > /dev/null
+expect "ripristino confermato" "ripristina" "$(tail -n 1 "$WEB/run/config.call")"
+RS=$WORK/ripristino
+mkdir -p "$RS/avvio" "$RS/chiavetta" "$RS/run"
+printf 'VOLUME=fisso\r\n' > "$RS/avvio/sweetspot.txt"
+printf 'VOLUME=software\r\nPASSWORD_WEB=x\r\n' > "$RS/chiavetta/sweetspot.txt"
+SWEETSPOT_RUN=$RS/run SWEETSPOT_LOG=$RS/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	SWEETSPOT_STICK_DIR=$RS/chiavetta SWEETSPOT_AVVIO=$RS/avvio $TEST_SH "$OVERLAY/usr/bin/sweetspot-config" ripristina; rc=$?
+expect "ripristino: sweetspot.txt iniziale sulla chiavetta e in memoria" "0|VOLUME=fisso|fisso" \
+	"$rc|$(tr -d '\r' < "$RS/chiavetta/sweetspot.txt")|$(sed -n 's/^VOLUME=//p' "$RS/run/sweetspot.conf" | tail -n 1)"
+SWEETSPOT_RUN=$RS/run SWEETSPOT_LOG=$RS/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	SWEETSPOT_STICK_DIR=$RS/assente SWEETSPOT_AVVIO=$RS/avvio $TEST_SH "$OVERLAY/usr/bin/sweetspot-config" ripristina; rc=$?
+expect "ripristino senza chiavetta: vale solo fino al riavvio" "2" "$rc"
 printf 'Musica.a|sdc1|ext4|1G|ro|/media/Musica.a|\n' > "$WEB/run/dischi.list"
 rm -f "$WEB/run/config.call"
 archive_action > /dev/null
 expect "archivio web: identita' ambigua non salvata" "no" "$([ -e "$WEB/run/config.call" ] && echo si || echo no)"
 rm -f "$WEB/run/dischi.list"
+
+echo "Credenziali di Lyrion"
+# Lyrion protetto: le richieste JSON portano l'intestazione Basic, la CLI
+# fa il login prima di iscriversi; senza credenziali niente cambia.
+cat > "$WEB/bin/wget-auth" <<'FINTO'
+#!/bin/sh
+prev=""; for a; do [ "$prev" = --header ] && printf '%s\n' "$a" >> "$SWEETSPOT_RUN/wget.headers"; prev=$a; done
+echo '{"result":{"_version":"9.1.1"}}'
+FINTO
+chmod +x "$WEB/bin/wget-auth"
+lmsauth() { # impostazioni
+	printf '%s\n' "$1" > "$WEB/s.txt"
+	rm -f "$WEB/run/wget.headers"
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; lms_json '' version '?' > /dev/null"
+	grep -c '^Authorization: ' "$WEB/run/wget.headers"
+}
+expect "Lyrion aperto: nessuna intestazione di autenticazione" "0" "$(lmsauth '')"
+expect "Lyrion protetto: Basic con utente e password" "1|Authorization: Basic bWFyY286cGE6c3M=" \
+	"$(lmsauth "$(printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=pa:ss')")|$(grep '^Authorization' "$WEB/run/wget.headers")"
+printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=segreta\n' > "$WEB/s.txt"
+clisub() {
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; cli_subscribe" | tr '\n' '|' | sed 's/|$//'
+}
+expect "CLI di Lyrion: login prima dell'iscrizione" "login marco segreta|subscribe mixer,client" "$(clisub)"
+printf '' > "$WEB/s.txt"
+expect "CLI di Lyrion aperto: solo l'iscrizione" "subscribe mixer,client" "$(clisub)"
+rm -f "$WEB/s.txt" "$WEB/run/wget.headers"
+printf '' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+
+echo "Prova DoP guidata"
+mkdac "$WEB" no
+out=$(page audio)
+case "$out" in *"Automatico: il DAC non dichiara il DSD nativo, quindi Lyrion converte i file DSD in PCM sul server, senza provare il DoP"*) ok "audio: DSD automatico senza nativo spiegato" ;; *) ko "audio DSD automatico" "conversione sul server, senza DoP" "-" ;; esac
+case "$out" in *"<h2>Prova DoP</h2>"*"Avvia la prova (6 secondi)"*) ok "audio: prova DoP proposta" ;; *) ko "audio prova DoP" "pulsante della prova" "-" ;; esac
+case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la prova" "nessun esito" "esito presente" ;; *) ok "audio: esito chiesto solo dopo la prova" ;; esac
+case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
+case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP scelto segnalato" ;; *) ko "audio DoP scelto" "Tramite DoP" "-" ;; esac
+cat > "$WEB/actionbin/sweetspot-prova-dop" <<'FINTO'
+#!/bin/sh
+printf '%s\n' "$*" > "$SWEETSPOT_RUN/prova-dop.call"
+echo RIFF > "$1"
+FINTO
+chmod +x "$WEB/actionbin/sweetspot-prova-dop"
+dop_action() { # azione [esito]
+	local body
+	body="t=$(cat "$WEB/run/web.token")&a=$1${2:+&esito=$2}"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" SWEETSPOT_WGET=$WEB/bin/wget \
+		SWEETSPOT_PROVA_DOP_DIR=$WEB/prova-dop REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
+}
+printf 'VOLUME=fisso\n' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+rm -f "$WEB/run/wget.post"
+out=$(dop_action prova_dop)
+expect "prova DoP: tono di 6 secondi generato sul player" "$WEB/prova-dop/prova-dop.wav 6" "$(cat "$WEB/run/prova-dop.call" 2>/dev/null)"
+expect "prova DoP: esito atteso dopo l'avvio" "si" "$([ -f "$WEB/run/web/prova-dop.avviata" ] && echo si || echo no)"
+expect "prova DoP: la coda di ascolto e' messa da parte (preview), non cancellata" "1|0" \
+	"$(grep -c "\"playlist\",\"preview\",\"url:file://$WEB/prova-dop/prova-dop.wav\",\"title:Prova DoP\"" "$WEB/run/wget.post")|$(grep -c '"playlist","play"' "$WEB/run/wget.post")"
+case "$out" in *"%50%72%6f%76%61%20%44%6f%50%20%61%76%76%69%61%74%61"*) ok "prova DoP: pagina con le istruzioni" ;; *) ko "prova DoP messaggio" "Prova DoP avviata" "$(printf '%s' "$out" | head -c 200)" ;; esac
+case "$(page audio)" in *"usa DoP"*"lascia la conversione"*) ok "audio: dopo la prova si sceglie l'esito" ;; *) ko "audio esito prova DoP" "due pulsanti" "-" ;; esac
+rm -f "$WEB/run/config.call" "$WEB/run/wget.post"
+dop_action prova_dop_esito no > /dev/null
+expect "esito negativo: nessuna impostazione cambiata" "no|no" \
+	"$([ -e "$WEB/run/config.call" ] && echo si || echo no)|$([ -f "$WEB/run/web/prova-dop.avviata" ] && echo si || echo no)"
+expect "esito: la coda di ascolto torna com'era" "1" "$(grep -c '"playlist","preview","cmd:stop"' "$WEB/run/wget.post")"
+touch "$WEB/run/web/prova-dop.avviata"
+rm -f "$WEB/run/wget.post"
+dop_action prova_dop_esito si > /dev/null
+expect "esito positivo: DSD tramite DoP, coda tornata com'era" "imposta DSD dop|1" "$(cat "$WEB/run/config.call" 2>/dev/null)|$(grep -c '"playlist","preview","cmd:stop"' "$WEB/run/wget.post")"
+# DAC a 16 bit (o uscita forzata a 16 bit): i marcatori DoP non ci stanno.
+cp "$WEB/proc/asound/card1/stream0" "$WEB/stream0.bak"
+printf 'Playback:\n  Interface 1\n    Format: S16_LE\n    Rates: 44100, 48000, 176400\n' > "$WEB/proc/asound/card1/stream0"
+case "$(page audio)" in *"Prova non disponibile"*"non dichiara 176,4 kHz a 24 o 32 bit"*) ok "audio: prova DoP bloccata con il DAC a 16 bit" ;; *) ko "audio prova DoP 16 bit" "prova non disponibile" "-" ;; esac
+cp "$WEB/stream0.bak" "$WEB/proc/asound/card1/stream0"
+case "$(page audio 'FORMATO_USCITA=16')" in *"Prova non disponibile"*"forzata a 16 bit"*) ok "audio: prova DoP bloccata con l'uscita forzata a 16 bit" ;; *) ko "audio prova DoP FORMATO_USCITA" "prova non disponibile" "-" ;; esac
+printf 'VOLUME=software\n' > "$WEB/s.txt"
+run "$WEB" "config_build $WEB/s.txt"
+rm -f "$WEB/run/prova-dop.call"
+dop_action prova_dop > /dev/null
+expect "prova DoP rifiutata con il volume software" "no" "$([ -e "$WEB/run/prova-dop.call" ] && echo si || echo no)"
+mkdac "$WEB" si
+case "$(page audio)" in *"<h2>Prova DoP</h2>"*) ko "audio: nessuna prova con DSD nativo" "nessuna prova" "prova presente" ;; *) ok "audio: nessuna prova con DSD nativo" ;; esac
+rm -f "$WEB/s.txt" "$WEB/run/config.call" "$WEB/run/web/prova-dop.avviata" "$WEB/run/prova-dop.call"
+rm -rf "$WEB/prova-dop"
 
 echo "Diagnostica del percorso"
 printf 'buffering\n' > "$WEB/squeezelite.log"
@@ -513,6 +795,12 @@ dsp() { # impostazioni comando...
 		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-dsp" sh "$@"
 }
+dspf() { # funzione...
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_AWK=$MATHAWK \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dsp; $1"
+}
 expect "filtri di REW (virgole, kHz, spenti, larghezza in ottave)" \
 	"Peaking 38.5 -6.8 q 6.5|Peaking 63.3 -9.2 q 4.9|Peaking 112 2.5 q 3|Lowshelf 80 1.5 q 0.707|HighshelfFO 8000 -1 none 0|Peaking 245 -3 bandwidth 0.333" \
 	"$(dsp '' leggi "$DSPE/rew.txt" | tr '\n' '|' | sed 's/|$//')"
@@ -530,6 +818,7 @@ yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "CamillaDSP: uscita sul DAC a 32 bit" "2" "$(printf '%s\n' "$yml" | grep -c -e 'device: "hw:CARD=R26,DEV=0"' -e 'format: S32_LE' | head -n 1 | sed 's/3/2/')"
 expect "CamillaDSP: 12 filtri e l'attenuazione" "12 -4.5" "$(printf '%s\n' "$yml" | grep -c 'type: Biquad') $(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
 expect "CamillaDSP: ingresso dal plugin" "type: Stdin" "$(printf '%s\n' "$yml" | grep -o 'type: Stdin')"
+expect "CamillaDSP: coda del brano di due blocchi per i filtri di REW" "extra_samples: 8192" "$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 expect "ALSA: frequenze del DAC fino a 384 kHz" "rates = [ 44100 48000 88200 96000 176400 192000 352800 384000 ]" \
 	"$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
 dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
@@ -542,6 +831,68 @@ expect "DAC a 16 bit: dither" "format: S16_LE|dither 3" \
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione accettata da CamillaDSP"; else ko "camilladsp -c" "valida" "rifiutata"; fi
 fi
+expect "correzione: volume principale a 0 dB per ogni processo" "0.0 0|1" \
+	"$(cat "$DSPE/run/camilladsp.volume")|$(grep -c "vol_file \"$DSPE/run/camilladsp.volume\"" "$DSPE/asound.conf")"
+expect "volume a 64 bit: CamillaDSP serve anche senza correzione" "0|1" "$(dsp 'VOLUME=dsp' attiva; echo $?)|$(dsp 'VOLUME=dsp' correzione; echo $?)"
+expect "volume a 64 bit: solo nella modalita' completa" "1" "$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player')" attiva; echo $?)"
+rm -f "$DSPE/run/camilladsp.volume"
+mv "$DSPE/run/correzione/sinistro.txt" "$DSPE/sinistro.bak"
+dsp 'VOLUME=dsp' prepara 1 > /dev/null
+yml=$(cat "$DSPE/run/camilladsp.yml")
+expect "volume a 64 bit, DAC a 16 bit: nessun filtro, guadagno 0, dither a 16 bit, mai sopra 0 dB" "0|0.0|bits: 16|volume_limit: 0.0" \
+	"$(printf '%s\n' "$yml" | grep -c 'type: Biquad')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)|$(printf '%s\n' "$yml" | grep -o 'bits: 16')|$(printf '%s\n' "$yml" | grep -o 'volume_limit: 0.0')"
+expect "volume a 64 bit: primo avvio a -30 dB" "-30.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
+echo "-17.4 1" > "$DSPE/run/camilladsp.volume"
+dsp 'VOLUME=dsp' prepara 1 > /dev/null
+expect "volume a 64 bit, DAC a 32 bit: dither a 24 bit" "S32_LE|bits: 24|dither 3" \
+	"$(grep -o 'format: S32_LE' "$DSPE/run/camilladsp.yml" | head -n 1 | cut -d' ' -f2)|$(grep -o 'bits: 24' "$DSPE/run/camilladsp.yml")|dither $(grep -c 'dither' "$DSPE/run/camilladsp.yml")"
+expect "volume a 64 bit: il volume gia' scelto resta" "-17.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
+if command -v camilladsp > /dev/null; then
+	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione del volume accettata da CamillaDSP"; else ko "camilladsp -c volume" "valida" "rifiutata"; fi
+fi
+expect "file del volume: valori non validi rifiutati" "1|-17.4 1" "$(dsp '' stato 'abc'; echo $?)|$(cat "$DSPE/run/camilladsp.volume")"
+mv "$DSPE/sinistro.bak" "$DSPE/run/correzione/sinistro.txt"
+dsp 'CORREZIONE=si' prepara 1 > /dev/null
+expect "tornando al volume fisso il guadagno riparte da 0 dB" "0.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+VB=$DSPE/volbin
+mkdir -p "$VB"
+printf '#!/bin/sh\nprintf "%%s\\n" "$2" >> "%s"\necho "{}"\n' "$DSPE/run/camilla.call" > "$VB/sweetspot-camilla"
+chmod +x "$VB/sweetspot-camilla"
+vol() {
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume" sh "$@"
+}
+volfn() { # funzione
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf SWEETSPOT_TEST=1 \
+		SWEETSPOT_WGET=$VB/wget SWEETSPOT_VOLUME_ATTESA=10 \
+		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume; $1"
+}
+# La scala di Lyrion per Squeezelite (SqueezePlay): 74 dB in due tratti,
+# cosi' il cursore suona come con il volume software e sulle zone.
+expect "scala del volume: quella di Lyrion (100 = 0 dB, 50 = -24,7, 25 = -37, 1 = -72,5)" "0.0|-24.7|-37.0|-72.5|-74.0" \
+	"$(vol db 100)|$(vol db 50)|$(vol db 25)|$(vol db 1)|$(vol db 0)"
+rm -f "$DSPE/run/camilla.call"
+vol applica 50 0
+expect "volume 50: file per i prossimi processi e CamillaDSP dal vivo" '-24.7 0|{"SetVolume":-24.7}|{"SetMute":false}|50 -24.7 0' \
+	"$(cat "$DSPE/run/camilladsp.volume")|$(tr '\n' '|' < "$DSPE/run/camilla.call")$(cat "$DSPE/run/volume.dsp")"
+vol applica 100 0
+expect "volume 100: 0 dB, e resta anche per il prossimo CamillaDSP" "0.0 0|0.0 0" \
+	"$(cat "$DSPE/run/camilladsp.volume")|$(dsp 'VOLUME=dsp' prepara 1 > /dev/null; cat "$DSPE/run/camilladsp.volume")"
+vol applica -20 0
+expect "volume negativo di Lyrion: sordina" "-44.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
+vol applica 0 0
+expect "volume 0: sordina" "-74.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+vol applica abc 0; rc=$?
+expect "volume non numerico: nessun cambio" "1|-74.0 1" "$rc|$(cat "$DSPE/run/camilladsp.volume")"
+# Primo allineamento: si riprova finche' Lyrion conosce il player.
+printf '#!/bin/sh\ncase "$*" in *mixer*volume*) n=$(cat "%s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "%s"; [ $n -ge 3 ] && echo "{\\"result\\":{\\"_volume\\":70}}" ;; *mixer*muting*) echo "{\\"result\\":{\\"_muting\\":0}}" ;; esac\nexit 0\n' "$DSPE/run/wget.n" "$DSPE/run/wget.n" > "$VB/wget"
+chmod +x "$VB/wget"
+rm -f "$DSPE/run/wget.n"
+expect "primo allineamento: riprova finche' il player non e' in Lyrion" "0|3|70 -14.8 0" \
+	"$(volfn 'sleep() { :; }; sync_first 00:11:22:33:44:55' 2>/dev/null; echo $?)|$(cat "$DSPE/run/wget.n")|$(cat "$DSPE/run/volume.dsp")"
 mkdir -p "$DSPE/chiavetta/sweetspot-dati"
 cp "$DSPE/rew.txt" "$DSPE/nuovo.txt"
 SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/nuovo.txt" "" ; rc=$?
@@ -549,6 +900,57 @@ expect "filtri salvati sulla chiavetta, cartella propria" "0|$(wc -c < "$DSPE/re
 	"$rc|$(wc -c < "$DSPE/chiavetta/correzione-ambientale/sinistro.txt" | tr -d ' ')|$([ -f "$DSPE/chiavetta/correzione-ambientale/destro.txt" ] && echo si || echo no)"
 SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/run/correzione/sinistro.txt" ""
 expect "salvare sopra lo stesso file non lo svuota" "$(wc -c < "$DSPE/rew.txt" | tr -d ' ')" "$(wc -c < "$DSPE/run/correzione/sinistro.txt" | tr -d ' ')"
+if command -v python3 > /dev/null; then
+	# Impulso FIR: WAV float a 32 bit con 512 campioni (frequenza, canali).
+	mkwav() { python3 -c "
+import struct, sys
+rate, ch = int(sys.argv[1]), int(sys.argv[2])
+data = b''.join(struct.pack('<f', 0.5 if i < ch else 0.0) for i in range(512 * ch))
+sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16, 3, ch, rate, rate * 4 * ch, 4 * ch, 32) + b'data' + struct.pack('<I', len(data)) + data)" "$1" "$2"; }
+	printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
+	mkwav 96000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR: frequenza, canali, destro e margine" "96000 1 sinistro 3" "$(dsp 'CORREZIONE=si' fir)"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	yml=$(cat "$DSPE/run/camilladsp.yml")
+	expect "FIR: CamillaDSP a 96 kHz con il ricampionatore sincrono" "samplerate: 96000|type: Synchronous" \
+		"$(printf '%s\n' "$yml" | grep -o 'samplerate: 96000')|$(printf '%s\n' "$yml" | grep -o 'type: Synchronous')"
+	expect "FIR: due convoluzioni dal file del sinistro, canale 0, dopo i filtri di REW" \
+		"2|2|- fir_sinistro|- fir_destro|-7.5" \
+		"$(printf '%s\n' "$yml" | grep -c "filename: \"$DSPE/run/correzione/fir-sinistro.wav\"")|$(printf '%s\n' "$yml" | grep -c 'channel: 0')|$(printf '%s\n' "$yml" | grep -o -- '- fir_sinistro')|$(printf '%s\n' "$yml" | grep -o -- '- fir_destro')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)"
+	# Coda del brano: con i FIR CamillaDSP legge, dopo la fine dello stream,
+	# tanti campioni di silenzio quanti i tap (512) piu' due blocchi.
+	expect "FIR: coda del brano non tagliata (extra_samples = tap + 2 blocchi)" "512|extra_samples: 8704" \
+		"$(dspf fir_taps)|$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
+	if command -v camilladsp > /dev/null; then
+		if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione FIR accettata da CamillaDSP"; else ko "camilladsp -c FIR" "valida" "rifiutata"; fi
+	fi
+	dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
+	expect "FIR nel confronto: stessa frequenza e attenuazione, senza convoluzione" "samplerate: 96000|0|-7.5" \
+		"$(grep -o 'samplerate: 96000' "$DSPE/run/camilladsp.yml")|$(grep -c -- '- fir_' "$DSPE/run/camilladsp.yml")|$(sed -n 's/^      gain: //p' "$DSPE/run/camilladsp.yml" | head -n 1)"
+	mkwav 96000 2 > "$DSPE/run/correzione/fir-sinistro.wav"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	expect "FIR stereo unico: il destro legge il canale 1" "channel: 0|channel: 1" \
+		"$(grep -o 'channel: [01]' "$DSPE/run/camilladsp.yml" | tr '\n' '|' | sed 's/|$//')"
+	mkwav 48000 1 > "$DSPE/run/correzione/fir-destro.wav"
+	expect "FIR con frequenze diverse sui due canali: rifiutati" "1" "$(dsp 'CORREZIONE=si' fir > /dev/null; echo $?)"
+	rm -f "$DSPE/run/correzione/fir-destro.wav"
+	mkwav 96000 1 | head -c 1068 > "$DSPE/run/correzione/fir-destro.wav"
+	expect "FIR: la coda e' quella del canale piu' lungo (512 a sinistra, 256 a destra)" "512|256" "$(dspf fir_taps)|$(dspf "wav_frames $DSPE/run/correzione/fir-destro.wav")"
+	rm -f "$DSPE/run/correzione/fir-destro.wav"
+	mkwav 192000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR a una frequenza che il DAC non accetta: correzione non applicata" "1" "$(dsp 'CORREZIONE=si' prepara 1 > /dev/null; echo $?)"
+	echo "non sono un wav" > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR non valido: ignorato" "1" "$(dsp 'CORREZIONE=si' fir > /dev/null; echo $?)"
+	mkwav 96000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	mv "$DSPE/run/correzione/sinistro.txt" "$DSPE/sinistro-rew.bak"
+	expect "solo FIR, senza filtri di REW: correzione attiva" "0" "$(dsp 'CORREZIONE=si' correzione; echo $?)"
+	mv "$DSPE/sinistro-rew.bak" "$DSPE/run/correzione/sinistro.txt"
+	cp "$DSPE/run/correzione/fir-sinistro.wav" "$DSPE/chiavetta/correzione-ambientale/"
+	SWEETSPOT_STICK_DIR=$DSPE/chiavetta dsp '' salva "$DSPE/rew.txt" "" > /dev/null
+	expect "salvare i filtri di REW non cancella i FIR sulla chiavetta" "si" \
+		"$([ -s "$DSPE/chiavetta/correzione-ambientale/fir-sinistro.wav" ] && echo si || echo no)"
+	rm -f "$DSPE/run/correzione/fir-sinistro.wav" "$DSPE/run/correzione/fir-destro.wav"
+fi
 ln -sf "$OVERLAY/usr/bin/sweetspot-dsp" "$WEB/bin/sweetspot-dsp"
 mkdir -p "$WEB/run/correzione"
 out=$(SWEETSPOT_AWK=$MATHAWK page correzione)
@@ -618,6 +1020,27 @@ expect "disco dati: tutto il disco" "Archivio" "$(links Archivio)"
 expect "collegamenti nella libreria" "Archivio Linux - anna Win - marco" "$(ls "$DSK/musica" | tr '\n' ' ' | sed 's/ $//')"
 expect "collegamento al disco" "$DSK/media/Archivio" "$(readlink "$DSK/musica/Archivio")"
 
+echo "Standby dei dischi interni"
+SB=$WORK/standby
+mkdir -p "$SB/run" "$SB/bin"
+for d in sda sdb sdc sdd; do
+	mkdir -p "$SB/sys/block/$d/queue" "$SB/sys/block/$d/${d}1" "$SB/sys/block/$d/dev"
+	echo 0 > "$SB/sys/block/$d/removable"
+	echo 1 > "$SB/sys/block/$d/queue/rotational"
+done
+echo 0 > "$SB/sys/block/sdd/queue/rotational"
+# sda: musica; sdb: archivio; sdc: nessuna musica; sdd: SSD
+printf 'Musica|/dev/sda1|ext4|500|1|ro|UUID=a\nArchivio|/dev/sdb1|ext4|900|1|rw|UUID=b\n' > "$SB/run/dischi.list"
+printf '#!/bin/sh\necho "$@" >> "$HDPARM_LOG"\n' > "$SB/bin/hdparm"
+chmod +x "$SB/bin/hdparm"
+SWEETSPOT_TEST=1 SWEETSPOT_SYSFS=$SB/sys SWEETSPOT_RUN=$SB/run SWEETSPOT_LOG=$SB/log SWEETSPOT_HDPARM=$SB/bin/hdparm HDPARM_LOG=$SB/hdparm.log \
+	$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-dischi; do_standby"
+expect "standby: dischi con musica e archivio solo timeout lungo" "-S 241 /dev/sda|-S 241 /dev/sdb" "$(grep -E '/dev/sd[ab]$' "$SB/hdparm.log" | sort -u | tr '\n' '|' | sed 's/|$//')"
+expect "standby: disco senza musica fermato subito" "-S 12 /dev/sdc|-y /dev/sdc" "$(grep '/dev/sdc$' "$SB/hdparm.log" | tr '\n' '|' | sed 's/|$//')"
+expect "standby: nessun -y sui dischi con musica" "0" "$(grep -c -- '^-y /dev/sd[ab]$' "$SB/hdparm.log")"
+expect "standby: SSD ignorato" "0" "$(grep -c '/dev/sdd' "$SB/hdparm.log")"
+expect "standby: non piu' in S20 (gira prima del montaggio)" "0" "$(grep -c 'hdparm' "$OVERLAY/etc/init.d/S20sweetspot-tune")"
+
 echo "Blocchi"
 LK=$WORK/lk
 mkdir -p "$LK/run" "$LK/proc"
@@ -638,7 +1061,17 @@ echo A-rootfs > "$UPD/stick/rootfs.cpio.zst"
 echo v1.0.0 > "$UPD/stick/boot/versioni/a"
 echo "menu vecchio" > "$UPD/stick/boot/grub/grub.cfg"
 echo "menu nuovo" > "$UPD/avvio/grub.cfg"
-printf '#!/bin/sh\nexit 0\n' > "$UPD/bin/wget-ok"
+# wget finto: risponde anche alle richieste JSON di Lyrion; jq finto (in
+# testa al PATH) accetta la risposta e restituisce una versione.
+printf '#!/bin/sh\ncase "$*" in *jsonrpc*) echo "{\\"result\\":{\\"_version\\":\\"9\\"}}" ;; esac\nexit 0\n' > "$UPD/bin/wget-ok"
+printf '#!/bin/sh\ncase "$*" in *jsonrpc*) exit 1 ;; esac\nexit 0\n' > "$UPD/bin/wget-nolms"
+mkdir -p "$UPD/jq" "$UPD/musica" "$UPD/lmsdati"
+printf '#!/bin/sh\nin=$(cat)\n[ -n "$in" ] || exit 1\ncase "$*" in *-e*) exit 0 ;; esac\necho 9\n' > "$UPD/jq/jq"
+chmod +x "$UPD/jq/jq"
+echo "MODALITA=completa" > "$UPD/run/sweetspot.conf"
+sleep 7200 &
+UPD_SUP=$!
+echo "$UPD_SUP" > "$UPD/run/supervisore.pid"
 printf '#!/bin/sh\nexit 1\n' > "$UPD/bin/wget-ko"
 chmod +x "$UPD/bin"/*
 mkpkg() { # versione architettura [rovina]
@@ -656,6 +1089,7 @@ upd() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$UPD/stick \
 		SWEETSPOT_MEDIA=$UPD/media SWEETSPOT_ARCH=x86_64 SWEETSPOT_VERSION_FILE=$UPD/version \
 		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
+		SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati SWEETSPOT_PATH=${UPD_PATH:-$UPD/jq:$SWEETSPOT_PATH} \
 		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
 }
@@ -684,6 +1118,44 @@ upd conferma
 expect "la nuova versione si conferma" "b|" "$(genv slot)|$(genv tentato)"
 expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riuscita=')"
 expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
+# Con la password delle pagine l'httpd risponde 401 a chi non si presenta:
+# la conferma usa l'utente sweetspot con la chiave di questo avvio.
+printf '#!/bin/sh\nfor a; do case "$a" in *jsonrpc*) echo "{\\"result\\":{\\"_version\\":\\"9\\"}}"; exit 0 ;; http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
+chmod +x "$UPD/bin/wget-401"
+setenv prova= tentato=b
+UPD_WGET=$UPD/bin/wget-401 upd conferma
+expect "con la password e senza chiave la conferma non passa (401)" "b" "$(genv tentato)"
+echo 0123456789abcdef0123456789abcdef > "$UPD/run/vivo.chiave"
+UPD_WGET=$UPD/bin/wget-401 upd conferma
+expect "con la password la conferma passa con la chiave della pagina vivo" "b|" "$(genv slot)|$(genv tentato)"
+rm -f "$UPD/run/vivo.chiave"
+# Controlli ulteriori della conferma: ognuno registra quale e' fallito
+conferma_ko() { # nome comando-che-rompe comando-che-ripara [wget]
+	setenv prova= tentato=b
+	rm -f "$UPD/stick/boot/conferma-fallita"
+	eval "$2"
+	UPD_WGET=${4:-$UPD/bin/wget-ok} upd conferma
+	expect "$1: non si conferma" "b" "$(genv tentato)"
+	expect "$1: controllo registrato sulla chiavetta" "$1" "$(cut -d'|' -f1 "$UPD/stick/boot/conferma-fallita")"
+	eval "$3"
+}
+conferma_ko lyrion : : "$UPD/bin/wget-nolms"
+conferma_ko supervisore 'rm -f "$UPD/run/supervisore.pid"' 'echo $UPD_SUP > "$UPD/run/supervisore.pid"'
+conferma_ko libreria 'rmdir "$UPD/lmsdati"' 'mkdir "$UPD/lmsdati"'
+conferma_ko impostazioni 'mv "$UPD/run/sweetspot.conf" "$UPD/run/sc"' 'mv "$UPD/run/sc" "$UPD/run/sweetspot.conf"'
+# Modalita' player: Lyrion non e' di questa macchina e non conta
+echo "MODALITA=player" > "$UPD/run/sweetspot.conf"
+rmdir "$UPD/lmsdati"
+setenv prova= tentato=b
+UPD_WGET=$UPD/bin/wget-nolms upd conferma
+expect "modalita' player: senza Lyrion locale la conferma passa" "b|" "$(genv slot)|$(genv tentato)"
+echo "MODALITA=completa" > "$UPD/run/sweetspot.conf"; mkdir "$UPD/lmsdati"
+# Senza DAC (player in attesa del DAC) la nuova versione e' valida
+echo "in attesa del DAC" > "$UPD/run/player.stato"
+setenv prova= tentato=b
+upd conferma
+expect "in attesa del DAC non e' un guasto: si conferma" "b|" "$(genv slot)|$(genv tentato)"
+rm -f "$UPD/run/player.stato" "$UPD/stick/boot/conferma-fallita"
 # Secondo aggiornamento (va nella copia A), che non parte: si torna a B
 rm -f "$UPD/run/aggiornamento/riuscita"
 mkpkg v1.2.0 x86_64
@@ -693,6 +1165,12 @@ setenv prova= tentato=a
 upd conferma
 expect "versione non partita: si resta su B" "b|" "$(genv slot)|$(genv tentato)"
 expect "versione non partita segnalata" "fallita=v1.2.0" "$(upd stato | grep '^fallita=')"
+# La versione che torna mostra il controllo fallito lasciato dalla nuova
+echo "lyrion|Lyrion non risponde" > "$UPD/stick/boot/conferma-fallita"
+setenv prova= tentato=a
+upd conferma
+expect "motivo del ritorno nello stato" "fallita_controllo=lyrion|Lyrion non risponde" "$(upd stato | grep '^fallita_controllo=')"
+expect "motivo ritirato dalla chiavetta" "no" "$([ -f "$UPD/stick/boot/conferma-fallita" ] && echo si || echo no)"
 # Pacchetti sbagliati
 mkpkg v1.3.0 x86_64 rovina
 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
@@ -717,7 +1195,7 @@ JSON
 EOF2
 chmod +x "$UPD/bin/curl"
 expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
-	"$(SWEETSPOT_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+	"$(UPD_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
 
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
@@ -753,6 +1231,45 @@ if command -v minisign > /dev/null; then
 	expect "pacchetto alterato dopo la firma rifiutato" "errore|firma non valida: il pacchetto è stato alterato o non è ufficiale" "$(cat "$UPD/run/aggiornamento/stato")"
 	rm -f "$UPD/pkg/SHA256SUMS.minisig"
 fi
+
+echo "Riavvii del watchdog: al secondo di seguito parte l'altra copia"
+# In uso la copia A (predefinita), la B installata.
+echo "BOOT_IMAGE=/bzImage sweetspot.slot=a sweetspot.part=ABCD-1234" > "$UPD/proc/cmdline"
+setenv slot=a prova= tentato= riavvii= riavvii_copia=
+echo "kernel vB" > "$UPD/stick/b/bzImage"; echo "rootfs vB" > "$UPD/stick/b/rootfs.cpio.zst"; echo v9.9.9 > "$UPD/stick/boot/versioni/b"
+rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
+upd watchdog
+expect "primo riavvio del watchdog: contato, copia invariata" "1|a|a|1|no" \
+	"$(genv riavvii)|$(genv riavvii_copia)|$(genv slot)|$(upd stato | sed -n 's/^watchdog_riavvii=//p')|$([ -f "$UPD/run/aggiornamento/watchdog.ritorno" ] && echo si || echo no)"
+upd stabile
+expect "dieci minuti di funzionamento: conteggio azzerato" "||no" "$(genv riavvii)|$(genv riavvii_copia)|$([ -f "$UPD/run/aggiornamento/watchdog.riavvii" ] && echo si || echo no)"
+upd watchdog; upd watchdog
+expect "secondo riavvio di seguito: dal prossimo avvio parte la copia B" "b||b|watchdog_ritorno=b" \
+	"$(genv slot)|$(genv riavvii)|$(cat "$UPD/run/aggiornamento/watchdog.ritorno")|$(upd stato | grep '^watchdog_ritorno=')"
+wdcheck() {
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep '^[A-Z]*|Riavvii del watchdog|'
+}
+mkdir -p "$WEB/run/aggiornamento"
+cp "$UPD/run/aggiornamento/watchdog.ritorno" "$WEB/run/aggiornamento/"
+expect "stato: ritorno all'altra copia segnalato" \
+	"ATTENZIONE|Riavvii del watchdog|due di seguito con questa copia: dal prossimo avvio parte la copia b (Sistema > aggiornamenti per cambiare)" "$(wdcheck)"
+rm -f "$WEB/run/aggiornamento/watchdog.ritorno"
+echo 1 > "$WEB/run/aggiornamento/watchdog.riavvii"
+expect "stato: primo riavvio del watchdog segnalato" \
+	"ATTENZIONE|Riavvii del watchdog|l'ultimo avvio e' finito con un blocco totale; al secondo di seguito parte l'altra copia" "$(wdcheck)"
+rm -f "$WEB/run/aggiornamento/watchdog.riavvii"
+expect "stato: senza riavvii del watchdog nessuna voce" "" "$(wdcheck)"
+# Riavvii con copie diverse non sono consecutivi; senza l'altra copia non si cambia.
+rm -f "$UPD/run/aggiornamento/watchdog.ritorno" "$UPD/run/aggiornamento/watchdog.riavvii"
+setenv slot=a riavvii=1 riavvii_copia=b
+upd watchdog
+expect "riavvio precedente con l'altra copia: si ricomincia da uno" "1|a|a" "$(genv riavvii)|$(genv riavvii_copia)|$(genv slot)"
+rm -f "$UPD/stick/b/rootfs.cpio.zst"
+upd watchdog
+expect "senza l'altra copia installata: conteggio ma nessun cambio" "2|a|no" "$(genv riavvii)|$(genv slot)|$([ -f "$UPD/run/aggiornamento/watchdog.ritorno" ] && echo si || echo no)"
+setenv slot=a prova= tentato= riavvii= riavvii_copia=
+rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
 
 echo "Raspberry Pi"
 PI=$WORK/rpi
@@ -825,12 +1342,16 @@ mkpkg_pi() { # versione scheda
 updpi() {
 	local s=$1
 	shift
-	SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
+	mkdir -p "$PI/run" "$UPD/musica" "$UPD/lmsdati"
+	[ -s "$PI/run/sweetspot.conf" ] || echo "MODALITA=completa" > "$PI/run/sweetspot.conf"
+	echo "$UPD_SUP" > "$PI/run/supervisore.pid"
+	SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati \
+		SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$PI/stick \
 		SWEETSPOT_MEDIA=$PI/media SWEETSPOT_VERSION_FILE=$PI/version SWEETSPOT_AVVIO=$PI/avvio \
 		SWEETSPOT_WGET=$UPD/bin/wget-ok SWEETSPOT_CONFERMA_ATTESA=2 SWEETSPOT_RCK=$PI/bin/rcK SWEETSPOT_REBOOT=$PI/bin/reboot \
 		SWEETSPOT_CHIAVE_FIRMA=${PI_PUB:-$PI/nessuna-chiave} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
-		SWEETSPOT_PATH="$PI/bin:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/$s" "$@"
+		SWEETSPOT_PATH="$PI/bin:$UPD/jq:$SWEETSPOT_PATH" $TEST_SH "$OVERLAY/usr/bin/$s" "$@"
 }
 penv() { pi "grubenv_get $PI/stick/sweetspot-avvio.env $1"; }
 mkpkg_pi v1.1.0 rpi
@@ -1020,6 +1541,906 @@ rm -f "$CC/lms/cache/artwork.db"
 lmsfn link_caches
 expect "senza archivio: cache in RAM come prima" "no" "$([ -e "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
 
+echo "Precarico in RAM"
+PRE=$WORK/precarico
+mkdir -p "$PRE/proc" "$PRE/run" "$PRE/musica/Album è"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
+head -c 3000 /dev/zero > "$PRE/musica/Album è/a.flac"
+head -c 2000 /dev/zero > "$PRE/musica/Album è/b c.flac"
+head -c 5000 /dev/zero > "$PRE/musica/Album è/grande.dsf"
+head -c 1000 /dev/zero > "$PRE/musica/Album è/d.flac"
+prefn() {
+	SWEETSPOT_PROCFS=$PRE/proc SWEETSPOT_RUN=$PRE/run SWEETSPOT_LOG=$PRE/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-precarico; $1"
+}
+U=file://$PRE/musica/Album%20%C3%A8
+expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
+expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
+# I buffer di Squeezelite (8 GB: 1 GB + 2 GB, player_buffers) si riempiono
+# a poco a poco: senza il player in esecuzione contano per intero.
+expect "buffer del player da riempire: contano per intero senza il player" "3048576" "$(prefn player_reserve_kb)"
+expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "572864" "$(prefn preload_budget_kb)"
+mkdir -p "$PRE/proc/4321"
+printf 'VmRSS:\t 1048576 kB\n' > "$PRE/proc/4321/status"
+echo 4321 > "$PRE/run/squeezelite.pid"
+expect "buffer del player in parte gia' occupati: conta solo il resto" "2000000|1097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
+rm -f "$PRE/run/squeezelite.pid"
+echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
+expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
+echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
+expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "883584" "$(prefn preload_budget_kb)"
+printf 'PRECARICO_FILE_MAX_MB=1 2\n' > "$PRE/run/sweetspot.conf"
+expect "limite dei file non numerico: predefinito, senza errori" "1048576" "$(prefn file_max_kb 2>&1)"
+rm -f "$PRE/run/sweetspot.conf"
+sleep 30 &
+echo $! > "$PRE/run/precarico.tieni.pid"
+printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "573364" "$(prefn preload_budget_kb)"
+kill "$(cat "$PRE/run/precarico.tieni.pid")"
+rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
+expect "piano: in coda fino al budget, poi si ferma" \
+	"SI 3 $PRE/musica/Album è/a.flac|STREAM http://radio.example/stream|GRANDE 5 $PRE/musica/Album è/grande.dsf|OLTRE 2 $PRE/musica/Album è/b c.flac|MANCA $PRE/musica/Album è/manca.flac|OLTRE 1 $PRE/musica/Album è/d.flac" \
+	"$(prefn "preload_plan 4 4 < '$PRE/coda'" | tr '\n' '|' | sed 's/|$//')"
+printf '%s\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.elenco"
+expect "brano finito: il resto della coda e' gia' in RAM" "si" \
+	"$(prefn "plan_held 'SI 2 $PRE/musica/Album è/b c.flac
+STREAM http://radio.example/stream' && echo si || echo no")"
+expect "nuovo brano in coda: precarico da rifare" "no" \
+	"$(prefn "plan_held 'SI 1 $PRE/musica/Album è/d.flac' && echo si || echo no")"
+expect "brano escluso: nuovo verdetto" "no" \
+	"$(prefn "plan_held 'SI 2 $PRE/musica/Album è/b c.flac
+OLTRE 1 $PRE/musica/Album è/d.flac' && echo si || echo no")"
+expect "coda di soli streaming: niente da tenere, nessuna esclusione" "si|no" \
+	"$(prefn "plan_held 'STREAM http://radio.example/stream' && echo si || echo no")|$(prefn "plan_held 'STREAM http://radio.example/stream
+MANCA /x.flac' && echo si || echo no")"
+# Standby dei dischi: stato vero da hdparm -C, un disco svegliato da altro
+# esce dall'elenco e si riprova non prima di un minuto.
+mkdir -p "$PRE/bin" "$PRE/sys/block/sdb/queue" "$PRE/sys/block/sdc/queue"
+echo 1 > "$PRE/sys/block/sdb/queue/rotational"; echo 1 > "$PRE/sys/block/sdc/queue/rotational"
+cat > "$PRE/bin/hdparm" <<'FINTO'
+#!/bin/sh
+echo "$*" >> "$HDPARM_LOG"
+case "$1" in
+	-C) if grep -q "^${2#/dev/}$" "$HDPARM_SLEEPING" 2>/dev/null; then echo " drive state is:  standby"; else echo " drive state is:  active/idle"; fi ;;
+	-y) echo "${2#/dev/}" >> "$HDPARM_SLEEPING" ;;
+esac
+FINTO
+chmod +x "$PRE/bin/hdparm"
+prestandby() {
+	HDPARM_LOG=$PRE/run/hdparm.log HDPARM_SLEEPING=$PRE/run/dormienti SWEETSPOT_HDPARM=$PRE/bin/hdparm SWEETSPOT_SYSFS=$PRE/sys \
+		prefn "file_disk() { case \"\$1\" in *a.flac) echo sdb ;; *) echo sdc ;; esac; }; standby_disks"
+}
+printf 'SI 3 %s\nSI 2 %s\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+rm -f "$PRE/run/hdparm.log" "$PRE/run/dormienti" "$PRE/run/precarico.standby" "$PRE/run/precarico.standby.t"
+prestandby
+expect "standby: i dischi della coda fermati e annotati" "sdb sdc|2" "$(cat "$PRE/run/precarico.standby")|$(grep -c -- '^-y' "$PRE/run/hdparm.log")"
+echo sdb > "$PRE/run/dormienti"
+rm -f "$PRE/run/hdparm.log"
+prestandby
+expect "standby: disco svegliato da altro: fuori dall'elenco, nessun nuovo -y prima di un minuto" "sdb|0|1" \
+	"$(cat "$PRE/run/precarico.standby")|$(grep -c -- '^-y' "$PRE/run/hdparm.log")|$(grep -c 'disco sdc svegliato da altro' "$PRE/log")"
+echo 0 > "$PRE/run/precarico.standby.t"
+rm -f "$PRE/run/hdparm.log"
+prestandby
+expect "standby: passato un minuto si riprova" "sdb sdc|1" "$(cat "$PRE/run/precarico.standby")|$(grep -c -- '^-y /dev/sdc' "$PRE/run/hdparm.log")"
+rm -f "$PRE/run/precarico.piano" "$PRE/run/precarico.standby" "$PRE/run/precarico.standby.t" "$PRE/run/dormienti" "$PRE/run/hdparm.log"
+printf 'SI 3 %s\nSI 2 %s\nSTREAM http://radio.example/stream\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+printf 'stato\tpronto\nfile\t3000\tok\t%s\nfile\t2000\terrore: Cannot allocate memory\t%s\nfile\t9\tok\t/vecchio.flac\n' \
+	"$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.stato"
+if command -v jq >/dev/null; then
+	prefn "write_summary parziale"
+	expect "riepilogo: solo i brani del piano, errori e streaming" "parziale 3 1 1 1 0" \
+		"$(jq -r '"\(.stato) \(.brani) \(.caricati) \(.errori) \(.streaming) \(.oltre)"' "$PRE/run/precarico.json")"
+else
+	echo "  (jq non installato: riepilogo non provato)"
+fi
+
+echo "CamillaDSP in real-time"
+DSP=$WORK/dsp
+mkdir -p "$DSP/run" "$DSP/proc/4242/task/4242" "$DSP/proc/4242/task/4243"
+# /proc/PID/stat: dopo "(comm) " il 38esimo campo e' la priorita', il 39esimo la politica.
+dspstat() { printf '%s (camilladsp) S%s %s %s 0\n' "$1" "$(printf ' 0%.0s' $(seq 2 37))" "$2" "$3"; }
+dspstat 4242 0 0 > "$DSP/proc/4242/task/4242/stat"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"
+# Funzioni al posto dei comandi: BusyBox preferisce le sue applet ai file nel PATH.
+DSPSTUB="pidof() { [ -n \"\$DSP_PID\" ] && echo \"\$DSP_PID\"; }
+chrt() { echo \"\$*\" >> '$DSP/run/chrt.call'; }
+taskset() { echo \"\$*\" >> '$DSP/run/taskset.call'; }"
+DSP_PID=4242
+export DSP_PID
+dspfn() { # PIN funzione
+	SWEETSPOT_SYSFS=$DSP/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c "$DSPSTUB
+. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; PIN=$1; LAYOUT_AUDIO=3; $2"
+}
+calls() { cat "$DSP/run/$1.call" 2>/dev/null | tr '\n' '|' | sed 's/|$//'; }
+dspfn 1 pin_dsp
+expect "senza correzione CamillaDSP non si tocca" "" "$(calls chrt)$(calls taskset)"
+touch "$DSP/run/correzione.attiva"
+dspfn 1 pin_dsp
+expect "CamillaDSP: SCHED_FIFO 70 sui thread non ancora real-time" "-f -p 70 4242" "$(calls chrt)"
+expect "CamillaDSP: tutti i thread sul core della riproduzione" "-p -c 3 4242|-p -c 3 4243" "$(calls taskset)"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
+dspfn 0 pin_dsp
+expect "core non isolati: real-time senza spostare i thread" "-f -p 70 4242|" "$(calls chrt)|$(calls taskset)"
+expect "registro: una riga per processo CamillaDSP" "1" "$(grep -c 'CamillaDSP 4242, thread audio in real-time' "$DSP/log")"
+# CamillaDSP con la nostra patch (thread "Processing"): solo i thread audio
+# sul core della riproduzione in real-time; principale, segnali e
+# websocket sui core di sistema con la priorita' normale. Un thread gia' a
+# posto (core e politica) non si tocca.
+for t in 4242 4243 4244 4245 4246; do mkdir -p "$DSP/proc/4242/task/$t"; done
+echo camilladsp > "$DSP/proc/4242/task/4242/comm"
+echo Processing > "$DSP/proc/4242/task/4243/comm"
+echo FileCapture > "$DSP/proc/4242/task/4244/comm"
+echo AlsaPlayback > "$DSP/proc/4242/task/4245/comm"
+echo camilladsp > "$DSP/proc/4242/task/4246/comm"
+dspstat 4242 80 1 > "$DSP/proc/4242/task/4242/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4242/status"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4243/status"
+dspstat 4244 80 1 > "$DSP/proc/4242/task/4244/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4244/status"
+dspstat 4245 80 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4245/status"
+dspstat 4246 0 0 > "$DSP/proc/4242/task/4246/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4246/status"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
+dspfn 1 "HK=0,1; pin_dsp"
+expect "thread audio: in real-time sul core audio, solo chi non lo e' gia'" \
+	"-f -p 70 4244|-f -p 70 4245|-p -c 3 4245" \
+	"$(grep -- '424[345]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[345]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
+expect "thread non audio: sui core di sistema con la priorita' normale, solo chi non lo e' gia'" \
+	"-o -p 0 4242|-p -c 0,1 4242" \
+	"$(grep -- '424[26]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[26]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
+rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
+echo PRIORITA_DSP=99 > "$DSP/run/sweetspot.conf"
+expect "priorita' DSP limitata a 98" "98" "$(dspfn 1 dsp_priority)"
+echo PRIORITA_DSP=alta > "$DSP/run/sweetspot.conf"
+expect "priorita' DSP non numerica: 70" "70" "$(dspfn 1 dsp_priority)"
+rm -f "$DSP/run/sweetspot.conf"
+dspcheck() {
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" | grep '^[A-Z]*|CamillaDSP in real-time|'
+}
+printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/status"
+for f in mounts meminfo cpuinfo cmdline; do [ -e "$WEB/proc/$f" ] && cp "$WEB/proc/$f" "$DSP/proc/$f"; done
+grep -q '^MemTotal:' "$DSP/proc/meminfo" 2>/dev/null || printf 'MemTotal:       16303112 kB\n' >> "$DSP/proc/meminfo"
+[ -e "$DSP/proc/mounts" ] || : > "$DSP/proc/mounts"
+expect "verifica: un thread non audio ancora in real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|3 thread audio a priorita' 70 80, ma 1 thread non audio ancora in real-time: si sistemano entro pochi secondi" "$(dspcheck)"
+dspstat 4242 0 0 > "$DSP/proc/4242/task/4242/stat"
+dspstat 4244 70 1 > "$DSP/proc/4242/task/4244/stat"
+dspstat 4245 70 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4245/status"
+expect "verifica: thread audio in real-time sul core audio, gli altri sui core di sistema" \
+	"OK|CamillaDSP in real-time|3 thread audio a priorita' 70 sul core 3, gli altri sui core di sistema" "$(dspcheck)"
+dspstat 4244 0 0 > "$DSP/proc/4242/task/4244/stat"
+expect "verifica: un thread audio non real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|2 di 3 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
+# CamillaDSP senza la patch (nessun thread "Processing"): tutti i thread contano.
+rm -rf "$DSP/proc/4242/task/4243" "$DSP/proc/4242/task/4244" "$DSP/proc/4242/task/4245" "$DSP/proc/4242/task/4246"
+mkdir -p "$DSP/proc/4242/task/4243"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"
+rm -f "$DSP/proc/4242/task/4242/comm"
+expect "verifica senza la patch: un thread non real-time e' un avviso" \
+	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
+dspstat 4242 70 1 > "$DSP/proc/4242/task/4242/stat"
+expect "verifica senza la patch: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread audio a priorita' 70 sul core 3" "$(dspcheck)"
+expect "verifica: CamillaDSP parte con il primo brano" \
+	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
+
+echo "Altri DAC (zone)"
+# DAC principale (scheda 1), un secondo DAC (2) e un microfono USB (3, solo ingresso).
+mkdir -p "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3"
+echo R26 > "$DSP/proc/asound/card1/id"; echo 292b:0a26 > "$DSP/proc/asound/card1/usbid"
+echo Zona > "$DSP/proc/asound/card2/id"; echo 1234:5678 > "$DSP/proc/asound/card2/usbid"
+echo UMIK > "$DSP/proc/asound/card3/id"; echo 2752:0007 > "$DSP/proc/asound/card3/usbid"
+printf '01-00: USB Audio : USB Audio : playback 1\n02-00: USB Audio : USB Audio : playback 1\n03-00: USB Audio : USB Audio : capture 1\n' > "$DSP/proc/asound/pcm"
+printf ' 1 [R26            ]: USB-Audio - R26\n 2 [Zona           ]: USB-Audio - Zona DAC\n 3 [UMIK           ]: USB-Audio - UMIK-1\n' > "$DSP/proc/asound/cards"
+rm -f "$DSP/run/taskset.call"; rm -rf "$DSP/run/zone"
+echo ALTRI_DAC=no > "$DSP/run/sweetspot.conf"
+dspfn 1 "HK=0; zones_sync 1"
+expect "zone spente di serie: nessun altro player" "" "$(calls taskset)"
+echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
+dspfn 1 "HK=0; zones_sync 1"
+zcall=$(calls taskset)
+case "$zcall" in "-c 0 squeezelite -o hw:CARD=Zona,DEV=0 "*"-n Sweetspot - Zona DAC -M Sweetspot -m 02:"*"-p 75 "*"-s 127.0.0.1"*) ok "zona: Squeezelite sul secondo DAC, sui core di sistema" ;; *) ko "zona avviata" "squeezelite su Zona" "$zcall" ;; esac
+case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "solo Zona" "$zcall" ;; *) ok "zona: niente microfono ne' DAC principale" ;; esac
+expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
+expect "zona: MAC stabile e locale" "1|02" \
+	"$([ "$(dspfn 1 'zone_mac 2')" = "$(dspfn 1 'zone_mac 2')" ] && echo 1)|$(dspfn 1 'zone_mac 2' | cut -c1-2)"
+sleep 300 & zpid=$!
+echo "$zpid Zona" > "$DSP/run/zone/2"
+expect "stato: zona attiva" "OK|Altri DAC (zone)|un player in Lyrion per Zona; si raggruppano da Lyrion" \
+	"$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Altri DAC')"
+rm -rf "$DSP/proc/asound/card2"
+dspfn 1 "HK=0; zones_sync 1"
+expect "DAC della zona staccato: player fermato" "no|no" \
+	"$([ -f "$DSP/run/zone/2" ] && echo si || echo no)|$(kill -0 "$zpid" 2>/dev/null && echo si || echo no)"
+# DAC principale staccato con una zona attiva: il player principale lo
+# aspetta, non passa alla zona (che continua), e al ritorno riprende lui.
+mkdir -p "$DSP/proc/asound/card2"; echo Zona > "$DSP/proc/asound/card2/id"; echo 1234:5678 > "$DSP/proc/asound/card2/usbid"
+rm -f "$DSP/run/dac.principale"
+expect "DAC=auto senza zone: il primo DAC USB" "1" "$(dspfn 1 'dac_find')"
+dspfn 1 'remember_main_dac 1'
+expect "DAC principale annotato: identificativo USB e numero di serie" "292b:0a26 " "$(cat "$DSP/run/dac.principale")"
+sleep 300 & zpid=$!
+echo "$zpid Zona" > "$DSP/run/zone/2"
+expect "con il DAC principale la zona non e' mai il principale" "1" "$(dspfn 1 'dac_find')"
+mv "$DSP/proc/asound/card1" "$DSP/proc/asound/card1.via"
+expect "DAC principale staccato: il player lo aspetta, non passa alla zona" "" "$(dspfn 1 'dac_find')"
+dspfn 1 "HK=0; zones_sync ''"
+expect "senza DAC principale la zona continua" "si|Zona" "$(kill -0 "$zpid" 2>/dev/null && echo si || echo no)|$(cut -d' ' -f2 "$DSP/run/zone/2")"
+mv "$DSP/proc/asound/card1.via" "$DSP/proc/asound/card1"
+rm -f "$DSP/run/taskset.call"
+dspfn 1 "HK=0; zones_sync ''"
+expect "il DAC principale tornato non diventa una zona" "no|" "$([ -f "$DSP/run/zone/1" ] && echo si || echo no)|$(calls taskset)"
+expect "DAC principale tornato: riprende lui" "1" "$(dspfn 1 'dac_find')"
+# Con ALTRI_DAC=no il DAC principale resta il primo trovato, come prima.
+echo ALTRI_DAC=no > "$DSP/run/sweetspot.conf"
+mv "$DSP/proc/asound/card1" "$DSP/proc/asound/card1.via"
+expect "senza zone, DAC staccato: si passa all'altro DAC" "2" "$(dspfn 1 'dac_find')"
+mv "$DSP/proc/asound/card1.via" "$DSP/proc/asound/card1"
+echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
+# Due DAC uguali: il numero di serie USB li distingue (identita' e MAC).
+mkdir -p "$DSP/proc/asound/card4" "$DSP/sys/class/sound/card1" "$DSP/sys/class/sound/card4" \
+	"$DSP/sys/devices/usb1/1-2/1-2:1.0" "$DSP/sys/devices/usb1/1-3/1-3:1.0"
+echo R26_1 > "$DSP/proc/asound/card4/id"; echo 292b:0a26 > "$DSP/proc/asound/card4/usbid"
+printf '01-00: USB Audio : USB Audio : playback 1\n02-00: USB Audio : USB Audio : playback 1\n03-00: USB Audio : USB Audio : capture 1\n04-00: USB Audio : USB Audio : playback 1\n' > "$DSP/proc/asound/pcm"
+printf ' 1 [R26            ]: USB-Audio - R26\n 2 [Zona           ]: USB-Audio - Zona DAC\n 3 [UMIK           ]: USB-Audio - UMIK-1\n 4 [R26_1          ]: USB-Audio - R26\n' > "$DSP/proc/asound/cards"
+ln -sfn "../../../devices/usb1/1-2/1-2:1.0" "$DSP/sys/class/sound/card1/device"
+ln -sfn "../../../devices/usb1/1-3/1-3:1.0" "$DSP/sys/class/sound/card4/device"
+echo AAA111 > "$DSP/sys/devices/usb1/1-2/serial"; echo BBB222 > "$DSP/sys/devices/usb1/1-3/serial"
+dspfn 1 'remember_main_dac 1'
+expect "due DAC uguali: il principale e' quello con il suo numero di serie" "292b:0a26 AAA111|2 4" \
+	"$(cat "$DSP/run/dac.principale")|$(dspfn 1 'other_dacs 1' | tr '\n' ' ' | sed 's/ $//')"
+expect "due DAC uguali: MAC diversi per le zone" "diversi" "$([ "$(dspfn 1 'zone_mac 1')" != "$(dspfn 1 'zone_mac 4')" ] && echo diversi)"
+# Ricollegamento rapido: stesso indice e stesso id ALSA, ma il kernel assegna
+# un nuovo devnum al dispositivo USB; l'istanza del DAC cambia.
+echo 1 > "$DSP/sys/devices/usb1/1-2/busnum"; echo 5 > "$DSP/sys/devices/usb1/1-2/devnum"
+expect "istanza del DAC USB: id, busnum e devnum" "R26 1:5" "$(dspfn 1 'dac_instance 1')"
+echo 6 > "$DSP/sys/devices/usb1/1-2/devnum"
+expect "ricollegamento rapido (stesso id): l'istanza cambia" "R26 1:6" "$(dspfn 1 'dac_instance 1')"
+expect "l'identita' del DAC principale non cambia col devnum" "292b:0a26 AAA111" "$(dspfn 1 'dac_identity 1')"
+mkdir -p "$DSP/proc/asound/card5"; echo I2S > "$DSP/proc/asound/card5/id"
+expect "scheda senza USB (I2S): l'istanza e' il solo id" "I2S" "$(dspfn 1 'dac_instance 5')"
+rm -rf "$DSP/proc/asound/card5"
+
+echo "Supervisore: backoff dei riavvii"
+expect "backoff: primo errore subito dopo l'avvio" "2" "$(dspfn 1 'backoff_next 0 1')"
+expect "backoff: raddoppia fino a 60 s" "4|8|16|32|60|60" \
+	"$(dspfn 1 'backoff_next 2 1; backoff_next 4 1; backoff_next 8 1; backoff_next 16 1; backoff_next 32 1; backoff_next 60 1' | tr '\n' '|' | sed 's/|$//')"
+expect "backoff: azzerato dopo un funzionamento stabile" "0" "$(dspfn 1 'backoff_next 60 30')"
+kill "$zpid" 2>/dev/null
+rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3" "$DSP/proc/asound/card4" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone" "$DSP/sys" "$DSP/run/dac.principale"
+rm -f "$DSP/run/sweetspot.conf"
+
+echo "Contatori live della sessione"
+irqs() { # conteggi dei core 2 e 3: IRQ16 IRQ29 LOC
+	printf '           CPU0       CPU1       CPU2       CPU3\n'
+	printf '  0:         10          0          0          0   IO-APIC   2-edge      timer\n'
+	printf ' 16:        100          0 %10s %10s   IO-APIC  16-fasteoi   ehci_hcd:usb1\n' "$1" "$1"
+	printf ' 29:          0          0 %10s %10s   PCI-MSI 327680-edge      xhci_hcd\n' "$2" "$2"
+	printf 'NMI:          0          0          0          0   Non-maskable interrupts\n'
+	printf 'LOC:       1000        900 %10s %10s   Local timer interrupts\n' "$3" "$3"
+	printf 'ERR:          0\n'
+}
+irqs 0 7000 700 > "$DSP/proc/interrupts"
+expect "interruzioni: colonna del core, nome del driver" \
+	"0 0 timer|16 0 ehci_hcd:usb1|29 7000 xhci_hcd|NMI 0 |LOC 700 " \
+	"$(dspfn 1 'irq_cpu_counts 3' | tr '\n' '|' | sed 's/|$//')"
+printf '[12:00:00] _output_frames:123 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
+expect "sessione: posizione nel registro di Squeezelite" "35|3" \
+	"$(sed -n 's/^sqlog=//p' "$DSP/run/sessione")|$(sed -n 's/^core=//p' "$DSP/run/sessione")"
+expect "sessione: interruzioni del core all'inizio" "29 7000 xhci_hcd" "$(grep '^29 ' "$DSP/run/sessione.irq")"
+# Rotazione del registro di Squeezelite (copytruncate) senza perdere eventi.
+rm -f "$DSP/run/xrun.totale" "$DSP/run/sessione.xrun"
+printf '[12:00:00] _output_frames:1 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
+printf '[12:00:01] _output_frames:2 XRUN\n[12:00:02] _output_frames:3 XRUN\n[12:00:03] _output_frames:4 XRUN recover failed: -32\n' >> "$DSP/squeezelite.log"
+awk 'BEGIN { for (i = 0; i < 30; i++) printf "[12:01:00] stream:%d riga di riempimento per superare la soglia di un kilobyte\n", i }' >> "$DSP/squeezelite.log"
+echo "LOG_SQUEEZELITE_KB=1" > "$DSP/run/sweetspot.conf"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; sqlog_rotate \$SQLOG"
+expect "rotazione: registro troncato in place" "0" "$(wc -c < "$DSP/squeezelite.log" | tr -d ' ')"
+expect "rotazione: totale salvato (eventi recuperi)" "3 1" "$(cat "$DSP/run/xrun.totale")"
+expect "rotazione: contatori della sessione" "2 1" "$(cat "$DSP/run/sessione.xrun")"
+expect "rotazione: posizione della sessione azzerata" "0" "$(sed -n 's/^sqlog=//p' "$DSP/run/sessione")"
+printf '[12:02:00] _output_frames:5 XRUN\n' >> "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; sqlog_rotate \$SQLOG"
+expect "rotazione: sotto soglia non ruota" "1" "$(wc -l < "$DSP/squeezelite.log" | tr -d ' ')"
+expect "rotazione: storico = contatori + registro" "4 1" "$(dspfn 1 "xrun_total $DSP/squeezelite.log")"
+# Ripristina lo stato che i test seguenti si aspettano.
+rm -f "$DSP/run/sweetspot.conf" "$DSP/run/xrun.totale" "$DSP/run/sessione.xrun"
+printf '[12:00:00] _output_frames:123 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
+mkdir -p "$DSP/bin"
+printf '#!/bin/sh\n[ -s "%s" ] || exit 1\nprintf '"'"'{"GetClippedSamples":{"result":"Ok","value":%%s}}\\n'"'"' "$(cat "%s")"\n' \
+	"$DSP/run/camilla.valore" "$DSP/run/camilla.valore" > "$DSP/bin/sweetspot-camilla"
+chmod +x "$DSP/bin/sweetspot-camilla"
+clip() { echo "$1" > "$DSP/run/camilla.valore"; dspfn 1 "PATH=$DSP/bin:\$PATH; dsp_clip_poll"; cat "$DSP/run/dsp.clip" 2>/dev/null; }
+expect "clipping: primo valore del processo" "4242 10 10" "$(clip 10)"
+expect "clipping: cresce con il processo" "4242 25 25" "$(clip 25)"
+expect "clipping: nuovo processo, si somma da zero" "5000 3 28" "$(DSP_PID=5000 clip 3)"
+expect "clipping: contatore ripartito nello stesso processo" "5000 1 29" "$(DSP_PID=5000 clip 1)"
+: > "$DSP/run/camilla.valore"
+expect "clipping: CamillaDSP che non risponde non cambia il totale" "5000 1 29" "$(DSP_PID=5000 clip '')"
+livecheck() { # voce
+	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$DSP/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" | grep "^[A-Z]*|$1|"
+}
+expect "stato: campioni tagliati nella sessione" \
+	"ATTENZIONE|Clipping di CamillaDSP|29 campioni tagliati nella sessione: l'attenuazione automatica non basta, riduci in REW i filtri che alzano il livello" \
+	"$(livecheck 'Clipping di CamillaDSP')"
+echo "5000 0 0" > "$DSP/run/dsp.clip"
+expect "stato: nessun campione tagliato" "OK|Clipping di CamillaDSP|nessun campione tagliato nella sessione" "$(livecheck 'Clipping di CamillaDSP')"
+# Sessione iniziata due minuti fa; nel registro un XRUN prima e uno dopo.
+sed -i "s/^inizio=.*/inizio=$(( $(date +%s) - 150 ))/" "$DSP/run/sessione"
+expect "stato: XRUN prima della sessione esclusi" "OK|XRUN nella sessione|nessuno in 2 minuti" "$(livecheck 'XRUN nella sessione')"
+expect "stato: lo storico diventa informazione" "INFO|XRUN ALSA registrati|1 nel registro storico; non misura il jitter del clock" "$(livecheck 'XRUN ALSA registrati')"
+printf '[12:05:00] _output_frames:123 XRUN\n[12:05:01] output_thread:123 XRUN recover failed: Broken pipe\n' >> "$DSP/squeezelite.log"
+expect "stato: XRUN della sessione" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 1)" "$(livecheck 'XRUN nella sessione')"
+printf 'XRUN\n' > "$DSP/squeezelite.log"
+expect "stato: registro ricominciato, conta tutto" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 0)" "$(livecheck 'XRUN nella sessione')"
+expect "stato: nessuna interruzione di dispositivi" "OK|Interruzioni sul core audio|nessuna da dispositivi in 2 minuti sul core 3" \
+	"$(livecheck 'Interruzioni sul core audio')"
+irqs 2 7600 12700 > "$DSP/proc/interrupts"
+# Di nuovo due minuti e mezzo: le verifiche precedenti richiedono tempo.
+sed -i "s/^inizio=.*/inizio=$(( $(date +%s) - 150 ))/" "$DSP/run/sessione"
+# Nel /sys finto il core 3 riceve anche le interruzioni USB: e' voluto.
+expect "stato: interruzioni USB sul core condiviso" \
+	"INFO|Interruzioni sul core audio|IRQ 16 (ehci_hcd:usb1) 2, IRQ 29 (xhci_hcd) 600 in 2 minuti (un solo core: USB e riproduzione lo condividono)" \
+	"$(livecheck 'Interruzioni sul core audio')"
+expect "stato: interruzioni di sistema al secondo" "INFO|Interruzioni di sistema sul core audio|100 al secondo (timer e chiamate fra core)" \
+	"$(livecheck 'Interruzioni di sistema sul core audio')"
+irqs 0 7000 700 > "$DSP/proc/interrupts"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; LAYOUT_AUDIO=2; session_start"
+sed -i "s/^inizio=.*/inizio=$(( $(date +%s) - 150 ))/" "$DSP/run/sessione"
+irqs 2 7600 12700 > "$DSP/proc/interrupts"
+expect "stato: interruzioni di dispositivi sul core isolato" \
+	"ATTENZIONE|Interruzioni sul core audio|IRQ 16 (ehci_hcd:usb1) 2, IRQ 29 (xhci_hcd) 600 in 2 minuti sul core 2, che dovrebbe restare libero" \
+	"$(livecheck 'Interruzioni sul core audio')"
+expect "stato: latenza non misurata per scelta" \
+	"INFO|Latenza durante l'ascolto|non misurata: LATENZA_ASCOLTO=si la misura, sweetspot-latenza a riproduzione ferma" \
+	"$(livecheck "Latenza durante l'ascolto")"
+mkdir -p "$DSP/proc/asound/card0/pcm0p/sub0"
+printf 'state: RUNNING\n' > "$DSP/proc/asound/card0/pcm0p/sub0/status"
+# Tre finestre di misura, poi il player "sparisce" e la sorveglianza si ferma.
+LATSTUB="cyclictest() { n=\$(( \$(cat '$DSP/run/finestre' 2>/dev/null || echo 0) + 1 )); echo \$n > '$DSP/run/finestre'
+	case \$n in 1) m=50 ;; 2) m=120 ;; *) m=30 ;; esac
+	echo \"T: 0 (  1) P:85 I:10000 C:   3000 Min:      2 Act:    5 Avg:    4 Max:     \$m\"; }
+kill() { [ \"\$(cat '$DSP/run/finestre' 2>/dev/null)\" != 3 ]; }"
+SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	$TEST_SH -c "$LATSTUB
+set -- --ascolto 3; . $OVERLAY/usr/bin/sweetspot-latenza"
+expect "latenza in ascolto: massima, finestre, ultima" "120 3 30" "$(cat "$DSP/run/latenza.ascolto")"
+expect "stato: latenza durante l'ascolto" "OK|Latenza durante l'ascolto|massima 120 us in 3 finestre di 30 s (ultima 30 us)" \
+	"$(livecheck "Latenza durante l'ascolto")"
+echo "400 4 400" > "$DSP/run/latenza.ascolto"
+expect "stato: latenza alta durante l'ascolto" \
+	"ATTENZIONE|Latenza durante l'ascolto|massima 400 us in 4 finestre di 30 s (ultima 400 us): prova il profilo 'prestazioni' e le impostazioni del BIOS" \
+	"$(livecheck "Latenza durante l'ascolto")"
+
+echo "Silenzio elettrico"
+Q=$WORK/quiet
+qreset() {
+	rm -rf "$Q"
+	mkdir -p "$Q/run" "$Q/proc" "$Q/sys/devices/system/cpu" "$Q/sys/devices/virtual/workqueue" \
+		"$Q/sys/bus/workqueue/devices/writeback" "$Q/sys/bus/usb/devices/usb1"
+	echo "BOOT_IMAGE=/bzImage quiet" > "$Q/proc/cmdline"
+	printf 'MemTotal:       16303112 kB\nMemAvailable:   15000000 kB\n' > "$Q/proc/meminfo"
+	: > "$Q/proc/mounts"
+	echo 0-3 > "$Q/sys/devices/system/cpu/online"
+	echo 2-3 > "$Q/sys/devices/system/cpu/isolated"
+	echo f > "$Q/sys/devices/virtual/workqueue/cpumask"
+	echo f > "$Q/sys/bus/workqueue/devices/writeback/cpumask"
+	for l in input3::capslock tpacpi::power phy0-led; do
+		mkdir -p "$Q/sys/class/leds/$l"
+		echo 1 > "$Q/sys/class/leds/$l/brightness"
+		echo "none [default-on]" > "$Q/sys/class/leds/$l/trigger"
+	done
+	# webcam, DAC, Bluetooth, webcam con microfono, periferica senza interfacce
+	for d in "1-1 Webcam 0e 0e" "1-2 DAC 01 01" "1-3 Bluetooth e0 e0" "1-4 Camera 0e 01" "1-5 Vuota"; do
+		set -- $d
+		mkdir -p "$Q/sys/bus/usb/devices/$1/power"
+		echo 1 > "$Q/sys/bus/usb/devices/$1/authorized"
+		echo on > "$Q/sys/bus/usb/devices/$1/power/control"
+		echo "$2" > "$Q/sys/bus/usb/devices/$1/product"
+		dev=$1; shift 2; n=0
+		for c in "$@"; do
+			mkdir -p "$Q/sys/bus/usb/devices/$dev:1.$n"
+			echo "$c" > "$Q/sys/bus/usb/devices/$dev:1.$n/bInterfaceClass"
+			n=$((n + 1))
+		done
+		printf ' %s\n' "$n" > "$Q/sys/bus/usb/devices/$dev/bNumInterfaces"
+	done
+	# PCI: video integrato (console), GPU discreta dietro un ponte, audio
+	# integrato, controller USB, rete con cavo, Wi-Fi e rete senza cavo
+	# ciascuna dietro il proprio ponte.
+	mkdir -p "$Q/sys/bus/pci/devices"
+	for p in "00:01.0 0x060400" "00:01.0/0000:01:00.0 0x030200" "00:02.0 0x030000 vga" "00:14.0 0x0c0330" \
+		"00:1b.0 0x040300" "00:1c.0 0x060400" "00:1c.0/0000:02:00.0 0x020000 enp2s0 1" \
+		"00:1c.1 0x060400" "00:1c.1/0000:03:00.0 0x028000" "00:1c.2 0x060400" "00:1c.2/0000:04:00.0 0x020000 enp4s0 0"; do
+		set -- $p
+		d=$Q/sys/devices/pci0000:00/0000:$1
+		mkdir -p "$d/power"
+		echo "$2" > "$d/class"
+		echo on > "$d/power/control"
+		echo active > "$d/power/runtime_status"
+		[ "${3:-}" = vga ] && echo 1 > "$d/boot_vga"
+		if [ -n "${4:-}" ]; then
+			# Interfaccia gia' su (flags con IFF_UP), con o senza cavo.
+			mkdir -p "$d/net/$3" "$Q/sys/class/net"
+			echo "$4" > "$d/net/$3/carrier"
+			echo 0x1003 > "$d/net/$3/flags"
+			echo 1 > "$d/net/$3/type"
+			mkdir -p "$d/net/$3/device"
+			ln -sfn "$d/net/$3" "$Q/sys/class/net/$3"
+		fi
+		ln -s "$d" "$Q/sys/bus/pci/devices/${d##*/}"
+	done
+}
+pcistate() { for b in 00:01.0 00:01.0/0000:01:00.0 00:02.0 00:14.0 00:1b.0 00:1c.0 00:1c.0/0000:02:00.0 00:1c.1 00:1c.1/0000:03:00.0 00:1c.2 00:1c.2/0000:04:00.0; do
+	printf '%s ' "$(cat "$Q/sys/devices/pci0000:00/0000:$b/power/control")"; done; }
+quiet() { # [comando]
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SILENZIO_ATTESA=0 \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-silenzio" "${1:-applica}"
+}
+usbstate() { for d in 1-1 1-2 1-3 1-4 1-5; do printf '%s ' "$(cat "$Q/sys/bus/usb/devices/$d/authorized")$(cat "$Q/sys/bus/usb/devices/$d/power/control")"; done; }
+qreset
+quiet
+expect "LED: spenti senza trigger, la tastiera resta" "1 0 0|none none" \
+	"$(cat "$Q/sys/class/leds/input3::capslock/brightness" "$Q/sys/class/leds/tpacpi::power/brightness" "$Q/sys/class/leds/phy0-led/brightness" | tr '\n' ' ' | sed 's/ $//')|$(cat "$Q/sys/class/leds/tpacpi::power/trigger" "$Q/sys/class/leds/phy0-led/trigger" | tr '\n' ' ' | sed 's/ $//')"
+expect "USB: webcam e Bluetooth scollegate, DAC e periferiche miste intatte" "0auto 1on 0auto 1on 1on " "$(usbstate)"
+expect "workqueue solo sui core di sistema" "3 3" \
+	"$(cat "$Q/sys/devices/virtual/workqueue/cpumask" "$Q/sys/bus/workqueue/devices/writeback/cpumask" | tr '\n' ' ' | sed 's/ $//')"
+expect "registro: periferiche scollegate per nome" "2" "$(grep -c 'silenzio: USB 1-[13] (\(Webcam\|Bluetooth\)) scollegata' "$Q/log")"
+expect "PCI: a riposo GPU discreta, audio integrato, Wi-Fi e i loro ponti; console, USB e schede di rete (ancora da decidere) intatte" \
+	"auto auto on on auto on on auto auto on on " "$(pcistate)"
+# Le schede di rete si decidono a rete su (S40sweetspot-net): solo quelle
+# attive e senza cavo; una scheda ancora giu' non si tocca.
+echo 0x1002 > "$Q/sys/devices/pci0000:00/0000:00:1c.2/0000:04:00.0/net/enp4s0/flags"
+quiet rete
+expect "rete: scheda senza cavo ma non ancora attivata: lasciata stare" "on on " \
+	"$(cat "$Q/sys/devices/pci0000:00/0000:00:1c.2/power/control") $(cat "$Q/sys/devices/pci0000:00/0000:00:1c.2/0000:04:00.0/power/control") "
+echo 0x1003 > "$Q/sys/devices/pci0000:00/0000:00:1c.2/0000:04:00.0/net/enp4s0/flags"
+quiet rete
+expect "rete: a riposo la scheda attiva senza cavo e il suo ponte, la scheda con il cavo resta" \
+	"auto auto on on auto on on auto auto auto auto " "$(pcistate)"
+expect "PCI: elenco per la pagina Stato" \
+	"0000:00:1b.0|audio integrato 0000:01:00.0|scheda video secondaria 0000:03:00.0|Wi-Fi 0000:04:00.0|scheda di rete senza cavo" \
+	"$(tr '\n' ' ' < "$Q/run/silenzio.pci" | sed 's/ $//')"
+# Periferiche collegate dopo l'avvio (regola udev, un evento per interfaccia).
+usbplug() { # periferica prodotto classi...
+	local dev=$1 n=0
+	mkdir -p "$Q/sys/bus/usb/devices/$dev/power"
+	echo 1 > "$Q/sys/bus/usb/devices/$dev/authorized"
+	echo on > "$Q/sys/bus/usb/devices/$dev/power/control"
+	echo "$2" > "$Q/sys/bus/usb/devices/$dev/product"
+	shift 2
+	for c in "$@"; do
+		mkdir -p "$Q/sys/bus/usb/devices/$dev:1.$n"
+		echo "$c" > "$Q/sys/bus/usb/devices/$dev:1.$n/bInterfaceClass"
+		n=$((n + 1))
+	done
+	printf ' %s\n' "$n" > "$Q/sys/bus/usb/devices/$dev/bNumInterfaces"
+}
+plugevent() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-silenzio" usb "/devices/pci0000:00/0000:00:14.0/usb1/$1/$1:1.0"
+}
+usbplug 1-7 Webcam 0e
+usbplug 1-8 "Webcam con microfono" 0e 01
+plugevent 1-7; plugevent 1-8
+expect "USB collegate dopo: webcam scollegata, webcam con microfono intatta" "0auto 1on" \
+	"$(cat "$Q/sys/bus/usb/devices/1-7/authorized")$(cat "$Q/sys/bus/usb/devices/1-7/power/control") $(cat "$Q/sys/bus/usb/devices/1-8/authorized")$(cat "$Q/sys/bus/usb/devices/1-8/power/control")"
+qcheck() { # voce
+	SWEETSPOT_NOW=${QNOW:-} SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep "^[A-Z]*|$1|"
+}
+expect "stato: LED spenti" "OK|LED|spenti (tranne quelli della tastiera)" "$(qcheck LED)"
+expect "stato: USB scollegate, anche quelle collegate dopo" "OK|USB inutilizzate|scollegate dai driver: Webcam, Bluetooth, Webcam" "$(qcheck 'USB inutilizzate')"
+expect "stato: workqueue sui core di sistema" "OK|Lavoro differito del kernel|workqueue solo sui core di sistema 0,1" \
+	"$(qcheck 'Lavoro differito del kernel')"
+mkdir -p "$Q/sys/class/drm/card0-HDMI-A-1" "$Q/sys/class/backlight/intel_backlight"
+echo connected > "$Q/sys/class/drm/card0-HDMI-A-1/status"
+echo On > "$Q/sys/class/drm/card0-HDMI-A-1/dpms"
+echo 4 > "$Q/sys/class/backlight/intel_backlight/bl_power"
+expect "stato: schermo e retroilluminazione" \
+	"INFO|Schermo|HDMI-A-1 On, retroilluminazione spenta; si spegne dopo 2 minuti senza tasti (0 = mai)" "$(qcheck Schermo)"
+echo suspended > "$Q/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/power/runtime_status"
+expect "stato: PCI con lo stato reale" \
+	"INFO|PCI a riposo|audio integrato 0000:00:1b.0 attivo (active), scheda video secondaria 0000:01:00.0 a riposo, Wi-Fi 0000:03:00.0 attivo (active), scheda di rete senza cavo 0000:04:00.0 attivo (active); un dispositivo senza driver o che non lo supporta resta attivo" \
+	"$(qcheck 'PCI a riposo')"
+for b in 00:1b.0 00:1c.1/0000:03:00.0 00:1c.2/0000:04:00.0; do echo suspended > "$Q/sys/devices/pci0000:00/0000:$b/power/runtime_status"; done
+expect "stato: tutti i PCI a riposo" \
+	"OK|PCI a riposo|audio integrato 0000:00:1b.0 a riposo, scheda video secondaria 0000:01:00.0 a riposo, Wi-Fi 0000:03:00.0 a riposo, scheda di rete senza cavo 0000:04:00.0 a riposo" \
+	"$(qcheck 'PCI a riposo')"
+qreset
+expect "stato: workqueue anche sui core isolati" "ATTENZIONE|Lavoro differito del kernel|workqueue anche sui core isolati (maschera f)" \
+	"$(qcheck 'Lavoro differito del kernel')"
+expect "stato: LED accesi elencati" "INFO|LED|accesi: phy0-led tpacpi::power" "$(qcheck LED)"
+echo PERIFERICHE_INUTILIZZATE=accese > "$Q/run/sweetspot.conf"
+quiet; quiet rete
+expect "PERIFERICHE_INUTILIZZATE=accese: periferiche lasciate stare" "1on 1on 1on 1on 1on |on on on on on on on on on on on " "$(usbstate)|$(pcistate)"
+qreset
+echo OTTIMIZZAZIONI=no > "$Q/run/sweetspot.conf"
+quiet; quiet rete
+expect "ottimizzazioni spente: niente silenzio" "1on 1on 1on 1on 1on |on on on on on on on on on on on |1|f" \
+	"$(usbstate)|$(pcistate)|$(cat "$Q/sys/class/leds/phy0-led/brightness")|$(cat "$Q/sys/devices/virtual/workqueue/cpumask")"
+usbplug 1-7 Webcam 0e
+plugevent 1-7
+expect "ottimizzazioni spente: USB collegate dopo lasciate stare" "1on" \
+	"$(cat "$Q/sys/bus/usb/devices/1-7/authorized")$(cat "$Q/sys/bus/usb/devices/1-7/power/control")"
+qreset
+echo USCITA_INTEGRATA=si > "$Q/run/sweetspot.conf"
+echo WIFI_NOME=casa >> "$Q/run/sweetspot.conf"
+quiet
+expect "audio integrato scelto e Wi-Fi configurato: restano attivi" "on on" \
+	"$(cat "$Q/sys/devices/pci0000:00/0000:00:1b.0/power/control") $(cat "$Q/sys/devices/pci0000:00/0000:00:1c.1/0000:03:00.0/power/control")"
+
+echo "Watchdog e prova di durata"
+qreset
+expect "stato: watchdog non attivo" "ATTENZIONE|Watchdog|non attivo: un blocco totale richiede di spegnere a mano" "$(qcheck Watchdog)"
+mkdir -p "$Q/sys/class/watchdog/watchdog0"
+echo active > "$Q/sys/class/watchdog/watchdog0/state"
+echo "iTCO_wdt" > "$Q/sys/class/watchdog/watchdog0/identity"
+echo 60 > "$Q/sys/class/watchdog/watchdog0/timeout"
+qwd() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
+		$TEST_SH -c "pidof() { echo 99; }
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Watchdog|'
+}
+expect "stato: watchdog attivo e alimentato" "OK|Watchdog|iTCO_wdt: riavvio dopo 60 secondi di blocco totale" "$(qwd)"
+echo WATCHDOG=no > "$Q/run/sweetspot.conf"
+expect "stato: watchdog spento per scelta" "INFO|Watchdog|spento (WATCHDOG=no): un blocco totale richiede di spegnere a mano" "$(qwd)"
+# I moduli del watchdog hardware (iTCO_wdt, sp5100_tco) restano in
+# blacklist solo con WATCHDOG=no: con il watchdog acceso li carica S21.
+blacklist() { # impostazioni
+	printf '%s\n' "$1" > "$Q/run/sweetspot.conf"
+	mkdir -p "$Q/modprobe.d"
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_MODPROBE_D=$Q/modprobe.d SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/etc/init.d/S03sweetspot-early; write_blacklist"
+	grep -c 'blacklist \(iTCO_wdt\|sp5100_tco\)' "$Q/modprobe.d/sweetspot-run.conf"
+}
+expect "watchdog acceso: i moduli del chipset non sono in blacklist" "0|1" "$(blacklist '')|$(grep -c 'blacklist pcspkr' "$Q/modprobe.d/sweetspot-run.conf")"
+expect "watchdog spento: i moduli del chipset restano in blacklist" "2" "$(blacklist 'WATCHDOG=no')"
+# S21: tempo limitato al massimo del dispositivo (Raspberry Pi: 15 s),
+# riavvio precedente del watchdog segnalato.
+echo 15 > "$Q/sys/class/watchdog/watchdog0/max_timeout"
+echo 32 > "$Q/sys/class/watchdog/watchdog0/bootstatus"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/taskset.call"
+SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WATCHDOG_DEV=/dev/null \
+	$TEST_SH -c "modprobe() { echo \"\$*\" >> '$Q/run/modprobe.call'; }; udevadm() { :; }; taskset() { echo \"\$*\" >> '$Q/run/taskset.call'; }
+set -- start; . $OVERLAY/etc/init.d/S21sweetspot-watchdog" > /dev/null 2>&1
+expect "S21: tempo del watchdog limitato al massimo del dispositivo" "-c 0 chrt -f 5 watchdog -T 15 -t 5 /dev/null" "$(cat "$Q/run/taskset.call")"
+expect "S21: riavvio precedente del watchdog annotato" "32|1" "$(cat "$Q/run/watchdog.riavvio")|$(grep -c 'riavvio del watchdog (bootstatus 32)' "$Q/log")"
+rm -f "$Q/sys/class/watchdog/watchdog0/max_timeout" "$Q/sys/class/watchdog/watchdog0/bootstatus" "$Q/run/watchdog.riavvio" "$Q/run/taskset.call" "$Q/run/modprobe.call"
+echo VOLUME=dsp > "$Q/run/sweetspot.conf"
+echo dsp > "$Q/run/volume.modo"
+echo "50 -30.0 0" > "$Q/run/volume.dsp"
+expect "stato: volume a 64 bit in uso" \
+	"OK|Volume|a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati (ora 50, -30.0 dB); non e' bit-perfect, ma senza troncamenti" \
+	"$(qcheck Volume)"
+echo riserva > "$Q/run/volume.modo"
+expect "stato: volume a 64 bit non disponibile, riserva software" \
+	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither" \
+	"$(qcheck Volume)"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp"
+mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
+printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
+echo 777 > "$Q/run/squeezelite.pid"
+printf 'avvio\n' > "$Q/squeezelite.log"
+durata() {
+	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
+		SWEETSPOT_STICK_DIR=$Q/chiavetta SWEETSPOT_DURATA_SECONDI=2 \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-durata" 0 1 > /dev/null 2>&1
+}
+durata && rc=0 || rc=$?
+expect "durata: ascolto continuo riuscito" "0|Prova di durata: RIUSCITA" "$rc|$(head -n 1 "$Q/run/durata.txt")"
+expect "durata: esito copiato sulla chiavetta" "Prova di durata: RIUSCITA" "$(head -n 1 "$Q/chiavetta/durata.txt" 2>/dev/null)"
+expect "durata: una riga per misura con intestazione" "ora,in_riproduzione,pid_player,xrun,memoria_kb,temperatura" "$(head -n 1 "$Q/run/durata.csv")"
+printf 'state: XRUN\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
+durata && rc=0 || rc=$?
+expect "durata: uscita ferma, prova non riuscita" "1|Prova di durata: NON RIUSCITA|uscita in riproduzione: 0% delle misure (minimo 95%)" \
+	"$rc|$(head -n 1 "$Q/run/durata.txt")|$(grep '^uscita' "$Q/run/durata.txt")"
+
+echo "Modalita' ascolto"
+expect "stato: ascolto puro in attesa della musica" \
+	"OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): si attiva quando la musica suona" "$(qcheck Ascolto)"
+printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
+printf -- '-123\n-456\n' > "$Q/run/ascolto.fermi"
+expect "stato: lavori sospesi durante la musica" \
+	"OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): ora 2 lavori sospesi" "$(qcheck Ascolto)"
+echo PRECARICO=no > "$Q/run/sweetspot.conf"
+expect "stato: solo lavori sospesi" "OK|Ascolto|lavori di fondo sospesi durante la musica: ora 2 lavori sospesi" "$(qcheck Ascolto)"
+echo MODALITA_ASCOLTO=no > "$Q/run/sweetspot.conf"
+expect "stato: modalita' ascolto spenta" \
+	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
+
+echo "Modalita' ascolto: ripresa all'avvio e rallentamento con cgroup v2"
+ASC=$WORK/ascolto
+mkdir -p "$ASC/run/sospendibili" "$ASC/cg"
+# ascrun CGROUP_DIR COMANDI: kill e ionice finti scrivono in $ASC/calls, ps e
+# pgrep restituiscono processi finti (job con gruppo 700 = PID 701 e 702,
+# scanner = PID 800).
+ascrun() {
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_CGROUP=$1 $TEST_SH -c "
+		. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-ascolto
+		kill() { echo \"kill \$*\" >> $ASC/calls; }
+		ionice() { echo \"ionice \$*\" >> $ASC/calls; }
+		group_pids() { [ \"\$1\" = 700 ] && printf '701\n702\n'; }
+		scanner_pids() { echo 800; }
+		$2"
+}
+# a) all'avvio i processi elencati in ascolto.fermi ripartono (SIGCONT) prima
+# che l'elenco venga svuotato.
+printf -- '-700\n800\n' > "$ASC/run/ascolto.fermi"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "start_clean"
+expect "ascolto: all'avvio i sospesi ricevono SIGCONT" "kill -CONT -- -700|kill -CONT -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: all'avvio l'elenco dei sospesi e' vuoto" "0" "$(grep -c . "$ASC/run/ascolto.fermi")"
+# b) senza cgroup v2 si ripiega su SIGSTOP (comportamento di prima).
+echo 700 > "$ASC/run/sospendibili/copia"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "pause_work"
+expect "ascolto: senza cgroup si ripiega su SIGSTOP" "kill -STOP -- -700|kill -STOP -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: senza cgroup i sospesi sono annotati" "-700 800" "$(tr '\n' ' ' < "$ASC/run/ascolto.fermi" | sed 's/ $//')"
+ascrun "$ASC/nessuno" "pause_work; resume_work"
+# c) con cgroup v2 (cpu disponibile) niente SIGSTOP: limiti e ionice idle.
+: > "$ASC/run/ascolto.fermi"
+printf 'cpu io memory\n' > "$ASC/cg/cgroup.controllers"
+: > "$ASC/cg/cgroup.subtree_control"
+rm -f "$ASC/calls"
+ascrun "$ASC/cg" "pause_work"
+expect "ascolto: cgroup, limite di CPU" "5000 100000" "$(cat "$ASC/cg/sweetspot-ascolto/cpu.max")"
+expect "ascolto: cgroup, peso minimo" "1" "$(cat "$ASC/cg/sweetspot-ascolto/cpu.weight")"
+expect "ascolto: cgroup, controller cpu attivato" "+cpu" "$(cat "$ASC/cg/cgroup.subtree_control")"
+expect "ascolto: cgroup, processi del job e scanner spostati" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/sweetspot-ascolto/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: cgroup, ionice idle e nessun SIGSTOP" "ionice -c 3 -p 701|ionice -c 3 -p 702|ionice -c 3 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: cgroup, nessun sospeso e due lenti" "0|2" "$(grep -c . "$ASC/run/ascolto.fermi")|$(grep -c . "$ASC/run/ascolto.lenti")"
+expect "ascolto: stato conta i lavori rallentati" "OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): ora 2 lavori sospesi" \
+	"$(printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"; cp "$ASC/run/ascolto.lenti" "$Q/run/ascolto.lenti"; qcheck Ascolto; rm -f "$Q/run/ascolto.lenti")"
+# d) a fine ascolto i processi tornano nel gruppo radice, ionice normale.
+rm -f "$ASC/calls"
+ascrun "$ASC/cg" "resume_work"
+expect "ascolto: cgroup, a fine ascolto tornano nel gruppo radice" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: cgroup, ionice di nuovo normale" "ionice -c 2 -n 4 -p 701|ionice -c 2 -n 4 -p 702|ionice -c 2 -n 4 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: cgroup, elenco dei rallentati svuotato" "0" "$(grep -c . "$ASC/run/ascolto.lenti")"
+
+echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
+# Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
+# scheda di rete e lo.
+mkdir -p "$Q/sys/devices/virtual/block/sdb/queue" "$Q/sys/devices/virtual/block/sdb/sdb1" "$Q/sys/class/block" "$Q/sys/block/sdb" "$Q/proc/net"
+echo 1000000 > "$Q/sys/devices/virtual/block/sdb/size"
+ln -sfn "../../devices/virtual/block/sdb/sdb1" "$Q/sys/class/block/sdb1"
+printf 'Musica|sdb1|ext4|1G|ro|/media/Musica|\n' > "$Q/run/dischi.list"
+iostat() { # settori_letti byte_rx byte_tx
+	printf '100 0 %s 0 0 0 0 0 0 0 0\n' "$1" > "$Q/sys/block/sdb/stat"
+	printf 'Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  eth0: %s 10 0 0 0 0 0 0 %s 10 0 0 0 0 0 0\n' "$2" "$3" > "$Q/proc/net/dev"
+}
+ascfn() { # funzione
+	SWEETSPOT_NOW=${QNOW:-} SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-ascolto; $1"
+}
+iostat 20480 1000 2000
+expect "contatori: disco con la musica (intero) e rete senza lo" "disco sdb 20480|rete 3000" "$(ascfn io_counters | tr '\n' '|' | sed 's/|$//')"
+ascfn io_start
+expect "inizio dell'ascolto annotato" "1|disco sdb 20480|rete 3000" \
+	"$(grep -c '^inizio [0-9]' "$Q/run/ascolto.io")|$(grep '^disco' "$Q/run/ascolto.io")|$(grep '^rete' "$Q/run/ascolto.io")"
+# L'ascolto e' iniziato un minuto fa. Orologio fisso (SWEETSPOT_NOW): la
+# durata non dipende dal tempo reale impiegato dal test.
+QNOW=1700000060
+sed -i "s/^inizio .*/inizio $(( QNOW - 60 ))/" "$Q/run/ascolto.io"
+expect "stato: nessuna lettura e solo controllo durante l'ascolto in corso" \
+	"OK|Letture dal disco durante l'ascolto|nessuna durante l'ascolto in corso (1 min) da sdb: la musica suona dalla RAM|OK|Rete durante l'ascolto|0 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
+	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
+iostat $((20480 + 4096)) 1000 $((2000 + 30 * 1024))
+expect "stato: 2 MB letti dal disco e 30 KB di rete" \
+	"INFO|Letture dal disco durante l'ascolto|2 MB durante l'ascolto in corso (1 min) da sdb (precarico in corso, file oltre il budget o fuori dal precarico)|OK|Rete durante l'ascolto|30 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
+	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
+iostat $((20480 + 4096)) $((1000 + 5 * 1048576)) $((2000 + 30 * 1024))
+case "$(qcheck 'Rete durante l.ascolto')" in "INFO|Rete durante l'ascolto|5150 KB durante l'ascolto in corso (1 min) ("*" KB/s): streaming, cartelle di rete o precarico dalla rete") ok "stato: rete usata durante l'ascolto segnalata" ;; *) ko "stato rete ascolto" "INFO 5150 KB" "$(qcheck 'Rete durante l.ascolto')" ;; esac
+ascfn io_stop
+iostat $((20480 + 999999)) $((1000 + 9 * 1048576)) 2000
+expect "fine dell'ascolto: i contatori di arrivo restano, quelli dopo non contano" \
+	"1|fine_disco sdb 24576|INFO|Letture dal disco durante l'ascolto|2 MB nell'ultimo ascolto (1 min) da sdb (precarico in corso, file oltre il budget o fuori dal precarico)" \
+	"$(grep -c '^fine [0-9]' "$Q/run/ascolto.io")|$(grep '^fine_disco' "$Q/run/ascolto.io")|$(qcheck 'Letture dal disco durante l.ascolto')"
+ascfn io_stop
+expect "seconda fine: non si scrive due volte" "1" "$(grep -c '^fine [0-9]' "$Q/run/ascolto.io")"
+rm -f "$Q/run/ascolto.io" "$Q/run/dischi.list" "$Q/sys/block/sdb/stat"
+expect "senza ascolto registrato: nessuna voce" "" "$(qcheck 'Letture dal disco durante l.ascolto')$(qcheck 'Rete durante l.ascolto')"
+
+echo "Rapporto e matrice di compatibilita'"
+rm -rf "$Q/sys/class/net"
+mkdir -p "$Q/sys/class/dmi/id" "$Q/repbin" "$Q/sys/class/net/eth0/device" "$Q/drivers/r8169"
+echo ASUSTeK > "$Q/sys/class/dmi/id/sys_vendor"
+echo N550JV > "$Q/sys/class/dmi/id/product_name"
+echo 1 > "$Q/sys/class/net/eth0/carrier"
+ln -sfn "$Q/drivers/r8169" "$Q/sys/class/net/eth0/device/driver"
+printf '#!/bin/sh\nprintf "OK|Rete|indirizzo 192.168.1.20\\nINFO|Interfaccia|http://salotto.local/\\nOK|XRUN nella sessione|nessuno in 5 minuti\\nATTENZIONE|Turbo|attivo, vedi http://192.168.1.20/\\n"\n' > "$Q/repbin/sweetspot-check"
+chmod +x "$Q/repbin/sweetspot-check"
+rap=$(SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	$TEST_SH -c "PATH=$Q/repbin:\$PATH; . $OVERLAY/usr/bin/sweetspot-rapporto" 2>/dev/null)
+expect "rapporto: JSON con computer e rete" "1|ASUSTeK|N550JV|r8169 ethernet true" \
+	"$(printf '%s' "$rap" | jq -r '[.formato, .computer.produttore, .computer.modello, (.rete[0] | "\(.driver) \(.tipo) \(.collegata)")] | join("|")' 2>/dev/null)"
+expect "rapporto: senza indirizzi ne' voci di rete" "XRUN nella sessione|Turbo|attivo, vedi [indirizzo]" \
+	"$(printf '%s' "$rap" | jq -r '[.verifiche[].voce] + [.verifiche[-1].dettaglio] | join("|")' 2>/dev/null)"
+expect "rapporto: nessun 192.168 nel testo" "0" "$(printf '%s' "$rap" | grep -c '192\.168')"
+if command -v python3 > /dev/null; then
+	mkdir -p "$Q/matrice"
+	printf '%s\n' "$rap" > "$Q/matrice/prova.json"
+	python3 "$ROOT/tools/matrice-compatibilita.py" --rapporti "$Q/matrice" --pagina "$Q/matrice.md"
+	expect "matrice: una riga dal rapporto, avvisi contati" "1|1" \
+		"$(grep -c '^| .*ASUSTeK N550JV' "$Q/matrice.md")|$(grep '^| .*ASUSTeK' "$Q/matrice.md" | awk -F'|' '{gsub(/ /, "", $8); print $8}')"
+	expect "matrice: docs/compatibilita.md aggiornata" "0" \
+		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
+fi
+
+echo "Hotspot di configurazione Wi-Fi (primo avvio)"
+HS=$WORK/hotspot
+mkdir -p "$HS/bin"
+# Comandi finti: registrano le chiamate in $HS/calls; 'ip' mostra un indirizzo
+# sul Wi-Fi solo se esiste $HS/ipok; 'sleep' conta i giri e li lascia
+# comandare a $HS/onsleep (cosi' i test non aspettano e hanno una fine).
+cat > "$HS/bin/iw" <<'EOF'
+#!/bin/sh
+echo "iw $*" >> "$HS_DIR/calls"
+case "$*" in
+	"phy phy0 info") printf 'Wiphy phy0\n\tSupported interface modes:\n\t\t * IBSS\n\t\t * managed\n%s\n\t\t * monitor\n' "$(cat "$HS_DIR/apmode" 2>/dev/null)" ;;
+	"dev wlan0 scan") printf 'BSS aa:bb:cc:00:00:01(on wlan0)\n\tsignal: -40.00 dBm\n\tSSID: Casa Rossi\nBSS aa:bb:cc:00:00:02(on wlan0)\n\tsignal: -80.00 dBm\n\tSSID: Vicino\nBSS aa:bb:cc:00:00:03(on wlan0)\n\tsignal: -60.00 dBm\n\tSSID: \n' ;;
+esac
+EOF
+cat > "$HS/bin/ip" <<'EOF'
+#!/bin/sh
+echo "ip $*" >> "$HS_DIR/calls"
+case "$*" in
+	*show*wlan0*) [ -f "$HS_DIR/ipok" ] && echo "3: wlan0    inet 192.168.1.9/24 scope global wlan0" ;;
+esac
+exit 0
+EOF
+for c in hostapd udhcpd dnsd killall flock; do
+	printf '#!/bin/sh\necho "%s $*" >> "$HS_DIR/calls"\nexit 0\n' "$c" > "$HS/bin/$c"
+done
+cat > "$HS/bin/sleep" <<'EOF'
+#!/bin/sh
+n=$(cat "$HS_DIR/n" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$HS_DIR/n"
+[ -f "$HS_DIR/onsleep" ] && . "$HS_DIR/onsleep"
+exit 0
+EOF
+cat > "$HS/net-init" <<'EOF'
+#!/bin/sh
+echo "S40 $*" >> "$HS_DIR/calls"
+EOF
+chmod +x "$HS/bin/"* "$HS/net-init"
+
+# hs_env APMODE: computer finto con cavo scollegato e Wi-Fi spento (rfkill).
+hs_env() {
+	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console"
+	mkdir -p "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
+		"$HS/sys/class/net/wlan0/wireless" "$HS/sys/class/rfkill/rfkill0" "$HS/sys/class/phy"
+	echo 1 > "$HS/sys/class/net/eth0/type"; echo 0 > "$HS/sys/class/net/eth0/carrier"
+	echo 1 > "$HS/sys/class/net/wlan0/type"
+	echo "aa:bb:cc:dd:5e:6f" > "$HS/sys/class/net/wlan0/address"
+	mkdir -p "$HS/sys/class/net/wlan0/phy80211"; echo phy0 > "$HS/sys/class/net/wlan0/phy80211/name"
+	echo wlan > "$HS/sys/class/rfkill/rfkill0/type"; echo 1 > "$HS/sys/class/rfkill/rfkill0/soft"
+	if [ "$1" = ap ]; then echo "$(printf '\t\t * AP')" > "$HS/apmode"; else : > "$HS/apmode"; fi
+	: > "$HS/calls"; : > "$HS/console"
+	cp "$OVERLAY/etc/sweetspot/defaults.conf" "$HS/run/sweetspot.conf"
+}
+# hs_run [ATTESA]: esegue sorveglia con i comandi finti.
+hs_run() {
+	printf 'HOTSPOT_ATTESA=%s\n' "${1:-0}" >> "$HS/run/sweetspot.conf"
+	HS_DIR=$HS SWEETSPOT_SYSFS=$HS/sys SWEETSPOT_PROCFS=$HS/proc SWEETSPOT_RUN=$HS/run \
+		SWEETSPOT_LOG=$HS/log SWEETSPOT_PATH="$HS/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_IW=$HS/bin/iw SWEETSPOT_IP=$HS/bin/ip SWEETSPOT_HOSTAPD=$HS/bin/hostapd \
+		SWEETSPOT_UDHCPD=$HS/bin/udhcpd SWEETSPOT_DNSD=$HS/bin/dnsd SWEETSPOT_SLEEP=$HS/bin/sleep SWEETSPOT_NET_INIT=$HS/net-init \
+		SWEETSPOT_CONSOLE=$HS/console SWEETSPOT_TTY=$HS/console \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" "${2:-sorveglia}" > /dev/null 2>&1
+}
+hs_calls() { grep -c "^$1" "$HS/calls"; }
+
+# 1. Senza rete e con un adattatore AP: l'hotspot si accende, poi arriva il cavo.
+hs_env ap
+echo '[ "$n" -ge 3 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: senza rete si accende su wlan0 con nome dal MAC" "1|1" \
+	"$(grep -c 'hotspot: acceso su wlan0, rete Sweetspot-5E6F' "$HS/log")|$(hs_calls hostapd)"
+expect "hotspot: indirizzo 192.168.4.1 sulla scheda, DHCP e DNS avviati" "1|1|1" \
+	"$(hs_calls 'ip addr add 192.168.4.1/24 dev wlan0')|$(hs_calls udhcpd)|$(hs_calls dnsd)"
+pw=$(sed -n 's/^Password: //p' "$HS/console" | head -n 1)
+expect "hotspot: password sullo schermo (10 caratteri), non nel registro" "1|0" \
+	"$(grep -c '^Password: [a-z2-9]\{10\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
+expect "hotspot: elenco reti ordinato per segnale, senza nomi vuoti" "100|Casa Rossi,Vicino" \
+	"$(head -n 1 "$HS/run/wifi-scan.list" | cut -d'|' -f1)|$(cut -d'|' -f2 "$HS/run/wifi-scan.list" | tr '\n' ',' | sed 's/,$//')"
+expect "hotspot: arrivato il cavo si spegne e le radio tornano spente" "1|0|1" \
+	"$(grep -c 'hotspot: arrivato il cavo' "$HS/log")|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 2. Password scelta dall'utente in sweetspot.txt.
+hs_env ap
+echo 'HOTSPOT_PASSWORD=la-mia-password' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: HOTSPOT_PASSWORD scelta dall'utente" "1" "$(grep -c '^Password: la-mia-password$' "$HS/console")"
+
+# 3. Cavo collegato: l'hotspot non si accende mai.
+hs_env ap
+echo 1 > "$HS/sys/class/net/eth0/carrier"
+hs_run
+expect "hotspot: con il cavo collegato non parte e la radio resta spenta" "0|0|1" \
+	"$(hs_calls hostapd)|$(hs_calls iw)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 4. Wi-Fi gia' collegato (indirizzo sulla scheda): niente hotspot.
+hs_env ap
+touch "$HS/ipok"
+hs_run
+expect "hotspot: Wi-Fi collegato, nessun hotspot" "0" "$(hs_calls hostapd)"
+
+# 5. HOTSPOT=no.
+hs_env ap
+echo 'HOTSPOT=no' >> "$HS/run/sweetspot.conf"
+hs_run
+expect "hotspot: HOTSPOT=no non fa niente" "0|1" "$(hs_calls hostapd)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 6. Adattatore senza modalita' AP.
+hs_env noap
+hs_run
+expect "hotspot: adattatore senza AP, niente hotspot" "0|1" \
+	"$(hs_calls hostapd)|$(grep -c 'nessun adattatore Wi-Fi capace' "$HS/log")"
+
+# 7. Attesa: la connessione arriva prima del tempo, l'hotspot non parte.
+hs_env ap
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run 60
+expect "hotspot: la rete arriva durante l'attesa, nessun hotspot" "0|2" "$(hs_calls hostapd)|$(cat "$HS/n")"
+
+# 8. Rete scelta dalla pagina ma sbagliata: l'hotspot riparte; poi quella giusta.
+hs_env ap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -ge 12 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"
+EOF
+hs_run
+expect "hotspot: rete salvata che non risponde, l'hotspot riparte (2 accensioni)" "1|2|1" \
+	"$(grep -c 'la rete Wi-Fi non risponde' "$HS/log")|$(hs_calls hostapd)|$(hs_calls 'S40 wifi wlan0')"
+hs_env ap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -eq 3 ] && : > "$HS_DIR/ipok"
+EOF
+hs_run
+expect "hotspot: rete scelta che risponde, hotspot spento e sorveglianza finita" "1|1|0" \
+	"$(grep -c 'collegato alla rete Wi-Fi' "$HS/log")|$(hs_calls hostapd)|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)"
+
+# S40: la scheda Wi-Fi configurata si collega con il nuovo comando 'wifi'.
+expect "S40sweetspot-net: comando wifi e avvio della sorveglianza" "1|1" \
+	"$(grep -c 'wifi) *$' "$OVERLAY/etc/init.d/S40sweetspot-net")|$(grep -c 'sweetspot-hotspot sorveglia' "$OVERLAY/etc/init.d/S40sweetspot-net")"
+expect "defaults.conf: HOTSPOT acceso di serie" "si" "$(sed -n 's/^HOTSPOT=//p' "$OVERLAY/etc/sweetspot/defaults.conf")"
+for cfg in sweetspot_x86_64 sweetspot_rpi; do
+	expect "$cfg: hostapd e iw nel defconfig" "2" "$(grep -c '^BR2_PACKAGE_\(HOSTAPD\|IW\)=y$' "$ROOT/configs/${cfg}_defconfig")"
+done
+expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
@@ -1038,8 +2459,11 @@ echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 sh "$ROOT/tests/audio-quality.sh" || exit 1
+sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
+python3 "$ROOT/tests/precarica.py" || exit 1
+python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

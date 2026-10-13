@@ -30,13 +30,46 @@ host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 info_row "" "Nome in rete" "http://$host.local - si pu√≤ usare al posto dell'indirizzo dal telefono e dal computer"
 echo '</div>'
 
+# Reti Wi-Fi trovate (scansione fatta dall'hotspot): "percentuale|nome".
+scanlist=""
+[ -s "$RUN/wifi-scan.list" ] && scanlist=$(cat "$RUN/wifi-scan.list")
+scan_options() {
+	printf '%s\n' "$scanlist" | while IFS='|' read -r pct name; do
+		[ -n "$name" ] || continue
+		printf '<option value="%s">%s (%s%%)</option>\n' "$(esc "$name")" "$(esc "$name")" "$pct"
+	done
+}
+
+# Hotspot di configurazione acceso: primo avvio senza cavo.
+if [ -s "$RUN/hotspot.attivo" ]; then
+	echo '<h2>Collega Sweetspot al Wi-Fi di casa</h2><div class="card formcard">'
+	echo '<p class="sub">Sei collegato all'"'"'hotspot di Sweetspot. Scegli la tua rete e scrivi la password: l'"'"'hotspot si spegne e Sweetspot si collega (il telefono torna alla rete di casa). Se la password Ë sbagliata l'"'"'hotspot riparte dopo circa un minuto.</p>'
+	form_start wifi_connetti
+	cat <<HTML
+<label for="rt">Rete trovata</label>
+<select id="rt" name="wifi_scelta">
+<option value="">Scrivi il nome qui sotto</option>
+$(scan_options)
+</select>
+<label for="rn">Nome della rete <span>(se non Ë nell'elenco o Ë nascosta)</span></label>
+<input id="rn" name="wifi_nome" autocapitalize="off" autocorrect="off">
+<label for="rp">Password della rete <span>(vuoto = rete aperta)</span></label>
+<input id="rp" name="wifi_password" type="password" autocomplete="off">
+<button class="primary">Collega</button>
+</form>
+HTML
+	form_start wifi_scansiona
+	echo '<button>Cerca di nuovo le reti</button></form></div>'
+fi
+
 ipmode=automatico
 [ -n "$(conf IP_FISSO)" ] && ipmode=fisso
 echo '<h2>Impostazioni</h2><div class="card formcard">'
 form_start rete
 cat <<HTML
 <label for="wn">Wi-Fi: nome della rete <span>(vuoto = Wi-Fi spento; il cavo resta la scelta migliore per il suono)</span></label>
-<input id="wn" name="wifi_nome" autocapitalize="off" autocorrect="off" value="$(esc "$(conf WIFI_NOME)")">
+<input id="wn" name="wifi_nome" list="reti" autocapitalize="off" autocorrect="off" value="$(esc "$(conf WIFI_NOME)")">
+<datalist id="reti">$(scan_options)</datalist>
 <label for="wp">Wi-Fi: password <span>(lascia vuoto per non cambiarla)</span></label>
 <input id="wp" name="wifi_password" type="password" autocomplete="new-password">
 

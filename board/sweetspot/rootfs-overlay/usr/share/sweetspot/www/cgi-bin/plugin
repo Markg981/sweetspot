@@ -15,7 +15,7 @@ if [ "$(mode)" = player ]; then
 	exit 0
 fi
 
-state=$(sweetspot-lms plugin stato 2>/dev/null)
+state=$(priv sweetspot-lms plugin stato 2>/dev/null)
 if [ -z "$state" ]; then
 	echo '<div class="card"><div class="row"><div class="grow"><div class="k">Lyrion si sta avviando</div><div class="v">La pagina si aggiorna da sola tra poco.</div></div></div></div>'
 	echo '<meta http-equiv="refresh" content="10">'

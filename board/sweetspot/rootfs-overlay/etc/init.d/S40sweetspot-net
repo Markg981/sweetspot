@@ -25,6 +25,26 @@ wifi_conf() {
 	chmod 600 "$RUN/wpa.conf"
 }
 
+# Collega la scheda Wi-Fi $1 alla rete di WIFI_NOME.
+wifi_up() {
+	rfkill_wlan_on
+	wifi_conf
+	ip link set "$1" up
+	wpa_supplicant -B -i "$1" -c "$RUN/wpa.conf" >/dev/null 2>&1
+	start_dhcp "$1"
+	log "rete: Wi-Fi su $1"
+}
+
+# Radio Wi-Fi accese (S20sweetspot-tune le spegne se non c'e' WIFI_NOME).
+rfkill_wlan_on() {
+	local r
+	for r in "$SYS"/class/rfkill/rfkill*; do
+		[ -d "$r" ] || continue
+		[ "$(cat "$r/type" 2>/dev/null)" = wlan ] && put 0 "$r/soft"
+	done
+	return 0
+}
+
 # Il collegamento del cavo puo' richiedere qualche secondo dopo
 # l'accensione della scheda: si attende e poi si chiede l'indirizzo,
 # riprovando ogni 5 secondi finche' non arriva.
@@ -61,11 +81,7 @@ case "$1" in
 			[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
 			if [ -d "$n/wireless" ] || [ -d "$n/phy80211" ]; then
 				[ -n "$(conf WIFI_NOME)" ] || continue
-				wifi_conf
-				ip link set "$i" up
-				wpa_supplicant -B -i "$i" -c "$RUN/wpa.conf" >/dev/null 2>&1
-				start_dhcp "$i"
-				log "rete: Wi-Fi su $i"
+				wifi_up "$i"
 			else
 				ip link set "$i" up
 				if ! is_yes "$(conf RISPARMIO_RETE no)"; then
@@ -81,9 +97,17 @@ case "$1" in
 		done
 		# Orologio sincronizzato una volta sola, poi nessun traffico.
 		(sleep 10; ntpd -n -q -p pool.ntp.org >/dev/null 2>&1) &
+		# Schede di rete rimaste senza cavo a riposo (ora che sono su).
+		sweetspot-silenzio rete &
+		# Primo avvio senza cavo: se resta senza rete, hotspot di configurazione.
+		sweetspot-hotspot sorveglia &
+		;;
+	wifi)
+		# Chiamato dall'hotspot dopo che la rete e' stata scelta dalla pagina Rete.
+		[ -n "$2" ] && [ -n "$(conf WIFI_NOME)" ] && wifi_up "$2"
 		;;
 	stop)
 		killall udhcpc wpa_supplicant 2>/dev/null
 		;;
-	*) echo "uso: $0 start|stop" ;;
+	*) echo "uso: $0 start|stop|wifi SCHEDA" ;;
 esac

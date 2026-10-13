@@ -4,12 +4,54 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
+# --- Privilegi -----------------------------------------------------------------
+# Le pagine girano come utente "web" (httpd -u web:web). Quello che richiede
+# root passa da sweetspot-priv (setuid, elenco chiuso di comandi): priv
+# COMANDO ARGOMENTI... Senza l'helper (test, sviluppo) il comando e' eseguito
+# direttamente.
+SWEETSPOT_PRIV=${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}
+# shellcheck disable=SC2034
+WEBDIR=$RUN/web
+
+priv() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" "$@"
+	else
+		"$@"
+	fi
+}
+
+# Con l'helper le pagine leggono la configurazione senza password.
+# shellcheck disable=SC2034
+[ -x "$SWEETSPOT_PRIV" ] && CONF=$CONF_WEB
+
+# Registro: lo scrive root (il file non e' delle pagine).
+log() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @log "$*"
+	else
+		mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
+		echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"
+	fi
+}
+
+# Lyrion: le credenziali stanno in CONF (solo root), quindi la richiesta
+# la fa l'helper, e solo per i pochi comandi che le pagine usano.
+lms_json() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" sweetspot-lms json "$@"
+	else
+		lms_json_locale "$@"
+	fi
+}
+
 # Testo sicuro dentro l'HTML (anche tra virgolette negli attributi).
 esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'; }
 
 # Gettone anti-CSRF valido fino al riavvio: una pagina esterna non puo'
 # leggerlo, quindi non puo' inviare comandi al player al posto dell'utente.
 token() {
+	# Sull'immagine lo crea root all'avvio (S03); qui solo se manca (test).
 	if [ ! -s "$RUN/web.token" ]; then
 		mkdir -p "$RUN"
 		head -c 16 /dev/urandom | md5sum | cut -c1-24 > "$RUN/web.token"
@@ -133,4 +175,34 @@ button() { # azione etichetta [campo valore] [classe]
 	printf '<input type="hidden" name="a" value="%s">' "$1"
 	[ -n "$3" ] && printf '<input type="hidden" name="%s" value="%s">' "$3" "$(esc "$4")"
 	printf '<button class="%s">%s</button></form>' "${5:-}" "$(esc "$2")"
+}
+
+# Il DAC accetta 176,4 kHz in un formato di almeno 24 bit? Il DoP mette i
+# marcatori nei 8 bit alti di campioni a 24 bit: a 16 bit spariscono.
+dac_dop_capable() { # scheda
+	local f
+	for f in S32_LE S24_3LE S24_LE; do
+		printf ' %s ' "$(dac_rates "$1" "$f" 2>/dev/null)" | grep -q ' 176400 ' && return 0
+	done
+	return 1
+}
+
+# Prova DoP della pagina Audio: perche' adesso non darebbe un esito
+# affidabile (vuoto: si puo' fare). Argomento: scheda del DAC.
+dop_test_blocker() { # scheda
+	if [ "$(mode)" != completa ]; then
+		echo "il file di prova sta su questo player: serve la modalità completa (Lyrion su Sweetspot)"
+	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
+		echo "il volume software altera i campioni e cancella i marcatori DoP: scegli Fisso o Dal DAC"
+	elif [ "$(lower "$(conf VOLUME fisso)")" = dsp ]; then
+		echo "il volume a 64 bit altera i campioni e cancella i marcatori DoP: scegli Fisso o Dal DAC"
+	elif [ -f "$RUN/correzione.attiva" ]; then
+		echo "la correzione ambientale elabora i campioni: spegnila per la durata della prova"
+	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
+		echo "il ricampionamento altera i campioni: spegnilo per la durata della prova"
+	elif [ "$(conf FORMATO_USCITA)" = 16 ]; then
+		echo "l'uscita è forzata a 16 bit (FORMATO_USCITA) e i marcatori DoP stanno nei bit alti dei campioni a 24 bit"
+	elif ! dac_dop_capable "$1"; then
+		echo "il DAC non dichiara 176,4 kHz a 24 o 32 bit, che il DoP richiede per il DSD64"
+	fi
 }

@@ -24,6 +24,17 @@ CONFIG_NO_HZ_FULL=y
 CONFIG_CPU_ISOLATION=y
 CONFIG_RCU_NOCB_CPU=y
 
+# --- cgroup v2: rallentare i lavori di fondo durante l'ascolto -------------
+# sweetspot-ascolto limita la CPU (cpu.max, cpu.weight) di scanner e copie
+# invece di congelarli. Niente RT_GROUP_SCHED: con quello il controller cpu
+# non e' attivabile con processi real-time nel gruppo radice.
+CONFIG_CGROUPS=y
+CONFIG_CGROUP_SCHED=y
+CONFIG_FAIR_GROUP_SCHED=y
+CONFIG_CFS_BANDWIDTH=y
+# CONFIG_RT_GROUP_SCHED is not set
+CONFIG_CGROUP_PIDS=y
+
 # --- Nessuno swap, nessuna ibernazione -------------------------------------
 # CONFIG_SWAP is not set
 # CONFIG_HIBERNATION is not set
@@ -96,3 +107,12 @@ CONFIG_MAC80211=m
 CONFIG_DEBUG_INFO_NONE=y
 # CONFIG_KVM is not set
 # CONFIG_XEN is not set
+
+# Watchdog: un blocco totale fa ripartire il computer (sweetspot-watchdog);
+# dopo un aggiornamento riparte cosi' la versione precedente. softdog
+# copre i computer senza watchdog hardware.
+CONFIG_WATCHDOG=y
+CONFIG_WATCHDOG_CORE=y
+CONFIG_WATCHDOG_SYSFS=y
+# CONFIG_WATCHDOG_NOWAYOUT is not set
+CONFIG_SOFT_WATCHDOG=m

@@ -1,0 +1,77 @@
+Subject: [PATCH] slimproto: -F keeps the internal gain at unity (fixed gain)
+
+With a DSP after squeezelite (Sweetspot: CamillaDSP applies the Lyrion
+volume in 64-bit floating point with dither), squeezelite must send the
+samples unchanged whatever volume the server announces, while the server
+keeps digitalVolumeControl=1 so that its clients (Material Skin, apps)
+still show a working volume slider. Without digital volume control the
+server sends adjust=0 and the clients treat the player as fixed-volume.
+
+Add -F: the audg gain from the server is ignored and the internal gain
+stays at FIXED_ONE. Nothing changes without the option.
+
+Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+Upstream: Not submitted (local option)
+
+--- a/main.c
++++ b/main.c
+@@ -104,6 +104,7 @@
+ 		   "  -n <name>\t\tSet the player name\n"
+ 		   "  -N <filename>\t\tStore player name in filename to allow server defined name changes to be shared between servers (not supported with -n)\n"
+ 		   "  -W\t\t\tRead wave and aiff format from header, ignore server parameters\n"
++		   "  -F\t\t\tFixed gain: ignore the server volume (it is applied downstream, e.g. by a DSP)\n"
+ #if ALSA
+ 		   "  -p <priority>\t\tSet real time priority of output thread (1-99)\n"
+ #endif
+@@ -304,6 +305,7 @@
+ 	char *namefile = NULL;
+ 	char *modelname = NULL;
+ 	extern bool pcm_check_header;
++	extern bool fixed_gain;
+ 	extern bool user_rates;
+ 	char *logfile = NULL;
+ 	u8_t mac[6];
+@@ -370,7 +372,7 @@
+ 				   , opt) && optind < argc - 1) {
+ 			optarg = argv[optind + 1];
+ 			optind += 2;
+-		} else if (strstr("ltz?W"
++		} else if (strstr("ltz?WF"
+ #if ALSA
+ 						  "LX"
+ #endif
+@@ -534,6 +536,9 @@
+ 		case 'W':
+ 			pcm_check_header = true;
+ 			break;
++		case 'F':
++			fixed_gain = true;
++			break;
+ #if ALSA
+ 		case 'p':
+ 			rt_priority = atoi(optarg);
+--- a/slimproto.c
++++ b/slimproto.c
+@@ -437,12 +437,21 @@
+ 	UNLOCK_O;
+ }
+ 
++// -F: the server volume is applied downstream (e.g. by a DSP): keep the
++// internal gain at unity whatever the server sends.
++bool fixed_gain = false;
++
+ static void process_audg(u8_t *pkt, int len) {
+ 	struct audg_packet *audg = (struct audg_packet *)pkt;
+ 	audg->gainL = unpackN(&audg->gainL);
+ 	audg->gainR = unpackN(&audg->gainR);
+ 
+-	LOG_DEBUG("audg gainL: %u gainR: %u adjust: %u", audg->gainL, audg->gainR, audg->adjust);
++	LOG_DEBUG("audg gainL: %u gainR: %u adjust: %u fixed: %u", audg->gainL, audg->gainR, audg->adjust, fixed_gain);
++
++	if (fixed_gain) {
++		set_volume(FIXED_ONE, FIXED_ONE);
++		return;
++	}
+ 
+ 	set_volume(audg->adjust ? audg->gainL : FIXED_ONE, audg->adjust ? audg->gainR : FIXED_ONE);
+ }

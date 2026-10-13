@@ -1,0 +1,246 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - meno attivita' elettrica superflua durante l'ascolto, su
+# qualunque computer: si decide per classe di dispositivo, mai per modello.
+#   - LED spenti (tranne quelli della tastiera);
+#   - periferiche USB che il player non usa (webcam, Bluetooth, lettori di
+#     smart card) scollegate dai driver con authorized=0, anche se collegate
+#     dopo l'avvio (regola udev); mai DAC, archivi, tastiere, hub, rete;
+#   - dispositivi PCI che il player non usa (scheda video secondaria, audio
+#     integrato non scelto, multimedia, modem, FireWire, lettore di schede,
+#     Wi-Fi non configurato, Bluetooth, schede di rete senza cavo) lasciati
+#     andare a riposo quando inattivi (power/control=auto), insieme al ponte
+#     PCI sopra di loro se non serve ad altro;
+#   - lavoro differito del kernel (workqueue non legate a un core) solo
+#     sui core di sistema, lontano da quelli isolati per l'audio.
+# PERIFERICHE_INUTILIZZATE=accese lascia stare USB e PCI. Lo schermo si
+# spegne gia' da solo (sweetspot-display, SCHERMO_MINUTI).
+#   sweetspot-silenzio applica        all'avvio (S20sweetspot-tune): tutto
+#                                     tranne le schede di rete
+#   sweetspot-silenzio rete           le schede di rete, dopo che la rete e'
+#                                     su (S40sweetspot-net): solo quelle
+#                                     attive senza cavo ne' indirizzo; una
+#                                     scheda ancora giu' non si tocca
+#   sweetspot-silenzio usb DEVPATH    periferica USB collegata dopo (udev)
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+# Classi USB delle interfacce che il player non usa mai: smart card (0b),
+# sicurezza dei contenuti (0d), video (0e), salute personale (0f),
+# controller wireless come il Bluetooth (e0).
+UNUSED_CLASSES="0b 0d 0e 0f e0"
+
+peripherals_off() { [ "$(lower "$(conf PERIFERICHE_INUTILIZZATE spente)")" != accese ]; }
+
+# Classi delle interfacce di una periferica USB, separate da spazi.
+usb_classes() { # cartella della periferica
+	local i
+	for i in "$1":*; do
+		[ -f "$i/bInterfaceClass" ] && cat "$i/bInterfaceClass"
+	done | tr '\n' ' '
+}
+
+# Vero se tutte le interfacce della periferica sono di classi inutili.
+usb_unused() { # cartella della periferica
+	local c classes
+	classes=$(usb_classes "$1")
+	[ -n "$classes" ] || return 1
+	for c in $classes; do
+		case " $UNUSED_CLASSES " in *" $c "*) ;; *) return 1 ;; esac
+	done
+}
+
+usb_quiet_one() { # cartella della periferica
+	local d=$1 name
+	case "${d##*/}" in *:*|usb*) return 0 ;; esac
+	[ "$(cat "$d/authorized" 2>/dev/null)" = 1 ] || return 0
+	usb_unused "$d" || return 0
+	name=$(cat "$d/product" 2>/dev/null)
+	put auto "$d/power/control"
+	put 0 "$d/authorized" && log "silenzio: USB ${d##*/} (${name:-senza nome}) scollegata dai driver"
+}
+
+usb_quiet() {
+	local d
+	for d in "$SYS"/bus/usb/devices/*; do usb_quiet_one "$d"; done
+}
+
+# Periferica collegata dopo l'avvio: udev segnala ogni interfaccia; si
+# aspetta che ci siano tutte (una webcam con microfono ha anche l'audio)
+# prima di decidere.
+usb_event() { # percorso dell'interfaccia in /sys
+	local d want have tries=0
+	[ -f "$RUN/silenzio.attivo" ] || return 0
+	# In /sys/bus/usb/devices periferica e interfacce stanno affiancate.
+	d=$SYS/bus/usb/devices/$(basename "$(dirname "$1")")
+	want=$(tr -d ' ' < "$d/bNumInterfaces" 2>/dev/null)
+	while :; do
+		have=$(ls -d "$d":* 2>/dev/null | wc -l | tr -d " ")
+		[ -z "$want" ] || [ "$have" -ge "$want" ] || [ "$tries" -ge 5 ] && break
+		tries=$((tries + 1))
+		sleep 1
+	done
+	usb_quiet_one "$d"
+}
+
+# Interfaccia di rete attivata (IFF_UP): prima che la rete sia su, una
+# scheda giu' non dice niente del cavo (carrier non leggibile).
+nic_is_up() { # cartella dell'interfaccia in /sys
+	local f
+	f=$(cat "$1/flags" 2>/dev/null) || return 1
+	[ $((f & 1)) -eq 1 ]
+}
+
+# Scheda di rete non usata: attiva, senza cavo e senza indirizzo.
+pci_nic_unused() { # cartella del dispositivo PCI
+	local n
+	for n in "$1"/net/*; do
+		[ -d "$n" ] || return 1
+		nic_is_up "$n" || return 1
+		[ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] && return 1
+		ip -4 addr show dev "${n##*/}" 2>/dev/null | grep -q inet && return 1
+	done
+	return 0
+}
+
+# C'e' una scheda di rete attiva ancora senza cavo? (il collegamento
+# arriva qualche secondo dopo l'attivazione)
+nic_waiting() {
+	local n
+	for n in "$SYS"/class/net/*; do
+		[ -e "$n/device" ] || continue
+		[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
+		[ -d "$n/wireless" ] || [ -d "$n/phy80211" ] && continue
+		nic_is_up "$n" || continue
+		[ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] || return 0
+	done
+	return 1
+}
+
+# Che cos'e' un dispositivo PCI che il player non usa; vuoto se serve o se
+# non si sa (nel dubbio non si tocca).
+pci_unused_kind() { # cartella del dispositivo PCI
+	case "$(cat "$1/class" 2>/dev/null)" in
+		0x0300*|0x0302*|0x0380*)
+			[ "$(cat "$1/boot_vga" 2>/dev/null)" = 1 ] || echo "scheda video secondaria" ;;
+		0x0403*) is_yes "$(conf USCITA_INTEGRATA no)" || echo "audio integrato" ;;
+		0x0400*|0x0401*|0x0480*) echo "multimedia" ;;
+		0x0703*) echo "modem" ;;
+		0x0c00*) echo "FireWire" ;;
+		0x0805*) echo "lettore di schede" ;;
+		0x0280*) [ -n "$(conf WIFI_NOME)" ] || echo "Wi-Fi" ;;
+		0x0d*) echo "controller wireless" ;;
+		0x0200*) pci_nic_unused "$1" && echo "scheda di rete senza cavo" ;;
+	esac
+}
+
+# Ponte PCI che porta solo a dispositivi inutili: puo' riposare anche lui.
+pci_bridge_unused() { # cartella del ponte
+	local c n=0
+	case "$(cat "$1/class" 2>/dev/null)" in 0x0604*) ;; *) return 1 ;; esac
+	for c in "$1"/[0-9a-f][0-9a-f][0-9a-f][0-9a-f]:*; do
+		[ -f "$c/class" ] || continue
+		[ -n "$(pci_unused_kind "$c")" ] || return 1
+		n=$((n + 1))
+	done
+	[ "$n" -gt 0 ]
+}
+
+pci_quiet_one() { # cartella del dispositivo PCI
+	local d=$1 kind drv parent
+	kind=$(pci_unused_kind "$d")
+	[ -n "$kind" ] || return 0
+	drv=$(basename "$(readlink "$d/driver" 2>/dev/null)" 2>/dev/null)
+	put auto "$d/power/control" || return 0
+	echo "${d##*/}|$kind" >> "$RUN/silenzio.pci"
+	log "silenzio: PCI ${d##*/} ($kind${drv:+, $drv}) a riposo quando inattivo"
+	parent=$(readlink -f "$d/..")
+	pci_bridge_unused "$parent" && put auto "$parent/power/control"
+	return 0
+}
+
+# Elenco per la pagina Stato: righe "INDIRIZZO|TIPO". Le schede di rete si
+# decidono dopo, con la rete su (nics_quiet).
+pci_quiet() {
+	local d
+	: > "$RUN/silenzio.pci"
+	for d in "$SYS"/bus/pci/devices/*; do
+		[ -f "$d/class" ] || continue
+		case "$(cat "$d/class" 2>/dev/null)" in 0x0200*) continue ;; esac
+		pci_quiet_one "$d"
+	done
+}
+
+# Schede di rete, dopo S40sweetspot-net: si aspetta qualche secondo il
+# collegamento delle schede attive, poi riposa solo chi resta senza cavo.
+nics_quiet() {
+	local d i=0
+	[ -f "$RUN/silenzio.attivo" ] || return 0
+	while [ "$i" -lt "${SWEETSPOT_SILENZIO_ATTESA:-5}" ] && nic_waiting; do
+		sleep 1
+		i=$((i + 1))
+	done
+	for d in "$SYS"/bus/pci/devices/*; do
+		[ -f "$d/class" ] || continue
+		case "$(cat "$d/class" 2>/dev/null)" in 0x0200*) pci_quiet_one "$d" ;; esac
+	done
+}
+
+# I LED della tastiera seguono i tasti (Bloc Maiusc): restano.
+leds_off() {
+	local l n=0
+	for l in "$SYS"/class/leds/*; do
+		[ -d "$l" ] || continue
+		case "${l##*/}" in *::capslock|*::numlock|*::scrolllock|*::compose|*::kana) continue ;; esac
+		put none "$l/trigger"
+		put 0 "$l/brightness" && n=$((n + 1))
+	done
+	[ "$n" -gt 0 ] && log "silenzio: $n LED spenti"
+	return 0
+}
+
+# Maschera esadecimale di un elenco di core ("0 1" -> 3).
+cpu_mask() {
+	local c m=0
+	for c in $1; do m=$((m | (1 << c))); done
+	printf '%x' "$m"
+}
+
+workqueues_housekeeping() {
+	local iso hk mask w
+	iso=$(expand_list "$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)")
+	[ -n "$iso" ] || return 0
+	hk=$(subtract "$(cpu_online)" "$iso")
+	[ -n "$hk" ] || return 0
+	mask=$(cpu_mask "$hk")
+	put "$mask" "$SYS/devices/virtual/workqueue/cpumask" &&
+		log "silenzio: workqueue sui core $(join_list "$hk")"
+	for w in "$SYS"/bus/workqueue/devices/*/cpumask; do
+		put "$mask" "$w"
+	done
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	applica)
+		mkdir -p "$RUN"
+		rm -f "$RUN/silenzio.attivo" "$RUN/silenzio.pci"
+		safe_mode && exit 0
+		leds_off
+		if peripherals_off; then
+			usb_quiet
+			pci_quiet
+			touch "$RUN/silenzio.attivo"
+		fi
+		workqueues_housekeeping
+		;;
+	rete)
+		safe_mode || ! peripherals_off || nics_quiet
+		;;
+	usb)
+		safe_mode || ! peripherals_off || usb_event "${2:?percorso}"
+		;;
+	*) echo "uso: $0 applica | rete | usb DEVPATH" ;;
+esac

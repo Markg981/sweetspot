@@ -11,10 +11,17 @@ write_blacklist() {
 	{
 		echo "# Generato all'avvio da Sweetspot."
 		# Mai necessari a un player: Bluetooth, webcam, lettori di schede,
-		# altoparlante di sistema, watchdog hardware.
-		for m in bluetooth btusb uvcvideo pcspkr iTCO_wdt sp5100_tco rtsx_pci rtsx_usb joydev; do
+		# altoparlante di sistema.
+		for m in bluetooth btusb uvcvideo pcspkr rtsx_pci rtsx_usb joydev; do
 			echo "blacklist $m"
 		done
+		# Il watchdog hardware del chipset serve a S21sweetspot-watchdog;
+		# con WATCHDOG=no resta fuori.
+		if ! is_yes "$(conf WATCHDOG si)"; then
+			for m in iTCO_wdt sp5100_tco; do
+				echo "blacklist $m"
+			done
+		fi
 		if ! is_yes "$(conf USCITA_INTEGRATA no)"; then
 			echo "blacklist snd_hda_intel"
 		fi
@@ -24,7 +31,7 @@ write_blacklist() {
 				echo "blacklist $m"
 			done
 		fi
-	} > /etc/modprobe.d/sweetspot-run.conf
+	} > "${SWEETSPOT_MODPROBE_D:-/etc/modprobe.d}/sweetspot-run.conf"
 }
 
 tune_sysctl() {
@@ -38,9 +45,16 @@ tune_sysctl() {
 	put 10 /proc/sys/vm/stat_interval
 }
 
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
 case "$1" in
 	start)
 		mkdir -p "$RUN" /var/log /etc/modprobe.d
+		# cgroup v2 per sweetspot-ascolto (rallenta i lavori di fondo senza
+		# congelarli); se il kernel non lo ha, l'ascolto ripiega su SIGSTOP.
+		if [ -d /sys/fs/cgroup ] && ! grep -q ' /sys/fs/cgroup cgroup2 ' /proc/mounts 2>/dev/null; then
+			mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
+		fi
 		printf 'Sweetspot: lettura impostazioni... '
 		# La chiavetta puo' impiegare qualche secondo a comparire.
 		i=0
@@ -53,10 +67,12 @@ case "$1" in
 			cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
 			# Impostazioni, plugin e libreria di Lyrion salvati.
 			sweetspot-dati ripristina "$STICK_MNT/$DATA_DIR_NAME"
-			# Filtri della correzione ambientale (REW).
+			# Filtri della correzione ambientale (REW) e impulsi FIR.
 			if [ -d "$STICK_MNT/correzione-ambientale" ]; then
 				mkdir -p "$RUN/correzione"
 				cp "$STICK_MNT/correzione-ambientale/"*.txt "$RUN/correzione/" 2>/dev/null
+				cp "$STICK_MNT/correzione-ambientale/"fir-sinistro.wav "$STICK_MNT/correzione-ambientale/"fir-destro.wav \
+					"$RUN/correzione/" 2>/dev/null
 			fi
 			stick_umount
 			log "impostazioni lette dalla chiavetta"
@@ -65,12 +81,23 @@ case "$1" in
 			log "chiavetta non trovata: impostazioni predefinite"
 			echo "chiavetta non trovata, uso i valori predefiniti"
 		fi
+		chmod 600 "$RUN/sweetspot.txt" 2>/dev/null # password in chiaro: solo root
 		config_build "$RUN/sweetspot.txt"
 		write_blacklist
 		tune_sysctl
 		# Impostazioni e stato di Sweetspot sulla porta 80 (Lyrion e' sulla 9000).
+		# Con PASSWORD_WEB le pagine chiedono utente e password (sweetspot-accesso).
+		sweetspot-accesso applica
+		# Cartella scrivibile dalle pagine (utente "web"): bozze dei filtri e
+		# stato della prova DoP. Il gettone anti-CSRF lo crea root: le pagine
+		# lo leggono soltanto.
+		mkdir -p "$RUN/web/correzione"
+		chown -R web:web "$RUN/web" 2>/dev/null
+		chmod 700 "$RUN/web" "$RUN/web/correzione"
+		head -c 16 /dev/urandom | md5sum | cut -c1-24 > "$RUN/web.token"
+		chmod 644 "$RUN/web.token"
 		mkdir -p /etc/default
-		echo 'HTTPD_ARGS="-p 80 -h /usr/share/sweetspot/www"' > /etc/default/httpd
+		echo 'HTTPD_ARGS="-p 80 -u web:web -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"' > /etc/default/httpd
 		;;
 	stop) ;;
 	*) echo "uso: $0 start" ;;

@@ -6,8 +6,12 @@
 #   sweetspot-dsp leggi FILE        filtri di un'esportazione di REW, uno per
 #                                   riga: "TIPO FREQ GUADAGNO PARAMETRO VALORE";
 #                                   errori come "errore|riga|messaggio"
-#   sweetspot-dsp attiva            esce con 0 se la correzione va usata
+#   sweetspot-dsp attiva            esce con 0 se CamillaDSP va usato (per la
+#                                   correzione o per il volume a 64 bit)
+#   sweetspot-dsp correzione        esce con 0 se la correzione va usata
 #                                   (CORREZIONE=si o confronto, filtri validi)
+#   sweetspot-dsp volume            esce con 0 con VOLUME=dsp (modalita' completa)
+#   sweetspot-dsp stato DB [muto]   volume di partenza dei prossimi processi
 #   sweetspot-dsp guadagno          margine conservativo in dB dei filtri
 #   sweetspot-dsp risposta          curva della correzione: "Hz sinistro destro"
 #   sweetspot-dsp prepara SCHEDA    scrive la configurazione di CamillaDSP e il
@@ -32,6 +36,7 @@
 
 DSP_DIR=$RUN/correzione
 DSP_YML=$RUN/camilladsp.yml
+DSP_VOLUME=$RUN/camilladsp.volume
 ASOUND=${SWEETSPOT_ASOUND:-/etc/asound.conf}
 CAMILLADSP=${SWEETSPOT_CAMILLADSP:-/usr/bin/camilladsp}
 DSP_PCM=sweetspot_correzione
@@ -121,8 +126,130 @@ dsp_mode() {
 	esac
 }
 
+correction_active() {
+	[ "$(dsp_mode)" != no ] && { filters_ok || fir_ok; }
+}
+
+# --- Filtri FIR (convoluzione) ------------------------------------------------
+#
+# Impulsi WAV esportati da rePhase, Acourate o REW, nella cartella della
+# correzione: fir-sinistro.wav e, facoltativo, fir-destro.wav (senza, il
+# destro usa il sinistro; un file stereo da solo vale per i due canali).
+# CamillaDSP lavora alla frequenza dei file: ogni brano viene ricampionato
+# (Synchronous) a quella frequenza, salvo che sia gia' la stessa.
+# Attenuazione in piu' per i FIR: FIR_MARGINE_DB (predefinito 3 dB).
+FIR_MAX_KB=16384
+
+# "FREQUENZA CANALI" di un WAV (intestazione standard: fmt subito dopo RIFF).
+wav_info() { # file
+	local ch rate
+	[ -s "$1" ] || return 1
+	[ "$(head -c 4 "$1")" = RIFF ] || return 1
+	[ "$(dd if="$1" bs=1 skip=8 count=8 2>/dev/null)" = "WAVEfmt " ] || return 1
+	ch=$(od -An -tu2 -j22 -N2 "$1" | tr -d ' ')
+	rate=$(od -An -tu4 -j24 -N4 "$1" | tr -d ' ')
+	[ "${ch:-0}" -ge 1 ] && [ "${ch:-0}" -le 2 ] && [ "${rate:-0}" -ge 8000 ] || return 1
+	echo "$rate $ch"
+}
+
+# File FIR di un canale (il destro ricade sul sinistro).
+fir_file() { # sinistro|destro
+	local f=$DSP_DIR/fir-$1.wav
+	[ "$1" = destro ] && [ ! -s "$f" ] && f=$DSP_DIR/fir-sinistro.wav
+	echo "$f"
+}
+
+# Canale del file da usare: 1 solo per il destro letto da un file stereo unico.
+fir_channel() { # sinistro|destro
+	local info
+	[ "$1" = destro ] || { echo 0; return; }
+	[ -s "$DSP_DIR/fir-destro.wav" ] && { echo 0; return; }
+	info=$(wav_info "$DSP_DIR/fir-sinistro.wav")
+	if [ "${info#* }" = 2 ]; then echo 1; else echo 0; fi
+}
+
+fir_rate() { wav_info "$DSP_DIR/fir-sinistro.wav" | cut -d' ' -f1; }
+
+# Campioni (per canale) di un impulso WAV: dalla dimensione del file, con
+# l'intestazione standard di 44 byte (per difetto, mai in meno).
+wav_frames() { # file
+	local ch bps size
+	ch=$(od -An -tu2 -j22 -N2 "$1" | tr -d ' ')
+	bps=$(od -An -tu2 -j34 -N2 "$1" | tr -d ' ')
+	size=$(wc -c < "$1")
+	case "$bps" in 8|16|24|32|64) ;; *) bps=16 ;; esac
+	[ "${ch:-0}" -ge 1 ] || ch=1
+	echo $(( (size - 44) / (ch * bps / 8) ))
+}
+
+# Il FIR piu' lungo dei due canali, in campioni alla sua frequenza.
+fir_taps() {
+	local f n max=0
+	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
+		[ -s "$f" ] || continue
+		n=$(wav_frames "$f")
+		[ "$n" -gt "$max" ] && max=$n
+	done
+	echo "$max"
+}
+
+fir_ok() {
+	local l r f
+	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
+		[ -s "$f" ] || continue
+		[ "$(( $(wc -c < "$f") / 1024 ))" -le "$FIR_MAX_KB" ] || return 1
+	done
+	l=$(wav_info "$DSP_DIR/fir-sinistro.wav") || return 1
+	[ -s "$DSP_DIR/fir-destro.wav" ] || return 0
+	r=$(wav_info "$DSP_DIR/fir-destro.wav") || return 1
+	# Stessa frequenza per i due canali.
+	[ "${l% *}" = "${r% *}" ]
+}
+
+fir_margin() {
+	local m
+	m=$(conf FIR_MARGINE_DB 3)
+	case "$m" in ''|*[!0-9.]*) m=3 ;; esac
+	echo "$m"
+}
+
+# FIR in uso: correzione attiva e file validi (anche nel confronto a pari
+# volume: stessa frequenza e stessa attenuazione, senza i filtri).
+fir_in_use() { correction_active && fir_ok; }
+
+# VOLUME=dsp: il volume di Lyrion lo applica CamillaDSP a 64 bit, con il
+# dither all'uscita, invece del troncamento di Squeezelite. Solo nella
+# modalita' completa: il player deve poter fissare Squeezelite al 100%.
+volume_dsp() {
+	[ "$(lower "$(conf VOLUME fisso)")" = dsp ] && [ "$(mode)" = completa ]
+}
+
+# CamillaDSP serve per la correzione, per il volume o per entrambi.
 active() {
-	[ "$(dsp_mode)" != no ] && filters_ok
+	correction_active || volume_dsp
+}
+
+# Volume di partenza "GUADAGNO_DB SORDINA(0|1)": il plugin cdsp lo legge
+# (vol_file) a ogni avvio di CamillaDSP e lo passa con -g/-m, quindi ogni
+# brano parte gia' al volume giusto. Se il file manca o non e' valido il
+# plugin non avvia CamillaDSP: silenzio, mai il volume massimo. Lo aggiorna
+# sweetspot-volume; si scrive sempre con un rename (mai a meta').
+dsp_state_write() { # dB [muto]
+	local mute=0
+	[ "${2:-}" = muto ] && mute=1
+	case "$1" in -[0-9]*|0|0.0) ;; *) return 1 ;; esac
+	echo "$1 $mute" > "$DSP_VOLUME.nuovo" && mv "$DSP_VOLUME.nuovo" "$DSP_VOLUME"
+}
+
+# Senza il volume a 64 bit il volume principale resta a 0 dB (solo la
+# correzione); con il volume si parte da -30 dB finche' Lyrion non dice il
+# suo, e un valore gia' scritto (anche 0.0, cioe' il cursore al 100%) resta.
+dsp_state_prepare() {
+	if ! volume_dsp; then
+		dsp_state_write 0.0
+	elif ! grep -qE '^-?[0-9]+(\.[0-9]+)? [01]$' "$DSP_VOLUME" 2>/dev/null; then
+		dsp_state_write -30.0
+	fi
 }
 
 # --- Risposta in frequenza (formule di R. Bristow-Johnson) -------------------------
@@ -258,8 +385,9 @@ dsp_out_format() {
 	esac
 }
 
-# Filtri attivi: nessuno nel confronto a pari volume.
+# Filtri attivi: nessuno nel confronto a pari volume o con il solo volume.
 active_filters() {
+	correction_active || return 0
 	[ "$(dsp_mode)" = confronto ] && return 0
 	channel_filters "$1"
 }
@@ -277,23 +405,61 @@ filter_names() { # prefisso canale
 }
 
 write_config() { # scheda
-	local card=$1 id dev fmt gain ch pre side
+	local card=$1 id dev fmt gain=0.0 ch pre side bits fir="" rate=44100 alsafmt extra=8192
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	fmt=$(dsp_out_format "$card") || { log "correzione: formato PCM del playback non disponibile"; return 1; }
-	gain=$(do_gain)
+	correction_active && gain=$(do_gain)
+	# Con i FIR CamillaDSP lavora (e suona sul DAC) alla frequenza dei file.
+	if fir_in_use; then
+		fir=1
+		rate=$(fir_rate)
+		case "$fmt" in S24_3_LE) alsafmt=S24_3LE ;; S24_4_RJ_LE) alsafmt=S24_LE ;; *) alsafmt=$fmt ;; esac
+		if ! printf ' %s ' "$(dac_rates "$card" "$alsafmt" 2 | tr '\n' ' ')" | grep -q " $rate "; then
+			log "correzione: il DAC non accetta $rate Hz, la frequenza dei filtri FIR"
+			return 1
+		fi
+		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
+		extra=$(( $(fir_taps) + 8192 ))
+	fi
+	# Dither TPDF alla risoluzione dell'uscita: CamillaDSP modifica sempre i
+	# campioni (attenuazione, filtri o volume), quindi il passaggio da 64 bit
+	# all'uscita va fatto con il dither e non con il troncamento: a 16 bit con
+	# il DAC a 16 bit, a 24 bit negli altri casi (i DAC "a 32 bit" ne
+	# convertono al piu' 24 in modo lineare).
+	if [ "$fmt" = S16_LE ]; then
+		bits=16
+	else
+		bits=24
+	fi
 	{
 		echo "---"
 		echo "# Generato da Sweetspot (sweetspot-dsp): non modificare."
 		echo "# Frequenza, formato e canali in ingresso li passa il plugin cdsp."
 		echo "devices:"
-		echo "  samplerate: 44100"
+		echo "  samplerate: $rate"
 		echo "  chunksize: 4096"
+		if [ -n "$fir" ]; then
+			# La frequenza del brano (dal plugin) diventa quella d'ingresso; se
+			# coincide con quella dei FIR il ricampionatore si spegne da solo.
+			echo "  resampler:"
+			echo "    type: Synchronous"
+		fi
 		echo "  queuelimit: 1"
+		# Il volume non supera mai 0 dB, qualunque comando arrivi.
+		echo "  volume_limit: 0.0"
 		echo "  capture:"
 		echo "    type: Stdin"
 		echo "    channels: 2"
 		echo "    format: S32_LE"
+		# Coda del brano: quando il plugin chiude lo stream (stop, cambio di
+		# frequenza, chiusura dopo la pausa) CamillaDSP esce appena finiscono
+		# i blocchi letti e taglia il suono ancora dentro i filtri. Con gli
+		# extra_samples legge altri campioni di silenzio: due blocchi per la
+		# coda dei biquad e, con i FIR, tutta la loro lunghezza (alla
+		# frequenza di questa configurazione: CamillaDSP li scala quando il
+		# plugin cambia la frequenza).
+		echo "    extra_samples: $extra"
 		echo "  playback:"
 		echo "    type: Alsa"
 		echo "    channels: 2"
@@ -306,14 +472,22 @@ write_config() { # scheda
 		echo "      gain: $gain"
 		write_filters_yaml sx sinistro
 		write_filters_yaml dx destro
-		if [ "$fmt" = S16_LE ]; then
-			echo "  dither:"
-			echo "    type: Dither"
-			echo "    parameters:"
-			echo "      type: Flat"
-			echo "      bits: 16"
-			echo "      amplitude: 2.0"
+		if [ -n "$fir" ]; then
+			for side in sinistro destro; do
+				echo "  fir_$side:"
+				echo "    type: Conv"
+				echo "    parameters:"
+				echo "      type: Wav"
+				echo "      filename: \"$(fir_file "$side")\""
+				echo "      channel: $(fir_channel "$side")"
+			done
 		fi
+		echo "  dither:"
+		echo "    type: Dither"
+		echo "    parameters:"
+		echo "      type: Flat"
+		echo "      bits: $bits"
+		echo "      amplitude: 2.0"
 		echo "pipeline:"
 		for ch in 0 1; do
 			if [ $ch = 0 ]; then pre=sx; side=sinistro; else pre=dx; side=destro; fi
@@ -322,7 +496,8 @@ write_config() { # scheda
 			echo "    names:"
 			echo "      - attenuazione"
 			filter_names "$pre" "$side"
-			if [ "$fmt" = S16_LE ]; then echo "      - dither"; fi
+			[ -n "$fir" ] && [ "$(dsp_mode)" = si ] && echo "      - fir_$side"
+			echo "      - dither"
 		done
 	} > "$DSP_YML.nuovo" && mv "$DSP_YML.nuovo" "$DSP_YML"
 }
@@ -351,7 +526,9 @@ write_asound() { # scheda
 		echo "	config_cdsp 1"
 		echo "	channels 2"
 		echo "	rates = [ $rates ]"
-		echo "	cargs [ -l \"warn\" -o \"/var/log/camilladsp.log\" ]"
+		# Websocket solo locale: il player ne legge i campioni tagliati.
+		echo "	cargs [ -l \"warn\" -o \"/var/log/camilladsp.log\" -p \"$DSP_PORTA\" -a \"127.0.0.1\" ]"
+		echo "	vol_file \"$DSP_VOLUME\""
 		echo "}"
 	} > "$ASOUND.nuovo" && mv "$ASOUND.nuovo" "$ASOUND"
 }
@@ -360,6 +537,7 @@ do_prepare() { # scheda
 	active || return 1
 	mkdir -p "$RUN"
 	write_config "$1" && write_asound "$1" || return 1
+	dsp_state_prepare
 	if [ -x "$CAMILLADSP" ] && ! "$CAMILLADSP" -c "$DSP_YML" > "$RUN/camilladsp.verifica" 2>&1; then
 		log "correzione: configurazione rifiutata da CamillaDSP: $(tail -n 1 "$RUN/camilladsp.verifica")"
 		return 1
@@ -370,7 +548,8 @@ do_prepare() { # scheda
 # --- Salvataggio -------------------------------------------------------------------
 
 # Sulla chiavetta i filtri stanno in una cartella propria, leggibile anche
-# dal computer: correzione-ambientale/sinistro.txt e destro.txt.
+# dal computer: correzione-ambientale/sinistro.txt e destro.txt, e gli
+# impulsi FIR fir-sinistro.wav e fir-destro.wav (copiati dal computer).
 STICK_DSP_DIR=correzione-ambientale
 
 do_save() { # file_sinistro file_destro
@@ -389,8 +568,9 @@ do_save() { # file_sinistro file_destro
 	cp "$tmp"/*.txt "$DSP_DIR/" 2>/dev/null
 	rm -rf "$tmp"
 	if stick_mount rw; then
-		rm -rf "${STICK_MNT:?}/$STICK_DSP_DIR"
+		# Solo i filtri di REW: gli impulsi FIR (fir-*.wav) restano.
 		mkdir -p "$STICK_MNT/$STICK_DSP_DIR"
+		rm -f "$STICK_MNT/$STICK_DSP_DIR/sinistro.txt" "$STICK_MNT/$STICK_DSP_DIR/destro.txt"
 		cp "$DSP_DIR"/sinistro.txt "$DSP_DIR"/destro.txt "$STICK_MNT/$STICK_DSP_DIR/" 2>/dev/null
 		stick_umount
 		log "correzione: filtri salvati sulla chiavetta"
@@ -404,6 +584,15 @@ do_save() { # file_sinistro file_destro
 case "$1" in
 	leggi) parse_rew "$2" ;;
 	attiva) active ;;
+	correzione) correction_active ;;
+	fir)
+		# "FREQUENZA CANALI DESTRO(proprio|sinistro) MARGINE_DB"
+		fir_ok || exit 1
+		d=sinistro
+		[ -s "$DSP_DIR/fir-destro.wav" ] && d=proprio
+		echo "$(wav_info "$DSP_DIR/fir-sinistro.wav") $d $(fir_margin)" ;;
+	volume) volume_dsp ;;
+	stato) dsp_state_write "$2" "$3" ;;
 	guadagno) do_gain ;;
 	risposta) do_response ;;
 	prepara) do_prepare "$2" ;;

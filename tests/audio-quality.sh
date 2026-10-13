@@ -177,6 +177,23 @@ printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
 chmod +x "$E/bin/sweetspot-dsp"
 player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
 expect "player apre l'endpoint di playback DEV1" 'hw:CARD=DAC,DEV=1' "$(sed -n 's/^-o \([^ ]*\).*/\1/p' "$E/run/player.args")"
+expect "senza volume a 64 bit Squeezelite applica il volume di Lyrion" 0 "$(grep -c -- ' -F ' "$E/run/player.args")"
+# Volume a 64 bit: CamillaDSP c'e' per il volume (non per la correzione) e
+# Squeezelite lascia i campioni invariati (-F).
+cat > "$E/bin/sweetspot-dsp" <<'DSP'
+#!/bin/sh
+case "$1" in attiva|volume) exit 0 ;; prepara) echo sweetspot_correzione; exit 0 ;; guadagno) echo 0.0; exit 0 ;; esac
+exit 1
+DSP
+printf 'DAC=auto\nVOLUME=dsp\nMODALITA=completa\n' > "$E/settings"
+common "config_build '$E/settings'"
+player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
+expect "volume a 64 bit: CamillaDSP nel percorso e Squeezelite con guadagno fisso (-F)" 'dsp|sweetspot_correzione|1' \
+	"$(cat "$E/run/volume.modo")|$(sed -n 's/^-o \([^ ]*\).*/\1/p' "$E/run/player.args")|$(grep -c -- ' -F ' "$E/run/player.args")"
+printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
+printf 'DAC=auto\nCORREZIONE=si\nMODALITA=player\n' > "$E/settings"
+common "config_build '$E/settings'"
+rm -f "$E/run/volume.modo"
 printf 'Filter 1: ON PK Fc 814.8 Hz Gain 6 dB Q 50\n' > "$E/run/correzione/sinistro.txt"
 dsp 'do_prepare 1' > /dev/null
 expect "CamillaDSP apre lo stesso DEV1" 'hw:CARD=DAC,DEV=1' "$(sed -n 's/^    device: "\(.*\)"/\1/p' "$E/run/camilladsp.yml")"
@@ -316,6 +333,7 @@ if [ -f "$state/rpc-response" ]; then cat "$state/rpc-response"; exit 0; fi
 prev=''
 for arg; do [ "$prev" != --post-data ] || data=$arg; prev=$arg; done
 command=$(printf '%s\n' "$data" | jq -r '.params[1] | join(" ")')
+echo "$command" >> "$state/rpc-log"
 if [ "$command" = 'connected ?' ]; then
 	printf '{"result":{"_connected":1}}\n'
 elif [ "$command" = "$(cat "$state/rpc-fail" 2>/dev/null)" ] && [ ! -f "$state/rpc-failed" ]; then
@@ -345,5 +363,18 @@ expect "volume fisso non confermato: retry al giro successivo" '0 1' "$(player '
 printf 'MODALITA=completa\nVOLUME=software\n' > "$E/settings"
 common "config_build '$E/settings'"
 expect "volume software richiesto: preferenze confermate" 1 "$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs; echo "$PREFS_SET"')"
+# Volume a 64 bit: il controllo digitale del volume resta acceso (il
+# cursore di Material e delle app) e il cursore non viene portato al 100%.
+printf 'MODALITA=completa\nVOLUME=dsp\n' > "$E/settings"
+common "config_build '$E/settings'"
+echo dsp > "$E/run/volume.modo"
+rm -f "$E/rpc-log"
+expect "volume a 64 bit: cursore di Lyrion acceso e libero" 'playerpref digitalVolumeControl 1|0' \
+	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+echo riserva > "$E/run/volume.modo"
+rm -f "$E/rpc-log"
+expect "volume a 64 bit non disponibile: volume software di Lyrion" 'playerpref digitalVolumeControl 1|0' \
+	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+rm -f "$E/run/volume.modo"
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ]

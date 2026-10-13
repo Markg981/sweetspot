@@ -3,9 +3,12 @@
 La prima parte del traguardo 1 confronta i campioni PCM e il payload DoP prodotti
 dal percorso Lyrion → Squeezelite nel backend stdout del binario compilato.
 Verifica anche la continuità fra due brani consecutivi della stessa frequenza,
-incluse le transizioni fra profondità PCM diverse.
-Il report dichiara lo scope `software_stdout`: ALSA e il DAC richiedono prove
-successive sulla relativa uscita digitale.
+incluse le transizioni fra profondità PCM diverse, e le sei transizioni PCM
+fra 44,1, 48 e 96 kHz in entrambe le direzioni.
+Il report dichiara lo scope `software_stdout`. I 18 casi a frequenza costante,
+ripetuti sul percorso ALSA del kernel con la scheda virtuale snd-aloop, hanno
+scope `alsa_loopback` (vedi [Percorso ALSA con snd-aloop](#percorso-alsa-con-snd-aloop)).
+Il DAC fisico richiede una prova successiva sulla sua uscita digitale.
 
 ## Prova del sistema compilato
 
@@ -26,7 +29,7 @@ la cartella completa dopo il termine della prova. Una scrittura o chiusura
 bloccata sul filesystem Windows può invalidare la capture senza indicare un
 difetto nei campioni audio.
 
-Il driver genera due sorgenti locali per ciascuno dei 18 casi e i relativi
+Il driver genera due sorgenti locali per ciascuno dei 24 casi e i relativi
 riferimenti WAV. Nei casi DSF/DFF i WAV sono soltanto l'oracle del confronto:
 la playlist contiene i due file DSD originali.
 
@@ -37,6 +40,7 @@ la playlist contiene i due file DSD originali.
 | WAV contenente DoP | 176,4/352,8 kHz | PCM24, payload DSD64/128 | 2 |
 | DSF→DoP | carrier 176,4/352,8 kHz | DSD64/128 stereo non compresso | 2 |
 | DFF→DoP | carrier 176,4/352,8 kHz | DSD64/128 stereo non compresso | 2 |
+| PCM con cambio frequenza | 44,1↔48, 44,1↔96, 48↔96 kHz | 24→24 bit, due brani | 6 |
 
 Riproduce una playlist completa con volume 100,
 controllo digitale del volume disattivato, ReplayGain e transizioni spenti;
@@ -54,6 +58,72 @@ confronto dei campioni era riuscito. I riferimenti, le capture e i log rimangono
 nella cartella di evidenza anche se una prova fallisce.
 In CI gli artifact `verifica-audio-x86_64` e `verifica-audio-rpi` accompagnano
 il job Lyrion; una verifica fallita blocca la pubblicazione delle release.
+
+## Percorso ALSA con snd-aloop
+
+La prova ripete i 18 casi passando dal driver ALSA del kernel invece che
+dallo stdout, sulla scheda virtuale `hw:Loopback` di snd-aloop.
+
+**Nel kernel di Sweetspot (CI x86).** Il kernel x86 dell'immagine include
+snd-aloop come modulo, che non si carica da solo. `tests/prova-alsa-qemu.sh`
+avvia una copia dell'immagine in QEMU (KVM se disponibile). Nella copia
+attiva SSH con una password casuale, disattiva la modalità ascolto e indica un
+DAC inesistente, così il player di Sweetspot non apre la scheda. Carica poi
+snd-aloop nel sistema avviato e lancia `tests/prova-audio.py --ssh-port`:
+fixture, Squeezelite, `aplay` e `/proc/asound` sono quelli del sistema
+avviato, il server è il Lyrion dell'immagine.
+
+```sh
+sudo sh tests/prova-alsa-qemu.sh sweetspot.img.xz "$(tar -xOf sweetspot-x86_64-aggiornamento.tar versione)"
+```
+
+Servono `qemu-system-x86`, `mtools`, `xz-utils`, `sshpass`, `curl` e Python 3.
+Le porte 9000 e 2222 di `127.0.0.1` devono essere libere. Report e capture
+finiscono in `alsa-qemu.*` accanto alle cartelle `run.*`, dentro l'artifact
+`verifica-audio-x86_64`. Una prova fallita blocca la release. I kernel dei
+runner GitHub non hanno snd-aloop, e il kernel del Raspberry Pi non si avvia in
+QEMU: su ARM resta la sola prova stdout.
+
+**Sull'host con il rootfs estratto.** Se l'host ha la scheda (`sudo modprobe
+snd-aloop id=Loopback pcm_substreams=1`), anche `tests/prova-lyrion.sh` ripete
+i casi su ALSA in chroot, con il kernel dell'host e report in
+`run.*/alsa-loopback/`. `SWEETSPOT_AUDIO_ALSA` vale `auto` (predefinito: prova
+solo se la scheda c'è), `richiesta` (fallisce se manca) o `no`.
+
+Squeezelite suona su `hw:CARD=Loopback,DEV=0` con gli stessi parametri del
+player senza correzione: dispositivo `hw:`, `-a 400:4::1` (buffer di 400 ms in
+quattro periodi, formato scelto dal motore, mmap), ricampionamento spento.
+`-r F-F` limita le frequenze a quella del caso, così il dispositivo si apre
+già alla frequenza giusta e manda silenzio finché non parte la playlist.
+
+Prima di agganciare la capture il driver legge `hw_params` e `status` del
+substream di riproduzione in `/proc/asound`. Richiede `state: RUNNING`,
+accesso `MMAP_INTERLEAVED`, due canali, la frequenza del caso e un formato
+noto (`S16_LE`, `S24_3LE`, `S24_LE`, `S32_LE`). Se un substream della scheda
+è già aperto da un altro processo, il caso fallisce. La capture usa `aplay -C`
+della rootfs su `hw:CARD=Loopback,DEV=1`, con lo stesso formato e la stessa
+frequenza, e una durata esatta in secondi. snd-aloop scandisce i due lati con
+il proprio timer, quindi non serve il ritmo di lettura dello stdout. La
+capture deve terminare con stato 0 e il numero esatto di byte attesi.
+
+Il confronto è lo stesso del backend stdout: tutti i bit significativi per il
+PCM, payload e marker per il DoP, nel contenitore negoziato. Il caso fallisce
+anche se il registro di Squeezelite (`-d output=info`) non riporta l'apertura
+di `hw:CARD=Loopback,DEV=0`, se contiene `XRUN` o `XRUN recover failed`, o se
+`aplay` segnala un overrun in capture. Il report conserva `hw_params`, i
+comandi del player e della capture, il registro con il suo SHA-256 e lo
+stderr della capture.
+
+Il passaggio da PCM a DoP fa riaprire il dispositivo con gli stessi parametri:
+snd-aloop riempie di zeri la capture durante la riapertura, prima del primo
+brano, e il confronto lo ammette solo come silenzio iniziale.
+
+Questa prova copre driver, contenitore, mmap e periodi del percorso ALSA, ma
+non un clock USB/I2S/S/PDIF, la temporizzazione di un DAC reale o
+l'apertura con il formato preferito da un DAC specifico. Il cambio di
+frequenza su ALSA non è ancora coperto: Squeezelite chiude e riapre il
+dispositivo, quindi la capture va riaperta a ogni frequenza e verificata come
+sequenza di segmenti.
 
 ## Confronto di una capture esterna
 
@@ -86,6 +156,60 @@ Exit code: 0 corrispondenza completa, 1 differenza nei campioni o nella sequenza
 2 input invalido. Il report conserva hash, confini dei brani e primo errore;
 una capture troncata o un rate dichiarato diverso non costituiscono una prova
 riuscita.
+
+## Cambi di frequenza PCM
+
+Le sei prove aggiuntive riproducono WAV24 a frequenze diverse nella stessa
+playlist. Squeezelite annuncia al server le frequenze 44.100, 48.000 e 96.000 Hz
+con `-r 44100,48000,96000:0`; il ricampionamento rimane spento. La capture stdout
+non ha header né marcatori di frequenza. Il driver conserva quindi anche gli
+annunci `track start sample rate` al
+[confine delle tracce nel motore](https://github.com/ralph-irving/squeezelite/blob/72e1fd8abfa9b2f8e9636f033247526920878718/output.c#L153)
+e richiede l'esatta sequenza dei
+due rate attesi, senza annunci mancanti, aggiuntivi, duplicati o fuori ordine.
+Il report conserva percorso e hash del log.
+
+Il confronto concatena tutti i frame nativi delle due sorgenti, normalizzati
+nei bit significativi, senza ricampionare o riallineare il secondo brano.
+Perdite, duplicazioni o pause interne falliscono anche al cambio di frequenza.
+I confini nel report indicano gli indici dei frame e i rate prima e dopo il
+cambio; il primo campione errato identifica anche traccia e frame di origine.
+
+Il consumer software legge stdout a un ritmo fisso di 44.100 frame al secondo,
+registrato come `pacing_rate`: questo valore non è la frequenza delle tracce
+né una misura del clock del DAC. Il limite di capture deriva dalla somma dei
+frame dei riferimenti più dieci secondi di silenzio iniziale e dieci finali
+al ritmo del consumer. Anche il timeout deriva da questo budget, con un
+margine finito per l'arresto; non assume che i due brani abbiano lo stesso rate.
+Il primo frame non nullo delle fixture diagnostiche determina il silenzio
+iniziale effettivo: il driver termina dopo questo bordo, tutti i frame nativi
+e il bordo finale ammesso, sempre entro il limite massimo. Conserva ogni byte
+letto, senza tagliare silenzi interni o usare il budget iniziale inutilizzato
+per allungare quello finale.
+
+Il comparatore dedicato si può usare separatamente:
+
+```sh
+python3 tools/audio_verification.py compare-pcm-sequence \
+  --reference primo-44100.wav --reference secondo-48000.wav \
+  --capture uscita.raw --capture-format s32_le \
+  --observed-rate 44100 --observed-rate 48000 --pacing-rate 44100 \
+  --max-lead-frames 441000 --max-trailing-frames 441000 \
+  --report graphify-out/rate-comparison.json
+```
+
+Sostituisci i riferimenti con i due WAV effettivi e ricava i valori
+`--observed-rate` dal log dell'esecuzione. La CLI confronta i valori forniti
+con gli header: da sola non acquisisce né autentica il log. Il driver completo
+lega invece il verdetto al log conservato della singola prova. Il report
+riporta la frequenza della capture come `null` e il pacing separatamente.
+Il comando `compare` precedente continua a richiedere una frequenza unica.
+Il nuovo comando limita entrambi i bordi nulli, anche usando un offset
+esplicito; dentro la sequenza non tollera silenzio aggiunto.
+
+Queste prove riguardano il cambio di rate annunciato dal motore e i frame
+nel backend software. L'apertura ALSA e il comportamento del DAC al cambio
+di frequenza richiedono un collaudo sulla relativa uscita reale.
 
 ## Confronto DoP
 
@@ -223,7 +347,10 @@ e tutti i 18 casi nelle immagini complete x86 e ARM. I log conservano gli
 esiti di ogni caso; l'upload dei report aveva invece una destinazione errata
 e non ha prodotto gli artifact di evidenza. Il workflow passa ora la cartella
 esplicitamente al comando privilegiato e considera un archivio assente un
-errore: la pubblicazione della correzione richiede una nuova esecuzione CI.
+errore. La [CI della PR #16](https://github.com/Markg981/sweetspot/actions/runs/38056065758),
+sul commit `b423231`, ha poi superato test, compilazioni e prove Lyrion su
+x86 e ARM e pubblicato entrambi gli artifact `verifica-audio-*`.
+Quella CI copre i 18 casi precedenti; la matrice da 24 richiede una nuova prova.
 La suite Linux finale ha superato 429 controlli, inclusi 65 test del
 comparatore/fixture, 35 del driver e 10 del parser C, senza test saltati.
 
@@ -264,9 +391,12 @@ collaudo ALSA su dispositivi reali rimane da completare.
 ## Copertura ancora da completare
 
 Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
-frequenza costante e due brani consecutivi nel backend software. Restano
-aperti DSD nativo, DFF compressi DST, mono/multicanale, seek, cambi di frequenza,
-ALSA, USB/I2S/S/PDIF reali, hotplug, rete/NAS, carico prolungato e la matrice
-computer/DAC/firmware per release. Non misura jitter del clock, rumore elettrico
+frequenza costante e due brani consecutivi nel backend software e sul
+percorso ALSA di snd-aloop, più sei cambi fra 44,1/48/96 kHz nel backend
+software. Restano aperti DSD nativo, DFF compressi DST, mono/multicanale,
+seek, cambi PCM/DSD, cambi di frequenza su ALSA e sui DAC, USB/I2S/S/PDIF
+reali (a partire da N550JV + R26 con registro pubblicato per release),
+hotplug, rete/NAS, carico prolungato e la matrice computer/DAC/firmware per
+release. Non misura jitter del clock, rumore elettrico
 USB o fedeltà dell'uscita analogica. Il traguardo 1 rimane parzialmente coperto
 finché queste prove non hanno evidenza riproducibile.

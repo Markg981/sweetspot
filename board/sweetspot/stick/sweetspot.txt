@@ -27,6 +27,17 @@ SERVER=
 # sospende e riparte quando la musica si ferma.
 MODALITA_ASCOLTO=si
 
+# Precarico in RAM (solo modalita' completa): i brani della coda, dal brano
+# in corso alla fine, vengono letti e tenuti in RAM; quando c'e' tutta la
+# coda i dischi meccanici che la contengono vanno in standby. Lo streaming
+# non si precarica. PRECARICO_MB limita la memoria usata (auto = meta' di
+# quella libera); i file piu' grandi di PRECARICO_FILE_MAX_MB si leggono dal
+# disco; PRECARICO_STANDBY=no lascia i dischi accesi.
+PRECARICO=si
+PRECARICO_MB=auto
+PRECARICO_FILE_MAX_MB=1024
+PRECARICO_STANDBY=si
+
 # --- Musica ---------------------------------------------------------------
 # Dischi interni e USB vengono trovati da soli e letti in sola lettura.
 # DISCHI=no li ignora tutti; ESCLUDI_DISCHI ignora quelli indicati per nome,
@@ -42,14 +53,22 @@ ESCLUDI_DISCHI=
 # Senza utente si accede come ospite.
 
 # --- Audio ----------------------------------------------------------------
-# Quale DAC usare: auto = il primo DAC USB collegato (consigliato).
-# Puoi anche scrivere il nome, per esempio DAC=R26.
+# Quale DAC usare: auto = il primo DAC USB collegato (consigliato; con le
+# zone qui sotto resta lui per tutto l'avvio). Puoi anche scrivere il nome,
+# per esempio DAC=R26, o l'identificativo USB (292b:0a26): nella pagina
+# Audio si sceglie tra i DAC collegati.
 DAC=auto
+
+# Altri DAC USB: no = suona solo il DAC qui sopra; si = ogni altro DAC
+# collegato diventa un player separato in Lyrion (zone da raggruppare li').
+ALTRI_DAC=no
 
 # Volume:
 #   fisso    = 100%, si regola dall'amplificatore (bit-perfect, consigliato)
 #   dac      = usa il controllo di volume del DAC (bit-perfect)
-#   software = attenuazione digitale, per diffusori attivi senza volume
+#   software = attenuazione digitale di Squeezelite, senza dither
+#   dsp      = volume a 64 bit con dither (CamillaDSP), solo in modalita'
+#              completa: il migliore se il volume va regolato da Lyrion
 VOLUME=fisso
 
 # DSD:
@@ -71,8 +90,12 @@ FILTRO=lineare
 # Correzione ambientale con i filtri misurati con REW (pagina Audio >
 # Correzione ambientale). Cambia il segnale, quindi di serie e' spenta.
 # I filtri sono nella cartella correzione-ambientale (testo esportato da REW:
-# sinistro.txt e destro.txt).
+# sinistro.txt e destro.txt). Nella stessa cartella si possono copiare dal
+# computer anche impulsi FIR in WAV (rePhase, Acourate, REW): fir-sinistro.wav
+# e, se diverso, fir-destro.wav; CamillaDSP lavora alla loro frequenza.
 CORREZIONE=no
+# Attenuazione in piu' (dB) quando ci sono i filtri FIR.
+FIR_MARGINE_DB=3
 
 # Frequenza massima inviata al DAC, in Hz. 0 = quella dichiarata dal DAC.
 FREQUENZA_MAX=0
@@ -103,6 +126,18 @@ NOME_RETE=sweetspot
 WIFI_NOME=
 WIFI_PASSWORD=
 
+# Hotspot di configurazione (si/no): se dopo HOTSPOT_ATTESA secondi non c'e'
+# nessuna connessione (niente cavo, Wi-Fi non configurato o non collegato)
+# e c'e' un adattatore Wi-Fi che lo permette, il player accende la rete
+# "Sweetspot-XXXX" per scegliere il Wi-Fi di casa dal telefono. La password
+# compare sullo schermo; per uno Sweetspot senza schermo scrivine una tua
+# (da 8 a 63 caratteri) in HOTSPOT_PASSWORD.
+# HOTSPOT_PROVA: secondi concessi alla rete scelta prima che l'hotspot riparta.
+HOTSPOT=si
+HOTSPOT_ATTESA=60
+HOTSPOT_PROVA=40
+HOTSPOT_PASSWORD=
+
 # Indirizzo fisso (vuoto = automatico dal router, consigliato). Esempio:
 #   IP_FISSO=192.168.1.50/24
 #   GATEWAY=192.168.1.1
@@ -122,13 +157,36 @@ PROFILO=bilanciato
 # Dopo quanti minuti spegnere lo schermo (0 = mai).
 SCHERMO_MINUTI=2
 
+# Periferiche che il player non usa, su qualunque computer: webcam,
+# Bluetooth e lettori di smart card USB scollegati dai driver (anche se
+# collegati dopo); scheda video secondaria, audio integrato non scelto,
+# modem, FireWire, lettore di schede, Wi-Fi non configurato e schede di
+# rete senza cavo lasciati a riposo. accese = lasciate come sono.
+# DAC, dischi, tastiere e la rete in uso non vengono mai toccati.
+PERIFERICHE_INUTILIZZATE=spente
+
 # Accesso remoto per l'assistenza tecnica (SSH).
 SSH=no
 SSH_PASSWORD=
 
+# Password delle pagine di Sweetspot (utente admin). Vuota = pagine aperte
+# a chi e' nella rete di casa. Dalla pagina Sistema si salva come impronta
+# ($1$...); qui si puo' scrivere anche in chiaro. Dimenticata: togli la riga.
+PASSWORD_WEB=
+
+# Lyrion protetto da utente e password (nelle sue impostazioni: Avanzate >
+# Sicurezza): scrivili anche qui, cosi' Sweetspot (volume, precarico,
+# pagine, prova DoP) continua a parlare con Lyrion. Vuoti = Lyrion aperto.
+LYRION_UTENTE=
+LYRION_PASSWORD=
+
 # Ottimizzazioni di sistema (core dedicati, frequenza fissa, ecc.).
 # no = funzionamento normale, utile solo per confronti o problemi.
 OTTIMIZZAZIONI=si
+
+# Watchdog: se il sistema si blocca del tutto il computer riparte da solo
+# (dopo un aggiornamento che si blocca, con la versione precedente).
+WATCHDOG=si
 
 # Fonte degli aggiornamenti (vuoto = questo progetto su GitHub).
 AGGIORNAMENTI_URL=

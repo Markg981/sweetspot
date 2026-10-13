@@ -1,0 +1,63 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - watchdog: se il sistema si blocca del tutto e smette di
+# alimentarlo, il computer riparte da solo. Dopo un aggiornamento che si
+# blocca riparte cosi' la versione precedente (vedi sweetspot-aggiorna).
+# Usa il watchdog hardware del chipset (Intel iTCO, AMD SP5100, Raspberry
+# Pi, i6300ESB in QEMU) e, se manca, softdog del kernel. WATCHDOG=no lo
+# lascia spento.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+# Il watchdog del Raspberry Pi arriva al massimo a 15 secondi: si alimenta
+# ogni 5, cosi' basta su ogni scheda (il tempo si adatta al massimo del
+# dispositivo).
+TIMEOUT=60
+PERIOD=5
+WD=${SWEETSPOT_WATCHDOG_DEV:-/dev/watchdog}
+WDSYS=$SYS/class/watchdog/watchdog0
+
+case "$1" in
+	start)
+		is_yes "$(conf WATCHDOG si)" || exit 0
+		mkdir -p "$RUN"
+		# Watchdog hardware del chipset (gli stessi moduli che S03 toglie
+		# dalla blacklist con WATCHDOG=si); softdog solo se manca.
+		if [ ! -c "$WD" ]; then
+			for m in iTCO_wdt sp5100_tco; do
+				modprobe "$m" 2>/dev/null
+			done
+			udevadm settle --timeout=5 2>/dev/null
+		fi
+		if [ ! -c "$WD" ]; then
+			modprobe softdog soft_margin=$TIMEOUT 2>/dev/null
+			udevadm settle --timeout=5 2>/dev/null
+		fi
+		if [ ! -c "$WD" ]; then
+			log "watchdog: nessun dispositivo disponibile"
+			exit 0
+		fi
+		max=$(cat "$WDSYS/max_timeout" 2>/dev/null)
+		case "$max" in ''|*[!0-9]*|0) ;; *) [ "$max" -lt "$TIMEOUT" ] && TIMEOUT=$max ;; esac
+		# Perche' si e' riavviato: bootstatus diverso da 0 = il watchdog.
+		# sweetspot-aggiorna conta i riavvii consecutivi e al secondo fa
+		# partire l'altra copia dal prossimo avvio.
+		boot=$(cat "$WDSYS/bootstatus" 2>/dev/null)
+		case "$boot" in
+			''|0) ;;
+			*)
+				log "watchdog: l'avvio precedente e' finito con un riavvio del watchdog (bootstatus $boot)"
+				echo "$boot" > "$RUN/watchdog.riavvio"
+				sweetspot-aggiorna watchdog ;;
+		esac
+		# Sul core di sistema, sopra i processi normali e sotto l'audio.
+		taskset -c 0 chrt -f 5 watchdog -T "$TIMEOUT" -t $PERIOD "$WD" &&
+			log "watchdog: $(cat "$WDSYS/identity" 2>/dev/null), riavvio dopo $(cat "$WDSYS/timeout" 2>/dev/null) secondi di blocco"
+		;;
+	stop)
+		# Alla chiusura BusyBox disattiva il watchdog (carattere magico V).
+		killall watchdog 2>/dev/null
+		;;
+	*) echo "uso: $0 start|stop" ;;
+esac

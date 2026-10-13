@@ -33,9 +33,33 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      streaming e le radio possono continuare a usare la rete;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
      interruzioni del controller USB del DAC (priorità 90) sull'altro.
-8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
-   sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
-   aspetta la fine dell'ascolto.
+8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
+   lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
+   normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
+   fine dell'ascolto. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
+   `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner
+   non resta congelato con una transazione del database aperta. Se il kernel
+   non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
+   riprende comunque quanto un'esecuzione precedente aveva lasciato fermo.
+8b. **Memoria sotto pressione**: il sistema non ha swap (e non si aggiunge, nemmeno
+   zram: riempirebbe di compressione e latenza il percorso del suono e
+   richiederebbe un kernel con swap). Per questo, se la RAM finisse (tipico
+   sui 2 GB, classe «essenziale»), l'OOM killer segue una scala di priorità
+   (`oom_score_adj`): Squeezelite e CamillaDSP a -1000 (mai uccisi), Lyrion a
+   -100, scanner di Lyrion, copie, estrazione dei CD e precarico a +500, i
+   primi a cadere. Resta il limite dei buffer di Squeezelite (`player_buffers`),
+   che lascia 768 MB al resto.
+9. **Precarico in RAM** (modalità completa): i file della coda, dal brano in
+   corso alla fine, vengono letti dietro a tutti gli altri processi (`nice`,
+   `ionice` idle) e bloccati in RAM (`mlock`), entro un budget di memoria (per
+   difetto metà di quella libera, tolti i buffer di Squeezelite ancora da
+   riempire). Quando tutta la coda è in RAM, i dischi meccanici che la
+   contengono vanno in standby; lo stato mostrato è quello vero (`hdparm -C`):
+   un disco svegliato da altro esce dall'elenco e si riprova a fermarlo dopo
+   un minuto. Con la coda invariata il piano non si ricalcola (niente `stat`
+   sulle cartelle di rete a ogni giro). Lo streaming non si precarica, i file
+   oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la pagina Stato mostra
+   brani caricati, memoria usata, esclusioni e dischi fermi.
 
 ## Come si usa
 
@@ -55,7 +79,7 @@ Daphile:
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
 | **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
-| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete |
+| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto. Non rifà i controlli a ogni visita: legge la cache del demone `sweetspot-stato` (ogni 10 secondi, ogni 45 durante l'ascolto; core di sistema, `nice 19`) e avvisa se è assente o vecchia. Lo stesso stato in JSON, in sola lettura: `/cgi-bin/stato.json` (stessa password del pannello) e, da Lyrion o Material via JSON-RPC, `["sweetspot","stato"]` |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
 anche con il Blocco note).
@@ -71,13 +95,40 @@ diffusore sinistro e uno per il destro.
 
 - I filtri li applica **CamillaDSP** in virgola mobile a 64 bit, alla
   frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
-  frequenza), sul core dedicato all'audio con priorità real-time; DAC a 16 bit
-  con dither.
+  frequenza): i suoi **thread audio** (cattura dal plugin, elaborazione,
+  riproduzione ALSA) sul core dedicato all'audio con priorità real-time
+  (`SCHED_FIFO` 70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta), gli
+  altri (principale, segnali, websocket e le connessioni di
+  `sweetspot-camilla`) sui core di sistema con la priorità normale, così sul
+  core isolato gira solo l'audio. Il thread di elaborazione si riconosce dal
+  nome grazie alla patch `patches/camilladsp/0001-name-processing-thread.patch`;
+  la pagina Stato verifica, alla voce "CamillaDSP in real-time", priorità e
+  core dei thread audio e segnala un thread non audio rimasto in real-time.
+  All'uscita sempre il dither TPDF alla
+  risoluzione del DAC (16 o 24 bit): CamillaDSP modifica i campioni, e il
+  passaggio da 64 bit all'uscita non va troncato.
 - Sweetspot calcola la curva della correzione e un'**attenuazione** conservativa
   dal massimo guadagno dei singoli filtri, comprese le risonanze: i picchi
   stretti non dipendono dalla griglia usata per disegnare la curva. Il margine
   copre il guadagno in frequenza; i picchi della forma d'onda possono richiedere
-  ulteriore attenuazione, da verificare sul segnale elaborato.
+  ulteriore attenuazione, da verificare sul segnale elaborato: la pagina Stato,
+  voce "Clipping di CamillaDSP", somma i campioni tagliati nella sessione
+  (letti ogni pochi secondi dal websocket di CamillaDSP, aperto solo su
+  127.0.0.1:1234).
+- **Filtri FIR** (convoluzione): impulsi WAV esportati da rePhase, Acourate o
+  REW, copiati dal computer nella cartella `correzione-ambientale` della
+  chiavetta come `fir-sinistro.wav` e, se diverso, `fir-destro.wav` (un file
+  stereo da solo vale per i due canali; mono o stereo, fino a 16 MB, stessa
+  frequenza). Si applicano dopo i filtri di REW, con la correzione accesa.
+  CamillaDSP lavora alla frequenza degli impulsi e ricampiona i brani a
+  frequenze diverse (ricampionatore `Synchronous`; con la stessa frequenza il
+  ricampionamento si spegne da solo); il DAC deve accettarla. Attenuazione in
+  più `FIR_MARGINE_DB` (3 dB): i FIR di rePhase e Acourate sono di solito già
+  normalizzati, la voce "Clipping di CamillaDSP" della pagina Stato dice se
+  basta. La coda di ogni brano non viene tagliata: quando lo stream si chiude
+  (stop, cambio di frequenza, pausa lunga) CamillaDSP legge ancora tanti
+  campioni di silenzio quanti i tap dei FIR più due blocchi
+  (`extra_samples`), così il suono ancora dentro i filtri arriva al DAC.
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.
@@ -287,7 +338,14 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
   sceglie la copia in uso (`os_prefix`); un aggiornamento si prova con il
   riavvio *tryboot* del firmware, che usa `tryboot.txt` una volta sola. Se la
   nuova versione non si conferma, al riavvio successivo (o staccando la
-  corrente) riparte quella di prima.
+  corrente) riparte quella di prima. La conferma a fine avvio
+  (`sweetspot-aggiorna conferma`) verifica in ordine: impostazioni
+  leggibili, pagina locale `/cgi-bin/vivo`, supervisore del player in
+  esecuzione, Lyrion che risponde (solo in modalità completa; fino a 10
+  minuti di attesa, `SWEETSPOT_CONFERMA_ATTESA_LMS`), musica e dati di Lyrion
+  accessibili. Un DAC assente o scollegato ("in attesa del DAC") non è un
+  guasto e non causa il ritorno alla versione precedente. Il controllo
+  fallito resta nel registro e compare nella pagina Sistema e nel rapporto.
 - **Lyrion**: Lyrion non fornisce i suoi moduli compilati per ARM con Perl 5.42.
   Li compila il workflow *Moduli di Lyrion* (`.github/workflows/moduli-lyrion.yml`)
   con lo script ufficiale di Lyrion, in Fedora 43 su un server ARM di GitHub, e
@@ -305,6 +363,36 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 5. Collega un disco con la musica o aggiungi la cartella del NAS in
    *Impostazioni Sweetspot → Musica*: la libreria si crea da sola.
 
+### Hotspot di configurazione Wi-Fi
+
+Senza cavo e senza aver scritto `WIFI_NOME` in `sweetspot.txt`, il primo avvio
+non resta senza rete. Se dopo `HOTSPOT_ATTESA` secondi (60) non c'è nessuna
+connessione (nessun cavo con collegamento, nessun indirizzo, Wi-Fi non
+configurato o non collegato) e c'è un adattatore Wi-Fi che sa fare da access
+point, Sweetspot accende la rete **`Sweetspot-XXXX`** (XXXX = ultime cifre del
+MAC), WPA2, canale 6 (2,4 GHz), con DHCP e DNS minimi (`udhcpd`, `dnsd` di
+BusyBox):
+
+1. Il nome e la **password** compaiono sullo schermo (console). La password è
+   casuale a ogni accensione e non finisce nel registro; per un player senza
+   schermo scrivine una tua (8-63 caratteri) in `HOTSPOT_PASSWORD`.
+2. Collega il telefono a quella rete e apri `http://192.168.4.1/` (anche
+   `http://sweetspot.local/`, se il telefono usa il DNS dell'hotspot): si apre
+   la pagina **Rete**.
+3. In *Collega Sweetspot al Wi-Fi di casa* scegli la rete dall'elenco (o scrivi
+   il nome) e la password, poi **Collega**. Il nome e la password sono salvati
+   con `sweetspot-config` (chiavetta), l'hotspot si spegne e Sweetspot si
+   collega.
+4. **Recupero**: se entro `HOTSPOT_PROVA` secondi (40) la rete scelta non dà un
+   indirizzo (password sbagliata, router spento) l'hotspot riparte e puoi
+   riprovare. La stessa cosa succede a un avvio con `WIFI_NOME` sbagliato.
+
+L'hotspot non si accende mai con la rete funzionante e si spegne da solo se
+arriva un cavo. Con `HOTSPOT=no` non si accende mai; le radio Wi-Fi restano
+spente come negli altri casi (`radios_off` in `S20sweetspot-tune`) e vengono
+accese solo per l'hotspot. Servono i pacchetti `hostapd` e `iw` (già nelle
+immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
+
 ## Impostazioni (`sweetspot.txt`)
 
 | Voce | Valori | Predefinito |
@@ -312,22 +400,32 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `NOME_PLAYER` | testo | Sweetspot |
 | `MODALITA` | `completa`, `player` | completa |
 | `SERVER` | solo modalità player: indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
-| `MODALITA_ASCOLTO` | `si`, `no` | si |
+| `MODALITA_ASCOLTO` | `si`, `no`: mentre la musica suona lettura della libreria, copie e ripping restano sospesi. Nella pagina Sistema un'unica scelta, che vale subito: *ascolto puro* (questa più `PRECARICO=si`: coda in RAM e dischi fermi), *lavori sospesi* (`PRECARICO=no`) o *spenta*; la pagina Stato, voce "Ascolto", dice quale è attiva e quanti lavori sono sospesi ora | si |
+| `PRECARICO` | `si`, `no`: coda di ascolto in RAM | si |
+| `PRECARICO_MB` | `auto` (metà della memoria libera, tolti i buffer di Squeezelite ancora da riempire) o MB; mai oltre la memoria libera meno quei buffer e 256 MB | auto |
+| `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
+| `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
-| `DAC` | `auto`, nome ALSA (es. `R26`) o `VID:PID` | auto |
-| `VOLUME` | `fisso`, `dac`, `software` | fisso |
+| `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
+| `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
+| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio | 500, 0 |
 | `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
+| `HOTSPOT`, `HOTSPOT_ATTESA`, `HOTSPOT_PROVA`, `HOTSPOT_PASSWORD` | hotspot di configurazione del primo avvio (vedi [sotto](#hotspot-di-configurazione-wi-fi)): `si`/`no`, secondi di attesa senza rete prima di accenderlo, secondi concessi alla rete scelta prima che riparta, password scelta da te (8-63 caratteri; vuoto = casuale a ogni accensione, mostrata sullo schermo) | si, 60, 40, vuoto |
 | `IP_FISSO`, `GATEWAY`, `DNS` | indirizzo fisso, es. `192.168.1.50/24` | vuoto |
 | `RISPARMIO_RETE` | risparmio energetico Ethernet (EEE) | no |
 | `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |
 | `USCITA_INTEGRATA` | usa la scheda audio del PC | no |
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
+| `PERIFERICHE_INUTILIZZATE` | `spente`: su qualunque computer, per classe di dispositivo e mai per modello. USB con sole interfacce smart card, video, Bluetooth/wireless (webcam, adattatori BT) scollegate dai driver (`authorized=0`), anche se collegate dopo l'avvio (regola udev). PCI inutilizzati a riposo quando inattivi (`power/control=auto`, e il ponte PCI sopra se porta solo a loro): scheda video che non mostra la console, audio integrato se `USCITA_INTEGRATA=no`, multimedia, modem, FireWire, lettore di schede, Wi-Fi senza `WIFI_NOME`, Bluetooth, schede di rete attive ma senza cavo né indirizzo (decise a rete su, da `S40sweetspot-net`, dopo qualche secondo per il collegamento: una scheda non ancora attivata non si tocca). Mai DAC, dischi, tastiere, hub o la rete in uso; `accese` lascia tutto com'è | spente |
+| `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
+| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Anche senza password le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
+| `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
@@ -347,13 +445,38 @@ sempre svegli. Il Turbo è sempre spento.
 | Sistema in RAM, chiavetta non in uso | pagina di stato, voci "Sistema in RAM" e "Chiavetta" |
 | Ottimizzazioni attive | pagina di stato: tutte le voci verdi |
 | DSD nativo sul R26 | pagina di stato, voce "DSD": `nativo (u32be)` |
-| Campioni e continuità nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF; [protocollo](docs/audio-verification.md) |
-| Riconoscimento DoP del DAC | `tools/genera-test-dop.py`: vedi sotto |
-| Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH), obiettivo sotto 50 µs |
-| XRUN ALSA e recuperi falliti | pagina di stato: conteggi separati nel registro disponibile, anche di avvii precedenti; zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
+| Campioni, continuità e cambi di frequenza nel backend software | `tests/prova-lyrion.sh`: confronto completo PCM/DoP, incluse sorgenti DSF/DFF e sei transizioni PCM fra 44,1/48/96 kHz; [protocollo](docs/audio-verification.md) |
+| Riconoscimento DoP del DAC | pagina Audio, "Prova DoP" (DAC senza DSD nativo), oppure `tools/genera-test-dop.py`: vedi sotto |
+| Latenza real-time | `sweetspot-latenza 300` da terminale (Alt+F2 o SSH) a riproduzione ferma, obiettivo sotto 50 µs |
+| Latenza durante l'ascolto | `LATENZA_ASCOLTO=si` in `sweetspot.txt`: finestre di 30 s a 100 risvegli al secondo sul core della riproduzione, solo mentre l'uscita suona; pagina di stato, massima e ultima finestra. Spenta in modo predefinito: il thread di misura (priorità 85) toglie pochi µs ogni 10 ms al player |
+| XRUN della sessione | pagina di stato, "XRUN nella sessione": eventi e recuperi falliti dall'ultimo avvio del player; lo storico del registro resta come informazione. Zero eventi non esclude carenza di dati, errori DSP o altre interruzioni |
+| Ascolto puro | pagina di stato, "Letture dal disco durante l'ascolto" e "Rete durante l'ascolto": settori letti dai dischi con la musica (`/sys/block/*/stat`) e byte di rete (`/proc/net/dev`, senza `lo`) dall'inizio dell'ascolto in corso o dell'ultimo, annotati da `sweetspot-ascolto` quando il DAC parte. Con il precarico finito le letture sono zero ("la musica suona dalla RAM"); la rete, in modalità completa, è solo il controllo dal browser e dalle app (sotto 2 KB/s), altrimenti streaming, cartelle di rete o precarico dalla rete |
+| Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
+| Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
+| Attività elettrica superflua | pagina di stato: "LED" (spenti tranne quelli della tastiera), "USB inutilizzate", "PCI a riposo" (ogni dispositivo con il suo stato reale: a riposo o attivo), "Lavoro differito del kernel" (workqueue non legate a un core solo sui core di sistema) e "Schermo" (stato DPMS dei connettori collegati e retroilluminazione). Le applica `sweetspot-silenzio` all'avvio, se le ottimizzazioni sono attive; è una riduzione di attività, non una misura del rumore analogico |
+| Robustezza | CI (`tests/prova-robustezza-qemu.sh`, immagine x86 in QEMU): watchdog i6300ESB attivo, DAC USB emulato collegato, scollegato e ricollegato a caldo con il player che si ferma e riparte, blocco simulato (servizio del watchdog fermato) con riavvio automatico e player di nuovo attivo, file system della chiavetta integro dopo il riavvio brusco. Sull'hardware: `sweetspot-durata 24 &` con una playlist lunga in riproduzione, esito in `/run/sweetspot/durata.txt` e sulla chiavetta (nessun XRUN, nessun riavvio del player, uscita in riproduzione almeno il 95% del tempo, memoria calata meno del 10%); pagina di stato, voce "Watchdog" |
+| Conversione PCM → DSD | non disponibile, per scelta: costo di CPU continuo e modulatore di qualità mancante; motivi e condizioni per riaprirla in [docs/pcm-dsd.md](docs/pcm-dsd.md) |
+| Compatibilità | [Matrice di compatibilità](docs/compatibilita.md), generata solo dai rapporti reali: pagina di stato → *Scarica il rapporto di compatibilità* (`sweetspot-rapporto`: computer, CPU, schede di rete con driver, DAC con identificativo USB e firmware, esiti della pagina Stato e della prova di durata, senza indirizzi né dati personali), poi una segnalazione *Rapporto di compatibilità* su GitHub |
+| Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
 
 ### Prova di riconoscimento con il file DoP
+
+Con un DAC USB che non dichiara il DSD nativo, `DSD=auto` fa convertire i file
+DSD in PCM dal server (Lyrion), senza provare il DoP. Molti DAC accettano
+comunque il DoP: la pagina **Audio** propone la **Prova DoP**. Genera sul
+player lo stesso file descritto sotto (`sweetspot-prova-dop`), lo fa suonare
+per 6 secondi (con `playlist preview` di Lyrion: la coda di ascolto viene
+messa da parte e torna com'era, ferma, quando si indica l'esito) e chiede
+l'esito: se il DAC ha mostrato DSD/DoP e si è sentito il tono, imposta
+`DSD=dop`; altrimenti non cambia nulla. La prova non parte con volume software
+o a 64 bit, correzione ambientale o ricampionamento attivi, con l'uscita
+forzata a 16 bit, né se il DAC non dichiara 176,4 kHz a 24 o 32 bit (i
+marcatori DoP stanno nei bit alti dei campioni a 24 bit), perché l'esito non
+sarebbe affidabile. Se il DAC non riconosce il DoP il tono diventa un fruscio
+forte con una componente ultrasonica: volume dell'amplificatore basso.
+
+Lo stesso file si può creare anche sul computer:
 
 ```sh
 python3 tools/genera-test-dop.py
@@ -377,7 +500,10 @@ confrontano ogni campione e il passaggio fra due brani, con report JSON e
 capture conservate dalla CI. Il backend software stdout viene controllato
 a 44,1/48/96 kHz e 16/24 bit, inclusi passaggi fra profondità diverse, e sul
 payload DoP a 176,4/352,8 kHz, anche decodificando sorgenti DSF/DFF DSD64/128.
-La certificazione di ALSA e dei DAC resta aperta.
+Sul PC i casi a frequenza costante si ripetono anche nel driver ALSA del kernel di
+Sweetspot, avviato in QEMU, su `hw:Loopback` (snd-aloop) con buffer, periodi e
+mmap del player; un XRUN fa fallire la prova.
+Restano aperti il cambio di frequenza su ALSA e la certificazione dei DAC reali.
 
 ### Qualità sonora e compatibilità
 
@@ -437,7 +563,7 @@ tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per A
 tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
-Basato su Buildroot 2026.08 e sul kernel LTS 6.18 con PREEMPT_RT: 6.18.55 sul
+Basato su Buildroot 2026.08 e sul kernel LTS 6.18 con PREEMPT_RT: 6.18.56 sul
 PC, il ramo rpi-6.18.y della Raspberry Pi Foundation sul Raspberry Pi.
 
 ## Licenza

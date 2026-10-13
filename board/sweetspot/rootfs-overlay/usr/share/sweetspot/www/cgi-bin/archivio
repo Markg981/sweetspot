@@ -13,7 +13,7 @@ if [ "$(mode)" = player ]; then
 	exit 0
 fi
 
-arch=$(sweetspot-dischi archivio)
+arch=$(priv sweetspot-dischi archivio)
 ARCHIVE_LABEL="Sweetspot Musica"
 host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 
@@ -42,7 +42,7 @@ HTML
 
 	# Spazio libero del disco da cui parte Sweetspot (scheda SD del Raspberry
 	# Pi, chiavetta grande, disco interno installato senza archivio).
-	job=$(sweetspot-spazio lavoro)
+	job=$(priv sweetspot-spazio lavoro)
 	jstate=${job%%|*}
 	jmsg=${job#*|}
 	case "$jstate" in
@@ -54,7 +54,7 @@ HTML
 			exit 0 ;;
 	esac
 	IFS='|' read -r _spdisk spgb spok _spwhy <<EOF2
-$(sweetspot-spazio stato)
+$(priv sweetspot-spazio stato)
 EOF2
 	if [ "$spok" = si ]; then
 		if [ "$(boot_type)" = rpi ]; then where="La scheda SD (o il disco) da cui parte Sweetspot"; else where="La chiavetta (o il disco) da cui parte Sweetspot"; fi
@@ -103,7 +103,7 @@ $(option si "Sì: per copiare la musica dal computer" "$shared")
 HTML
 
 # --- Copia in corso -------------------------------------------------------------------
-st=$(sweetspot-copia stato)
+st=$(priv sweetspot-copia stato)
 if [ -n "$st" ]; then
 	state=${st%%|*}; rest=${st#*|}
 	done_kb=${rest%%|*}; rest=${rest#*|}
@@ -125,9 +125,9 @@ if [ -n "$st" ]; then
 fi
 
 # --- CD -------------------------------------------------------------------------------
-if [ -n "$(sweetspot-cd lettore)" ]; then
+if [ -n "$(priv sweetspot-cd lettore)" ]; then
 	echo '<h2>CD</h2><div class="card formcard">'
-	cst=$(sweetspot-cd stato)
+	cst=$(priv sweetspot-cd stato)
 	cstate=${cst%%|*}; crest=${cst#*|}
 	ctrack=${crest%%|*}; crest=${crest#*|}
 	ctotal=${crest%%|*}; cmsg=${crest#*|}
@@ -174,11 +174,11 @@ fi
 # --- Copia da un altro disco o da una cartella di rete ------------------------------------
 p=$(query_param p)
 echo '<h2>Copia nell'"'"'archivio</h2><div class="card">'
-if [ -z "$p" ] || ! sweetspot-copia sorgente "$p"; then
+if [ -z "$p" ] || ! priv sweetspot-copia sorgente "$p"; then
 	n=0
 	for d in "$MEDIA_DIR"/*; do
 		[ -d "$d" ] || continue
-		sweetspot-copia sorgente "$d" || continue
+		priv sweetspot-copia sorgente "$d" || continue
 		n=$((n + 1))
 		label=${d##*/}
 		case "$label" in rete-*) label="Cartella di rete $(conf "CONDIVISIONE_${label#rete-}")" ;; esac
@@ -190,7 +190,7 @@ else
 	real=$(readlink -f "$p")
 	up=${real%/*}
 	printf '<div class="row"><div class="grow"><div class="k">%s</div>' "$(esc "$real")"
-	if sweetspot-copia sorgente "$up"; then
+	if priv sweetspot-copia sorgente "$up"; then
 		printf '<div class="v"><a href="/cgi-bin/archivio?p=%s">&larr; cartella superiore</a></div>' "$(urlenc "$up")"
 	else
 		echo '<div class="v"><a href="/cgi-bin/archivio">&larr; elenco dei dischi</a></div>'

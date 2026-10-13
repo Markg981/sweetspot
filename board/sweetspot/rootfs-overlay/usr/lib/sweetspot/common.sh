@@ -14,12 +14,18 @@ SYS=${SWEETSPOT_SYSFS:-/sys}
 PROC=${SWEETSPOT_PROCFS:-/proc}
 RUN=${SWEETSPOT_RUN:-/run/sweetspot}
 CONF=$RUN/sweetspot.conf
+# Copia di CONF senza le password (valore "*"): e' quella che leggono le
+# pagine web, che girano come utente "web" e non devono vedere i segreti.
+CONF_WEB=$RUN/sweetspot.web
 DEFAULTS=${SWEETSPOT_DEFAULTS:-/etc/sweetspot/defaults.conf}
 LOGFILE=${SWEETSPOT_LOG:-/var/log/sweetspot.log}
 # awk con le funzioni matematiche (curve dei filtri); nei test quello del sistema.
 # shellcheck disable=SC2034
 AWK=${SWEETSPOT_AWK:-awk}
 STICK_LABEL=SWEETSPOT
+# Server websocket di CamillaDSP, solo locale: ne leggiamo i contatori.
+# shellcheck disable=SC2034
+DSP_PORTA=${SWEETSPOT_DSP_PORTA:-1234}
 # SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
 STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 
@@ -66,7 +72,12 @@ config_build() {
 		[ -f "$DEFAULTS" ] && config_normalize "$DEFAULTS"
 		[ -n "$1" ] && [ -f "$1" ] && config_normalize "$1"
 	} > "$CONF.tmp"
+	chmod 600 "$CONF.tmp"
 	mv "$CONF.tmp" "$CONF"
+	# Le pagine sanno solo SE una password e' impostata, non il suo valore.
+	sed 's/^\([A-Z0-9_]*PASSWORD[A-Z0-9_]*\)=..*$/\1=*/' "$CONF" > "$CONF_WEB.tmp"
+	chmod 644 "$CONF_WEB.tmp"
+	mv "$CONF_WEB.tmp" "$CONF_WEB"
 }
 
 # conf CHIAVE [predefinito]: l'ultima riga vince.
@@ -276,6 +287,20 @@ cpu_layout() {
 	LAYOUT_HK=$(subtract "$prim" "$LAYOUT_ISO")
 }
 
+# Interruzioni ricevute da un core da /proc/interrupts, una per riga:
+# "ETICHETTA CONTEGGIO NOME" (per i dispositivi il nome e' il driver,
+# per le interruzioni di sistema come LOC il nome e' vuoto).
+irq_cpu_counts() { # core
+	awk -v c="CPU$1" '
+		NR == 1 { for (i = 1; i <= NF; i++) if ($i == c) col = i + 1; n = NF; next }
+		col && $1 ~ /:$/ && NF > n && $col ~ /^[0-9]+$/ {
+			l = $1; sub(/:$/, "", l)
+			name = (l ~ /^[0-9]+$/) ? $NF : ""
+			print l, $col, name
+		}
+	' "$PROC/interrupts" 2>/dev/null
+}
+
 cpu_has_flag() { grep -q "^flags.*[[:space:]]$1\([[:space:]]\|$\)" "$PROC/cpuinfo" 2>/dev/null; }
 
 cpu_model() {
@@ -299,6 +324,35 @@ machine_class() {
 	elif [ "$mb" -lt 12288 ]; then echo standard
 	else echo completa
 	fi
+}
+
+# Protezione dall'OOM killer: oom_adj VALORE PID... scrive oom_score_adj
+# (-1000 = mai ucciso, +1000 = il primo). Senza swap, sotto pressione di
+# memoria il kernel uccide chi ha il punteggio piu' alto: il player deve
+# essere l'ultimo, scanner e lavori sospendibili i primi. Scrive solo se il
+# valore cambia; ignora in silenzio i processi gia' terminati.
+oom_adj() {
+	local v=$1 p
+	shift
+	for p in "$@"; do
+		[ "$(cat "$PROC/$p/oom_score_adj" 2>/dev/null)" = "$v" ] && continue
+		put "$v" "$PROC/$p/oom_score_adj"
+	done
+	return 0
+}
+
+# oom_adj_cmd VALORE TESTO: come oom_adj, per i processi la cui riga di
+# comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+oom_adj_cmd() {
+	local v=$1 pat=$2 d p
+	for d in "$PROC"/[0-9]*; do
+		[ -r "$d/cmdline" ] || continue
+		p=${d##*/}
+		case "$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null)" in
+			*"$pat"*) oom_adj "$v" "$p" ;;
+		esac
+	done
+	return 0
 }
 
 # Buffer di squeezelite in KB: "stream:output".
@@ -344,8 +398,42 @@ i2s_card() {
 	return 1
 }
 
+# Con gli altri DAC come zone (ALTRI_DAC=si) e DAC=auto, il DAC principale
+# e' quello scelto la prima volta in questo avvio (sweetspot-player lo
+# annota in $RUN/dac.principale): se viene staccato il player aspetta lui,
+# non passa a un DAC di zona. Una scheda gia' zona non e' mai il principale.
+# La scheda USB (indice ALSA) e' quella voluta come DAC principale?
+# DAC esplicito: per nome ALSA, identificativo USB o parte del nome.
+# DAC=auto: qualunque, oppure solo quella annotata in $RUN/dac.principale
+# (identificativo USB e numero di serie).
+dac_wanted() { # indice
+	local want d idx=$1 id usbid name main
+	want=$(lower "$(conf DAC auto)")
+	d=$PROC/asound/card$idx
+	id=$(cat "$d/id" 2>/dev/null)
+	usbid=$(lower "$(cat "$d/usbid" 2>/dev/null)")
+	case "$want" in
+		auto|'')
+			main=""
+			is_yes "$(conf ALTRI_DAC no)" && main=$(cat "$RUN/dac.principale" 2>/dev/null)
+			[ -z "$main" ] || [ "$main" = "$(dac_identity "$idx")" ] ;;
+		*)
+			[ "$want" = "$(lower "$id")" ] && return 0
+			[ "$want" = "$usbid" ] && return 0
+			name=$(lower "$(sed -n "s/^ *$idx \[[^]]*\]: *//p" "$PROC/asound/cards" 2>/dev/null)")
+			case "$name" in *"$want"*) return 0 ;; esac
+			return 1 ;;
+	esac
+}
+
+# Scheda gia' in uso come zona (ALTRI_DAC=si, sweetspot-player).
+dac_is_zone() { # indice
+	is_yes "$(conf ALTRI_DAC no)" || return 1
+	[ "$(cut -d' ' -f2 "$RUN/zone/$1" 2>/dev/null)" = "$(cat "$PROC/asound/card$1/id" 2>/dev/null)" ]
+}
+
 dac_find() {
-	local want d idx id usbid name
+	local want d idx
 	want=$(lower "$(conf DAC auto)")
 	case "$want" in auto|'') i2s_card && return 0 ;; esac
 	for d in "$PROC"/asound/card[0-9]*; do
@@ -353,18 +441,37 @@ dac_find() {
 		idx=${d##*card}
 		[ -f "$d/usbid" ] || continue
 		[ -n "$(dac_playback_dev "$idx")" ] || continue
-		id=$(cat "$d/id" 2>/dev/null)
-		usbid=$(lower "$(cat "$d/usbid" 2>/dev/null)")
-		name=$(lower "$(sed -n "s/^ *$idx \[[^]]*\]: *//p" "$PROC/asound/cards" 2>/dev/null)")
-		case "$want" in
-			auto|'') echo "$idx"; return 0 ;;
-		esac
-		if [ "$want" = "$(lower "$id")" ] || [ "$want" = "$usbid" ]; then
-			echo "$idx"; return 0
-		fi
-		case "$name" in *"$want"*) echo "$idx"; return 0 ;; esac
+		dac_is_zone "$idx" && continue
+		dac_wanted "$idx" || continue
+		echo "$idx"; return 0
 	done
 	return 1
+}
+
+# Numero di serie USB del DAC (vuoto se non lo dichiara): distingue due DAC
+# dello stesso modello.
+dac_usb_serial() {
+	local p
+	p=$(dac_usb_device "$1") || return 1
+	cat "$p/serial" 2>/dev/null
+}
+
+# Identita' del DAC che non dipende dalla porta ne' dall'ordine di
+# collegamento: identificativo USB e numero di serie (se c'e').
+dac_identity() { # indice
+	printf '%s %s' "$(dac_usbid "$1")" "$(dac_usb_serial "$1")"
+}
+
+# Istanza del DAC: cambia anche se la scheda ricompare con lo stesso indice e
+# lo stesso id (ricollegamento rapido, reset USB). Per USB si aggiungono
+# busnum e devnum del dispositivo, che il kernel riassegna a ogni enumerazione;
+# per le schede senza USB (I2S) resta il solo id ALSA.
+dac_instance() { # indice
+	local p
+	printf '%s' "$(dac_id "$1")"
+	p=$(dac_usb_device "$1") || return 0
+	[ -f "$p/devnum" ] || return 0
+	printf ' %s:%s' "$(cat "$p/busnum" 2>/dev/null)" "$(cat "$p/devnum" 2>/dev/null)"
 }
 
 dac_id() { cat "$PROC/asound/card$1/id" 2>/dev/null; }
@@ -565,11 +672,29 @@ json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')";
 
 # lms_json PLAYER PAROLA...: invia un comando a Lyrion (PLAYER vuoto per i
 # comandi del server) e stampa la risposta JSON. Fallisce se non risponde.
-lms_json() {
-	local player=$1 args="" w out
+# Lyrion protetto da utente e password (Impostazioni > Avanzate > Sicurezza
+# di Lyrion): LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt valgono per
+# le richieste JSON di Sweetspot (Basic) e per la CLI (login). Senza, le
+# richieste restano come prima.
+lms_user() { conf LYRION_UTENTE; }
+lms_auth_header() {
+	local u
+	u=$(lms_user)
+	[ -n "$u" ] || return 0
+	printf 'Authorization: Basic %s' "$(printf '%s:%s' "$u" "$(conf LYRION_PASSWORD)" | base64 | tr -d '\n')"
+}
+
+lms_json() { lms_json_locale "$@"; }
+
+# Le pagine web (utente "web") la ridefiniscono in web.sh: non conoscono la
+# password di Lyrion, quindi passano dall'helper privilegiato.
+lms_json_locale() {
+	local player=$1 args="" w out auth
 	shift
 	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
+	auth=$(lms_auth_header)
 	out=$("${SWEETSPOT_WGET:-wget}" -q -T "${LMS_TIMEOUT:-20}" -O - --header 'Content-Type: application/json' \
+		${auth:+--header "$auth"} \
 		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null) || return 1
 	[ -n "$out" ] || return 1
@@ -593,6 +718,26 @@ lms_ready() { [ -n "$(LMS_TIMEOUT=5 lms_get '._version' '' version '?')" ]; }
 
 # Lyrion sta leggendo la libreria?
 lms_scanning() { [ "$(lms_get '.rescan' '' rescan '?')" = 1 ]; }
+
+# Modalita' ascolto scelta nella pagina Sistema: puro (lavori sospesi,
+# coda in RAM, dischi fermi), si (solo lavori sospesi) o no. Il precarico
+# esiste solo nella modalita' completa (Lyrion su Sweetspot).
+listening_choice() {
+	if ! is_yes "$(conf MODALITA_ASCOLTO si)"; then
+		echo no
+	elif [ "$(mode)" = completa ] && is_yes "$(conf PRECARICO si)"; then
+		echo puro
+	else
+		echo si
+	fi
+}
+
+# CamillaDSP e' nel percorso con i filtri della stanza, non solo per il
+# volume a 64 bit (lo decide il player, vedi sweetspot-player).
+correction_running() {
+	[ -f "$RUN/correzione.filtri" ] && return 0
+	[ -f "$RUN/correzione.attiva" ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" != dsp ]
+}
 
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
 dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
@@ -722,6 +867,29 @@ part_disk() { # sdb1 -> sdb, nvme0n1p1 -> nvme0n1
 	p=$(readlink -f "$SYS/class/block/$1/.." 2>/dev/null) || return 1
 	[ -f "$p/size" ] && [ -d "$p/queue" ] || return 1
 	echo "${p##*/}"
+}
+
+# Dischi (interi) che contengono la musica montata da sweetspot-dischi.
+music_disks() {
+	local dev disk
+	[ -f "$RUN/dischi.list" ] || return 0
+	cut -d'|' -f2 "$RUN/dischi.list" | while IFS= read -r dev; do
+		[ -n "$dev" ] || continue
+		disk=$(part_disk "$dev") || disk=$dev
+		echo "$disk"
+	done | sort -u
+}
+
+# La prova dell'ascolto puro: "disco NOME SETTORI_LETTI" per ogni disco con
+# la musica e "rete BYTE" (ricevuti + trasmessi, senza lo). Li annota
+# sweetspot-ascolto all'inizio di ogni ascolto, li confronta sweetspot-check.
+io_counters() {
+	local disk
+	for disk in $(music_disks); do
+		[ -f "$SYS/block/$disk/stat" ] || continue
+		echo "disco $disk $(awk '{ print $3 }' "$SYS/block/$disk/stat")"
+	done
+	echo "rete $(awk 'NR > 2 && $1 !~ /^lo:/ { sub(/^[^:]*:/, ""); t += $1 + $9 } END { print t + 0 }' "$PROC/net/dev")"
 }
 
 # Montaggio condiviso: chi monta la chiavetta (impostazioni, salvataggio
@@ -946,3 +1114,133 @@ mbr_read() { # dispositivo
 		}
 	}'
 }
+
+# --- Registro di Squeezelite: conteggi e rotazione ---------------------------
+
+# XRUN e recuperi falliti nel registro di Squeezelite: "EVENTI RECUPERI".
+# Il messaggio di output_alsa.c segue il prefisso del logger oppure e' nudo.
+# Confrontare il messaggio intero evita sottostringhe e doppi conteggi.
+xrun_counts() { # [file], altrimenti lo standard input
+	awk '
+		{ message=$0; sub(/^\[[^]]*\][[:space:]]+[[:alnum:]_]+:[0-9]+[[:space:]]+/, "", message) }
+		message == "XRUN" { events++ }
+		message ~ /^XRUN recover failed: / { recovery++ }
+		END { printf "%d %d", events, recovery }
+	' "$@"
+}
+
+# Somma due coppie "EVENTI RECUPERI".
+xrun_sum() { # COPPIA COPPIA
+	echo "$(( ${1% *} + ${2% *} )) $(( ${1#* } + ${2#* } ))"
+}
+
+# Contatori persistenti in $RUN: eventi gia' usciti dal registro per la
+# rotazione. $RUN/xrun.totale vale da quando il sistema e' acceso,
+# $RUN/sessione.xrun solo dall'inizio della sessione del player.
+xrun_saved() { # FILE
+	local v
+	v=$(cat "$1" 2>/dev/null)
+	case "$v" in
+		*[!0-9\ ]*|'') echo "0 0" ;;
+		*) echo "$v" ;;
+	esac
+}
+
+# Rotazione per dimensione "copytruncate": Squeezelite tiene il file aperto
+# (-f), quindi niente rename. Prima si copia, poi si tronca in place, poi si
+# contano gli eventi della copia e si sommano ai contatori persistenti.
+# Costo normale: la sola dimensione del file. Soglia in KB: LOG_SQUEEZELITE_KB.
+sqlog_rotate() { # FILE
+	local f=$1 size max copy off all part
+	[ -f "$f" ] || return 0
+	max=$(conf LOG_SQUEEZELITE_KB 1024)
+	case "$max" in ''|*[!0-9]*|0) max=1024 ;; esac
+	size=$(wc -c < "$f" | tr -d ' ')
+	[ "${size:-0}" -ge $((max * 1024)) ] || return 0
+	mkdir -p "$RUN"
+	copy=$RUN/squeezelite.rotazione
+	cp "$f" "$copy" 2>/dev/null || { rm -f "$copy"; return 1; }
+	: > "$f"
+	all=$(xrun_counts "$copy")
+	xrun_sum "$(xrun_saved "$RUN/xrun.totale")" "$all" > "$RUN/xrun.totale"
+	# Sessione in corso: conta solo cio' che sta dopo la posizione iniziale.
+	if [ -s "$RUN/sessione" ]; then
+		off=$(sed -n 's/^sqlog=//p' "$RUN/sessione")
+		part=$(tail -c +"$((${off:-0} + 1))" "$copy" | xrun_counts)
+		xrun_sum "$(xrun_saved "$RUN/sessione.xrun")" "$part" > "$RUN/sessione.xrun"
+		sed 's/^sqlog=.*/sqlog=0/' "$RUN/sessione" > "$RUN/sessione.tmp" &&
+			mv "$RUN/sessione.tmp" "$RUN/sessione"
+	fi
+	rm -f "$copy"
+	log "registro di Squeezelite ruotato ($size byte): eventi XRUN $all salvati nei contatori"
+}
+
+# Storico completo: contatori persistenti piu' registro corrente.
+xrun_total() { # FILE
+	local cur
+	cur=$(xrun_counts "$1" 2>/dev/null) || return 1
+	xrun_sum "$(xrun_saved "$RUN/xrun.totale")" "$cur"
+}
+
+# --- Controllo dell'header Host delle pagine web ------------------------------------
+# Difesa dal DNS rebinding: una pagina esterna che fa risolvere il proprio
+# nome all'indirizzo di Sweetspot arriverebbe con un Host diverso e potrebbe
+# leggere il gettone anti-CSRF. Si accettano solo i nomi e gli indirizzi
+# con cui l'utente raggiunge davvero il player.
+
+# Host senza la porta, in minuscolo ("[fe80::1]:80" -> "fe80::1").
+host_bare() {
+	local h
+	h=$(lower "$1")
+	case "$h" in
+		'['*) h=${h#\[}; h=${h%%\]*} ;;
+		*:*:*) ;; # IPv6 senza parentesi: nessuna porta da togliere
+		*) h=${h%%:*} ;;
+	esac
+	printf '%s' "$h"
+}
+
+# Indirizzi IPv4 e IPv6 assegnati al computer, uno per riga.
+host_addresses() {
+	local n dev fam addr rest
+	${SWEETSPOT_IP:-ip} -o addr show 2>/dev/null | while read -r n dev fam addr rest; do
+		case "$fam" in inet|inet6) printf '%s\n' "${addr%%/*}" ;; esac
+	done
+}
+
+# host_allowed HOST [INDIRIZZO_CLIENT]: vero se HOST e' un nome o un
+# indirizzo di questo player. Senza Host (HTTP/1.0) passa solo chi arriva
+# dal computer stesso: un browser manda sempre l'Host, quindi il rebinding
+# non puo' sfruttare l'assenza.
+host_allowed() {
+	local h net a
+	h=$(host_bare "$1")
+	if [ -z "$h" ]; then
+		case "$2" in 127.*|::1) return 0 ;; esac
+		return 1
+	fi
+	case "$h" in localhost|127.0.0.1|::1) return 0 ;; esac
+	net=$(lower "$(conf NOME_RETE sweetspot)" | tr -c 'a-z0-9-' '-' | cut -c1-32)
+	if [ -n "$net" ]; then
+		case "$h" in "$net"|"$net.local") return 0 ;; esac
+	fi
+	a=$(lower "$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)")
+	if [ -n "$a" ]; then
+		case "$h" in "$a"|"$a.local") return 0 ;; esac
+	fi
+	for a in $(host_addresses); do
+		[ "$(lower "$a")" = "$h" ] && return 0
+	done
+	return 1
+}
+
+# Chiamato all'inizio di ogni pagina (CGI): Host non riconosciuto -> 403 e
+# nessuna azione. Fuori da una richiesta web (script di sistema, test) non fa nulla.
+host_guard() {
+	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
+	host_allowed "${HTTP_HOST:-}" "${REMOTE_ADDR:-}" && return 0
+	printf 'Status: 403 Forbidden\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\nindirizzo non valido: usa http://%s.local/\n' \
+		"$(conf NOME_RETE sweetspot)"
+	exit 0
+}
+host_guard

@@ -13,6 +13,9 @@ CONFIG_SENSORS_K10TEMP=m
 
 # --- Uscita audio integrata, disponibile come modulo -----------------------
 CONFIG_SND_HDA_INTEL=m
+# Scheda virtuale hw:Loopback per la verifica dei campioni sul percorso ALSA
+# (tests/prova-alsa-qemu.sh). Non si carica da sola: serve modprobe snd-aloop.
+CONFIG_SND_ALOOP=m
 
 # --- Controller USB di ogni epoca ------------------------------------------
 CONFIG_USB_XHCI_PCI=y
@@ -63,3 +66,10 @@ CONFIG_VMWARE_PVSCSI=m
 CONFIG_FUSION=y
 CONFIG_FUSION_SPI=m
 CONFIG_FUSION_SAS=m
+
+# Watchdog hardware dei chipset Intel (iTCO), AMD (SP5100/FCH) e di QEMU
+# (i6300ESB, usato dalla prova di robustezza in CI).
+CONFIG_LPC_ICH=m
+CONFIG_ITCO_WDT=m
+CONFIG_SP5100_TCO=m
+CONFIG_I6300ESB_WDT=m

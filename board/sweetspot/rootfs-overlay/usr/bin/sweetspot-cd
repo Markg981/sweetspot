@@ -187,6 +187,8 @@ sect_time() { printf '%d:%02d.%02d' $(($1 / 4500)) $(($1 / 75 % 60)) $(($1 % 75)
 rip() { # album artista anno
 	local dev arch album artist year disc discs n dest work t title tartist num ids off db v1v2 v1 v2 conf ok=0 bad=0
 	dev=$(drive) || { state errore 0 0 "nessun lettore CD"; return 1; }
+	# Lavoro sospendibile: per l'OOM killer flac e cdparanoia cadono prima del player.
+	oom_adj 500 $$
 	arch=$(sweetspot-dischi archivio)
 	[ -n "$arch" ] || { state errore 0 0 "nessun archivio musicale"; return 1; }
 	album=${1:-$(jq -r '.album' "$INFO")}
