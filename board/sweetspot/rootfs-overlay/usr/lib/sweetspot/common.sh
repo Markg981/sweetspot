@@ -1083,7 +1083,7 @@ host_bare() {
 # Indirizzi IPv4 e IPv6 assegnati al computer, uno per riga.
 host_addresses() {
 	local n dev fam addr rest
-	ip -o addr show 2>/dev/null | while read -r n dev fam addr rest; do
+	${SWEETSPOT_IP:-ip} -o addr show 2>/dev/null | while read -r n dev fam addr rest; do
 		case "$fam" in inet|inet6) printf '%s\n' "${addr%%/*}" ;; esac
 	done
 }
