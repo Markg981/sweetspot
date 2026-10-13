@@ -36,6 +36,14 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
    sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
    aspetta la fine dell'ascolto.
+8b. **Memoria sotto pressione**: il sistema non ha swap (e non si aggiunge, nemmeno
+   zram: riempirebbe di compressione e latenza il percorso del suono e
+   richiederebbe un kernel con swap). Per questo, se la RAM finisse (tipico
+   sui 2 GB, classe «essenziale»), l'OOM killer segue una scala di priorità
+   (`oom_score_adj`): Squeezelite e CamillaDSP a -1000 (mai uccisi), Lyrion a
+   -100, scanner di Lyrion, copie, estrazione dei CD e precarico a +500, i
+   primi a cadere. Resta il limite dei buffer di Squeezelite (`player_buffers`),
+   che lascia 768 MB al resto.
 9. **Precarico in RAM** (modalità completa): i file della coda, dal brano in
    corso alla fine, vengono letti dietro a tutti gli altri processi (`nice`,
    `ionice` idle) e bloccati in RAM (`mlock`), entro un budget di memoria (per
