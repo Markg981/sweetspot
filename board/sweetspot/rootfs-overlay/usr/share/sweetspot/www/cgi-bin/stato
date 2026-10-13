@@ -4,11 +4,13 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
-# Traffico di rete in 2 secondi: misura tutte le attività, inclusi streaming
-# e controllo remoto; i buffer del player non garantiscono rete inattiva.
-net_bytes() { awk 'NR>2 && $1 !~ /^lo:/ {sub(/^[^:]*:/, ""); split($0, a, " "); t += a[1] + a[9]} END {print t+0}' /proc/net/dev; }
-b1=$(net_bytes); sleep 2; b2=$(net_bytes)
-traffic=$(( (b2 - b1) / 2 ))
+# La pagina legge solo la cache del demone sweetspot-stato (esiti e traffico
+# di rete): niente attese e niente controlli a ogni richiesta.
+CACHE_DATI=$RUN/stato.dati
+read -r st_ts st_every < "$RUN/stato.ts" 2>/dev/null || { st_ts=0; st_every=10; }
+case "$st_ts" in ''|*[!0-9]*) st_ts=0 ;; esac
+case "$st_every" in ''|*[!0-9]*) st_every=10 ;; esac
+st_age=$(( $(date +%s) - st_ts ))
 
 page_start "Stato" stato 15
 printf '<p class="sub">Player in %s &middot; si aggiorna ogni 15 secondi</p>\n' "$(esc "$(net_ipv4)")"
@@ -17,15 +19,18 @@ if [ "$(mode)" = player ] && [ -n "$srv" ]; then
 	printf '<p><a class="btn" href="http://%s:9000/">Apri Lyrion per scegliere la musica</a></p>\n' "$srv"
 fi
 echo '<div class="card">'
-if [ "$traffic" -lt 2048 ]; then t_esito=OK; else t_esito=INFO; fi
-{
-	sweetspot-check --dati
-	echo "$t_esito|Traffico di rete ora|$((traffic / 1024)) KB/s (streaming e controllo remoto possono mantenere attiva la rete)"
-} | while IFS='|' read -r esito voce dettaglio; do
-	[ -n "$voce" ] || continue
-	printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s</div></div></div>\n' \
-		"$esito" "$(esc "$voce")" "$(esc "$dettaglio")"
-done
+if [ "$st_ts" -eq 0 ] || [ ! -r "$CACHE_DATI" ]; then
+	echo '<div class="row ATTENZIONE"><span class="dot"></span><div class="grow"><div class="k">Stato non ancora disponibile</div><div class="v">Il servizio che raccoglie lo stato non ha ancora scritto i dati: riprova tra qualche secondo.</div></div></div>'
+else
+	if [ "$st_age" -gt $(( st_every * 3 + 5 )) ]; then
+		printf '<div class="row ATTENZIONE"><span class="dot"></span><div class="grow"><div class="k">Dati non aggiornati</div><div class="v">Ultimo aggiornamento %s secondi fa: il servizio dello stato potrebbe essere fermo.</div></div></div>\n' "$st_age"
+	fi
+	while IFS='|' read -r esito voce dettaglio; do
+		[ -n "$voce" ] || continue
+		printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s</div></div></div>\n' \
+			"$esito" "$(esc "$voce")" "$(esc "$dettaglio")"
+	done < "$CACHE_DATI"
+fi
 echo '</div>'
 printf '<p class="sub"><a href="/cgi-bin/rapporto">Scarica il rapporto di compatibilità</a>: computer, DAC e questi esiti, senza indirizzi né dati personali. Allegalo a una segnalazione su <a href="https://github.com/Markg981/sweetspot/issues/new?template=compatibilita.yml" target="_blank" rel="noopener">GitHub</a> per la matrice di compatibilità.</p>\n'
 page_end
