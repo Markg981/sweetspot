@@ -182,6 +182,7 @@ jobs:
       - name: Disco per VMware
         if: matrix.scheda == 'x86_64'
         run: |
+          sudo apt-get update
           sudo apt-get install -y qemu-utils
           qemu-img convert -f raw -O vmdk -o adapter_type=lsilogic,subformat=monolithicSparse \
             output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
@@ -271,6 +272,7 @@ jobs:
       - name: Verifica PCM/DoP sul percorso ALSA in QEMU
         if: ${{ !cancelled() && matrix.scheda == 'x86_64' }}
         run: |
+          sudo apt-get update
           sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass
           versione=$(tar -xOf sweetspot-x86_64-aggiornamento.tar versione)
           sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-alsa-qemu.sh sweetspot.img.xz "$versione"
@@ -278,6 +280,7 @@ jobs:
       - name: Prove di robustezza in QEMU
         if: ${{ !cancelled() && matrix.scheda == 'x86_64' }}
         run: |
+          sudo apt-get update
           sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass dosfstools
           sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-robustezza-qemu.sh sweetspot.img.xz
       - name: Evidenza della verifica audio software
