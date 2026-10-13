@@ -51,7 +51,8 @@ int main(int argc, char **argv) {
 	if (argc > 1) alsa_strict_hw = true;
 	strcpy(alsa.device, "hw:CARD=Test,DEV=0");
 	current_dev = alsa.device;
-	int err = open_rate("CARD=Test,DEV=0", 96000);
+	/* Come in alsa_open: il nome completo, da cui il ripiego fa "plug" + nome. */
+	int err = open_rate("hw:CARD=Test,DEV=0", 96000);
 	printf("%d %s\n", err, alsa.device);
 	return 0;
 }
