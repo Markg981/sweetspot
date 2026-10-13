@@ -32,7 +32,9 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      caricamento e la decodifica dell'intero brano prima di suonare; i servizi
      streaming e le radio possono continuare a usare la rete;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
-     interruzioni del controller USB del DAC (priorità 90) sull'altro.
+     interruzioni del controller USB del DAC (priorità 90) sull'altro: servono
+     alla stabilità temporale dell'alimentazione dei buffer, non a ridurre il
+     jitter del clock di conversione del DAC.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
    lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
    normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
@@ -522,7 +524,11 @@ Con USB asincrona il clock della conversione è quello del DAC. Il programma
 alimenta i buffer tramite il driver ALSA; non può sostituire l'oscillatore del
 DAC con il clock del PC né realizzare un filtro elettrico sulle linee USB.
 La latenza misurata da `sweetspot-latenza` riguarda lo scheduler, non il jitter
-del clock audio. Per riferimenti: [Daphile](https://www.daphile.com/index.html),
+del clock audio. `sweetspot-alsa-misura [-c scheda] [-d dispositivo] [-t secondi]`
+campiona `/proc/asound/cardX/pcmYp/sub0/status` e `hw_params` e riassume delay
+massimo, avail minimo e XRUN: misura il margine del buffer, non il clock. Il
+buffer ALSA parte conservativo (`BUFFER_ALSA_MS=400`, `PERIODI_ALSA=4`) ed è
+modificabile in `sweetspot.txt`. Per riferimenti: [Daphile](https://www.daphile.com/index.html),
 [clock USB XMOS](https://www.xmos.com/documentation/XM-012296-UG/html/doc/rst/sw_ep0.html).
 
 Il riconoscimento del DAC considera le uscite playback e il loro numero di
