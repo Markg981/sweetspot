@@ -8,6 +8,7 @@
 #   sweetspot-dischi smonta N  toglie il disco N dalla libreria
 #   sweetspot-dischi elenco    righe "nome|dispositivo|tipo|GB|cartelle|modo|identita"
 #   sweetspot-dischi archivio  percorso dell'archivio musicale, se c'e'
+#   sweetspot-dischi riposo    standby dei dischi meccanici interni (dopo il montaggio)
 #
 # I dischi vengono montati in sola lettura, con il dispositivo bloccato in
 # sola lettura prima del montaggio: Sweetspot non scrive sui dischi
@@ -244,6 +245,42 @@ do_umount_one() {
 	mv "$LIST.new" "$LIST"
 }
 
+# Standby dei dischi meccanici interni, da chiamare dopo il montaggio. I dischi
+# con la musica (o l'archivio) sono letti dalla libreria: fermarli subito
+# causerebbe cicli di spin-down/spin-up e attese all'inizio di ogni album, quindi
+# hanno solo un timeout lungo (SWEETSPOT_STANDBY_MUSICA, in unita' hdparm -S:
+# 241 = 30 minuti, 0 = mai). Gli altri dischi, inutili, si fermano subito.
+# Il precarico in RAM (sweetspot-precarico) ferma comunque a coda caricata
+# quelli che contengono i brani.
+HDPARM=${SWEETSPOT_HDPARM:-hdparm}
+disk_has_music() { # disco
+	local d="$1" dev k
+	[ -s "$LIST" ] || return 1
+	while IFS='|' read -r _ dev _; do
+		k=${dev##*/}
+		if [ "$k" = "$d" ] || [ -d "$SYS/block/$d/$k" ]; then return 0; fi
+	done < "$LIST"
+	return 1
+}
+
+do_standby() {
+	local b dev t
+	t=${SWEETSPOT_STANDBY_MUSICA:-241}
+	for b in "$SYS"/block/sd*; do
+		[ -d "$b" ] || continue
+		dev=${b##*/}
+		[ "$(cat "$b/removable" 2>/dev/null)" = 0 ] || continue
+		case "$(readlink -f "$b/device")" in */usb*) continue ;; esac
+		[ "$(cat "$b/queue/rotational" 2>/dev/null)" = 1 ] || continue
+		if disk_has_music "$dev"; then
+			"$HDPARM" -S "$t" "/dev/$dev" >/dev/null 2>&1 && log "dischi: $dev con la musica, standby dopo il timeout lungo ($t)"
+			continue
+		fi
+		"$HDPARM" -S 12 "/dev/$dev" >/dev/null 2>&1
+		"$HDPARM" -y "/dev/$dev" >/dev/null 2>&1 && log "disco $dev in standby"
+	done
+}
+
 # I test includono questo file per provare le singole funzioni.
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
@@ -252,7 +289,8 @@ case "$1" in
 	pulisci) do_clean ;;
 	smonta) do_umount_one "$2" ;;
 	elenco) cat "$LIST" 2>/dev/null ;;
+	riposo) do_standby ;;
 	archivio) a=$(cat "$RUN/archivio" 2>/dev/null); [ -n "$a" ] && [ -d "$a" ] && echo "$a" ;;
-	*) echo "uso: $0 monta|pulisci|smonta NOME|elenco|archivio" >&2; exit 1 ;;
+	*) echo "uso: $0 monta|pulisci|smonta NOME|elenco|archivio|riposo" >&2; exit 1 ;;
 esac
 exit 0
