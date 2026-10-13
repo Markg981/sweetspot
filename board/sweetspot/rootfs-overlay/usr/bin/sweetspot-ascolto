@@ -29,7 +29,7 @@ scanner_pids() { pgrep -f scanner.pl 2>/dev/null; }
 
 # Inizio dell'ascolto: contatori di partenza (io_counters in common.sh).
 io_start() {
-	{ echo "inizio $(date +%s)"; io_counters; } > "$IO.nuovo" && mv "$IO.nuovo" "$IO"
+	{ echo "inizio ${SWEETSPOT_NOW:-$(date +%s)}"; io_counters; } > "$IO.nuovo" && mv "$IO.nuovo" "$IO"
 }
 
 # Fine dell'ascolto: i contatori di arrivo restano per la pagina Stato
@@ -37,7 +37,7 @@ io_start() {
 io_stop() {
 	[ -f "$IO" ] || return 0
 	grep -q '^fine ' "$IO" && return 0
-	{ echo "fine $(date +%s)"; io_counters | sed 's/^/fine_/'; } >> "$IO"
+	{ echo "fine ${SWEETSPOT_NOW:-$(date +%s)}"; io_counters | sed 's/^/fine_/'; } >> "$IO"
 }
 
 # --- Rallentamento con cgroup v2 ---------------------------------------------

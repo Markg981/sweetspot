@@ -349,6 +349,36 @@ case "$out" in *"Percorso originale configurato"*"integrità dei campioni non ve
 case "$out" in *'name="dac"'*'<option value="auto" selected>'*'<option value="292b:0a26">GUSTARD R26 (USB 292b:0a26)</option>'*) ok "audio: scelta del DAC principale tra i DAC USB collegati" ;; *) ko "audio DAC principale" "auto selezionato e R26 per identificativo USB" "-" ;; esac
 case "$(page audio 'DAC=R26')" in *'<option value="r26" selected>r26 (da sweetspot.txt)</option>'*) ok "audio: DAC scritto a mano in sweetspot.txt resta scelto" ;; *) ko "audio DAC da sweetspot.txt" "opzione r26 selezionata" "-" ;; esac
 case "$out" in *"esattamente i campioni"*) ko "audio: nessuna prova campioni inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "audio: nessuna prova campioni inventata" ;; esac
+
+# Demone dello stato: cache, pagina e endpoint JSON.
+echo "Stato in cache (demone, pagina, JSON)"
+ST=$WORK/stato
+mkdir -p "$ST/bin" "$ST/run" "$ST/proc/net" "$ST/proc/asound"
+printf 'OK|Prova "uno"|tutto \\ bene\nATTENZIONE|Due|da guardare\n' > "$ST/righe"
+printf '#!/bin/sh\ncat "%s/righe"\n' "$ST" > "$ST/bin/sweetspot-check"
+chmod +x "$ST/bin/sweetspot-check"
+printf 'h\nh\n  eth0: 1000 1 0 0 0 0 0 0 1000 1 0 0 0 0 0 0\n' > "$ST/proc/net/dev"
+stato_env() { env SWEETSPOT_RUN=$ST/run SWEETSPOT_PROCFS=$ST/proc SWEETSPOT_LOG=$ST/log SWEETSPOT_PATH="$ST/bin:$SWEETSPOT_PATH" \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf PATH="$ST/bin:$PATH" "$@"; }
+stato_cgi() { stato_env REQUEST_METHOD=GET QUERY_STRING="" HTTP_HOST=sweetspot.local $TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/$1" 2>&1; }
+out=$(stato_cgi stato)
+case "$out" in *"Stato non ancora disponibile"*) ok "stato: senza cache avvisa e non blocca" ;; *) ko "stato senza cache" "avviso" "$out" ;; esac
+case "$(stato_cgi stato.json)" in "Status: 503"*) ok "stato.json: senza cache risponde 503" ;; *) ko "stato.json senza cache" "503" "-" ;; esac
+stato_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" aggiorna
+printf 'h\nh\n  eth0: 9000000 1 0 0 0 0 0 0 9000000 1 0 0 0 0 0 0\n' > "$ST/proc/net/dev"
+sleep 1
+stato_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" aggiorna
+expect "demone: file di cache scritti, nessun residuo temporaneo" "4|0" "$(ls "$ST/run"/stato.* | grep -vc nuovo)|$(ls "$ST/run" | grep -c nuovo)"
+expect "demone: cache leggibile da tutti (la legge lms)" "644|644" "$(stat -c %a "$ST/run/stato.json")|$(stat -c %a "$ST/run/stato.dati")"
+case "$(cat "$ST/run/stato.dati")" in *"Due|da guardare"*"INFO|Traffico di rete ora|"*) ok "demone: righe del check e del traffico" ;; *) ko "demone righe" "righe + traffico" "$(cat "$ST/run/stato.dati")" ;; esac
+case "$(cat "$ST/run/stato.json")" in '{"ts":'*'"voci":[{"esito":"OK","voce":"Prova \"uno\"","dettaglio":"tutto \\ bene"}'*']}') ok "demone: JSON con escape corretto" ;; *) ko "demone JSON" "JSON valido" "$(cat "$ST/run/stato.json")" ;; esac
+out=$(stato_cgi stato)
+case "$out" in *"Due"*"da guardare"*"Traffico di rete ora"*) ok "stato: la pagina rende la cache" ;; *) ko "stato da cache" "righe in cache" "$out" ;; esac
+case "$out" in *"Dati non aggiornati"*) ko "stato: cache fresca" "nessun avviso" "avviso" ;; *) ok "stato: cache fresca senza avviso" ;; esac
+printf '1000 10\n' > "$ST/run/stato.ts"
+case "$(stato_cgi stato)" in *"Dati non aggiornati"*) ok "stato: cache vecchia mostra l'avviso" ;; *) ko "stato cache vecchia" "avviso" "-" ;; esac
+out=$(stato_cgi stato.json)
+case "$out" in "Content-Type: application/json"*'{"ts":'*) ok "stato.json: restituisce la cache" ;; *) ko "stato.json con cache" "JSON" "$out" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
@@ -452,6 +482,8 @@ vivo_key=$(cat "$WEB/run/vivo.chiave")
 expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#vivo_key}|$(stat -c %a "$WEB/run/vivo.chiave")"
 case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
 expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
+# stato.json non ha eccezioni: ricade nella regola generale "/" con password.
+expect "stato.json protetto dalla regola generale (nessuna eccezione)" "0|/:admin" "$(grep -c 'stato' "$WEB/run/httpd.conf")|$(tail -n 1 "$WEB/run/httpd.conf" | cut -d: -f1-2)"
 expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
 acc '' > /dev/null
 expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
@@ -1926,7 +1958,7 @@ plugevent 1-7; plugevent 1-8
 expect "USB collegate dopo: webcam scollegata, webcam con microfono intatta" "0auto 1on" \
 	"$(cat "$Q/sys/bus/usb/devices/1-7/authorized")$(cat "$Q/sys/bus/usb/devices/1-7/power/control") $(cat "$Q/sys/bus/usb/devices/1-8/authorized")$(cat "$Q/sys/bus/usb/devices/1-8/power/control")"
 qcheck() { # voce
-	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_NOW=${QNOW:-} SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$Q/squeezelite.log \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati 2>/dev/null | grep "^[A-Z]*|$1|"
 }
@@ -2117,7 +2149,7 @@ iostat() { # settori_letti byte_rx byte_tx
 	printf 'Inter-|   Receive                                                |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n    lo: 5000 10 0 0 0 0 0 0 5000 10 0 0 0 0 0 0\n  eth0: %s 10 0 0 0 0 0 0 %s 10 0 0 0 0 0 0\n' "$2" "$3" > "$Q/proc/net/dev"
 }
 ascfn() { # funzione
-	SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
+	SWEETSPOT_NOW=${QNOW:-} SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
 		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-ascolto; $1"
 }
@@ -2126,8 +2158,10 @@ expect "contatori: disco con la musica (intero) e rete senza lo" "disco sdb 2048
 ascfn io_start
 expect "inizio dell'ascolto annotato" "1|disco sdb 20480|rete 3000" \
 	"$(grep -c '^inizio [0-9]' "$Q/run/ascolto.io")|$(grep '^disco' "$Q/run/ascolto.io")|$(grep '^rete' "$Q/run/ascolto.io")"
-# L'ascolto e' iniziato un minuto fa.
-sed -i "s/^inizio .*/inizio $(( $(date +%s) - 60 ))/" "$Q/run/ascolto.io"
+# L'ascolto e' iniziato un minuto fa. Orologio fisso (SWEETSPOT_NOW): la
+# durata non dipende dal tempo reale impiegato dal test.
+QNOW=1700000060
+sed -i "s/^inizio .*/inizio $(( QNOW - 60 ))/" "$Q/run/ascolto.io"
 expect "stato: nessuna lettura e solo controllo durante l'ascolto in corso" \
 	"OK|Letture dal disco durante l'ascolto|nessuna durante l'ascolto in corso (1 min) da sdb: la musica suona dalla RAM|OK|Rete durante l'ascolto|0 KB durante l'ascolto in corso (1 min): solo il controllo (browser, app)" \
 	"$(qcheck 'Letture dal disco durante l.ascolto')|$(qcheck 'Rete durante l.ascolto')"
