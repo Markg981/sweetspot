@@ -1103,6 +1103,73 @@ mbr_read() { # dispositivo
 	}'
 }
 
+# --- Registro di Squeezelite: conteggi e rotazione ---------------------------
+
+# XRUN e recuperi falliti nel registro di Squeezelite: "EVENTI RECUPERI".
+# Il messaggio di output_alsa.c segue il prefisso del logger oppure e' nudo.
+# Confrontare il messaggio intero evita sottostringhe e doppi conteggi.
+xrun_counts() { # [file], altrimenti lo standard input
+	awk '
+		{ message=$0; sub(/^\[[^]]*\][[:space:]]+[[:alnum:]_]+:[0-9]+[[:space:]]+/, "", message) }
+		message == "XRUN" { events++ }
+		message ~ /^XRUN recover failed: / { recovery++ }
+		END { printf "%d %d", events, recovery }
+	' "$@"
+}
+
+# Somma due coppie "EVENTI RECUPERI".
+xrun_sum() { # COPPIA COPPIA
+	echo "$(( ${1% *} + ${2% *} )) $(( ${1#* } + ${2#* } ))"
+}
+
+# Contatori persistenti in $RUN: eventi gia' usciti dal registro per la
+# rotazione. $RUN/xrun.totale vale da quando il sistema e' acceso,
+# $RUN/sessione.xrun solo dall'inizio della sessione del player.
+xrun_saved() { # FILE
+	local v
+	v=$(cat "$1" 2>/dev/null)
+	case "$v" in
+		*[!0-9\ ]*|'') echo "0 0" ;;
+		*) echo "$v" ;;
+	esac
+}
+
+# Rotazione per dimensione "copytruncate": Squeezelite tiene il file aperto
+# (-f), quindi niente rename. Prima si copia, poi si tronca in place, poi si
+# contano gli eventi della copia e si sommano ai contatori persistenti.
+# Costo normale: la sola dimensione del file. Soglia in KB: LOG_SQUEEZELITE_KB.
+sqlog_rotate() { # FILE
+	local f=$1 size max copy off all part
+	[ -f "$f" ] || return 0
+	max=$(conf LOG_SQUEEZELITE_KB 1024)
+	case "$max" in ''|*[!0-9]*|0) max=1024 ;; esac
+	size=$(wc -c < "$f" | tr -d ' ')
+	[ "${size:-0}" -ge $((max * 1024)) ] || return 0
+	mkdir -p "$RUN"
+	copy=$RUN/squeezelite.rotazione
+	cp "$f" "$copy" 2>/dev/null || { rm -f "$copy"; return 1; }
+	: > "$f"
+	all=$(xrun_counts "$copy")
+	xrun_sum "$(xrun_saved "$RUN/xrun.totale")" "$all" > "$RUN/xrun.totale"
+	# Sessione in corso: conta solo cio' che sta dopo la posizione iniziale.
+	if [ -s "$RUN/sessione" ]; then
+		off=$(sed -n 's/^sqlog=//p' "$RUN/sessione")
+		part=$(tail -c +"$((${off:-0} + 1))" "$copy" | xrun_counts)
+		xrun_sum "$(xrun_saved "$RUN/sessione.xrun")" "$part" > "$RUN/sessione.xrun"
+		sed 's/^sqlog=.*/sqlog=0/' "$RUN/sessione" > "$RUN/sessione.tmp" &&
+			mv "$RUN/sessione.tmp" "$RUN/sessione"
+	fi
+	rm -f "$copy"
+	log "registro di Squeezelite ruotato ($size byte): eventi XRUN $all salvati nei contatori"
+}
+
+# Storico completo: contatori persistenti piu' registro corrente.
+xrun_total() { # FILE
+	local cur
+	cur=$(xrun_counts "$1" 2>/dev/null) || return 1
+	xrun_sum "$(xrun_saved "$RUN/xrun.totale")" "$cur"
+}
+
 # --- Controllo dell'header Host delle pagine web ------------------------------------
 # Difesa dal DNS rebinding: una pagina esterna che fa risolvere il proprio
 # nome all'indirizzo di Sweetspot arriverebbe con un Host diverso e potrebbe

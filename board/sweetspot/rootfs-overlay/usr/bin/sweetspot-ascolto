@@ -40,37 +40,120 @@ io_stop() {
 	{ echo "fine ${SWEETSPOT_NOW:-$(date +%s)}"; io_counters | sed 's/^/fine_/'; } >> "$IO"
 }
 
+# --- Rallentamento con cgroup v2 ---------------------------------------------
+# SIGSTOP su scanner.pl puo' fermarlo con una transazione SQLite in scrittura
+# aperta: Lyrion non scriverebbe piu' nel database finche' la musica non si
+# ferma. Dove c'e' cgroup v2 i lavori restano vivi ma con poca CPU (cpu.max,
+# cpu.weight) e I/O idle (ionice -c3); altrimenti si ripiega su SIGSTOP.
+CGROOT=${SWEETSPOT_CGROUP:-/sys/fs/cgroup}
+CG=$CGROOT/sweetspot-ascolto
+SLOWED=$RUN/ascolto.lenti
+
+# Processi di un gruppo (ps di busybox: intestazione scartata dal test numerico).
+group_pids() { ps -o pid,pgid 2>/dev/null | awk -v g="$1" '$1 ~ /^[0-9]+$/ && $2 == g { print $1 }'; }
+
+# Il cgroup dell'ascolto e' pronto (controller cpu attivo, limiti scritti)?
+# Lo si prepara qui, la prima volta.
+cg_ready() {
+	[ -f "$CG/cpu.max" ] && return 0
+	[ -f "$CGROOT/cgroup.controllers" ] || return 1
+	grep -qw cpu "$CGROOT/cgroup.controllers" 2>/dev/null || return 1
+	grep -qw cpu "$CGROOT/cgroup.subtree_control" 2>/dev/null ||
+		echo +cpu >> "$CGROOT/cgroup.subtree_control" 2>/dev/null
+	mkdir -p "$CG" 2>/dev/null || return 1
+	echo "5000 100000" > "$CG/cpu.max" 2>/dev/null || return 1
+	echo 1 > "$CG/cpu.weight" 2>/dev/null
+	return 0
+}
+
+# Sposta nel cgroup lento i PID dati e li mette in I/O idle. Riuscito = almeno
+# uno spostato.
+slow_pids() {
+	local pid ok=1
+	while read -r pid; do
+		[ -n "$pid" ] || continue
+		echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue
+		ok=0
+		command -v ionice >/dev/null 2>&1 && ionice -c 3 -p "$pid" 2>/dev/null
+	done <<EOF
+$1
+EOF
+	return $ok
+}
+
+# Rimette nel gruppo radice quanto e' nel cgroup lento (compresi i figli nati
+# dopo) e torna alla classe I/O normale. I limiti restano nel cgroup vuoto.
+unslow_all() {
+	local pid
+	[ -f "$CG/cgroup.procs" ] || return 0
+	for pid in $(cat "$CG/cgroup.procs" 2>/dev/null); do
+		echo "$pid" >> "$CGROOT/cgroup.procs" 2>/dev/null
+		command -v ionice >/dev/null 2>&1 && ionice -c 2 -n 4 -p "$pid" 2>/dev/null
+	done
+}
+
+# Rallenta (cgroup) o, in mancanza, sospende (SIGSTOP) un lavoro.
+# $1 = voce da annotare ("-GRUPPO" o PID), $2 = descrizione, poi i PID.
+throttle() {
+	local entry=$1 what=$2 pids=$3
+	if cg_ready && slow_pids "$pids"; then
+		grep -qx -- "$entry" "$SLOWED" 2>/dev/null && return 0
+		echo "$entry" >> "$SLOWED" && log "ascolto: $what rallentato durante l'ascolto"
+		return 0
+	fi
+	grep -qx -- "$entry" "$STOPPED" 2>/dev/null && return 0
+	kill -STOP -- "$entry" 2>/dev/null && echo "$entry" >> "$STOPPED" &&
+		log "ascolto: $what sospeso durante l'ascolto"
+}
+
 pause_work() {
 	local pid f g
 	for f in "$PAUSABLE"/*; do
 		[ -f "$f" ] || continue
 		g=$(cat "$f" 2>/dev/null)
 		case "$g" in ''|*[!0-9]*) continue ;; esac
-		grep -qx -- "-$g" "$STOPPED" 2>/dev/null && continue
-		kill -STOP "-$g" 2>/dev/null && echo "-$g" >> "$STOPPED" &&
-			log "ascolto: ${f##*/} sospeso durante l'ascolto"
+		throttle "-$g" "${f##*/}" "$(group_pids "$g")"
 	done
 	for pid in $(scanner_pids); do
-		grep -qx "$pid" "$STOPPED" 2>/dev/null && continue
-		kill -STOP "$pid" 2>/dev/null && echo "$pid" >> "$STOPPED" &&
-			log "ascolto: lettura della libreria sospesa durante l'ascolto"
+		throttle "$pid" "lettura della libreria" "$pid"
 	done
 }
 
+# Riprende quanto e' sospeso (SIGCONT) e toglie i limiti a quanto e' rallentato.
+# Chiamata anche all'avvio: dopo un riavvio del demone (o kill -9, senza trap)
+# i processi elencati in $STOPPED resterebbero fermi per sempre.
 resume_work() {
 	local pid
-	[ -s "$STOPPED" ] || return 0
-	while read -r pid; do
-		kill -CONT "$pid" 2>/dev/null
-	done < "$STOPPED"
+	if [ -s "$STOPPED" ]; then
+		while read -r pid; do
+			kill -CONT -- "$pid" 2>/dev/null
+		done < "$STOPPED"
+		: > "$STOPPED"
+		log "ascolto: lavori ripresi"
+	fi
+	# (cgroup.procs ha sempre dimensione 0: il test e' sull'elenco annotato.)
+	if [ -s "$SLOWED" ]; then
+		unslow_all
+		: > "$SLOWED"
+		log "ascolto: limiti tolti, lavori a velocita' normale"
+	fi
+}
+
+# Avvio del demone: prima si riprende quanto una vita precedente (riavviata o
+# uccisa con -9, senza trap) aveva lasciato sospeso o rallentato, poi si
+# svuotano gli elenchi. Svuotarli senza riprendere lascerebbe i processi
+# fermi per sempre.
+start_clean() {
+	resume_work
+	unslow_all
 	: > "$STOPPED"
-	log "ascolto: lavori ripresi"
+	: > "$SLOWED"
 }
 
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 mkdir -p "$RUN"
-: > "$STOPPED"
+start_clean
 rm -f "$IO"
 playing=0
 trap 'resume_work; io_stop; exit 0' TERM INT

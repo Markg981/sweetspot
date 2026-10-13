@@ -1795,6 +1795,26 @@ dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
 expect "sessione: posizione nel registro di Squeezelite" "35|3" \
 	"$(sed -n 's/^sqlog=//p' "$DSP/run/sessione")|$(sed -n 's/^core=//p' "$DSP/run/sessione")"
 expect "sessione: interruzioni del core all'inizio" "29 7000 xhci_hcd" "$(grep '^29 ' "$DSP/run/sessione.irq")"
+# Rotazione del registro di Squeezelite (copytruncate) senza perdere eventi.
+rm -f "$DSP/run/xrun.totale" "$DSP/run/sessione.xrun"
+printf '[12:00:00] _output_frames:1 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
+printf '[12:00:01] _output_frames:2 XRUN\n[12:00:02] _output_frames:3 XRUN\n[12:00:03] _output_frames:4 XRUN recover failed: -32\n' >> "$DSP/squeezelite.log"
+awk 'BEGIN { for (i = 0; i < 30; i++) printf "[12:01:00] stream:%d riga di riempimento per superare la soglia di un kilobyte\n", i }' >> "$DSP/squeezelite.log"
+echo "LOG_SQUEEZELITE_KB=1" > "$DSP/run/sweetspot.conf"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; sqlog_rotate \$SQLOG"
+expect "rotazione: registro troncato in place" "0" "$(wc -c < "$DSP/squeezelite.log" | tr -d ' ')"
+expect "rotazione: totale salvato (eventi recuperi)" "3 1" "$(cat "$DSP/run/xrun.totale")"
+expect "rotazione: contatori della sessione" "2 1" "$(cat "$DSP/run/sessione.xrun")"
+expect "rotazione: posizione della sessione azzerata" "0" "$(sed -n 's/^sqlog=//p' "$DSP/run/sessione")"
+printf '[12:02:00] _output_frames:5 XRUN\n' >> "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; sqlog_rotate \$SQLOG"
+expect "rotazione: sotto soglia non ruota" "1" "$(wc -l < "$DSP/squeezelite.log" | tr -d ' ')"
+expect "rotazione: storico = contatori + registro" "4 1" "$(dspfn 1 "xrun_total $DSP/squeezelite.log")"
+# Ripristina lo stato che i test seguenti si aspettano.
+rm -f "$DSP/run/sweetspot.conf" "$DSP/run/xrun.totale" "$DSP/run/sessione.xrun"
+printf '[12:00:00] _output_frames:123 XRUN\n' > "$DSP/squeezelite.log"
+dspfn 1 "SQLOG=$DSP/squeezelite.log; session_start"
 mkdir -p "$DSP/bin"
 printf '#!/bin/sh\n[ -s "%s" ] || exit 1\nprintf '"'"'{"GetClippedSamples":{"result":"Ok","value":%%s}}\\n'"'"' "$(cat "%s")"\n' \
 	"$DSP/run/camilla.valore" "$DSP/run/camilla.valore" > "$DSP/bin/sweetspot-camilla"
@@ -2110,6 +2130,56 @@ expect "stato: modalita' ascolto spenta" \
 	"INFO|Ascolto|modalità spenta: lettura della libreria, copie e ripping continuano anche durante la musica" "$(qcheck Ascolto)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/ascolto.fermi"
 
+echo "Modalita' ascolto: ripresa all'avvio e rallentamento con cgroup v2"
+ASC=$WORK/ascolto
+mkdir -p "$ASC/run/sospendibili" "$ASC/cg"
+# ascrun CGROUP_DIR COMANDI: kill e ionice finti scrivono in $ASC/calls, ps e
+# pgrep restituiscono processi finti (job con gruppo 700 = PID 701 e 702,
+# scanner = PID 800).
+ascrun() {
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_CGROUP=$1 $TEST_SH -c "
+		. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-ascolto
+		kill() { echo \"kill \$*\" >> $ASC/calls; }
+		ionice() { echo \"ionice \$*\" >> $ASC/calls; }
+		group_pids() { [ \"\$1\" = 700 ] && printf '701\n702\n'; }
+		scanner_pids() { echo 800; }
+		$2"
+}
+# a) all'avvio i processi elencati in ascolto.fermi ripartono (SIGCONT) prima
+# che l'elenco venga svuotato.
+printf -- '-700\n800\n' > "$ASC/run/ascolto.fermi"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "start_clean"
+expect "ascolto: all'avvio i sospesi ricevono SIGCONT" "kill -CONT -- -700|kill -CONT -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: all'avvio l'elenco dei sospesi e' vuoto" "0" "$(grep -c . "$ASC/run/ascolto.fermi")"
+# b) senza cgroup v2 si ripiega su SIGSTOP (comportamento di prima).
+echo 700 > "$ASC/run/sospendibili/copia"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "pause_work"
+expect "ascolto: senza cgroup si ripiega su SIGSTOP" "kill -STOP -- -700|kill -STOP -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: senza cgroup i sospesi sono annotati" "-700 800" "$(tr '\n' ' ' < "$ASC/run/ascolto.fermi" | sed 's/ $//')"
+ascrun "$ASC/nessuno" "pause_work; resume_work"
+# c) con cgroup v2 (cpu disponibile) niente SIGSTOP: limiti e ionice idle.
+: > "$ASC/run/ascolto.fermi"
+printf 'cpu io memory\n' > "$ASC/cg/cgroup.controllers"
+: > "$ASC/cg/cgroup.subtree_control"
+rm -f "$ASC/calls"
+ascrun "$ASC/cg" "pause_work"
+expect "ascolto: cgroup, limite di CPU" "5000 100000" "$(cat "$ASC/cg/sweetspot-ascolto/cpu.max")"
+expect "ascolto: cgroup, peso minimo" "1" "$(cat "$ASC/cg/sweetspot-ascolto/cpu.weight")"
+expect "ascolto: cgroup, controller cpu attivato" "+cpu" "$(cat "$ASC/cg/cgroup.subtree_control")"
+expect "ascolto: cgroup, processi del job e scanner spostati" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/sweetspot-ascolto/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: cgroup, ionice idle e nessun SIGSTOP" "ionice -c 3 -p 701|ionice -c 3 -p 702|ionice -c 3 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: cgroup, nessun sospeso e due lenti" "0|2" "$(grep -c . "$ASC/run/ascolto.fermi")|$(grep -c . "$ASC/run/ascolto.lenti")"
+expect "ascolto: stato conta i lavori rallentati" "OK|Ascolto|ascolto puro (coda in RAM, dischi fermi, lavori di fondo sospesi): ora 2 lavori sospesi" \
+	"$(printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"; cp "$ASC/run/ascolto.lenti" "$Q/run/ascolto.lenti"; qcheck Ascolto; rm -f "$Q/run/ascolto.lenti")"
+# d) a fine ascolto i processi tornano nel gruppo radice, ionice normale.
+rm -f "$ASC/calls"
+ascrun "$ASC/cg" "resume_work"
+expect "ascolto: cgroup, a fine ascolto tornano nel gruppo radice" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: cgroup, ionice di nuovo normale" "ionice -c 2 -n 4 -p 701|ionice -c 2 -n 4 -p 702|ionice -c 2 -n 4 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+expect "ascolto: cgroup, elenco dei rallentati svuotato" "0" "$(grep -c . "$ASC/run/ascolto.lenti")"
+
 echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
 # Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
 # scheda di rete e lo.
@@ -2180,6 +2250,155 @@ if command -v python3 > /dev/null; then
 	expect "matrice: docs/compatibilita.md aggiornata" "0" \
 		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
 fi
+
+echo "Hotspot di configurazione Wi-Fi (primo avvio)"
+HS=$WORK/hotspot
+mkdir -p "$HS/bin"
+# Comandi finti: registrano le chiamate in $HS/calls; 'ip' mostra un indirizzo
+# sul Wi-Fi solo se esiste $HS/ipok; 'sleep' conta i giri e li lascia
+# comandare a $HS/onsleep (cosi' i test non aspettano e hanno una fine).
+cat > "$HS/bin/iw" <<'EOF'
+#!/bin/sh
+echo "iw $*" >> "$HS_DIR/calls"
+case "$*" in
+	"phy phy0 info") printf 'Wiphy phy0\n\tSupported interface modes:\n\t\t * IBSS\n\t\t * managed\n%s\n\t\t * monitor\n' "$(cat "$HS_DIR/apmode" 2>/dev/null)" ;;
+	"dev wlan0 scan") printf 'BSS aa:bb:cc:00:00:01(on wlan0)\n\tsignal: -40.00 dBm\n\tSSID: Casa Rossi\nBSS aa:bb:cc:00:00:02(on wlan0)\n\tsignal: -80.00 dBm\n\tSSID: Vicino\nBSS aa:bb:cc:00:00:03(on wlan0)\n\tsignal: -60.00 dBm\n\tSSID: \n' ;;
+esac
+EOF
+cat > "$HS/bin/ip" <<'EOF'
+#!/bin/sh
+echo "ip $*" >> "$HS_DIR/calls"
+case "$*" in
+	*show*wlan0*) [ -f "$HS_DIR/ipok" ] && echo "3: wlan0    inet 192.168.1.9/24 scope global wlan0" ;;
+esac
+exit 0
+EOF
+for c in hostapd udhcpd dnsd killall flock; do
+	printf '#!/bin/sh\necho "%s $*" >> "$HS_DIR/calls"\nexit 0\n' "$c" > "$HS/bin/$c"
+done
+cat > "$HS/bin/sleep" <<'EOF'
+#!/bin/sh
+n=$(cat "$HS_DIR/n" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$HS_DIR/n"
+[ -f "$HS_DIR/onsleep" ] && . "$HS_DIR/onsleep"
+exit 0
+EOF
+cat > "$HS/net-init" <<'EOF'
+#!/bin/sh
+echo "S40 $*" >> "$HS_DIR/calls"
+EOF
+chmod +x "$HS/bin/"* "$HS/net-init"
+
+# hs_env APMODE: computer finto con cavo scollegato e Wi-Fi spento (rfkill).
+hs_env() {
+	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console"
+	mkdir -p "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
+		"$HS/sys/class/net/wlan0/wireless" "$HS/sys/class/rfkill/rfkill0" "$HS/sys/class/phy"
+	echo 1 > "$HS/sys/class/net/eth0/type"; echo 0 > "$HS/sys/class/net/eth0/carrier"
+	echo 1 > "$HS/sys/class/net/wlan0/type"
+	echo "aa:bb:cc:dd:5e:6f" > "$HS/sys/class/net/wlan0/address"
+	mkdir -p "$HS/sys/class/net/wlan0/phy80211"; echo phy0 > "$HS/sys/class/net/wlan0/phy80211/name"
+	echo wlan > "$HS/sys/class/rfkill/rfkill0/type"; echo 1 > "$HS/sys/class/rfkill/rfkill0/soft"
+	if [ "$1" = ap ]; then echo "$(printf '\t\t * AP')" > "$HS/apmode"; else : > "$HS/apmode"; fi
+	: > "$HS/calls"; : > "$HS/console"
+	cp "$OVERLAY/etc/sweetspot/defaults.conf" "$HS/run/sweetspot.conf"
+}
+# hs_run [ATTESA]: esegue sorveglia con i comandi finti.
+hs_run() {
+	printf 'HOTSPOT_ATTESA=%s\n' "${1:-0}" >> "$HS/run/sweetspot.conf"
+	HS_DIR=$HS SWEETSPOT_SYSFS=$HS/sys SWEETSPOT_PROCFS=$HS/proc SWEETSPOT_RUN=$HS/run \
+		SWEETSPOT_LOG=$HS/log SWEETSPOT_PATH="$HS/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_IW=$HS/bin/iw SWEETSPOT_IP=$HS/bin/ip SWEETSPOT_HOSTAPD=$HS/bin/hostapd \
+		SWEETSPOT_UDHCPD=$HS/bin/udhcpd SWEETSPOT_DNSD=$HS/bin/dnsd SWEETSPOT_SLEEP=$HS/bin/sleep SWEETSPOT_NET_INIT=$HS/net-init \
+		SWEETSPOT_CONSOLE=$HS/console SWEETSPOT_TTY=$HS/console \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" "${2:-sorveglia}" > /dev/null 2>&1
+}
+hs_calls() { grep -c "^$1" "$HS/calls"; }
+
+# 1. Senza rete e con un adattatore AP: l'hotspot si accende, poi arriva il cavo.
+hs_env ap
+echo '[ "$n" -ge 3 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: senza rete si accende su wlan0 con nome dal MAC" "1|1" \
+	"$(grep -c 'hotspot: acceso su wlan0, rete Sweetspot-5E6F' "$HS/log")|$(hs_calls hostapd)"
+expect "hotspot: indirizzo 192.168.4.1 sulla scheda, DHCP e DNS avviati" "1|1|1" \
+	"$(hs_calls 'ip addr add 192.168.4.1/24 dev wlan0')|$(hs_calls udhcpd)|$(hs_calls dnsd)"
+pw=$(sed -n 's/^Password: //p' "$HS/console" | head -n 1)
+expect "hotspot: password sullo schermo (10 caratteri), non nel registro" "1|0" \
+	"$(grep -c '^Password: [a-z2-9]\{10\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
+expect "hotspot: elenco reti ordinato per segnale, senza nomi vuoti" "100|Casa Rossi,Vicino" \
+	"$(head -n 1 "$HS/run/wifi-scan.list" | cut -d'|' -f1)|$(cut -d'|' -f2 "$HS/run/wifi-scan.list" | tr '\n' ',' | sed 's/,$//')"
+expect "hotspot: arrivato il cavo si spegne e le radio tornano spente" "1|0|1" \
+	"$(grep -c 'hotspot: arrivato il cavo' "$HS/log")|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 2. Password scelta dall'utente in sweetspot.txt.
+hs_env ap
+echo 'HOTSPOT_PASSWORD=la-mia-password' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: HOTSPOT_PASSWORD scelta dall'utente" "1" "$(grep -c '^Password: la-mia-password$' "$HS/console")"
+
+# 3. Cavo collegato: l'hotspot non si accende mai.
+hs_env ap
+echo 1 > "$HS/sys/class/net/eth0/carrier"
+hs_run
+expect "hotspot: con il cavo collegato non parte e la radio resta spenta" "0|0|1" \
+	"$(hs_calls hostapd)|$(hs_calls iw)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 4. Wi-Fi gia' collegato (indirizzo sulla scheda): niente hotspot.
+hs_env ap
+touch "$HS/ipok"
+hs_run
+expect "hotspot: Wi-Fi collegato, nessun hotspot" "0" "$(hs_calls hostapd)"
+
+# 5. HOTSPOT=no.
+hs_env ap
+echo 'HOTSPOT=no' >> "$HS/run/sweetspot.conf"
+hs_run
+expect "hotspot: HOTSPOT=no non fa niente" "0|1" "$(hs_calls hostapd)|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+
+# 6. Adattatore senza modalita' AP.
+hs_env noap
+hs_run
+expect "hotspot: adattatore senza AP, niente hotspot" "0|1" \
+	"$(hs_calls hostapd)|$(grep -c 'nessun adattatore Wi-Fi capace' "$HS/log")"
+
+# 7. Attesa: la connessione arriva prima del tempo, l'hotspot non parte.
+hs_env ap
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run 60
+expect "hotspot: la rete arriva durante l'attesa, nessun hotspot" "0|2" "$(hs_calls hostapd)|$(cat "$HS/n")"
+
+# 8. Rete scelta dalla pagina ma sbagliata: l'hotspot riparte; poi quella giusta.
+hs_env ap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -ge 12 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"
+EOF
+hs_run
+expect "hotspot: rete salvata che non risponde, l'hotspot riparte (2 accensioni)" "1|2|1" \
+	"$(grep -c 'la rete Wi-Fi non risponde' "$HS/log")|$(hs_calls hostapd)|$(hs_calls 'S40 wifi wlan0')"
+hs_env ap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -eq 3 ] && : > "$HS_DIR/ipok"
+EOF
+hs_run
+expect "hotspot: rete scelta che risponde, hotspot spento e sorveglianza finita" "1|1|0" \
+	"$(grep -c 'collegato alla rete Wi-Fi' "$HS/log")|$(hs_calls hostapd)|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)"
+
+# S40: la scheda Wi-Fi configurata si collega con il nuovo comando 'wifi'.
+expect "S40sweetspot-net: comando wifi e avvio della sorveglianza" "1|1" \
+	"$(grep -c 'wifi) *$' "$OVERLAY/etc/init.d/S40sweetspot-net")|$(grep -c 'sweetspot-hotspot sorveglia' "$OVERLAY/etc/init.d/S40sweetspot-net")"
+expect "defaults.conf: HOTSPOT acceso di serie" "si" "$(sed -n 's/^HOTSPOT=//p' "$OVERLAY/etc/sweetspot/defaults.conf")"
+for cfg in sweetspot_x86_64 sweetspot_rpi; do
+	expect "$cfg: hostapd e iw nel defconfig" "2" "$(grep -c '^BR2_PACKAGE_\(HOSTAPD\|IW\)=y$' "$ROOT/configs/${cfg}_defconfig")"
+done
+expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
 
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then

@@ -179,7 +179,7 @@ session_start() {
 	[ -f "$SQLOG" ] && size=$(wc -c < "$SQLOG" | tr -d ' ')
 	printf 'inizio=%s\nsqlog=%s\ncore=%s\n' "$(date +%s)" "${size:-0}" "$LAYOUT_AUDIO" > "$RUN/sessione"
 	irq_cpu_counts "$LAYOUT_AUDIO" > "$RUN/sessione.irq"
-	rm -f "$RUN/dsp.clip" "$RUN/latenza.ascolto"
+	rm -f "$RUN/dsp.clip" "$RUN/latenza.ascolto" "$RUN/sessione.xrun"
 }
 
 # Campioni tagliati da CamillaDSP nella sessione. Il suo contatore riparte
@@ -565,6 +565,7 @@ player_loop() {
 			pin_output_thread "$PID"
 			pin_dsp
 			dsp_clip_poll
+			sqlog_rotate "$SQLOG"
 			zones_sync "$card"
 			apply_player_prefs
 			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_instance "$card")" != "$inst" ]; then

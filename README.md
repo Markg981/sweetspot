@@ -33,9 +33,14 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      streaming e le radio possono continuare a usare la rete;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
      interruzioni del controller USB del DAC (priorità 90) sull'altro.
-8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria si
-   sospende e riprende quando la musica si ferma; il salvataggio sulla chiavetta
-   aspetta la fine dell'ascolto.
+8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
+   lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
+   normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
+   fine dell'ascolto. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
+   `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner
+   non resta congelato con una transazione del database aperta. Se il kernel
+   non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
+   riprende comunque quanto un'esecuzione precedente aveva lasciato fermo.
 8b. **Memoria sotto pressione**: il sistema non ha swap (e non si aggiunge, nemmeno
    zram: riempirebbe di compressione e latenza il percorso del suono e
    richiederebbe un kernel con swap). Per questo, se la RAM finisse (tipico
@@ -351,6 +356,36 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 5. Collega un disco con la musica o aggiungi la cartella del NAS in
    *Impostazioni Sweetspot → Musica*: la libreria si crea da sola.
 
+### Hotspot di configurazione Wi-Fi
+
+Senza cavo e senza aver scritto `WIFI_NOME` in `sweetspot.txt`, il primo avvio
+non resta senza rete. Se dopo `HOTSPOT_ATTESA` secondi (60) non c'è nessuna
+connessione (nessun cavo con collegamento, nessun indirizzo, Wi-Fi non
+configurato o non collegato) e c'è un adattatore Wi-Fi che sa fare da access
+point, Sweetspot accende la rete **`Sweetspot-XXXX`** (XXXX = ultime cifre del
+MAC), WPA2, canale 6 (2,4 GHz), con DHCP e DNS minimi (`udhcpd`, `dnsd` di
+BusyBox):
+
+1. Il nome e la **password** compaiono sullo schermo (console). La password è
+   casuale a ogni accensione e non finisce nel registro; per un player senza
+   schermo scrivine una tua (8-63 caratteri) in `HOTSPOT_PASSWORD`.
+2. Collega il telefono a quella rete e apri `http://192.168.4.1/` (anche
+   `http://sweetspot.local/`, se il telefono usa il DNS dell'hotspot): si apre
+   la pagina **Rete**.
+3. In *Collega Sweetspot al Wi-Fi di casa* scegli la rete dall'elenco (o scrivi
+   il nome) e la password, poi **Collega**. Il nome e la password sono salvati
+   con `sweetspot-config` (chiavetta), l'hotspot si spegne e Sweetspot si
+   collega.
+4. **Recupero**: se entro `HOTSPOT_PROVA` secondi (40) la rete scelta non dà un
+   indirizzo (password sbagliata, router spento) l'hotspot riparte e puoi
+   riprovare. La stessa cosa succede a un avvio con `WIFI_NOME` sbagliato.
+
+L'hotspot non si accende mai con la rete funzionante e si spegne da solo se
+arriva un cavo. Con `HOTSPOT=no` non si accende mai; le radio Wi-Fi restano
+spente come negli altri casi (`radios_off` in `S20sweetspot-tune`) e vengono
+accese solo per l'hotspot. Servono i pacchetti `hostapd` e `iw` (già nelle
+immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
+
 ## Impostazioni (`sweetspot.txt`)
 
 | Voce | Valori | Predefinito |
@@ -374,6 +409,7 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio | 500, 0 |
 | `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
+| `HOTSPOT`, `HOTSPOT_ATTESA`, `HOTSPOT_PROVA`, `HOTSPOT_PASSWORD` | hotspot di configurazione del primo avvio (vedi [sotto](#hotspot-di-configurazione-wi-fi)): `si`/`no`, secondi di attesa senza rete prima di accenderlo, secondi concessi alla rete scelta prima che riparta, password scelta da te (8-63 caratteri; vuoto = casuale a ogni accensione, mostrata sullo schermo) | si, 60, 40, vuoto |
 | `IP_FISSO`, `GATEWAY`, `DNS` | indirizzo fisso, es. `192.168.1.50/24` | vuoto |
 | `RISPARMIO_RETE` | risparmio energetico Ethernet (EEE) | no |
 | `PROFILO` | `bilanciato`, `silenzio`, `prestazioni` | bilanciato |

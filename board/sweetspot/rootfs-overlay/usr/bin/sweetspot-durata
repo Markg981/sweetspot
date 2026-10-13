@@ -23,9 +23,11 @@ SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
 
 playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 mem_available() { sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo"; }
-xruns() { # XRUN nel registro di Squeezelite, compresi i recuperi falliti
+xruns() { # XRUN nel registro di Squeezelite (anche ruotato), compresi i recuperi falliti
+	local c
 	[ -f "$SQLOG" ] || { echo 0; return; }
-	awk '/XRUN/ { n++ } END { print n + 0 }' "$SQLOG"
+	c=$(xrun_total "$SQLOG") || { echo 0; return; }
+	echo $(( ${c% *} + ${c#* } ))
 }
 temperature() {
 	local t

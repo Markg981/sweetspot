@@ -126,6 +126,18 @@ NOME_RETE=sweetspot
 WIFI_NOME=
 WIFI_PASSWORD=
 
+# Hotspot di configurazione (si/no): se dopo HOTSPOT_ATTESA secondi non c'e'
+# nessuna connessione (niente cavo, Wi-Fi non configurato o non collegato)
+# e c'e' un adattatore Wi-Fi che lo permette, il player accende la rete
+# "Sweetspot-XXXX" per scegliere il Wi-Fi di casa dal telefono. La password
+# compare sullo schermo; per uno Sweetspot senza schermo scrivine una tua
+# (da 8 a 63 caratteri) in HOTSPOT_PASSWORD.
+# HOTSPOT_PROVA: secondi concessi alla rete scelta prima che l'hotspot riparta.
+HOTSPOT=si
+HOTSPOT_ATTESA=60
+HOTSPOT_PROVA=40
+HOTSPOT_PASSWORD=
+
 # Indirizzo fisso (vuoto = automatico dal router, consigliato). Esempio:
 #   IP_FISSO=192.168.1.50/24
 #   GATEWAY=192.168.1.1
