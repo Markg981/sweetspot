@@ -19,7 +19,7 @@ saved_msg() { # codice testo
 
 # Campi dei moduli, riempiti da read_form.
 F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome=""
-F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
+F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
@@ -118,6 +118,9 @@ case "$F_a" in
 		case "$F_volume" in fisso|dac|software|dsp) ;; *) F_volume=fisso ;; esac
 		case "$F_dsd" in auto|nativo|dop|no) ;; *) F_dsd=auto ;; esac
 		case "$F_altri_dac" in si|no) ;; *) F_altri_dac=no ;; esac
+		[ -n "$F_dsd_margine" ] || F_dsd_margine=$(dsd_margine_db)
+		F_dsd_margine=$(printf '%s' "$F_dsd_margine" | tr ',' '.')
+		dsd_margine_valido "$F_dsd_margine" || done_to audio "Il margine DSD va da -24 a 0 dB (un decimale al massimo), es. -3."
 		# DAC principale: auto, un identificativo USB, oppure il valore gia'
 		# scritto a mano in sweetspot.txt (non si tocca).
 		F_dac=$(lower "$F_dac")
@@ -133,7 +136,7 @@ case "$F_a" in
 		in_range "$F_periodi" 2 16 || done_to audio "I periodi ALSA vanno da 2 a 16."
 		in_range "$F_pausa_frequenza" 0 5000 || done_to audio "La pausa al cambio di frequenza va da 0 a 5000 millisecondi."
 		in_range "$F_pausa_dsd" 0 5000 || done_to audio "La pausa tra DSD e PCM va da 0 a 5000 millisecondi."
-		priv sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" RICAMPIONAMENTO "$F_ricampionamento" \
+		priv sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" DSD_PCM_MARGINE_DB "$F_dsd_margine" RICAMPIONAMENTO "$F_ricampionamento" \
 			FILTRO "$F_filtro" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
 			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd" \
 			ALTRI_DAC "$F_altri_dac" DAC "$F_dac"

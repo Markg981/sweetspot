@@ -118,7 +118,7 @@ static const struct regola REGOLE[] = {
 // (comandi, percorsi, opzioni di basso livello) si toccano solo dalla
 // chiavetta, con il computer.
 static const char *const CHIAVI[] = {
-	"VOLUME", "DSD", "RICAMPIONAMENTO", "FILTRO", "FREQUENZA_MAX", "BUFFER_ALSA_MS",
+	"VOLUME", "DSD", "DSD_PCM_MARGINE_DB", "RICAMPIONAMENTO", "FILTRO", "FREQUENZA_MAX", "BUFFER_ALSA_MS",
 	"PERIODI_ALSA", "PAUSA_FREQUENZA_MS", "PAUSA_DSD_MS", "ALTRI_DAC", "DAC",
 	"ESCLUDI_DISCHI", "ARCHIVIO", "ARCHIVIO_CONDIVISO", "ARCHIVIO_PASSWORD",
 	"WIFI_NOME", "WIFI_PASSWORD", "NOME_RETE", "RISPARMIO_RETE", "IP_FISSO",
