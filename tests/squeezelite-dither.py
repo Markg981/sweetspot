@@ -47,7 +47,17 @@ typedef u32_t frames_t;
 #define BYTES_PER_FRAME 8
 #define MONO_LEFT 0x01
 #define MONO_RIGHT 0x02
+#define ISAMPLE_T s32_t
 typedef enum { S32_LE, S24_LE, S24_3LE, S16_LE } output_format;
+/* minimo di squeezelite.h per _apply_cross e _apply_gain (in fondo a output_pack.c) */
+struct buffer {
+	u8_t *buf;
+	u8_t *readp;
+	u8_t *writep;
+	u8_t *wrap;
+	size_t size;
+	size_t base_size;
+};
 '''
 
 HARNESS = r'''
