@@ -2202,7 +2202,7 @@ mkdir -p "$ASC/run/sospendibili" "$ASC/cg"
 # pgrep restituiscono processi finti (job con gruppo 700 = PID 701 e 702,
 # scanner = PID 800).
 ascrun() {
-	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_CGROUP=$1 $TEST_SH -c "
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_PROCFS=$ASC/proc SWEETSPOT_CGROUP=$1 $TEST_SH -c "
 		. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-ascolto
 		kill() { echo \"kill \$*\" >> $ASC/calls; }
 		ionice() { echo \"ionice \$*\" >> $ASC/calls; }
@@ -2217,6 +2217,22 @@ rm -f "$ASC/calls"
 ascrun "$ASC/nessuno" "start_clean"
 expect "ascolto: all'avvio i sospesi ricevono SIGCONT" "kill -CONT -- -700|kill -CONT -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
 expect "ascolto: all'avvio l'elenco dei sospesi e' vuoto" "0" "$(grep -c . "$ASC/run/ascolto.fermi")"
+# a2) identita' dei processi: PID + starttime (campo 22 di /proc/PID/stat, con
+# il nome fra parentesi che puo' avere spazi). Un PID riusato da un altro
+# processo non riceve segnali; il gruppo il cui capogruppo e' sparito si'.
+mkdir -p "$ASC/proc/850" "$ASC/proc/860" "$ASC/proc/800"
+procstat() { echo "$1 ($2) S 1 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 $3 0 0" > "$ASC/proc/$1/stat"; }
+procstat 850 "sh (x) y" 5000
+procstat 860 "altro" 7000
+printf -- '850 5000\n860 6000\n-870 4000\n' > "$ASC/run/ascolto.fermi"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "start_clean"
+expect "ascolto: PID riusato niente SIGCONT, gruppo senza capogruppo si'" "kill -CONT -- 850|kill -CONT -- -870" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+procstat 800 "scanner.pl" 4242
+rm -f "$ASC/calls" "$ASC/run/ascolto.fermi"
+ascrun "$ASC/nessuno" "throttle 800 scanner 800"
+expect "ascolto: SIGSTOP annota PID e starttime" "800 4242" "$(cat "$ASC/run/ascolto.fermi")"
+rm -f "$ASC/proc/800/stat" "$ASC/run/ascolto.fermi"
 # b) senza cgroup v2 si ripiega su SIGSTOP (comportamento di prima).
 echo 700 > "$ASC/run/sospendibili/copia"
 rm -f "$ASC/calls"
