@@ -2441,6 +2441,45 @@ for cfg in sweetspot_x86_64 sweetspot_rpi; do
 done
 expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
 
+echo "Condivisioni di rete: ritentativi"
+RT=$WORK/rete
+mkdir -p "$RT/bin" "$RT/busy" "$RT/run" "$RT/proc" "$RT/media" "$RT/musica"
+: > "$RT/proc/mounts"
+printf 'CONDIVISIONE_1=//192.168.1.10/Musica\nCONDIVISIONE_2=//192.168.1.10/Altra\n' > "$RT/run/sweetspot.conf"
+# NAS finto: la condivisione 1 risponde dal settimo tentativo di mount in poi
+# (due giri da tre versioni di protocollo), la 2 ha sempre la password sbagliata.
+cat > "$RT/bin/mount.cifs" <<MOUNT
+#!/bin/sh
+n=\$(cat "$RT/n" 2>/dev/null || echo 0)
+case "\$2" in *rete-2) echo "mount error(13): Permission denied" >&2; exit 32 ;; esac
+echo \$((n + 1)) > "$RT/n"
+[ "\$n" -lt 6 ] && { echo "mount error(112): Host is down" >&2; exit 32; }
+exit 0
+MOUNT
+printf '#!/bin/sh\ntouch "%s/rescan"\n' "$RT" > "$RT/bin/lms"
+printf '#!/bin/sh\nexit 0\n' > "$RT/bin/modprobe"
+printf '#!/bin/sh\nexit 0\n' > "$RT/bin/flock"
+printf '#!/bin/sh\nexit 1\n' > "$RT/busy/flock"
+chmod +x "$RT"/bin/* "$RT"/busy/*
+rete_env() { # cartella-comandi comando...
+	local d=$1
+	shift
+	env SWEETSPOT_RUN=$RT/run SWEETSPOT_PROCFS=$RT/proc SWEETSPOT_LOG=$RT/log SWEETSPOT_PATH="$d:$RT/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_MEDIA=$RT/media SWEETSPOT_MUSICA=$RT/musica SWEETSPOT_LMS=$RT/bin/lms \
+		SWEETSPOT_RETE_MIN=0 SWEETSPOT_RETE_MAX=0 "$@"
+}
+printf '1|//192.168.1.10/Musica|ERRORE|server non raggiungibile\n2|//192.168.1.10/Altra|ERRORE|accesso negato: controlla utente e password\n' > "$RT/run/rete.list"
+rete_env "$RT/busy" $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" ritenta > /dev/null 2>&1
+expect "ritenta: con un ciclo gia' attivo non parte un doppione" "no" "$([ -f "$RT/n" ] && echo si || echo no)"
+rete_env "$RT/bin" $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" ritenta > /dev/null 2>&1
+expect "ritenta: la condivisione che torna viene montata" "1|//192.168.1.10/Musica|OK|montata" "$(grep '^1|' "$RT/run/rete.list")"
+expect "ritenta: l'errore dell'altra resta visibile" "2|//192.168.1.10/Altra|ERRORE|accesso negato: controlla utente e password" "$(grep '^2|' "$RT/run/rete.list")"
+expect "ritenta: dopo il successo chiede la scansione a Lyrion" "si" "$([ -f "$RT/rescan" ] && echo si || echo no)"
+RD=". $OVERLAY/usr/bin/sweetspot-rete; RETRY_MIN=30; RETRY_MAX=600"
+expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
+	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
+expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*

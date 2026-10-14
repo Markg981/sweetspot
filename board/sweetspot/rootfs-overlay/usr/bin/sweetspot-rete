@@ -7,6 +7,8 @@
 #   sweetspot-rete smonta     le smonta
 #   sweetspot-rete elenco     righe "numero|percorso|stato|dettaglio"
 #   sweetspot-rete prova N    prova la condivisione N e risponde OK o l'errore
+#   sweetspot-rete ritenta    riprova le condivisioni non montate, a intervalli
+#                             crescenti, finche' non sono tutte montate
 #
 # Configurazione in sweetspot.txt (fino a 9 condivisioni):
 #   CONDIVISIONE_1=//192.168.1.10/Musica
@@ -17,6 +19,12 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 LIST=$RUN/rete.list
+# Condivisioni in attesa di un nuovo tentativo: "numero|tentativi|prossimo" (secondi epoch).
+ATTESA=$RUN/rete.attesa
+RETRY_LOCK=$RUN/rete.ritenta.lock
+RETRY_PID=$RUN/rete.ritenta.pid
+RETRY_MIN=${SWEETSPOT_RETE_MIN:-30}
+RETRY_MAX=${SWEETSPOT_RETE_MAX:-600}
 
 share_name() {
 	local p=$1 last
@@ -110,8 +118,95 @@ do_mount() {
 	done
 }
 
+# retry_delay TENTATIVI -> secondi di attesa: raddoppia ogni volta, fino al tetto
+retry_delay() {
+	local d=$RETRY_MIN i=1
+	while [ $i -lt "$1" ] && [ $d -lt $RETRY_MAX ]; do
+		d=$((d * 2))
+		i=$((i + 1))
+	done
+	[ $d -gt $RETRY_MAX ] && d=$RETRY_MAX
+	echo $d
+}
+
+# set_stato N STATO DETTAGLIO: aggiorna la riga di N nell'elenco
+set_stato() {
+	{ grep -v "^$1|" "$LIST" 2>/dev/null; echo "$1|$(conf "CONDIVISIONE_$1")|$2|$3"; } > "$LIST.new"
+	mv "$LIST.new" "$LIST"
+}
+
+# Si ritenta solo quando il NAS puo' tornare da solo (spento, rete assente).
+# Password sbagliata, cartella inesistente o percorso scritto male li deve
+# correggere l'utente: ritentare all'infinito non serve.
+retryable() {
+	case "$1" in
+		"server non raggiungibile"*|"nome del server sconosciuto"*) return 0 ;;
+		"errore:"*) return 0 ;;
+	esac
+	return 1
+}
+
+# Dopo l'avvio: riprova a montare le condivisioni che non c'erano (NAS acceso
+# dopo il player). Un solo ciclo alla volta (flock); l'avvio non lo aspetta.
+do_retry() {
+	local n t next now line res stato min nuovo="$ATTESA.new" riuscita=0
+	mkdir -p "$RUN"
+	exec 7> "$RETRY_LOCK"
+	flock -n 7 || return 0
+	echo $$ > "$RETRY_PID"
+	: > "$ATTESA"
+	now=$(date +%s)
+	for n in 1 2 3 4 5 6 7 8 9; do
+		[ -n "$(conf "CONDIVISIONE_$n")" ] || continue
+		line=$(grep "^$n|" "$LIST" 2>/dev/null | head -n 1)
+		[ "$(printf '%s' "$line" | cut -d'|' -f3)" = ERRORE ] || continue
+		retryable "$(printf '%s' "$line" | cut -d'|' -f4-)" || continue
+		echo "$n|1|$((now + $(retry_delay 1)))" >> "$ATTESA"
+	done
+	while [ -s "$ATTESA" ]; do
+		now=$(date +%s)
+		: > "$nuovo"
+		min=""
+		while IFS='|' read -r n t next; do
+			# Rimossa nel frattempo, oppure gia' montata (pulsante "prova")
+			[ -n "$(conf "CONDIVISIONE_$n")" ] || continue
+			stato=$(grep "^$n|" "$LIST" 2>/dev/null | head -n 1 | cut -d'|' -f3)
+			[ "$stato" = ERRORE ] || continue
+			if [ "$now" -ge "$next" ]; then
+				res=$(mount_share "$n")
+				if [ "$res" = OK ]; then
+					set_stato "$n" OK montata
+					log "rete: condivisione $n montata al tentativo $((t + 1))"
+					riuscita=1
+					continue
+				fi
+				set_stato "$n" ERRORE "$res"
+				retryable "$res" || continue
+				t=$((t + 1))
+				next=$((now + $(retry_delay "$t")))
+			fi
+			echo "$n|$t|$next" >> "$nuovo"
+			if [ -z "$min" ] || [ "$next" -lt "$min" ]; then min=$next; fi
+		done < "$ATTESA"
+		mv "$nuovo" "$ATTESA"
+		if [ $riuscita = 1 ]; then
+			riuscita=0
+			# Musica nuova sul NAS: Lyrion legge solo cio' che e' nuovo o cambiato.
+			if ${SWEETSPOT_LMS:-/usr/bin/sweetspot-lms} aggiorna > /dev/null 2>&1; then
+				log "rete: richiesto a Lyrion il controllo della libreria"
+			fi
+		fi
+		[ -s "$ATTESA" ] || break
+		now=$(date +%s)
+		[ "$min" -gt "$now" ] && sleep $((min - now))
+	done
+	rm -f "$ATTESA" "$RETRY_PID"
+}
+
 do_umount() {
 	local mp l
+	[ -f "$RETRY_PID" ] && kill "$(cat "$RETRY_PID")" 2>/dev/null
+	rm -f "$RETRY_PID" "$ATTESA"
 	for mp in "$MEDIA_DIR"/rete-*; do
 		[ -d "$mp" ] || continue
 		umount -l "$mp" 2>/dev/null
@@ -140,8 +235,11 @@ do_umount_one() {
 	return 0
 }
 
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
 case "$1" in
-	monta) do_mount; touch "$RUN/rete.pronta" ;;
+	monta) do_mount; touch "$RUN/rete.pronta"; do_retry ;;
+	ritenta) do_retry ;;
 	smonta) do_umount ;;
 	smonta-una)
 		case "$2" in [1-9]) do_umount_one "$2" ;; *) exit 1 ;; esac ;;
@@ -154,5 +252,5 @@ case "$1" in
 		# Montata: la pagina Musica la mostra subito, senza attendere il prossimo avvio.
 		[ "$res" = OK ] && echo "$2|$(conf "CONDIVISIONE_$2")|OK|montata" >> "$LIST"
 		exit $rc ;;
-	*) echo "uso: $0 monta|smonta|smonta-una N|elenco|prova N" >&2; exit 1 ;;
+	*) echo "uso: $0 monta|smonta|smonta-una N|elenco|prova N|ritenta" >&2; exit 1 ;;
 esac
