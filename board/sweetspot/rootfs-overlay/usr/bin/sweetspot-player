@@ -505,7 +505,7 @@ run_player() {
 		-d output=info -f "$SQLOG"
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	# Pausa fra brani a frequenza diversa: Squeezelite svuota il buffer ALSA
-	# (patch 0004) prima di riaprire il DAC; la pausa minima e' quanto il
+	# (patch 0005) prima di riaprire il DAC; la pausa minima e' quanto il
 	# buffer reale impiega a uscire, PAUSA_FREQUENZA_MS puo' solo allungarla.
 	[ "$rate_ms" -lt "$alsa" ] && rate_ms=$alsa
 	if [ "$maxrate" -gt 0 ]; then

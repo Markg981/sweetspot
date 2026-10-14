@@ -25,14 +25,14 @@ Upstream: Not submitted (local option)
 +// Chiusura per cambio di formato o frequenza: prima di chiudere si lascia
 +// uscire dal buffer ALSA la coda del brano appena finito, altrimenti
 +// snd_pcm_close la scarta (con 400 ms di buffer sparivano le ultime centinaia
-+// di ms). L'attesa e' limitata alla durata del buffer piu' un margine; se
++// di ms). L'attesa e' limitata alla durata del buffer piu' un margine (300 ms: i timer di snd-aloop in QEMU sforano di qualche ms); se
 +// l'utente ferma il player (stop) o l'uscita si spegne, o il drain non
 +// finisce in tempo, si ripiega sul drop immediato.
 +static void alsa_drain_before_close(void) {
 +	unsigned limit_ms, waited_ms = 0;
 +	int err;
 +	if (!pcmp || !alsa.rate) return;
-+	limit_ms = (unsigned)((unsigned long long)alsa.buffer_size * 1000 / alsa.rate) + 100;
++	limit_ms = (unsigned)((unsigned long long)alsa.buffer_size * 1000 / alsa.rate) + 300;
 +	if (limit_ms > 1000) limit_ms = 1000;
 +	snd_pcm_nonblock(pcmp, 1);
 +	while (running) {

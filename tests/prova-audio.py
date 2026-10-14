@@ -656,6 +656,23 @@ def wait_loopback_left_rate(target, rate, process, timeout=15, interval=.05):
     raise AudioError("hw:Loopback playback never left %s Hz before deadline" % rate)
 
 
+def wait_engine_reopen(target, log, process, timeout=30, interval=.1):
+    """Wait until the engine log reports the drain done (patch 0005), i.e. before the reopen."""
+    deadline = time.monotonic() + timeout
+    needles = (b"before closing", b"drain skipped", b"snd_pcm_drain error")
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AudioError("Squeezelite exited with status %s during the rate change" % process.returncode)
+        try:
+            data = target.read_bytes(log)
+            if any(needle in data for needle in needles):
+                return
+        except OSError:
+            pass
+        time.sleep(interval)
+    raise AudioError("Squeezelite did not reopen the device for the second rate before deadline")
+
+
 def write_wav_tail(source, destination, frames):
     """Write the last frames of a WAV as its own file: the reference of a track tail."""
     with wave.open(str(source), "rb") as stream:
@@ -688,7 +705,7 @@ def locate_reference_start(reference, capture, capture_format, rate, probe_frame
 
 
 def drain_evidence(log):
-    """Count the drain outcomes Squeezelite (patch 0004) logs at each reopen."""
+    """Count the drain outcomes Squeezelite (patch 0005) logs at each reopen."""
     text = log.read_text(errors="replace") if log.exists() else ""
     return {"drained": len(re.findall(r"drained \d+ ms before closing", text)),
             "dropped": len(re.findall(r"drain skipped or timed out", text)),
@@ -762,7 +779,10 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
                 report["alsa"]["capture"] = wait_loopback_capture(capture, rate)
                 # The capture keeps reading until the device leaves this rate; a short
                 # wait afterwards lets the drained tail cross the SSH pipe.
-                wait_loopback_left_rate(target, rate, process)
+                # Il capture tiene il loopback configurato al vecchio ritmo, quindi il
+                # playback puo' riaprirsi in plug mode e sembrare ancora a `rate`:
+                # il segnale del cambio e' la riga di esito del drain nel registro.
+                wait_engine_reopen(target, engine_log, process)
                 time.sleep(1.5)
             finally:
                 if capture is not None:
@@ -1177,6 +1197,8 @@ def main(argv=None):
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)
+            if result.get("error"):
+                print("  %s" % result["error"], flush=True)
     except Exception as error:
         report["error"] = str(error)
     finally:
