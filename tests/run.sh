@@ -739,7 +739,6 @@ case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP s
 case "$out" in *"-3 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-3"'*) ok "audio: margine DSD -3 dB di serie, in campo e in riga" ;; *) ko "audio margine DSD" "-3 dB di serie" "-" ;; esac
 case "$(page audio 'DSD_PCM_MARGINE_DB=-6')" in *"-6 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-6"'*) ok "audio: margine DSD scelto mostrato" ;; *) ko "audio margine DSD scelto" "-6 dB" "-" ;; esac
 case "$(page audio 'DSD_PCM_MARGINE_DB=5')" in *"-3 dB nella conversione del DSD in PCM"*'value="-3"'*) ok "audio: margine DSD positivo ignorato" ;; *) ko "audio margine DSD positivo" "-3 dB" "-" ;; esac
-case "$(check_page_diag)" in *"Margine DSD → PCM|-3 dB (DSD_PCM_MARGINE_DB)"*) ok "stato: margine DSD → PCM mostrato" ;; *) ko "stato margine DSD" "Margine DSD → PCM|-3 dB" "$(check_page_diag 2>&1 | head -n 12)" ;; esac
 for v in 0 0.0 -0.5 -3 -12 -23.9 -24; do
 	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
 	expect "margine DSD $v valido" "$v" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
@@ -843,6 +842,7 @@ audio_params "$PCM/sub0" 48000
 printf 'state: RUNNING\n' > "$PCM/sub0/status"
 audio_params "$WEB/proc/asound/card1/pcm0p/sub0" 192000
 out=$(page audio); diag=$(check_page_diag)
+case "$diag" in *"INFO|Margine DSD → PCM|-3 dB (DSD_PCM_MARGINE_DB)"*) ok "stato: margine DSD → PCM mostrato" ;; *) ko "stato margine DSD" "Margine DSD → PCM|-3 dB" "$(printf '%s' "$diag" | head -n 8)" ;; esac
 case "$out" in *'Buffer ALSA'*'DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "audio: buffer del PCM selezionato" ;; *) ko "audio buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
 case "$diag" in *'Buffer ALSA|DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "diagnostica: buffer del PCM selezionato" ;; *) ko "diagnostica buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
 case "$out" in *'Uscita in corso'*'DEV=1/sub0'*'S32_LE, 48000 Hz, 2 canali'*) ok "audio: PCM selezionato, decoy ignorato" ;; *) ko "audio PCM selezionato" "DEV=1/sub0 48000" "-" ;; esac
