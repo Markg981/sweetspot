@@ -736,10 +736,10 @@ case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la pro
 case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
 case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP scelto segnalato" ;; *) ko "audio DoP scelto" "Tramite DoP" "-" ;; esac
 # Margine del DSD convertito in PCM (DSD_PCM_MARGINE_DB): -3 di serie, da -24 a 0.
-case "$out" in *'name="dsd_margine"'*'value="-3"'*"-3 dB nella conversione del DSD in PCM"*) ok "audio: margine DSD -3 dB di serie, in campo e in riga" ;; *) ko "audio margine DSD" "-3 dB di serie" "-" ;; esac
-case "$(page audio 'DSD_PCM_MARGINE_DB=-6')" in *'name="dsd_margine"'*'value="-6"'*"-6 dB nella conversione del DSD in PCM"*) ok "audio: margine DSD scelto mostrato" ;; *) ko "audio margine DSD scelto" "-6 dB" "-" ;; esac
-case "$(page audio 'DSD_PCM_MARGINE_DB=5')" in *'value="-3"'*"-3 dB nella conversione del DSD in PCM"*) ok "audio: margine DSD positivo ignorato" ;; *) ko "audio margine DSD positivo" "-3 dB" "-" ;; esac
-case "$(check_page_diag)" in *"Margine DSD → PCM|-3 dB (DSD_PCM_MARGINE_DB)"*) ok "stato: margine DSD → PCM mostrato" ;; *) ko "stato margine DSD" "Margine DSD → PCM|-3 dB" "-" ;; esac
+case "$out" in *"-3 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-3"'*) ok "audio: margine DSD -3 dB di serie, in campo e in riga" ;; *) ko "audio margine DSD" "-3 dB di serie" "-" ;; esac
+case "$(page audio 'DSD_PCM_MARGINE_DB=-6')" in *"-6 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-6"'*) ok "audio: margine DSD scelto mostrato" ;; *) ko "audio margine DSD scelto" "-6 dB" "-" ;; esac
+case "$(page audio 'DSD_PCM_MARGINE_DB=5')" in *"-3 dB nella conversione del DSD in PCM"*'value="-3"'*) ok "audio: margine DSD positivo ignorato" ;; *) ko "audio margine DSD positivo" "-3 dB" "-" ;; esac
+case "$(check_page_diag)" in *"Margine DSD → PCM|-3 dB (DSD_PCM_MARGINE_DB)"*) ok "stato: margine DSD → PCM mostrato" ;; *) ko "stato margine DSD" "Margine DSD → PCM|-3 dB" "$(check_page_diag 2>&1 | head -n 12)" ;; esac
 for v in 0 0.0 -0.5 -3 -12 -23.9 -24; do
 	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
 	expect "margine DSD $v valido" "$v" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
