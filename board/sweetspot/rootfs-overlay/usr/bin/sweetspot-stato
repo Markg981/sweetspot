@@ -14,6 +14,19 @@
 #                con in coda la riga del traffico di rete
 #   stato.json   gli stessi dati in JSON
 #   stato.ts     "momento intervallo" dell'ultimo giro (secondi)
+#   liveness.*   contatori della liveness applicativa (vedi sotto)
+#
+# Liveness applicativa, nello stesso giro (nessun nuovo poller):
+#   - Lyrion (solo modalita' completa): una richiesta JSON-RPC "serverstatus"
+#     deve rispondere entro LIVENESS_LYRION_TIMEOUT secondi; dopo
+#     LIVENESS_LYRION_FALLIMENTI fallimenti consecutivi si ferma Lyrion e il
+#     servizio (sweetspot-lms servizio) lo riavvia.
+#   - Player: se Lyrion dice "play" ma nessun PCM ALSA e' RUNNING da piu' di
+#     LIVENESS_PLAYER_SECONDI, lo stato e' "bloccato" e si ferma squeezelite;
+#     il supervisore (sweetspot-player) lo riavvia.
+# I riavvii hanno un backoff (LIVENESS_BACKOFF_MIN, raddoppia fino a
+# LIVENESS_BACKOFF_MAX) e finiscono nel log e nello stato. Durante l'ascolto
+# il giro e' piu' lungo: le soglie scattano al giro successivo.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -45,6 +58,137 @@ traffic_kbs() {
 	echo "$kbs"
 }
 
+# --- Liveness applicativa -----------------------------------------------------
+
+LV_LMS=$RUN/liveness.lyrion      # fallimenti ultimo_riavvio backoff pid_riavviato riavvii
+LV_PLY=$RUN/liveness.player      # da ultimo_riavvio backoff riavvii
+
+lv_num() { # nome predefinito
+	local v
+	v=$(conf "$1" "$2")
+	case "$v" in ''|*[!0-9]*) v=$2 ;; esac
+	printf '%s' "$v"
+}
+
+# Backoff dei riavvii: parte da MIN, raddoppia fino a MAX.
+lv_next_backoff() { # attuale
+	local n min max
+	min=$(lv_num LIVENESS_BACKOFF_MIN 60)
+	max=$(lv_num LIVENESS_BACKOFF_MAX 900)
+	if [ "$1" -lt "$min" ]; then n=$min; else n=$(( $1 * 2 )); fi
+	[ "$n" -gt "$max" ] && n=$max
+	echo "$n"
+}
+
+LV_ROWS=''
+LV_JSON='"liveness":{}'
+lv_row() { LV_ROWS="$LV_ROWS$1|$2|$3
+"; }
+lv_save() { echo "$2" > "$1.n" && mv "$1.n" "$1"; }
+
+lv_lyrion() { # momento
+	local now=$1 fails=0 last=0 bo=0 rpid=0 nrest=0 pid st age tmo k
+	LV_LYR_STATO=non_attivo
+	LV_LYR_FAILS=0
+	[ "$(mode)" = completa ] || return 0
+	pid=$(cat "$RUN/lms.pid" 2>/dev/null)
+	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+		lv_row INFO "Lyrion" "non in esecuzione (lo riavvia il servizio)"
+		return 0
+	fi
+	[ -r "$LV_LMS" ] && read -r fails last bo rpid nrest < "$LV_LMS"
+	tmo=$(lv_num LIVENESS_LYRION_TIMEOUT 8)
+	k=$(lv_num LIVENESS_LYRION_FALLIMENTI 3)
+	if LMS_TIMEOUT=$tmo lms_json '' serverstatus 0 0 > /dev/null 2>&1; then
+		[ "${fails:-0}" -gt 0 ] && log "liveness: Lyrion risponde di nuovo dopo $fails fallimenti"
+		lv_save "$LV_LMS" "0 ${last:-0} 0 ${rpid:-0} ${nrest:-0}"
+		LV_LYR_STATO=ok
+		lv_row OK "Lyrion risponde" "JSON-RPC serverstatus entro $tmo s (riavvii per liveness: ${nrest:-0})"
+		return 0
+	fi
+	# Appena avviato (il servizio riscrive lms.pid a ogni avvio): si aspetta.
+	st=$(stat -c %Y "$RUN/lms.pid" 2>/dev/null || echo 0)
+	age=$(( now - st ))
+	if [ "$age" -lt "$(lv_num LIVENESS_LYRION_AVVIO 180)" ]; then
+		LV_LYR_STATO=avvio
+		lv_row INFO "Lyrion risponde" "in avvio, non risponde ancora ($age s dall'avvio)"
+		return 0
+	fi
+	fails=$(( ${fails:-0} + 1 ))
+	LV_LYR_STATO=non_risponde
+	LV_LYR_FAILS=$fails
+	log "liveness: Lyrion non risponde entro $tmo s (fallimento $fails di $k)"
+	if [ "$fails" -ge "$k" ] && [ $(( now - ${last:-0} )) -ge "${bo:-0}" ]; then
+		nrest=$(( ${nrest:-0} + 1 ))
+		if [ "$rpid" = "$pid" ]; then
+			log "liveness: Lyrion (pid $pid) ancora in stallo dopo il riavvio, kill -9 (riavvio $nrest)"
+			kill -9 "$pid" 2>/dev/null
+		else
+			log "liveness: Lyrion in stallo dopo $fails fallimenti, riavvio (pid $pid, riavvio $nrest)"
+			kill "$pid" 2>/dev/null
+		fi
+		bo=$(lv_next_backoff "${bo:-0}")
+		lv_save "$LV_LMS" "0 $now $bo $pid $nrest"
+		LV_LYR_STATO=riavviato
+	else
+		lv_save "$LV_LMS" "$fails ${last:-0} ${bo:-0} ${rpid:-0} ${nrest:-0}"
+	fi
+	lv_row ERRORE "Lyrion risponde" "no: serverstatus senza risposta entro $tmo s ($LV_LYR_STATO, fallimenti $fails di $k, riavvii $nrest)"
+}
+
+lv_player() { # momento
+	local now=$1 since=0 last=0 bo=0 nrest=0 pid mac mode_now T
+	LV_PLY_STATO=n/d
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+		rm -f "$LV_PLY"
+		return 0
+	fi
+	[ -r "$LV_PLY" ] && read -r since last bo nrest < "$LV_PLY"
+	T=$(lv_num LIVENESS_PLAYER_SECONDI 20)
+	LV_PLY_STATO=ok
+	if dac_playing; then
+		lv_save "$LV_PLY" "0 ${last:-0} 0 ${nrest:-0}"
+		return 0
+	fi
+	# Il PCM non suona: e' un problema solo se Lyrion dice "play".
+	mac=$(cat "$RUN/player.mac" 2>/dev/null)
+	mode_now=$(LMS_TIMEOUT=$(lv_num LIVENESS_LYRION_TIMEOUT 8) lms_get '._mode' "$mac" mode '?' 2>/dev/null)
+	if [ "$mode_now" != play ]; then
+		lv_save "$LV_PLY" "0 ${last:-0} 0 ${nrest:-0}"
+		return 0
+	fi
+	[ "${since:-0}" -gt 0 ] || since=$now
+	if [ $(( now - since )) -ge "$T" ]; then
+		LV_PLY_STATO=bloccato
+		lv_row ERRORE "Player" "bloccato: Lyrion dice play ma il PCM ALSA non e' RUNNING da $(( now - since )) s (soglia $T s, riavvii ${nrest:-0})"
+		if [ $(( now - ${last:-0} )) -ge "${bo:-0}" ]; then
+			nrest=$(( ${nrest:-0} + 1 ))
+			log "liveness: player bloccato da $(( now - since )) s (play senza PCM RUNNING), riavvio squeezelite pid $pid (riavvio $nrest)"
+			kill "$pid" 2>/dev/null
+			bo=$(lv_next_backoff "${bo:-0}")
+			last=$now
+			since=$now
+		fi
+	fi
+	lv_save "$LV_PLY" "$since ${last:-0} ${bo:-0} ${nrest:-0}"
+}
+
+liveness_round() { # momento
+	local ln=0 pn=0
+	LV_ROWS=''
+	LV_LYR_STATO=non_attivo
+	LV_LYR_FAILS=0
+	LV_PLY_STATO=n/d
+	is_yes "$(conf LIVENESS si)" || { LV_JSON='"liveness":{"attiva":false}'; return 0; }
+	lv_lyrion "$1"
+	lv_player "$1"
+	[ -r "$LV_LMS" ] && read -r _ _ _ _ ln < "$LV_LMS"
+	[ -r "$LV_PLY" ] && read -r _ _ _ pn < "$LV_PLY"
+	LV_JSON=$(printf '"liveness":{"attiva":true,"lyrion":{"stato":"%s","fallimenti":%s,"riavvii":%s},"player":{"stato":"%s","riavvii":%s}}' \
+		"$LV_LYR_STATO" "$LV_LYR_FAILS" "${ln:-0}" "$LV_PLY_STATO" "${pn:-0}")
+}
+
 do_round() {
 	local every=$1 kbs esito now listening=false rows sep='' e v d
 	mkdir -p "$RUN"
@@ -53,12 +197,14 @@ do_round() {
 	if [ "$kbs" -lt 2 ]; then esito=OK; else esito=INFO; fi
 	dac_playing && listening=true
 	rows=$(sweetspot-check --dati)
+	liveness_round "$now"
 	{
 		[ -n "$rows" ] && printf '%s\n' "$rows"
+		[ -n "$LV_ROWS" ] && printf '%s' "$LV_ROWS"
 		echo "$esito|Traffico di rete ora|$kbs KB/s (streaming e controllo remoto possono mantenere attiva la rete)"
 	} > "$DATI.nuovo"
 	{
-		printf '{"ts":%s,"intervallo":%s,"ascolto":%s,"traffico_kbs":%s,"voci":[' "$now" "$every" "$listening" "$kbs"
+		printf '{"ts":%s,"intervallo":%s,"ascolto":%s,"traffico_kbs":%s,%s,"voci":[' "$now" "$every" "$listening" "$kbs" "$LV_JSON"
 		while IFS='|' read -r e v d; do
 			[ -n "$v" ] || continue
 			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$(json_esc "$e")" "$(json_esc "$v")" "$(json_esc "$d")"
