@@ -390,7 +390,12 @@ def run(args):
             wav = tmp / "prova.wav"
             make_wav(wav, seconds=40)
             handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=str(tmp), **k)  # noqa: E731
-            fileserver = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            class QuietServer(http.server.ThreadingHTTPServer):
+                def handle_error(self, request, client_address):
+                    # Lyrion chiude la prima connessione al file: non e' un errore.
+                    if not isinstance(sys.exc_info()[1], (ConnectionError, BrokenPipeError)):
+                        super().handle_error(request, client_address)
+            fileserver = QuietServer(("127.0.0.1", 0), handler)
             threading.Thread(target=fileserver.serve_forever, daemon=True).start()
             url = "http://127.0.0.1:%d/prova.wav" % fileserver.server_address[1]
             servers.append(fileserver)
@@ -448,10 +453,17 @@ def run(args):
         if fake:
             plays = [c for c in fake.calls if c[:2] == ["playlist", "play"]]
             check("Play manda a Lyrion 'playlist play' con indirizzo e titolo", len(plays) == 1 and plays[0][2] == url and plays[0][3] == "Brano di prova & C.", plays)
-        time.sleep(1.2)
-        st, out = soap(base, "AVTransport", "GetPositionInfo", [("InstanceID", 0)])
-        check("GetPositionInfo: traccia, indirizzo e posizione", out.get("Track") == "1" and out.get("TrackURI") == url
-              and out.get("RelTime", "0:00:00") != "0:00:00" and out.get("RelTime", "").count(":") == 2, out)
+        # La posizione avanza quando il player ha iniziato a suonare: su un computer
+        # lento puo' volerci qualche secondo, quindi si attende (al massimo 20 s).
+        def position():
+            o = soap(base, "AVTransport", "GetPositionInfo", [("InstanceID", 0)])[1]
+            return o if o.get("RelTime", "0:00:00") != "0:00:00" else None
+        out = wait_for(position, 20, 0.5)
+        if not out:
+            out = soap(base, "AVTransport", "GetPositionInfo", [("InstanceID", 0)])[1]
+        check("GetPositionInfo: traccia, indirizzo e posizione che avanza entro 20 s", out.get("Track") == "1"
+              and out.get("TrackURI") == url and out.get("RelTime", "0:00:00") != "0:00:00"
+              and out.get("RelTime", "").count(":") == 2, out)
         ev = wait_for(lambda: any("PLAYING" in e[1] for e in sink.events), 8)
         check("evento LastChange con TransportState PLAYING", bool(ev), [e[1][:120] for e in sink.events])
         seqs = [int(e[0].get("SEQ", -1)) for e in sink.events]
