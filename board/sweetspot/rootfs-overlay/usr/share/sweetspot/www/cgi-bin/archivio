@@ -95,7 +95,7 @@ cat <<HTML
 $(option no "No" "$shared")
 $(option si "Sì: per copiare la musica dal computer" "$shared")
 </select>
-<label for="cp">Password <span>(vuota = accesso libero dalla rete di casa; utente "sweetspot")</span></label>
+<label for="cp">Password <span>(con la password: utente "sweetspot", si può copiare la musica; senza: la cartella si legge soltanto, senza password)</span></label>
 <input id="cp" name="password" type="password" autocomplete="new-password" placeholder="$( [ -n "$(conf ARCHIVIO_PASSWORD)" ] && echo 'impostata: lascia vuoto per non cambiarla')">
 <button class="primary">Salva</button>
 </form>

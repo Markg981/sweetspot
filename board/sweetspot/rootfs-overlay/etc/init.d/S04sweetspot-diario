@@ -1,0 +1,22 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - diario di bordo: recupera i crash dump del kernel (pstore),
+# registra l'avvio, porta registro e timeline sulla chiavetta a intervalli
+# lunghi e sugli eventi critici, e li chiude allo spegnimento. Parte subito
+# dopo la lettura delle impostazioni (S03) e si ferma per ultimo, cosi' vede
+# anche gli arresti degli altri servizi.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+case "$1" in
+	start)
+		mkdir -p "$RUN"
+		sweetspot-diario avvio
+		start-stop-daemon -S -b -m -p "$RUN/diario.pid" -x /usr/bin/sweetspot-diario -- sorveglia
+		;;
+	stop)
+		start-stop-daemon -K -p "$RUN/diario.pid" 2>/dev/null
+		sweetspot-diario spegni
+		;;
+	*) echo "uso: $0 start|stop" ;;
+esac
