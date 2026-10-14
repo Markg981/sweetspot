@@ -2081,7 +2081,7 @@ expect "stato DSP: underrun nel riepilogo" "4" "$(sed -n 's/^underrun=//p' "$DSP
 expect "stato: underrun di CamillaDSP nella sessione" \
 	"ATTENZIONE|Underrun di CamillaDSP|4 nella sessione (camilladsp.log): il buffer di uscita si e' svuotato, prova ad alzare BUFFER_ALSA_MS o il profilo 'prestazioni'" \
 	"$(livecheck 'Underrun di CamillaDSP')"
-expect "stato: picchi di CamillaDSP" "INFO|Picco di CamillaDSP|ingresso -20.5,-3.0 dBFS, uscita -6.0,-9.5 dBFS (massimo della sessione, sinistro e destro)" \
+expect "stato: picchi di CamillaDSP" "INFO|Picco di CamillaDSP|ingresso -30.0,-3.0 dBFS, uscita -6.0,-9.5 dBFS (massimo della sessione, sinistro e destro)" \
 	"$(livecheck 'Picco di CamillaDSP')"
 echo "1000 0" > "$DSP/run/dsp.underrun"
 expect "stato: nessun underrun" "OK|Underrun di CamillaDSP|nessuno nella sessione" "$(livecheck 'Underrun di CamillaDSP')"

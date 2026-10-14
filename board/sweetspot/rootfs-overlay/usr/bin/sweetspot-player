@@ -473,6 +473,7 @@ correzione_non_applicabile() { # motivo
 		return 1
 	fi
 	log "player: ATTENZIONE correzione ambientale non applicabile ($1), uscita diretta sul DAC senza correzione (CORREZIONE_SE_ASSENTE=diretto)"
+	dsp_stato_poll
 	return 0
 }
 
