@@ -497,8 +497,9 @@ acc() { # impostazioni
 	cat "$WEB/run/httpd.conf"
 }
 expect "pagine aperte senza password" "" "$(acc '')"
-expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | tail -n 1)"
-case "$(acc 'PASSWORD_WEB=segreta' | tail -n 1)" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+# Con la password l'httpd non fa piu' autenticazione Basic: restano la regola
+# di vivo e l'accesso con sessione (tests/accesso.sh).
+expect "con la password nessuna regola Basic generale e nessuna impronta nel file" "0" "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | grep -c '^/:\|abcd')"
 expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
 # La pagina vivo resta raggiungibile dall'aggiornamento: utente sweetspot
 # con la chiave casuale dell'avvio, regola prima di quella generale.
@@ -506,8 +507,7 @@ vivo_key=$(cat "$WEB/run/vivo.chiave")
 expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#vivo_key}|$(stat -c %a "$WEB/run/vivo.chiave")"
 case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
 expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
-# stato.json non ha eccezioni: ricade nella regola generale "/" con password.
-expect "stato.json protetto dalla regola generale (nessuna eccezione)" "0|/:admin" "$(grep -c 'stato' "$WEB/run/httpd.conf")|$(tail -n 1 "$WEB/run/httpd.conf" | cut -d: -f1-2)"
+expect "httpd.conf con la sola regola di vivo" "1" "$(grep -c . "$WEB/run/httpd.conf")"
 expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
 acc '' > /dev/null
 expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
@@ -2540,6 +2540,7 @@ echo "Superati: $PASS  Falliti: $FAIL"
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
+sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1

@@ -2,5 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - risposta minima: il server web e gli script funzionano (usata
 # per confermare che una versione appena aggiornata e' partita bene).
+# shellcheck disable=SC2034
+WEB_PUBLIC=1 # la chiave sola; il resto e' dietro l'accesso
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 printf 'Content-Type: text/plain\r\n\r\nok %s\n' "$(running_slot)"

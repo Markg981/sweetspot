@@ -7,11 +7,16 @@
 #                                      BusyBox da PASSWORD_WEB e gliela fa
 #                                      rileggere (SIGHUP)
 #   sweetspot-accesso hash PASSWORD    impronta MD5-crypt da salvare
+#   sweetspot-accesso verifica         legge la password dall'ingresso
+#                                      standard (non compare tra gli
+#                                      argomenti) e risponde 0 se e' quella
+#                                      di PASSWORD_WEB, 1 se no
 #
 # PASSWORD_WEB vuota (predefinita): pagine aperte a chi e' nella rete di
 # casa, come oggi. Con una password, ogni pagina e ogni azione chiedono
-# utente "admin" e password (autenticazione Basic: protegge dagli altri
-# della rete, non da chi ascolta il traffico). In sweetspot.txt si puo'
+# l'accesso (/cgi-bin/accesso, sessione con cookie: vedi web.sh). La
+# password si verifica qui, da root: le pagine non leggono l'impronta.
+# Non protegge da chi ascolta il traffico (http). In sweetspot.txt si puo'
 # scrivere la password in chiaro: all'avvio vale come la sua impronta; dalle
 # pagine si salva solo l'impronta ($1$...). Password dimenticata: togli la
 # riga PASSWORD_WEB da sweetspot.txt con il computer.
@@ -23,6 +28,9 @@
 # stato annullato. Per quella sola pagina vale anche un utente "sweetspot"
 # con una chiave casuale di questo avvio, in $RUN/vivo.chiave (solo root):
 # l'httpd di BusyBox applica la regola con il percorso piu' lungo.
+#
+# Il resto del sito non e' piu' protetto dall'autenticazione Basic dell'httpd
+# ma dalla sessione delle pagine: httpd.conf contiene solo la regola di vivo.
 #
 # L'httpd e le pagine girano come utente "web": httpd.conf e' root:web 0640
 # (l'httpd lo rilegge dopo aver lasciato root), la chiave di vivo resta
@@ -40,29 +48,24 @@ random_key() {
 }
 
 apply() {
-	local pw h key
+	local pw key
 	mkdir -p "$RUN"
 	pw=$(conf PASSWORD_WEB)
 	if [ -z "$pw" ]; then
 		: > "$HTTPD_CONF.nuovo"
 		rm -f "$VIVO_KEY"
 	else
-		case "$pw" in
-			'$1$'*) h=$pw ;;
-			*) h=$(hash "$pw") || return 1 ;;
-		esac
 		key=$(random_key)
 		[ ${#key} -eq 32 ] || return 1
 		# La chiave prima della regola: quando la regola vale, la chiave c'e'.
 		printf '%s\n' "$key" > "$VIVO_KEY.nuovo"
 		chmod 600 "$VIVO_KEY.nuovo"
 		mv "$VIVO_KEY.nuovo" "$VIVO_KEY"
-		printf '/cgi-bin/vivo:sweetspot:%s\n/:admin:%s\n' "$key" "$h" > "$HTTPD_CONF.nuovo"
+		printf '/cgi-bin/vivo:sweetspot:%s\n' "$key" > "$HTTPD_CONF.nuovo"
 	fi
 	# L'httpd gira come "web" (httpd -u) e rilegge questo file con SIGHUP:
-	# gruppo web in sola lettura. Contiene l'impronta MD5-crypt della
-	# password (non la password) e la chiave di /cgi-bin/vivo, che da sola
-	# non apre altro. Senza il gruppo web (test) resta solo di root.
+	# gruppo web in sola lettura. Contiene la chiave di
+	# /cgi-bin/vivo, che da sola non apre altro. Senza il gruppo web (test) resta solo di root.
 	if chgrp web "$HTTPD_CONF.nuovo" 2>/dev/null; then
 		chmod 640 "$HTTPD_CONF.nuovo"
 	else
@@ -73,10 +76,29 @@ apply() {
 	return 0
 }
 
+# Password in ingresso contro PASSWORD_WEB: impronta MD5-crypt ($1$sale$...),
+# rifatta con la stessa sale; se in sweetspot.txt e' in chiaro (e l'avvio non
+# l'ha ancora trasformata) si confronta com'e'.
+verify() {
+	local pw stored salt calc
+	IFS= read -r pw
+	stored=$(conf PASSWORD_WEB)
+	[ -n "$stored" ] && [ -n "$pw" ] || return 1
+	case "$stored" in
+		'$1$'*)
+			salt=${stored#'$1$'}
+			salt=${salt%%'$'*}
+			calc=$(mkpasswd -m md5 -S "$salt" "$pw" 2>/dev/null) || return 1
+			[ "$calc" = "$stored" ] ;;
+		*) [ "$pw" = "$stored" ] ;;
+	esac
+}
+
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 case "$1" in
 	applica) apply ;;
 	hash) hash "${2:?password}" ;;
-	*) echo "uso: $0 applica | hash PASSWORD" >&2; exit 1 ;;
+	verifica) verify ;;
+	*) echo "uso: $0 applica | hash PASSWORD | verifica" >&2; exit 1 ;;
 esac

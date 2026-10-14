@@ -443,6 +443,15 @@ case "$F_a" in
 		rc=$?
 		[ $rc -eq 1 ] && done_to sistema "$(saved_msg 1)"
 		priv sweetspot-accesso applica
+		# Password nuova o tolta: le sessioni aperte non valgono piu'. Chi l'ha
+		# cambiata resta dentro con una sessione nuova.
+		if [ -n "$F_web_password" ]; then
+			rm -f "$SESSION_DIR"/* 2>/dev/null
+			# shellcheck disable=SC2034
+			REDIRECT_COOKIE=$(session_new) || REDIRECT_COOKIE=""
+		elif [ "$F_web_libero" = si ]; then
+			rm -f "$SESSION_DIR"/* 2>/dev/null
+		fi
 		# Il nome nuovo vale subito, in Lyrion e nel player.
 		if [ "$nome" != "$old_name" ] && [ "$old_mode" = completa ]; then
 			mac=$(cat "$RUN/player.mac" 2>/dev/null)

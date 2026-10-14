@@ -62,6 +62,7 @@ struct regola {
 static const struct regola REGOLE[] = {
 	{"sweetspot-accesso", "applica", "", ""},
 	{"sweetspot-accesso", "hash", "s", ""},
+	{"sweetspot-accesso", "verifica", "", ""}, // password dall'ingresso standard
 	{"sweetspot-aggiorna", "altra", "", ""},
 	{"sweetspot-aggiorna", "annulla", "", ""},
 	{"sweetspot-aggiorna", "cerca", "", ""},
