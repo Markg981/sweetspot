@@ -857,11 +857,11 @@ dac_playing() {
 # (scrivibile da tutti: puo' solo chiedere un giro, che il demone limita);
 # senza demone, o con la FIFO senza lettore, si serve la cache com'e'.
 stato_richiedi() { # [eta]
-	local ts every t2 i max=${1:-10}
+	local ts t2 i max=${1:-10}
 	[ -p "$RUN/stato.richiesta" ] || return 0
 	dac_playing && [ "$max" -lt 40 ] && max=40
 	ts=0
-	read -r ts every < "$RUN/stato.ts" 2>/dev/null
+	read -r ts _ < "$RUN/stato.ts" 2>/dev/null
 	case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
 	[ $(( $(date +%s) - ts )) -gt "$max" ] || return 0
 	timeout 2 sh -c 'echo r > "$1"' sh "$RUN/stato.richiesta" 2>/dev/null || return 0
