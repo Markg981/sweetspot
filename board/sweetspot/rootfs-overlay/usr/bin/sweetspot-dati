@@ -27,6 +27,7 @@ CACHE=$LMS_DATA/cache
 KEEP="prefs playlists cache/InstalledPlugins"
 DBS="library.db persist.db"
 STAMP=$RUN/dati.impronta
+LOCK_WAIT=${SWEETSPOT_DATI_ATTESA:-300}
 
 fingerprint() {
 	{
@@ -101,11 +102,38 @@ save_failed() { # temporaneo destinazione [montata]
 	return 1
 }
 
+# Il blocco vale per un solo salvataggio: "sorveglia" resta in vita e, se lo
+# tenesse, il salvataggio chiamato al riavvio del player resterebbe in attesa.
+# BusyBox flock non ha -w: si riprova ogni secondo fino al limite.
 do_save() {
-	local dst tmp d f list="" found=0
+	local rc n=0 before after
 	[ -d "$LMS_DATA" ] || return 0
-	exec 8> "$RUN/dati.lock"
-	flock 8 || return 1
+	exec 8> "$RUN/dati.lock" || return 1
+	while ! flock -n 8; do
+		if [ "$n" -ge "$LOCK_WAIT" ]; then
+			exec 8>&-
+			log "dati: un altro salvataggio non termina da ${LOCK_WAIT}s, salvataggio rimandato"
+			return 1
+		fi
+		sleep 1
+		n=$((n + 1))
+	done
+	# Impronta presa prima della copia: cio' che cambia durante il salvataggio
+	# potrebbe non essere nella copia, e va risalvato al prossimo controllo.
+	before=$(fingerprint)
+	save_generation; rc=$?
+	if [ "$rc" -eq 0 ]; then
+		echo "$before" > "$STAMP"
+		after=$(fingerprint)
+		[ "$after" = "$before" ] || log "dati: modifiche durante il salvataggio, verranno salvate al prossimo controllo"
+	fi
+	flock -u 8
+	exec 8>&-
+	return "$rc"
+}
+
+save_generation() {
+	local dst tmp d f list="" found=0
 	# Copia in RAM prima: la chiavetta resta montata il meno possibile.
 	tmp=$RUN/dati.salva
 	rm -rf "$tmp"
@@ -158,7 +186,6 @@ do_save() {
 	rm -rf "$dst.vecchio"
 	stick_umount
 	rm -rf "$tmp"
-	fingerprint > "$STAMP"
 	log "dati: salvati sulla chiavetta"
 }
 
