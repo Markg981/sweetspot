@@ -771,6 +771,20 @@ listening_choice() {
 	fi
 }
 
+# Modalita' effettiva del volume: hardware, fisso o digitale. La calcola il
+# player all'avvio (VOLUME=dac senza mixer nel DAC diventa fisso) e la scrive
+# in volume.effettivo; senza il file si ricava da VOLUME.
+volume_effettivo() {
+	local v
+	v=$(cat "$RUN/volume.effettivo" 2>/dev/null)
+	case "$v" in hardware|fisso|digitale) echo "$v"; return 0 ;; esac
+	case "$(lower "$(conf VOLUME fisso)")" in
+		dac) echo hardware ;;
+		software|dsp) echo digitale ;;
+		*) echo fisso ;;
+	esac
+}
+
 # CamillaDSP e' nel percorso con i filtri della stanza, non solo per il
 # volume a 64 bit (lo decide il player, vedi sweetspot-player).
 correction_running() {
