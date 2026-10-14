@@ -1,2 +1,3 @@
 lms -1 lms -1 * /var/lib/lms /bin/false - Lyrion Music Server
 web -1 web -1 * - /bin/false audio Pannello web (httpd e CGI senza privilegi)
+nas -1 nas -1 * - /bin/false - Condivisione SMB dell'archivio (senza privilegi)

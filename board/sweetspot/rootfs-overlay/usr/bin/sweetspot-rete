@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - cartelle condivise in rete (NAS, PC Windows, Mac) via SMB.
+# Sweetspot - cartelle condivise in rete (NAS, PC Windows, Mac) via SMB o NFS.
 #
 #   sweetspot-rete monta      monta le condivisioni configurate
 #   sweetspot-rete smonta     le smonta
@@ -14,7 +14,9 @@
 #   CONDIVISIONE_1=//192.168.1.10/Musica
 #   CONDIVISIONE_1_UTENTE=marco          (vuoto = accesso ospite)
 #   CONDIVISIONE_1_PASSWORD=...
-# Le condivisioni sono montate in sola lettura.
+#   CONDIVISIONE_1_SMB1=si               (solo se il NAS parla solo SMB1: insicuro)
+#   CONDIVISIONE_2=nfs://192.168.1.10/export/musica   (cartella NFS)
+# Le condivisioni sono montate in sola lettura. SMB: almeno 2.1.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -41,18 +43,77 @@ wait_network() {
 	[ -n "$(net_ipv4)" ]
 }
 
+# Opzioni comuni di montaggio. "hard" e non "soft": con "soft" un NAS lento o
+# un Wi-Fi che cade fanno restituire errori di I/O a Squeezelite e a Lyrion
+# nel mezzo di un brano (brano saltato, file scartati dalla scansione, a volte
+# libreria incompleta). Con "hard" il processo aspetta il ritorno del server e
+# riprende da dove era (il buffer del DAC copre le pause brevi); i processi in
+# attesa restano comunque interrompibili (kill) e lo smontaggio e' "lazy"
+# (umount -l), quindi nulla si blocca per sempre. Il montaggio vero e proprio
+# non resta appeso: ha un tempo massimo e, se fallisce, valgono i ritentativi
+# di 'sweetspot-rete ritenta'.
+SMB_OPZIONI=${SWEETSPOT_SMB_OPZIONI:-hard,echo_interval=10,iocharset=utf8,noserverino}
+NFS_OPZIONI=${SWEETSPOT_NFS_OPZIONI:-hard,timeo=100,retrans=3,retry=0,noatime}
+MOUNT_TIMEOUT=${SWEETSPOT_MOUNT_TIMEOUT:-60}
+
+# mount_limitato COMANDO...: come il comando, ma con un tempo massimo se
+# 'timeout' c'e' (BusyBox).
+mount_limitato() {
+	if command -v timeout > /dev/null 2>&1; then
+		timeout "$MOUNT_TIMEOUT" "$@"
+	else
+		"$@"
+	fi
+}
+
 # mount_share N -> stampa "OK" oppure il messaggio d'errore
 mount_share() {
-	local n=$1 raw unc user pass mp cred err e v name auth
+	local n=$1 raw unc user pass mp cred err e v name auth smb1
 	raw=$(conf "CONDIVISIONE_$n")
 	[ -n "$raw" ] || return 1
+	mp="$MEDIA_DIR/rete-$n"
+	if is_nfs "$raw"; then
+		if ! unc=$(normalize_nfs "$raw"); then
+			echo "percorso non valido: scrivi nfs://indirizzo/cartella"
+			return 1
+		fi
+		mkdir -p "$mp"
+		grep -q " $mp " "$PROC/mounts" && umount -l "$mp" 2>/dev/null
+		modprobe nfs 2>/dev/null
+		err=""
+		# Prima NFSv4 (negozia 4.2, 4.1, 4.0), poi NFSv3 per i server piu'
+		# vecchi (senza 'lockd' locale: nolock).
+		for v in "vers=4" "vers=3,nolock"; do
+			if e=$(mount_limitato mount.nfs "$unc" "$mp" -o "ro,$NFS_OPZIONI,$v" 2>&1); then
+				err=""
+				break
+			fi
+			err="$err$(printf '%s' "$e" | head -n 1)
+"
+		done
+		if [ -n "$err" ]; then
+			rmdir "$mp" 2>/dev/null
+			case "$err" in
+				*"access denied"*|*"Permission denied"*) echo "accesso negato: il server NFS non esporta la cartella a questo indirizzo" ;;
+				*"No such file"*|*"does not exist"*) echo "cartella non trovata sul server" ;;
+				*"Connection refused"*|*"timed out"*|*"No route"*|*"unreachable"*|*"Host is down"*|*"RPC"*) echo "server non raggiungibile" ;;
+				*"Unknown host"*|*"Name or service"*|*"resolve"*|*"get address"*) echo "nome del server sconosciuto: prova con l'indirizzo IP" ;;
+				*) echo "errore: $(printf '%s' "$err" | head -n 1)" ;;
+			esac
+			return 1
+		fi
+		name=$(share_name "$unc")
+		ln -sfn "$mp" "$MUSIC_DIR/$name"
+		echo OK
+		return 0
+	fi
 	if ! unc=$(normalize_unc "$raw"); then
 		echo "percorso non valido: scrivi //indirizzo/cartella"
 		return 1
 	fi
 	user=$(conf "CONDIVISIONE_${n}_UTENTE")
 	pass=$(conf "CONDIVISIONE_${n}_PASSWORD")
-	mp="$MEDIA_DIR/rete-$n"
+	smb1=$(conf "CONDIVISIONE_${n}_SMB1" no)
 	cred="$RUN/credenziali-$n"
 	mkdir -p "$mp"
 	grep -q " $mp " "$PROC/mounts" && umount -l "$mp" 2>/dev/null
@@ -66,12 +127,14 @@ mount_share() {
 	fi
 	modprobe cifs 2>/dev/null
 	err=""
-	# Prima la versione del protocollo scelta dal NAS, poi le precedenti
-	# per i NAS piu' vecchi. Si tengono tutti gli errori: quello che conta
-	# (password sbagliata, cartella inesistente) puo' arrivare da un
-	# tentativo precedente all'ultimo.
-	for v in "" ",vers=2.0" ",vers=1.0"; do
-		if e=$(mount.cifs "$unc" "$mp" -o "ro,$auth,iocharset=utf8,noserverino,soft$v" 2>&1); then
+	# Mai meno di SMB 2.1: prima la versione scelta dal NAS (3.x preferita),
+	# poi 3.0 e 2.1 espliciti. SMB1 (insicuro: niente firma ne' cifratura,
+	# bersaglio di attacchi noti) solo se l'utente lo ha chiesto per questa
+	# cartella (CONDIVISIONE_N_SMB1=si).
+	set -- "" ",vers=3.0" ",vers=2.1"
+	is_yes "$smb1" && set -- "$@" ",vers=1.0"
+	for v in "$@"; do
+		if e=$(mount_limitato mount.cifs "$unc" "$mp" -o "ro,$auth,$SMB_OPZIONI$v" 2>&1); then
 			err=""
 			break
 		fi

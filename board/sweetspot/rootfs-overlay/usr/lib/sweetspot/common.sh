@@ -32,6 +32,61 @@ STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 log() {
 	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
 	echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"
+	evento_da_log "$*"
+}
+
+# --- Timeline degli eventi ---------------------------------------------------
+# Una riga per fatto: DATA|SORGENTE|EVENTO|DETTAGLI, in RAM. La copia sulla
+# chiavetta la fa sweetspot-diario (a intervalli lunghi e sugli eventi
+# critici), che sorveglia anche XRUN e cambi di frequenza.
+TIMELINE=${SWEETSPOT_TIMELINE:-$RUN/timeline.log}
+# Presente = c'e' un evento critico da portare sulla chiavetta.
+DIARIO_FLAG=$RUN/diario.urgente
+
+evento() { # sorgente evento [dettagli]
+	local det
+	[ -n "${SWEETSPOT_EVENTO_MUTO:-}" ] && return 0
+	det=$(printf '%s' "${3:-}" | tr '\n\r|' '   ')
+	mkdir -p "$(dirname "$TIMELINE")" 2>/dev/null
+	printf '%s|%s|%s|%s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" "$2" "$det" >> "$TIMELINE" 2>/dev/null
+	case "$2" in
+		spegnimento|riavvio*|aggiornamento*|rollback*|errore*|panic*) : > "$DIARIO_FLAG" 2>/dev/null ;;
+	esac
+	return 0
+}
+
+# Le righe del registro che sono anche fatti della timeline (aggiornamenti,
+# rollback, riavvii della liveness e del sistema): un solo punto, cosi' gli
+# script che le scrivono non cambiano.
+evento_da_log() {
+	local msg=${1#*: }
+	case "$1" in
+		aggiornamento:*)
+			case "$1" in
+				*"alla precedente"*|*"parte la copia"*|*"riavvii consecutivi"*) evento aggiorna rollback "$msg" ;;
+				*) evento aggiorna aggiornamento "$msg" ;;
+			esac ;;
+		liveness:*)
+			case "$1" in
+				*"riavvio squeezelite"*) evento liveness riavvio-player "$msg" ;;
+				*"Lyrion in stallo"*|*"kill -9"*) evento liveness riavvio-lyrion "$msg" ;;
+				*) evento liveness avviso "$msg" ;;
+			esac ;;
+		lyrion:*)
+			case "$1" in
+				*"fermo"*) evento lyrion riavvio-lyrion "$msg" ;;
+				*"riavvio richiesto"*) evento lyrion riavvio-richiesto "$msg" ;;
+				*"avvio sui core"*) evento lyrion avvio "$msg" ;;
+			esac ;;
+		player:*)
+			case "$1" in
+				*"riavvio del player"*|*"terminato subito"*) evento player riavvio-player "$msg" ;;
+				*) evento player stato "$msg" ;;
+			esac ;;
+		riavvio:*) evento sistema riavvio "$msg" ;;
+		watchdog:*) evento watchdog avviso "$msg" ;;
+	esac
+	return 0
 }
 
 # --- Configurazione ----------------------------------------------------------
@@ -135,6 +190,24 @@ normalize_unc() {
 		//?*/?*) printf '%s' "$p" ;;
 		*) return 1 ;;
 	esac
+}
+
+# La voce e' una cartella NFS (nfs://server/cartella)?
+is_nfs() {
+	case "$1" in nfs:*|NFS:*) return 0 ;; esac
+	return 1
+}
+
+# Da nfs://server/export/sotto a "server:/export/sotto" (come vuole mount.nfs).
+normalize_nfs() {
+	local p srv dir
+	p=$(printf '%s' "$1" | tr '\\' '/' | sed 's#^[nN][fF][sS]:##; s#^/*##; s#/*$##; s#//*#/#g')
+	srv=${p%%[/:]*}
+	dir=${p#"$srv"}
+	dir=$(printf '%s' "$dir" | sed 's#^:##; s#^/*#/#')
+	case "$srv" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+	case "$dir" in ""|/) return 1 ;; esac
+	printf '%s:%s' "$srv" "$dir"
 }
 
 # Il valore e' accettabile in sweetspot.txt? (niente a capo e niente
@@ -362,6 +435,75 @@ oom_adj_cmd() {
 			*"$pat"*) oom_adj "$v" "$p" ;;
 		esac
 	done
+	return 0
+}
+
+# --- cgroup v2 di servizio (memoria, I/O, CPU) --------------------------------
+# Lavori di fondo (checkpoint della libreria, Lyrion, scanner) in gruppi con
+# limiti propri: non tolgono memoria, I/O o CPU al player. Senza cgroup v2
+# (kernel senza, nessun permesso) restano nice/ionice/taskset.
+CGROOT=${SWEETSPOT_CGROUP:-/sys/fs/cgroup}
+
+# cg_make NOME [FILE=VALORE...]: crea il gruppo e scrive i limiti. Fallisce
+# se cgroup v2 non c'e'; un limite che il kernel rifiuta non e' un errore.
+cg_make() {
+	local d=$CGROOT/$1 c kv
+	shift
+	[ -f "$CGROOT/cgroup.controllers" ] || return 1
+	for c in cpu io memory; do
+		grep -qw "$c" "$CGROOT/cgroup.controllers" 2>/dev/null || continue
+		grep -qw "$c" "$CGROOT/cgroup.subtree_control" 2>/dev/null ||
+			echo "+$c" >> "$CGROOT/cgroup.subtree_control" 2>/dev/null
+	done
+	mkdir -p "$d" 2>/dev/null || return 1
+	for kv in "$@"; do
+		echo "${kv#*=}" > "$d/${kv%%=*}" 2>/dev/null
+	done
+	return 0
+}
+
+# cg_add NOME PID...: sposta i processi nel gruppo (figli futuri compresi).
+cg_add() {
+	local n=$1 p
+	shift
+	[ -d "$CGROOT/$n" ] || return 1
+	for p in "$@"; do echo "$p" >> "$CGROOT/$n/cgroup.procs" 2>/dev/null; done
+	return 0
+}
+
+# Memoria totale in KB.
+mem_total_kb() { sed -n 's/^MemTotal:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo" 2>/dev/null; }
+
+# mem_limit_bytes CHIAVE PERCENTUALE: limite in byte. CHIAVE (MB, solo cifre,
+# "auto" o vuoto) viene dalla configurazione; auto e' la PERCENTUALE della
+# memoria totale. 0 = nessun limite.
+mem_limit_bytes() {
+	local mb tot
+	mb=$(conf "$1" auto)
+	case "$mb" in
+		''|auto|*[!0-9]*)
+			tot=$(mem_total_kb); [ -n "$tot" ] || tot=0
+			echo $((tot * 1024 / 100 * $2)) ;;
+		*) echo $((mb * 1048576)) ;;
+	esac
+}
+
+# bg_self NOME: il processo corrente (una subshell: ( bg_self x; ... )) e i
+# suoi figli lavorano a bassa priorita': gruppo NOME con io.weight minimo,
+# classe I/O idle, nice 19, solo sui core di sistema (mai quello audio).
+bg_self() {
+	local hk me
+	# $$ e' la shell principale anche dentro una subshell: il PID della
+	# subshell si legge da /proc/self (letto dalla subshell stessa).
+	read -r me _ < /proc/self/stat 2> /dev/null
+	case "$me" in ''|*[!0-9]*) return 0 ;; esac
+	cg_make "$1" "io.weight=default 1" "cpu.weight=10" && cg_add "$1" "$me"
+	command -v ionice > /dev/null 2>&1 && ionice -c 3 -p "$me" 2> /dev/null
+	command -v renice > /dev/null 2>&1 && renice -n 19 -p "$me" > /dev/null 2>&1
+	cpu_layout
+	hk=$(join_list "$LAYOUT_HK")
+	[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
+	[ -n "$hk" ] && command -v taskset > /dev/null 2>&1 && taskset -p -c "$hk" "$me" > /dev/null 2>&1
 	return 0
 }
 
@@ -976,13 +1118,17 @@ stick_mount() { # [ro|rw]
 	flock 6
 	n=$(cat "$STICK_USERS" 2>/dev/null)
 	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
-		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null
+		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null && evento chiavetta rimontata "rw"
 	else
 		n=0
 		dev=$(stick_device)
 		if [ -n "$dev" ]; then
 			mkdir -p "$STICK_MNT"
-			mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null || rc=1
+			if mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null; then
+				evento chiavetta montata "$mode"
+			else
+				rc=1
+			fi
 		else
 			rc=1
 		fi
@@ -1001,7 +1147,7 @@ stick_umount() {
 	n=$(($(cat "$STICK_USERS" 2>/dev/null || echo 1) - 1))
 	sync
 	if [ $n -le 0 ]; then
-		umount "$STICK_MNT" 2>/dev/null
+		umount "$STICK_MNT" 2>/dev/null && evento chiavetta smontata
 		rm -f "$STICK_USERS"
 	else
 		echo $n > "$STICK_USERS"

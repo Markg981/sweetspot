@@ -90,12 +90,61 @@ EOF
 # .sweetspot-cache, e in RAM resta solo un collegamento.
 CACHE_DBS="artwork.db imgproxy.db"
 
+# Senza archivio le cache stanno in un tmpfs a parte, con un tetto (size=):
+# l'artwork non puo' crescere fino all'OOM ne' riempire il tmpfs che contiene
+# il database della libreria. Superato il tetto Lyrion non riesce piu' a
+# scrivere in queste cache (le copertine si rifanno a ogni richiesta) e la
+# pagina Stato lo segnala; si svuotano a ogni avvio.
+ART_RAM=$LMS_DATA/artwork-ram
+ART_FULL=$RUN/lms.artwork.piena
+
+# Tetto in MB: ARTWORK_RAM_MB, auto = 4% della memoria, tra 32 e 256 MB.
+art_ram_mb() {
+	local mb tot
+	mb=$(conf ARTWORK_RAM_MB auto)
+	case "$mb" in
+		''|auto|*[!0-9]*)
+			tot=$(mem_total_kb); [ -n "$tot" ] || tot=0
+			mb=$((tot / 1024 / 25))
+			[ "$mb" -ge 32 ] || mb=32
+			[ "$mb" -le 256 ] || mb=256 ;;
+	esac
+	echo "$mb"
+}
+
+# Monta (una volta) il tmpfs delle cache in RAM; fallisce se non si puo'.
+art_ram_mount() {
+	[ -d "$ART_RAM" ] && grep -q " $ART_RAM tmpfs " "$PROC/mounts" 2>/dev/null && return 0
+	mkdir -p "$ART_RAM" || return 1
+	"${SWEETSPOT_MOUNT:-mount}" -t tmpfs -o "size=$(art_ram_mb)m,mode=0755,nosuid,nodev" tmpfs "$ART_RAM" || return 1
+	chown "$LMS_USER:$LMS_USER" "$ART_RAM" 2>/dev/null
+	return 0
+}
+
+# Percentuale occupata del tmpfs delle cache (vuoto se non montato).
+art_ram_used() {
+	df -P "$ART_RAM" 2>/dev/null | awk 'NR == 2 { sub(/%/, "", $5); print $5 }'
+}
+
+# Avviso per Stato quando il tmpfs delle cache e' quasi pieno.
+art_ram_check() {
+	local u
+	u=$(art_ram_used)
+	case "$u" in ''|*[!0-9]*) rm -f "$ART_FULL"; return 0 ;; esac
+	if [ "$u" -ge 95 ]; then
+		[ -f "$ART_FULL" ] || log "lyrion: cache delle copertine in RAM piena ($u%), le nuove non si salvano"
+		echo "$u" > "$ART_FULL"
+	else
+		rm -f "$ART_FULL"
+	fi
+}
+
 link_caches() {
 	local arch dir f
 	arch=$(sweetspot-dischi archivio)
-	[ -n "$arch" ] && [ -d "$arch" ] || return 0
+	[ -n "$arch" ] && [ -d "$arch" ] || { link_caches_ram; return 0; }
 	dir=$arch/.sweetspot-cache
-	mkdir -p "$dir" 2>/dev/null || { log "lyrion: archivio non scrivibile, copertine in RAM"; return 0; }
+	mkdir -p "$dir" 2>/dev/null || { log "lyrion: archivio non scrivibile, copertine in RAM"; link_caches_ram; return 0; }
 	for f in $CACHE_DBS; do
 		# Una cache rimasta in RAM (es. archivio scelto dopo l'avvio) si sposta.
 		if [ -f "$CACHE/$f" ] && [ ! -L "$CACHE/$f" ] && [ ! -f "$dir/$f" ]; then
@@ -105,7 +154,20 @@ link_caches() {
 		ln -s "$dir/$f" "$CACHE/$f"
 	done
 	chown -R "$LMS_USER:$LMS_USER" "$dir" 2>/dev/null
+	rm -f "$ART_FULL"
 	log "lyrion: cache delle copertine sull'archivio ($dir)"
+}
+
+# Cache in RAM con tetto: collegamenti verso il tmpfs a misura.
+link_caches_ram() {
+	local f
+	art_ram_mount || { log "lyrion: tmpfs delle copertine non montato, cache senza tetto"; return 0; }
+	for f in $CACHE_DBS; do
+		# Le cache sono ricostruibili: un file vero (avvio precedente senza
+		# tetto) o un collegamento vecchio si sostituisce.
+		rm -f "$CACHE/$f" "$CACHE/$f-wal" "$CACHE/$f-shm"
+		ln -s "$ART_RAM/$f" "$CACHE/$f"
+	done
 }
 
 do_prepare() {
@@ -133,12 +195,34 @@ do_prepare() {
 	chown -R "$LMS_USER:$LMS_USER" "$LMS_DATA" "$LMS_LOG" 2>/dev/null
 }
 
+# Limiti di memoria cgroup (memory.high rallenta e recupera, memory.max e'
+# il tetto duro) per Lyrion e, a parte, per lo scanner, che nasce figlio di
+# Lyrion e viene spostato nel suo gruppo. LYRION_MEM_MB e SCANNER_MEM_MB
+# (MB; auto = 70% e 40% della memoria totale, high all'85% del tetto).
+# Il tmpfs conta nel gruppo di chi lo scrive: il tetto di Lyrion lascia il
+# posto al database della libreria in RAM. Senza cgroup v2 non si fa nulla.
+CG_LYRION=sweetspot-lyrion
+CG_SCANNER=sweetspot-scanner
+
+lms_cgroups() {
+	local max high
+	max=$(mem_limit_bytes LYRION_MEM_MB 70); high=$((max / 100 * 85))
+	cg_make "$CG_LYRION" "memory.max=$max" "memory.high=$high" "memory.swap.max=0" || return 1
+	max=$(mem_limit_bytes SCANNER_MEM_MB 40); high=$((max / 100 * 85))
+	cg_make "$CG_SCANNER" "memory.max=$max" "memory.high=$high" "memory.swap.max=0" "io.weight=default 20"
+}
+
 # Finche' Lyrion vive, ogni 20 secondi porta lo scanner (figlio del server,
-# nasce con il valore di Lyrion) tra i primi candidati dell'OOM killer.
-# Un giro leggero sulle righe di comando; niente scanner, niente scritture.
+# nasce con il valore di Lyrion) tra i primi candidati dell'OOM killer e nel
+# suo gruppo di memoria. Un giro leggero sulle righe di comando; niente
+# scanner, niente scritture.
 oom_watch() {
+	local spid
 	while kill -0 "$1" 2>/dev/null; do
 		oom_adj_cmd 500 scanner.pl
+		spid=$(pgrep -f scanner.pl 2>/dev/null)
+		[ -n "$spid" ] && cg_add "$CG_SCANNER" $spid
+		art_ram_check
 		sleep 20
 	done
 }
@@ -161,6 +245,7 @@ do_service() {
 				>> "$LMS_LOG/avvio.log" 2>&1 &
 		lmspid=$!
 		echo "$lmspid" > "$RUN/lms.pid"
+		lms_cgroups && cg_add "$CG_LYRION" "$lmspid"
 		# OOM killer: Lyrion poco protetto, lo scanner (figlio, lo eredita)
 		# tra i primi a cadere; il player (-1000) mai.
 		oom_adj -100 "$lmspid"

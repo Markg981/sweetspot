@@ -18,7 +18,7 @@ saved_msg() { # codice testo
 }
 
 # Campi dei moduli, riempiti da read_form.
-F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome=""
+F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome="" F_protocollo="" F_smb1=""
 F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
@@ -203,16 +203,20 @@ case "$F_a" in
 			done_to musica "Dati non validi."
 		fi
 		case "$dir$F_utente" in *'"'*|*'$'*|*'`'*) done_to musica "La cartella e l'utente non possono contenere virgolette o simboli \$ \`." ;; esac
+		case "$F_smb1" in si) ;; *) F_smb1=no ;; esac
 		n=""
 		for i in 1 2 3 4 5 6 7 8 9; do
 			[ -z "$(conf "CONDIVISIONE_$i")" ] && { n=$i; break; }
 		done
 		[ -n "$n" ] || done_to musica "Hai giÃ  9 cartelle di rete: rimuovine una."
-		if [ -n "$F_utente" ]; then
-			priv sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir" \
-				"CONDIVISIONE_${n}_UTENTE" "$F_utente" "CONDIVISIONE_${n}_PASSWORD" "$F_password"
+		if [ "$F_protocollo" = nfs ]; then
+			# NFS: niente utente e password (il server decide dall'indirizzo)
+			priv sweetspot-config imposta "CONDIVISIONE_$n" "nfs://$server/$dir"
 		else
-			priv sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir"
+			priv sweetspot-config imposta "CONDIVISIONE_$n" "//$server/$dir" "CONDIVISIONE_${n}_SMB1" "$F_smb1"
+			if [ -n "$F_utente" ]; then
+				priv sweetspot-config imposta "CONDIVISIONE_${n}_UTENTE" "$F_utente" "CONDIVISIONE_${n}_PASSWORD" "$F_password"
+			fi
 		fi
 		res=$(priv sweetspot-rete prova "$n")
 		if [ "$res" = OK ]; then
@@ -220,13 +224,13 @@ case "$F_a" in
 			priv sweetspot-lms aggiorna
 			done_to musica "Cartella aggiunta: la libreria si sta aggiornando."
 		fi
-		priv sweetspot-config rimuovi "CONDIVISIONE_$n" "CONDIVISIONE_${n}_UTENTE" "CONDIVISIONE_${n}_PASSWORD"
+		priv sweetspot-config rimuovi "CONDIVISIONE_$n" "CONDIVISIONE_${n}_UTENTE" "CONDIVISIONE_${n}_PASSWORD" "CONDIVISIONE_${n}_SMB1"
 		done_to musica "Cartella non aggiunta: $res." ;;
 
 	rimuovi_condivisione)
 		case "$F_n" in [1-9]) ;; *) done_to musica "Richiesta non valida." ;; esac
 		priv sweetspot-rete smonta-una "$F_n"
-		priv sweetspot-config rimuovi "CONDIVISIONE_$F_n" "CONDIVISIONE_${F_n}_UTENTE" "CONDIVISIONE_${F_n}_PASSWORD"
+		priv sweetspot-config rimuovi "CONDIVISIONE_$F_n" "CONDIVISIONE_${F_n}_UTENTE" "CONDIVISIONE_${F_n}_PASSWORD" "CONDIVISIONE_${F_n}_SMB1"
 		priv sweetspot-lms aggiorna
 		done_to musica "Cartella rimossa dalla libreria." ;;
 
@@ -383,7 +387,7 @@ case "$F_a" in
 	# Primo avvio: rete scelta dal telefono collegato all'hotspot. Si salva e
 	# sweetspot-hotspot spegne l'hotspot e prova la rete (poi riparte se fallisce).
 	wifi_connetti)
-		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
+		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non Ã¨ acceso."
 		[ -n "$F_wifi_nome" ] || F_wifi_nome=$F_wifi_scelta
 		[ -n "$F_wifi_nome" ] || done_to rete "Scegli una rete o scrivine il nome."
 		valid_value "$F_wifi_nome" && valid_value "$F_wifi_password" || done_to rete "Dati non validi."
@@ -394,7 +398,7 @@ case "$F_a" in
 		priv sweetspot-hotspot richiesta || done_to rete "L'hotspot non risponde: riprova fra qualche secondo."
 		done_to rete "Mi collego a $F_wifi_nome: l'hotspot si spegne. Ricollega il telefono alla tua rete e apri http://$(cat "$PROC/sys/kernel/hostname" 2>/dev/null).local/ (se non si collega, entro circa un minuto l'hotspot Sweetspot riparte)." ;;
 	wifi_scansiona)
-		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
+		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non Ã¨ acceso."
 		priv sweetspot-hotspot scansiona
 		done_to rete "Elenco delle reti aggiornato." ;;
 

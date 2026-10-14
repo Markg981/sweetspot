@@ -256,6 +256,52 @@ expect 'modifica durante la copia: impronta precedente, nuovo salvataggio richie
 expect 'nessuna modifica durante la copia: impronta allineata' uguale \
 	"$(lock_probe 'do_save >/dev/null 2>&1; [ "$(cat "$STAMP")" = "$(fingerprint)" ] && echo uguale || echo diversa')"
 
+echo 'Checkpoint e spazio sulla chiavetta'
+# dprobe MARGINE_KB RITENTA_S COMANDI: comandi dopo il caricamento di sweetspot-dati.
+dprobe() {
+	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPOT_LMS_DATA=$D/lms \
+		SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log SWEETSPOT_CGROUP=$D/nessun-cgroup \
+		SWEETSPOT_DATI_MARGINE_KB=$1 SWEETSPOT_DATI_RITENTA=$2 \
+		$TEST_SH -c '. "$1"; '"$3" sh "$OVERLAY/usr/bin/sweetspot-dati" 2>/dev/null
+}
+rm -rf "$D/stick/sweetspot-dati" "$D/stick/sweetspot-dati.vecchio" "$D/run/dati.spazio" "$D/run/dati.checkpoint"
+rm -f "$D/lms/cache/library.db" "$D/lms/cache/library.db-wal" "$D/lms/cache/library.db-shm"
+"$SQLITE3" "$D/lms/cache/library.db" 'CREATE TABLE songs(id INTEGER); INSERT INTO songs VALUES(1);' > /dev/null
+expect 'chiavetta piena: salvataggio rifiutato' 1 "$(dprobe 999999999 1800 'do_save >/dev/null 2>&1; echo $?')"
+expect 'chiavetta piena: nessuna generazione scritta' no "$([ -e "$D/stick/sweetspot-dati" ] && echo si || echo no)"
+expect 'chiavetta piena: avviso per Stato (liberi e necessari)' si "$(grep -Eq '^[0-9]+ [0-9]+ [0-9]+$' "$D/run/dati.spazio" && echo si || echo no)"
+expect 'chiavetta piena: non si riprova ogni minuto' attesa "$(dprobe 999999999 1800 'space_wait && echo attesa || echo subito')"
+expect 'chiavetta piena: dopo il tempo di attesa si riprova' subito "$(dprobe 999999999 0 'space_wait && echo attesa || echo subito')"
+expect 'checkpoint a chiavetta piena: rifiutato' 1 "$(dprobe 999999999 1800 'do_checkpoint; echo $?')"
+expect 'spazio tornato: salvataggio riuscito' 0 "$(dprobe 8192 1800 'do_save >/dev/null 2>&1; echo $?')"
+expect 'spazio tornato: avviso rimosso' no "$([ -e "$D/run/dati.spazio" ] && echo si || echo no)"
+"$SQLITE3" "$D/lms/cache/library.db" 'INSERT INTO songs VALUES(2);' > /dev/null
+expect 'checkpoint durante ascolto: riuscito' 0 "$(dprobe 8192 1800 'do_checkpoint; echo $?')"
+expect 'checkpoint: database della chiavetta aggiornato' 2 "$("$SQLITE3" "$D/stick/sweetspot-dati/library.db" 'SELECT count(*) FROM songs;')"
+expect 'checkpoint: nessun file temporaneo rimasto' no "$(ls "$D/stick/sweetspot-dati" | grep -q '\.nuovo$' && echo si || echo no)"
+expect 'checkpoint: lyrion.tar della generazione intatto' si "$([ -s "$D/stick/sweetspot-dati/lyrion.tar" ] && echo si || echo no)"
+expect 'checkpoint: cadenza rispettata' 1 "$(dprobe 8192 1800 'checkpoint_due && echo 0 || echo 1')"
+rm -rf "$D/stick/sweetspot-dati"
+mkdir -p "$D/stick/sweetspot-dati.vecchio"
+expect 'checkpoint con sola generazione vecchia: non la nasconde' 1 "$(dprobe 8192 1800 'do_checkpoint; echo $?')"
+rm -rf "$D/stick/sweetspot-dati.vecchio"
+
+# Il riavvio del solo player non salva il database; lo spegnimento si'.
+mkdir -p "$D/bin2"
+for c in start-stop-daemon killall; do printf '#!/bin/sh\nexit 0\n' > "$D/bin2/$c"; chmod +x "$D/bin2/$c"; done
+printf '#!/bin/sh\necho "$1" >> "%s/salvataggi"\n' "$D" > "$D/bin2/dati-finto"
+chmod +x "$D/bin2/dati-finto"
+echo 'MODALITA=completa' > "$D/run/sweetspot.conf"
+: > "$D/salvataggi"
+player_init() {
+	SWEETSPOT_PATH="$D/bin2:$BASE_PATH" SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log SWEETSPOT_DATI=$D/bin2/dati-finto \
+		$TEST_SH "$OVERLAY/etc/init.d/S60sweetspot-player" "$1" > /dev/null 2>&1
+}
+player_init restart
+expect 'riavvio del player: nessun backup del database' 0 "$(wc -l < "$D/salvataggi" | tr -d ' ')"
+player_init stop
+expect 'spegnimento: salvataggio su chiavetta' salva "$(cat "$D/salvataggi")"
+
 K=$WORK/dischi
 mkdir -p "$K/sys/class/block/sda1" "$K/sys/class/block/sdb1" "$K/run" "$K/proc" "$K/media" "$K/musica"
 echo 20971520 > "$K/sys/class/block/sda1/size"

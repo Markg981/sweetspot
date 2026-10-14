@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - scarica il bundle diagnostico (sweetspot-diario bundle): log,
+# timeline, crash dump, configurazione senza segreti, versioni e stato audio,
+# da allegare a una segnalazione. Dietro l'accesso come le altre pagine
+# (web.sh chiude la porta se c'e' PASSWORD_WEB).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+tmp=$(mktemp "$WEBDIR/diagnostica.XXXXXX" 2>/dev/null || mktemp)
+if priv sweetspot-diario bundle > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+	printf 'Content-Type: application/gzip\r\nContent-Disposition: attachment; filename="sweetspot-diagnostica-%s.tar.gz"\r\nContent-Length: %s\r\nCache-Control: no-store\r\n\r\n' \
+		"$(date '+%Y%m%d-%H%M%S')" "$(wc -c < "$tmp" | tr -d ' ')"
+	cat "$tmp"
+else
+	printf 'Status: 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBundle diagnostico non disponibile.\n'
+fi
+rm -f "$tmp"

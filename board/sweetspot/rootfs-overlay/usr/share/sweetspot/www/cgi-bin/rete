@@ -43,7 +43,7 @@ scan_options() {
 # Hotspot di configurazione acceso: primo avvio senza cavo.
 if [ -s "$RUN/hotspot.attivo" ]; then
 	echo '<h2>Collega Sweetspot al Wi-Fi di casa</h2><div class="card formcard">'
-	echo '<p class="sub">Sei collegato all'"'"'hotspot di Sweetspot. Scegli la tua rete e scrivi la password: l'"'"'hotspot si spegne e Sweetspot si collega (il telefono torna alla rete di casa). Se la password è sbagliata l'"'"'hotspot riparte dopo circa un minuto.</p>'
+	echo '<p class="sub">Sei collegato all'"'"'hotspot di Sweetspot. Scegli la tua rete e scrivi la password: l'"'"'hotspot si spegne e Sweetspot si collega (il telefono torna alla rete di casa). Se la password Ã¨ sbagliata l'"'"'hotspot riparte dopo circa un minuto.</p>'
 	form_start wifi_connetti
 	cat <<HTML
 <label for="rt">Rete trovata</label>
@@ -51,7 +51,7 @@ if [ -s "$RUN/hotspot.attivo" ]; then
 <option value="">Scrivi il nome qui sotto</option>
 $(scan_options)
 </select>
-<label for="rn">Nome della rete <span>(se non è nell'elenco o è nascosta)</span></label>
+<label for="rn">Nome della rete <span>(se non Ã¨ nell'elenco o Ã¨ nascosta)</span></label>
 <input id="rn" name="wifi_nome" autocapitalize="off" autocorrect="off">
 <label for="rp">Password della rete <span>(vuoto = rete aperta)</span></label>
 <input id="rp" name="wifi_password" type="password" autocomplete="off">
