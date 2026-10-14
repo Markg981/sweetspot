@@ -2688,7 +2688,7 @@ echo "Renderer UPnP/DLNA"
 RPL=$OVERLAY/usr/lib/sweetspot/renderer.pl
 INIT=$OVERLAY/etc/init.d/S70sweetspot-renderer
 expect "renderer: l'audio passa da Lyrion (playlist play), non apre il DAC" "1|0" \
-	"$(grep -c "'playlist', 'play'" "$RPL")|$(grep -c 'hw:|/dev/snd|aplay|exec.*squeezelite' "$RPL"\|/dev/snd\|aplay\|squeezelite' "$RPL")"
+	"$(grep -c "'playlist', 'play'" "$RPL")|$(grep -c 'hw:\|/dev/snd\|aplay' "$RPL")"
 expect "renderer: avviato dall'init, in coda a Lyrion e al supervisore" "si|si" \
 	"$([ -x "$INIT" ] && echo si || echo no)|$(grep -q 'renderer.pl' "$INIT" && echo si || echo no)"
 expect "renderer: l'init gira sui core di sistema con nice" "1" "$(grep -c 'taskset.*nice -n' "$INIT")"
