@@ -127,6 +127,12 @@ diffusore sinistro e uno per il destro.
   voce "Clipping di CamillaDSP", somma i campioni tagliati nella sessione
   (letti ogni pochi secondi dal websocket di CamillaDSP, aperto solo su
   127.0.0.1:1234).
+- Con `CORREZIONE=si` o `confronto` e `CORREZIONE_SE_ASSENTE=blocca` (predefinito)
+  il player non suona se i filtri mancano, sono illeggibili, malformati (REW
+  senza righe `Filter N:` o con errori, WAV non valido), incoerenti (FIR con
+  frequenze o canali diversi, `destro` senza `sinistro`) o se CamillaDSP rifiuta
+  la configurazione: la pagina Stato e Correzione mostrano il motivo. Con
+  `diretto` suona senza correzione e lo stesso avviso resta visibile.
 - **Filtri FIR** (convoluzione): impulsi WAV esportati da rePhase, Acourate o
   REW, copiati dal computer nella cartella `correzione-ambientale` della
   chiavetta come `fir-sinistro.wav` e, se diverso, `fir-destro.wav` (un file
@@ -539,6 +545,7 @@ annullata proprio perché il registro di prima del riavvio non c'era),
 | Ascolto puro | pagina di stato, "Letture dal disco durante l'ascolto" e "Rete durante l'ascolto": settori letti dai dischi con la musica (`/sys/block/*/stat`) e byte di rete (`/proc/net/dev`, senza `lo`) dall'inizio dell'ascolto in corso o dell'ultimo, annotati da `sweetspot-ascolto` quando il DAC parte. Con il precarico finito le letture sono zero ("la musica suona dalla RAM"); la rete, in modalità completa, è solo il controllo dal browser e dalle app (sotto 2 KB/s), altrimenti streaming, cartelle di rete o precarico dalla rete |
 | Interruzioni sul core audio | pagina di stato: IRQ dei dispositivi arrivati sul core della riproduzione nella sessione, uno per uno, e frequenza di quelle di sistema (timer, IPI) |
 | Clipping della correzione | pagina di stato, "Clipping di CamillaDSP": campioni tagliati nella sessione |
+| Underrun e picchi della correzione | pagina di stato, "Underrun di CamillaDSP" (righe "underrun" di `camilladsp.log` dall'inizio della sessione, contate dal player: CamillaDSP non li espone nel websocket) e "Picco di CamillaDSP" (massimo di sessione per canale, dal websocket) |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 | Attività elettrica superflua | pagina di stato: "LED" (spenti tranne quelli della tastiera), "USB inutilizzate", "PCI a riposo" (ogni dispositivo con il suo stato reale: a riposo o attivo), "Lavoro differito del kernel" (workqueue non legate a un core solo sui core di sistema) e "Schermo" (stato DPMS dei connettori collegati e retroilluminazione). Le applica `sweetspot-silenzio` all'avvio, se le ottimizzazioni sono attive; è una riduzione di attività, non una misura del rumore analogico |
 | Robustezza | CI (`tests/prova-robustezza-qemu.sh`, immagine x86 in QEMU): watchdog i6300ESB attivo, DAC USB emulato collegato, scollegato e ricollegato a caldo con il player che si ferma e riparte, blocco simulato (servizio del watchdog fermato) con riavvio automatico e player di nuovo attivo, file system della chiavetta integro dopo il riavvio brusco. Sull'hardware: `sweetspot-durata 24 &` con una playlist lunga in riproduzione, esito in `/run/sweetspot/durata.txt` e sulla chiavetta (nessun XRUN, nessun riavvio del player, uscita in riproduzione almeno il 95% del tempo, memoria calata meno del 10%); pagina di stato, voce "Watchdog" |

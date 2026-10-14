@@ -40,7 +40,7 @@ temperatura ambiente, almeno 10 minuti di riproduzione a regime):
     sweetspot-energia misura 60 10 /tmp/conservativo.txt
     sweetspot-energia confronta /tmp/fisso.txt /tmp/conservativo.txt
 
-Il riepilogo contiene: XRUN (campioni in stato XRUN) e ritardo massimo da
+Il riepilogo contiene: XRUN (il maggiore fra i campioni in stato XRUN e la crescita, durante la misura, di `xrun_counter` del kernel con `CONFIG_SND_PCM_XRUN_DEBUG` e degli eventi XRUN nel registro di Squeezelite: contano anche gli XRUN recuperati entro un campionamento) e ritardo massimo da
 `/proc/asound/card*/pcm*p/sub*/status`, CPU, memoria residente dei processi
 principali, PSI (`/proc/pressure/*`), temperatura massima e throttling
 (`/sys/class/thermal`, `thermal_throttle`), frequenza media (cpufreq),

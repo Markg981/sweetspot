@@ -8,12 +8,15 @@
 # minimo, XRUN. Misura la stabilita' temporale dell'alimentazione del buffer
 # (quanto margine resta prima di un underrun); non misura il jitter del clock
 # di conversione del DAC. Il campionamento e' periodico: un XRUN seguito da
-# un ripristino entro un intervallo e' visto solo dal contatore xrun_counter,
-# se il kernel lo espone.
+# un ripristino entro un intervallo (anche pochi ms) non si vede nello stato.
+# Per questo si usano anche fonti cumulative, di cui conta la differenza fra
+# primo e ultimo campione: xrun_counter del kernel (CONFIG_SND_PCM_XRUN_DEBUG)
+# e gli eventi XRUN nel registro di Squeezelite (SWEETSPOT_SQLOG).
 # Valori predefiniti: scheda 0, dispositivo 0, 30 s, intervallo 0.1 s.
 # Esito: 0 nessun XRUN, 3 almeno un XRUN, 1 uscita assente, 2 uso errato.
 
 PROC=${SWEETSPOT_PROCFS:-/proc}
+SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
 card=0 dev=0 secs=30 step=0.1
 while getopts c:d:t:i: o; do
 	case $o in
@@ -42,6 +45,7 @@ i=0
 while [ "$i" -lt "$n" ]; do
 	cat "$sub/status" 2>/dev/null
 	echo "xrun_counter: $(cat "$sub/xrun_counter" 2>/dev/null)"
+	echo "xrun_log: $(grep -c "XRUN$" "$SQLOG" 2>/dev/null)"
 	echo "@@"
 	i=$((i + 1))
 	[ "$i" -lt "$n" ] && sleep "$step"
@@ -51,6 +55,7 @@ function num(s) { sub(/^[^:]*:[ \t]*/, "", s); return s + 0 }
 /^delay[ \t]*:/ { delay = num($0); have_d = 1 }
 /^avail[ \t]*:/ { avail = num($0); have_a = 1 }
 /^xrun_counter:/ { xc = ($2 == "" ? -1 : $2 + 0) }
+/^xrun_log:/ { lc = ($2 == "" ? -1 : $2 + 0) }
 /^@@$/ {
 	n++
 	if (state == "RUNNING") {
@@ -61,10 +66,12 @@ function num(s) { sub(/^[^:]*:[ \t]*/, "", s); return s + 0 }
 	if (state == "XRUN" && prev != "XRUN") xr++
 	prev = state
 	if (xc >= 0) { if (xc0 == "") xc0 = xc; xc1 = xc }
-	state = ""; have_d = have_a = 0; xc = -1
+	if (lc >= 0) { if (lc0 == "") lc0 = lc; lc1 = lc }
+	state = ""; have_d = have_a = 0; xc = -1; lc = -1
 }
 END {
 	if (xc0 != "" && xc1 - xc0 > xr) xr = xc1 - xc0
+	if (lc0 != "" && lc1 - lc0 > xr) xr = lc1 - lc0
 	printf "campioni: %d\n", n
 	printf "in riproduzione: %d\n", r
 	printf "buffer: %d frame, periodo: %d frame, frequenza: %d Hz\n", buffer, period, rate
