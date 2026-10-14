@@ -16,6 +16,8 @@
 #       mandato con SetAVTransportURI: l'uscita PCM deve contenere il segnale.
 
 import argparse
+import array
+import signal
 import http.server
 import json
 import math
@@ -246,8 +248,15 @@ def make_wav(path, seconds=8, rate=44100):
 
 def run(args):
     real = args.rootfs is not None
+    if hasattr(signal, "alarm"):
+        # Mai bloccati: dopo 5 minuti la prova fallisce (le attese singole sono di secondi).
+        def timed_out(*_):
+            raise TimeoutError("tempo massimo della prova scaduto (300 s)")
+        signal.signal(signal.SIGALRM, timed_out)
+        signal.alarm(300)
     tmp = Path(tempfile.mkdtemp(prefix="renderer-upnp-"))
     procs = []
+    servers = []
     fake = None
     try:
         mac = "02:aa:bb:cc:dd:ee"
@@ -265,6 +274,7 @@ def run(args):
             wav_dir = tmp
         else:
             fake = FakeLyrion()
+            servers.append(fake.server)
             lms_port = fake.port
             run_dir = tmp / "run"
             run_dir.mkdir()
@@ -370,6 +380,7 @@ def run(args):
         check("Play senza contenuto: errore 701", st == 500 and out.get("errorCode") == "701", (st, out))
 
         sink = EventSink()
+        servers.append(sink.server)
         status, sid, timeout = subscribe(base, "AVTransport", "http://127.0.0.1:%d/ev" % sink.port)
         check("SUBSCRIBE: SID e TIMEOUT", status == 200 and (sid or "").startswith("uuid:") and (timeout or "").startswith("Second-"), (status, sid, timeout))
         first = wait_for(lambda: sink.events and sink.events[0], 5)
@@ -377,16 +388,38 @@ def run(args):
 
         if real:
             wav = tmp / "prova.wav"
-            make_wav(wav)
+            make_wav(wav, seconds=40)
             handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=str(tmp), **k)  # noqa: E731
             fileserver = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
             threading.Thread(target=fileserver.serve_forever, daemon=True).start()
             url = "http://127.0.0.1:%d/prova.wav" % fileserver.server_address[1]
-            pcm_path = tmp / "uscita.pcm"
+            servers.append(fileserver)
+            # L'uscita PCM (-o -) va in un pipe letto a velocita' di riproduzione
+            # (0,1 s ogni 0,1 s): senza lettore Squeezelite si bloccherebbe, e
+            # letta senza freno scriverebbe silenzio all'infinito. Il lettore
+            # tiene solo il picco e i byte con segnale, mai l'uscita intera.
             sq = subprocess.Popen(["chroot", args.rootfs, "/usr/bin/squeezelite", "-o", "-", "-a", "32", "-r", "44100",
                                    "-s", "127.0.0.1", "-m", mac, "-n", "Prova-renderer"],
-                                  stdout=pcm_path.open("wb"), stderr=subprocess.DEVNULL)
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             procs.append(sq)
+            pcm = {"bytes": 0, "peak": 0, "signal": 0}
+
+            def drain():
+                chunk = 44100 * 8 // 10
+                while True:
+                    data = sq.stdout.read(chunk)
+                    if not data:
+                        return
+                    data = data[: len(data) // 4 * 4]
+                    samples = array.array("i")
+                    samples.frombytes(data)
+                    peak = max((abs(x) for x in samples), default=0)
+                    pcm["bytes"] += len(data)
+                    pcm["peak"] = max(pcm["peak"], peak)
+                    if peak > (1 << 27):
+                        pcm["signal"] += len(data)
+                    time.sleep(0.1)
+            threading.Thread(target=drain, daemon=True).start()
             lms = lambda cmd, p="": json.loads(urllib.request.urlopen(urllib.request.Request(  # noqa: E731
                 args.server + "/jsonrpc.js", data=json.dumps({"id": 1, "method": "slim.request", "params": [p, cmd]}).encode(),
                 headers={"Content-Type": "application/json"}), timeout=5).read())["result"]
@@ -425,12 +458,11 @@ def run(args):
         check("SEQ degli eventi crescente", seqs == sorted(seqs) and len(set(seqs)) == len(seqs), seqs)
 
         if real:
-            time.sleep(3)
-            data = pcm_path.read_bytes()
-            samples = struct.unpack("<%di" % (len(data) // 4), data[: len(data) // 4 * 4])
-            peak = max((abs(x) for x in samples), default=0)
-            check("l'uscita di Squeezelite contiene il segnale del file (%d byte, picco %d)" % (len(data), peak),
-                  len(data) > 44100 * 8 and peak > (1 << 27), (len(data), peak))
+            got = wait_for(lambda: pcm["signal"] >= 44100 * 8, 25)
+            check("l'uscita di Squeezelite contiene il segnale del file entro 25 s (%d byte letti, %d con segnale, picco %d)"
+                  % (pcm["bytes"], pcm["signal"], pcm["peak"]), bool(got),
+                  "nessun segnale: Lyrion ha scaricato il file ma Squeezelite non lo suona (modo Lyrion: %s)"
+                  % lms(["status", "-", 1], mac).get("mode"))
 
         st, out = soap(base, "AVTransport", "Pause", [("InstanceID", 0)])
         check("Pause accettato", st == 200, (st, out))
@@ -486,9 +518,13 @@ def run(args):
         daemon.terminate()
         check("SIGTERM: il demone esce", daemon.wait(10) == 0 or os.name == "nt", daemon.returncode)
     finally:
+        signal.alarm(0) if hasattr(signal, "alarm") else None
         for p in procs:
             if p.poll() is None:
                 p.kill()
+        for srv in servers:
+            srv.shutdown()
+            srv.server_close()
         if real:
             shutil.rmtree(Path(args.rootfs) / "tmp" / "renderer-run", ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
