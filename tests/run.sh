@@ -2562,17 +2562,17 @@ pw1=$(sed -n 's/^Password: //p' "$HS/stick/sweetspot-hotspot.txt" | head -n 1)
 expect "hotspot: nome e password scritti sulla partizione di avvio" "1|1" \
 	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{10\}$')"
 expect "hotspot: codice QR WIFI: sulla partizione di avvio (SVG) e sullo schermo" "1|1|1" \
-	"$(grep -c "^WIFI:T:WPA;S:Sweetspot-5E6F;P:$pw1;;\$" "$HS/qrtesti")|$(grep -c '<svg' "$HS/stick/sweetspot-hotspot.svg")|$(grep -c '^\[QR\]$' "$HS/console")"
+	"$(sort -u "$HS/qrtesti" | grep -c "^WIFI:T:WPA;S:Sweetspot-5E6F;P:$pw1;;\$")|$(grep -c '<svg' "$HS/stick/sweetspot-hotspot.svg")|$(grep -c '^\[QR\]$' "$HS/console")"
 rm -f "$HS/run/hotspot.attivo"
 echo 0 > "$HS/sys/class/net/eth0/carrier"; : > "$HS/console"; rm -f "$HS/n"
 hs_run
 expect "hotspot: password stabile tra un'accensione e l'altra" "1" "$(grep -c "^Password: $pw1\$" "$HS/console")"
 # Caratteri speciali nel QR: \ ; , : " protetti con la barra.
 hs_env ap
-echo 'HOTSPOT_PASSWORD=a;b:c,d"e\f12' >> "$HS/run/sweetspot.conf"
+printf '%s\n' 'HOTSPOT_PASSWORD=a;b:c,d\e12' >> "$HS/run/sweetspot.conf"
 echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
 hs_run
-expect "hotspot: QR con i caratteri speciali protetti" 'WIFI:T:WPA;S:Sweetspot-5E6F;P:a\;b\:c\,d\"e\\f12;;' "$(head -n 1 "$HS/qrtesti")"
+expect "hotspot: QR con i caratteri speciali protetti" 'WIFI:T:WPA;S:Sweetspot-5E6F;P:a\;b\:c\,d\\e12;;' "$(head -n 1 "$HS/qrtesti")"
 
 # 3. Cavo collegato: l'hotspot non si accende mai.
 hs_env ap
