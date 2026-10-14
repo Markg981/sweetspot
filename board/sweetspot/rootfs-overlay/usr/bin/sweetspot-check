@@ -547,7 +547,8 @@ check_player() {
 	elif [ "$vol" = fisso ]; then
 		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
 	elif [ "$vol" = software ]; then
-		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC; i file DSD si convertono in PCM, perche' il volume non agisce sul DSD nativo"
+		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC"
+		emit INFO "DSD e volume" "con il volume software i file DSD si convertono in PCM: il volume non agisce sul DSD nativo e un DSF suonerebbe al 100% dopo un brano attenuato"
 	elif [ "$vol" = dac ] && [ "$(volume_effettivo)" = fisso ]; then
 		emit ATTENZIONE "Volume" "richiesto del DAC, ma il DAC non ha un controllo del volume: in uso il volume fisso al 100%, regola dall'amplificatore"
 	elif [ "$vol" = dac ] && volume_dac_ripiego; then
