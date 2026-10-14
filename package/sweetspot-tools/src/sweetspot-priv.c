@@ -77,6 +77,11 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-cd", "leggi", "", ""},
 	{"sweetspot-cd", "lettore", "", ""},
 	{"sweetspot-cd", "stato", "", ""},
+	{"sweetspot-bluetooth", "abbina", "n", ""},
+	{"sweetspot-bluetooth", "applica", "", ""},
+	{"sweetspot-bluetooth", "chiudi", "", ""},
+	{"sweetspot-bluetooth", "elenco", "", ""},
+	{"sweetspot-bluetooth", "rimuovi", "w", ""},
 	{"sweetspot-check", "--dati", "", ""},
 	{"sweetspot-config", "imposta", "", "ks"},
 	{"sweetspot-config", "rimuovi", "", "k"},
@@ -124,7 +129,7 @@ static const char *const CHIAVI[] = {
 	"WIFI_NOME", "WIFI_PASSWORD", "NOME_RETE", "RISPARMIO_RETE", "IP_FISSO",
 	"GATEWAY", "DNS", "SCHEDA_I2S", "NOME_PLAYER", "MODALITA", "PROFILO",
 	"MODALITA_ASCOLTO", "PRECARICO", "SSH", "SSH_PASSWORD", "OTTIMIZZAZIONI",
-	"PASSWORD_WEB", "SERVER", "CORREZIONE", NULL,
+	"PASSWORD_WEB", "SERVER", "CORREZIONE", "BLUETOOTH", "BLUETOOTH_NOME", NULL,
 };
 
 static uid_t uid_web(void)

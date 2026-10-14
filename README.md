@@ -138,6 +138,27 @@ diffusore sinistro e uno per il destro.
 - I filtri restano sulla chiavetta, nella cartella `correzione-ambientale`
   (testo di REW, leggibile anche dal computer).
 
+### Bluetooth come sorgente
+
+Un telefono può suonare su Sweetspot (A2DP sink). È **spento di serie**: si
+accende nella pagina *Bluetooth* (o con `BLUETOOTH=si` in `sweetspot.txt`;
+`BLUETOOTH_NOME` cambia il nome che vede il telefono). L'abbinamento si apre
+dalla pagina per 2, 5 o 9 minuti: fuori dalla finestra Sweetspot non si fa
+trovare e non accetta telefoni. La pagina elenca i dispositivi abbinati (con
+*Rimuovi*) e *Stato* mostra se il servizio aspetta, è in abbinamento o suona.
+Gli abbinamenti si conservano sulla chiavetta (`sweetspot-dati/bluetooth.tar`).
+
+Scelta di integrazione: **passaggio esclusivo**. Quando il telefono comincia a
+trasmettere, il player si ferma e `bluealsa-aplay` suona sul DAC con l'uscita
+`hw:` diretta, senza mixer né secondo clock; quando il telefono smette, il DAC
+torna al player. Non c'è un ingresso nativo in Lyrion (servirebbe un plugin) e
+un loopback ALSA aggiungerebbe un dominio di clock e un ricampionamento. Limiti:
+la musica di Lyrion si ferma mentre suona il telefono e va ripresa a mano;
+l'audio è SBC (compresso), AAC richiede fdk-aac (licenza non libera), aptX e
+LDAC non sono in Buildroot; sul PC servono un dongle USB e, per alcuni modelli,
+il suo firmware. Il Bluetooth gira solo sui core di sistema, mai su quello
+isolato dell'audio né sulle sue interruzioni.
+
 ### Archivio musicale e cartella di rete
 
 Tutti i dischi restano in sola lettura tranne uno, scelto come **archivio**
@@ -329,7 +350,8 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
   Pi 5. Due core su quattro dedicati a riproduzione e interruzioni USB,
   frequenza fissa, nessuno stato di risparmio della CPU (`cpuidle.off=1`).
 - **Uscite spente**: jack e HDMI audio (`dtparam=audio=off`), Bluetooth
-  (`disable-bt`), Wi-Fi se non configurato.
+  Wi-Fi se non configurato. Il Bluetooth integrato non è disabilitato nel
+  firmware ma il servizio è spento di serie (vedi *Bluetooth come sorgente*).
 - **DAC USB** come sul PC. **Schede DAC I2S** (HiFiBerry, Allo, IQaudio, Raspberry
   Pi DAC+/DAC Pro, JustBoom, I-Sabre...): si sceglie la scheda in *Impostazioni
   Sweetspot → Audio*, o si scrive il nome del suo overlay; il Pi si riavvia una

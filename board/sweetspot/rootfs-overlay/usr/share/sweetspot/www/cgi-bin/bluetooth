@@ -1,0 +1,76 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina "Bluetooth": il telefono suona su Sweetspot (A2DP).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+page_start "Bluetooth" bluetooth 15
+attivo=$(conf BLUETOOTH no)
+is_yes "$attivo" && attivo=si || attivo=no
+stato=$(cat "$RUN/bluetooth.stato" 2>/dev/null)
+
+echo '<h2>Stato</h2><div class="card">'
+if [ "$attivo" = no ]; then
+	info_row "" "Bluetooth spento" "Attivalo qui sotto per suonare dal telefono."
+else
+	case "$stato" in
+		''|errore*|nessun*|"non attivo") info_row ATTENZIONE "Bluetooth" "${stato:-in avvio}" ;;
+		*) info_row OK "Bluetooth" "$stato" ;;
+	esac
+fi
+echo '</div>'
+
+echo '<h2>Impostazioni</h2><div class="card formcard">'
+form_start bluetooth_imposta
+cat <<HTML
+<label for="ba">Bluetooth</label>
+<select id="ba" name="bt_attivo">
+$(option no "Spento (consigliato se non lo usi)" "$attivo")
+$(option si "Acceso: il telefono può suonare su Sweetspot" "$attivo")
+</select>
+<label for="bn">Nome che vede il telefono <span>(vuoto = nome del player)</span></label>
+<input id="bn" name="bt_nome" autocapitalize="off" autocorrect="off" value="$(esc "$(conf BLUETOOTH_NOME)")">
+<p class="sub">Quando il telefono suona, Lyrion si ferma e il DAC è del telefono; alla fine il player torna da solo. La musica di Lyrion va ripresa a mano. L'audio Bluetooth è compresso (SBC): la qualità è quella del telefono, non quella dei file.</p>
+<button class="primary">Salva</button>
+</form>
+</div>
+HTML
+
+if [ "$attivo" = si ]; then
+	echo '<h2>Abbinamento</h2><div class="card formcard">'
+	if [ -s "$RUN/bluetooth.abbina" ] && [ "$(cat "$RUN/bluetooth.abbina")" -gt "$(date +%s)" ] 2>/dev/null; then
+		resto=$(( ($(cat "$RUN/bluetooth.abbina") - $(date +%s) + 59) / 60 ))
+		printf '<p class="sub">Abbinamento aperto ancora circa %s min: sul telefono cerca &laquo;%s&raquo; nelle impostazioni Bluetooth.</p>\n' \
+			"$resto" "$(esc "$(conf BLUETOOTH_NOME "$(conf NOME_PLAYER Sweetspot)")")"
+		form_start bluetooth_chiudi
+		echo '<button>Chiudi l'"'"'abbinamento</button></form>'
+	else
+		form_start bluetooth_abbina
+		cat <<HTML
+<label for="bm">Finestra di abbinamento</label>
+<select id="bm" name="bt_minuti">
+$(option 2 "2 minuti" 2)
+$(option 5 "5 minuti" 2)
+$(option 9 "9 minuti" 2)
+</select>
+<p class="sub">Fuori dalla finestra Sweetspot non si fa trovare e non accetta nuovi telefoni.</p>
+<button class="primary">Apri l'abbinamento</button>
+</form>
+HTML
+	fi
+	echo '</div>'
+
+	echo '<h2>Dispositivi abbinati</h2><div class="card">'
+	elenco=$(priv sweetspot-bluetooth elenco 2>/dev/null)
+	printf '%s\n' "$elenco" | while IFS='|' read -r mac nome conn; do
+		[ -n "$mac" ] || continue
+		if [ "$conn" = si ]; then det="collegato"; es=OK; else det="non collegato"; es=""; fi
+		printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s &middot; %s</div></div>\n' \
+			"$es" "$(esc "${nome:-$mac}")" "$(esc "$mac")" "$det"
+		form_start bluetooth_rimuovi
+		printf '<input type="hidden" name="bt_mac" value="%s"><button>Rimuovi</button></form></div>\n' "$(esc "$mac")"
+	done
+	[ -n "$elenco" ] || info_row "" "Nessun dispositivo abbinato" "Apri l'abbinamento e cerca Sweetspot dal telefono."
+	echo '</div>'
+fi
+page_end

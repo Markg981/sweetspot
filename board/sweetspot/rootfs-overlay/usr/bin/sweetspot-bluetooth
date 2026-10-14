@@ -1,0 +1,522 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - Bluetooth come sorgente (A2DP sink): un telefono suona su
+# Sweetspot e l'audio arriva al DAC.
+#
+#   sweetspot-bluetooth avvia        avvia i servizi, se BLUETOOTH=si
+#   sweetspot-bluetooth ferma        ferma tutto e restituisce il DAC al player
+#   sweetspot-bluetooth applica      avvia o ferma secondo la configurazione
+#   sweetspot-bluetooth abbina [min] apre la finestra di abbinamento (1-9 minuti)
+#   sweetspot-bluetooth chiudi       chiude subito la finestra di abbinamento
+#   sweetspot-bluetooth elenco       dispositivi abbinati: MAC|nome|connesso(si/no)
+#   sweetspot-bluetooth rimuovi MAC  dimentica un dispositivo abbinato
+#   sweetspot-bluetooth stato        testo di stato (anche in $RUN/bluetooth.stato)
+#   sweetspot-bluetooth conf         stampa main.conf di bluetoothd (per i test)
+#
+# Scelta di integrazione: PASSAGGIO ESCLUSIVO. Quando il telefono comincia a
+# trasmettere, il supervisore del player e Squeezelite si fermano,
+# bluealsa-aplay suona sul DAC con l'uscita hw: diretta (nessun mixer, nessun
+# dmix, nessun secondo clock) e a fine trasmissione il DAC torna al player.
+# Perche' non dentro Lyrion: Lyrion non ha un ingresso a pipe o a loopback di
+# serie (servirebbe un plugin da scrivere e mantenere), un loopback ALSA
+# aggiungerebbe un secondo dominio di clock e un ricampionamento, e il DAC e'
+# comunque aperto in modo esclusivo da un solo programma alla volta. Limite: la
+# musica di Lyrion si ferma mentre il telefono suona e va ripresa a mano.
+#
+# L'audio A2DP e' gia' compresso con perdita (SBC): "stesso percorso" vale da
+# bluealsa in poi (nessuna elaborazione aggiunta fino al DAC). AAC, aptX e LDAC
+# non ci sono: AAC richiede fdk-aac (licenza non libera), gli altri non sono
+# in Buildroot.
+#
+# Il Bluetooth lavora solo sui core di sistema: processi fissati con taskset
+# e interruzioni del Bluetooth (UART del Pi) spostate sui core di sistema.
+# Mai sul core isolato dell'audio e mai sulle sue interruzioni.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+BT_RUN=$RUN/bluetooth
+BT_CONF=$BT_RUN/main.conf
+BT_STATO=$RUN/bluetooth.stato
+BT_ABBINA=$RUN/bluetooth.abbina
+BT_ABBINA_PID=$RUN/bluetooth.abbina.pid
+BT_ATTIVO=$RUN/bluetooth.attivo
+BT_LIB=${SWEETSPOT_BT_LIB:-/var/lib/bluetooth}
+BT_SORV_PID=$RUN/bluetooth.pid
+BT_D_PID=$RUN/bluetoothd.pid
+BT_A_PID=$RUN/bluealsa.pid
+BT_P_PID=$RUN/bluealsa-aplay.pid
+BT_STICK_FILE=sweetspot-dati/bluetooth.tar
+SUPERVISORE_PID=$RUN/supervisore.pid
+BT_SONDA=${SWEETSPOT_BT_SONDA:-1}
+
+bt_enabled() { is_yes "$(conf BLUETOOTH no)"; }
+
+bt_name() {
+	local n
+	n=$(safe_name "$(conf BLUETOOTH_NOME)")
+	[ -n "$n" ] || n=$(safe_name "$(conf NOME_PLAYER Sweetspot)")
+	[ -n "$n" ] || n=Sweetspot
+	printf '%s' "$n"
+}
+
+valid_mac() {
+	case "$1" in
+		*[!0-9A-Fa-f:]*|'') return 1 ;;
+		??:??:??:??:??:??) return 0 ;;
+	esac
+	return 1
+}
+
+say() { # testo: scrive lo stato solo se cambia
+	[ "$(cat "$BT_STATO" 2>/dev/null)" = "$1" ] && return 0
+	mkdir -p "$RUN"
+	echo "$1" > "$BT_STATO"
+}
+
+# Nuove righe di bluetoothctl nel formato "Device MAC Nome".
+bt_devices() { # filtro (Paired|Connected)
+	bluetoothctl devices "$1" 2>/dev/null | sed -n 's/^Device \([0-9A-Fa-f:]*\) \{0,1\}\(.*\)$/\1|\2/p'
+}
+
+# --- Configurazione di bluetoothd ----------------------------------------------
+
+main_conf() {
+	cat <<EOF
+[General]
+Name=$(bt_name)
+Class=0x240414
+DiscoverableTimeout=0
+PairableTimeout=0
+FastConnectable=false
+# Solo Bluetooth classico (A2DP): niente annunci a bassa energia.
+ControllerMode=bredr
+# Un telefono che ha perso la chiave si riabbina senza conferma, ma solo se la
+# finestra di abbinamento e' aperta (fuori dalla finestra non si accetta nulla).
+JustWorksRepairing=always
+
+[Policy]
+AutoEnable=true
+EOF
+}
+
+# --- Core isolato: il Bluetooth sta sui core di sistema -----------------------
+
+hk_list() {
+	cpu_layout
+	join_list "$LAYOUT_HK"
+}
+
+# Sposta sui core di sistema le interruzioni della UART del Bluetooth del Pi.
+# Quelle USB (dongle) non si toccano: sono del controller USB, che puo'
+# essere lo stesso del DAC e ha gia' il suo assetto (sweetspot-player).
+bt_irq_housekeeping() {
+	local hk irq f
+	hk=$(hk_list)
+	[ -n "$hk" ] || return 0
+	[ -r "$PROC/interrupts" ] || return 0
+	for irq in $(awk '/uart-pl011|ttyAMA|bcm2835-bt|hci_uart|serial-bt/ {sub(":", "", $1); print $1}' "$PROC/interrupts"); do
+		f=$PROC/irq/$irq/smp_affinity_list
+		put "$hk" "$f"
+	done
+}
+
+# --- Servizi ---------------------------------------------------------------------
+
+running() { # file pid
+	local p
+	p=$(cat "$1" 2>/dev/null)
+	[ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
+
+# bluetoothd sta in libexec (o in lib) e non nel PATH.
+bt_daemon() {
+	local d
+	for d in /usr/libexec/bluetooth /usr/lib/bluetooth /usr/sbin /usr/bin; do
+		[ -x "$d/bluetoothd" ] && { echo "$d/bluetoothd"; return; }
+	done
+	echo bluetoothd
+}
+
+start_dbus() {
+	pidof dbus-daemon > /dev/null 2>&1 && return 0
+	if [ -x /etc/init.d/dbus ]; then
+		/etc/init.d/dbus start > /dev/null 2>&1
+	else
+		mkdir -p /run/dbus /var/lib/dbus
+		dbus-uuidgen --ensure 2>/dev/null
+		dbus-daemon --system > /dev/null 2>&1
+	fi
+	pidof dbus-daemon > /dev/null 2>&1
+}
+
+bt_modules() {
+	local m
+	for m in bluetooth btusb hci_uart; do modprobe "$m" 2>/dev/null; done
+	return 0
+}
+
+start_services() {
+	local hk
+	hk=$(hk_list)
+	[ -n "$hk" ] || hk=0
+	mkdir -p "$BT_RUN" "$BT_LIB"
+	chmod 0755 "$BT_RUN"
+	main_conf > "$BT_CONF"
+	bt_modules
+	start_dbus || { log "bluetooth: dbus non avviato"; say "errore: dbus non avviato"; return 1; }
+	if ! running "$BT_D_PID"; then
+		taskset -c "$hk" "$(bt_daemon)" -f "$BT_CONF" > /dev/null 2>&1 &
+		echo $! > "$BT_D_PID"
+		sleep 1
+	fi
+	running "$BT_D_PID" || { log "bluetooth: bluetoothd non avviato"; say "errore: bluetoothd non avviato"; return 1; }
+	if ! running "$BT_A_PID"; then
+		taskset -c "$hk" bluealsa -p a2dp-sink > /dev/null 2>&1 &
+		echo $! > "$BT_A_PID"
+		sleep 1
+	fi
+	running "$BT_A_PID" || { log "bluetooth: bluealsa non avviato"; say "errore: bluealsa non avviato"; return 1; }
+	bt_irq_housekeeping
+	return 0
+}
+
+stop_services() {
+	local f p
+	for f in "$BT_P_PID" "$BT_A_PID" "$BT_D_PID"; do
+		p=$(cat "$f" 2>/dev/null)
+		[ -n "$p" ] && kill "$p" 2>/dev/null
+		rm -f "$f"
+	done
+}
+
+adapter_present() { bluetoothctl list 2>/dev/null | grep -q '^Controller '; }
+
+adapter_setup() {
+	bluetoothctl power on > /dev/null 2>&1
+	bluetoothctl system-alias "$(bt_name)" > /dev/null 2>&1
+	bluetoothctl pairable off > /dev/null 2>&1
+	bluetoothctl discoverable off > /dev/null 2>&1
+}
+
+trust_paired() {
+	bt_devices Paired | while IFS='|' read -r mac _; do
+		valid_mac "$mac" && bluetoothctl trust "$mac" > /dev/null 2>&1
+	done
+}
+
+# --- Finestra di abbinamento -----------------------------------------------------
+
+abbina_aperta() {
+	local fine
+	fine=$(cat "$BT_ABBINA" 2>/dev/null)
+	case "$fine" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$fine" -gt "$(date +%s)" ]
+}
+
+# Processo della finestra: un solo bluetoothctl resta aperto con l'agente
+# "senza ingresso ne' uscita" (abbinamento "Just Works" dal telefono) finche'
+# non scade il tempo o arriva "chiudi".
+finestra() { # minuti
+	local fine now
+	fine=$(cat "$BT_ABBINA")
+	{
+		echo "agent NoInputNoOutput"
+		echo "default-agent"
+		echo "pairable on"
+		echo "discoverable on"
+		while now=$(date +%s) && [ "$now" -lt "$fine" ] && [ -e "$BT_ABBINA" ]; do
+			trust_paired
+			sleep 2
+		done
+		echo "discoverable off"
+		echo "pairable off"
+		sleep 1
+	} | bluetoothctl > /dev/null 2>&1
+	trust_paired
+	rm -f "$BT_ABBINA" "$BT_ABBINA_PID"
+	salva
+}
+
+cmd_abbina() { # minuti
+	local min=${1:-2}
+	bt_enabled || { echo "Bluetooth spento: attivalo prima." >&2; return 1; }
+	case "$min" in [1-9]) ;; *) min=2 ;; esac
+	running "$BT_SORV_PID" || { echo "Servizio Bluetooth non attivo." >&2; return 1; }
+	cmd_chiudi
+	echo $(( $(date +%s) + min * 60 )) > "$BT_ABBINA"
+	if [ "${SWEETSPOT_TEST:-}" != 1 ]; then
+		setsid "$0" finestra "$min" > /dev/null 2>&1 < /dev/null &
+		echo $! > "$BT_ABBINA_PID"
+	fi
+	log "bluetooth: abbinamento aperto per $min minuti"
+	return 0
+}
+
+cmd_chiudi() {
+	local p
+	rm -f "$BT_ABBINA"
+	p=$(cat "$BT_ABBINA_PID" 2>/dev/null)
+	[ -n "$p" ] && kill "$p" 2>/dev/null
+	rm -f "$BT_ABBINA_PID"
+	return 0
+}
+
+# --- Dispositivi abbinati -------------------------------------------------------
+
+cmd_elenco() {
+	local conn
+	conn=$(bt_devices Connected | cut -d'|' -f1)
+	bt_devices Paired | while IFS='|' read -r mac nome; do
+		valid_mac "$mac" || continue
+		case "
+$conn
+" in *"
+$mac
+"*) c=si ;; *) c=no ;; esac
+		printf '%s|%s|%s\n' "$mac" "$nome" "$c"
+	done
+}
+
+cmd_rimuovi() { # MAC
+	valid_mac "$1" || { echo "Indirizzo non valido." >&2; return 1; }
+	bluetoothctl remove "$1" > /dev/null 2>&1
+	log "bluetooth: dispositivo $1 rimosso"
+	salva
+	return 0
+}
+
+# Le chiavi di abbinamento stanno in RAM: una copia sulla chiavetta le conserva.
+salva() {
+	[ "${SWEETSPOT_TEST:-}" = 1 ] && [ -z "${SWEETSPOT_STICK_DIR:-}" ] && return 0
+	[ -d "$BT_LIB" ] || return 0
+	stick_mount rw || return 0
+	mkdir -p "$STICK_MNT/sweetspot-dati"
+	if tar -C "$BT_LIB" -cf "$STICK_MNT/$BT_STICK_FILE.nuovo" . 2>/dev/null; then
+		mv -f "$STICK_MNT/$BT_STICK_FILE.nuovo" "$STICK_MNT/$BT_STICK_FILE"
+	else
+		rm -f "$STICK_MNT/$BT_STICK_FILE.nuovo"
+	fi
+	stick_umount
+}
+
+ripristina() {
+	stick_mount ro || return 0
+	if [ -f "$STICK_MNT/$BT_STICK_FILE" ]; then
+		mkdir -p "$BT_LIB"
+		tar -C "$BT_LIB" -xf "$STICK_MNT/$BT_STICK_FILE" 2>/dev/null
+	fi
+	stick_umount
+}
+
+lib_impronta() {
+	find "$BT_LIB" -type f 2>/dev/null | sort | while IFS= read -r f; do
+		stat -c '%n %s %Y' "$f" 2>/dev/null
+	done | md5sum | cut -d' ' -f1
+}
+
+# --- Passaggio esclusivo del DAC ------------------------------------------------
+
+# Il telefono sta trasmettendo? Stato del trasporto A2DP di BlueZ
+# (MediaTransport1.State: idle, pending, active).
+stream_active() {
+	local mac hci path node st
+	hci=$(ls "$SYS/class/bluetooth" 2>/dev/null | sed -n 's/^\(hci[0-9]*\)$/\1/p' | head -n 1)
+	[ -n "$hci" ] || hci=hci0
+	for mac in $(bt_devices Connected | cut -d'|' -f1); do
+		valid_mac "$mac" || continue
+		path=/org/bluez/$hci/dev_$(printf '%s' "$mac" | tr ':' '_')
+		for node in $(dbus-send --system --print-reply --dest=org.bluez "$path" \
+				org.freedesktop.DBus.Introspectable.Introspect 2>/dev/null | sed -n 's/.*<node name="\(fd[0-9]*\)".*/\1/p'); do
+			st=$(dbus-send --system --print-reply --dest=org.bluez "$path/$node" \
+				org.freedesktop.DBus.Properties.Get string:org.bluez.MediaTransport1 string:State 2>/dev/null |
+				sed -n 's/.*string "\([a-z]*\)".*/\1/p')
+			case "$st" in active|pending) return 0 ;; esac
+		done
+	done
+	return 1
+}
+
+stop_player() {
+	start-stop-daemon -K -p "$SUPERVISORE_PID" 2>/dev/null
+	killall squeezelite 2>/dev/null
+	return 0
+}
+
+start_player() {
+	mkdir -p "$RUN"
+	start-stop-daemon -S -b -m -p "$SUPERVISORE_PID" -x /usr/bin/sweetspot-player
+}
+
+aplay_start() { # dispositivo ALSA
+	local hk
+	hk=$(hk_list)
+	[ -n "$hk" ] || hk=0
+	taskset -c "$hk" bluealsa-aplay -D "$1" 00:00:00:00:00:00 > /dev/null 2>&1 &
+	echo $! > "$BT_P_PID"
+	sleep 1
+	running "$BT_P_PID"
+}
+
+handoff_start() {
+	local card dev
+	card=$(dac_find) || card=""
+	if [ -z "$card" ]; then
+		log "bluetooth: nessun DAC per il telefono"
+		say "telefono collegato ma nessun DAC disponibile"
+		return 1
+	fi
+	dev=$(dac_playback_dev "$card") || dev=0
+	stop_player
+	echo "$card" > "$BT_ATTIVO"
+	# Prima l'uscita diretta (hw:); se il DAC non accetta il formato A2DP
+	# (44,1 o 48 kHz, 16 bit) ripiego su plughw: con avviso nel registro.
+	if aplay_start "hw:$card,$dev"; then
+		log "bluetooth: telefono su hw:$card,$dev"
+	elif aplay_start "plughw:$card,$dev"; then
+		log "bluetooth: hw:$card,$dev non accetta il formato A2DP, uso plughw:$card,$dev"
+	else
+		log "bluetooth: bluealsa-aplay non parte, il DAC torna al player"
+		handoff_end
+		return 1
+	fi
+	return 0
+}
+
+handoff_end() {
+	local p
+	p=$(cat "$BT_P_PID" 2>/dev/null)
+	[ -n "$p" ] && kill "$p" 2>/dev/null
+	rm -f "$BT_P_PID" "$BT_ATTIVO"
+	# Il DAC deve essere libero prima che il player lo riapra.
+	sleep 1
+	start_player
+	log "bluetooth: DAC restituito al player"
+}
+
+# --- Stato ------------------------------------------------------------------------
+
+stato_testo() {
+	local conn
+	if ! bt_enabled; then echo "spento"; return; fi
+	if ! running "$BT_SORV_PID"; then echo "non attivo"; return; fi
+	if ! adapter_present; then echo "nessun adattatore Bluetooth"; return; fi
+	conn=$(bt_devices Connected | head -n 1 | cut -d'|' -f2)
+	if [ -e "$BT_ATTIVO" ]; then
+		echo "in ascolto: ${conn:-telefono}"
+	elif abbina_aperta; then
+		echo "abbinamento aperto"
+	elif [ -n "$conn" ]; then
+		echo "collegato: $conn"
+	else
+		echo "pronto, in attesa del telefono"
+	fi
+}
+
+cmd_stato() {
+	local t
+	t=$(stato_testo)
+	say "$t"
+	echo "$t"
+}
+
+# --- Sorveglianza -----------------------------------------------------------------
+
+sorveglia() {
+	local presente=0 assenti=0 imp imp0 giri=0
+	trap 'handoff_cleanup; exit 0' TERM INT
+	imp0=$(lib_impronta)
+	while bt_enabled; do
+		giri=$((giri + 1))
+		if ! adapter_present; then
+			presente=0
+			say "nessun adattatore Bluetooth"
+			sleep 5
+			continue
+		fi
+		if [ $presente -eq 0 ]; then
+			adapter_setup
+			bt_irq_housekeeping
+			presente=1
+		fi
+		if [ -e "$BT_ATTIVO" ]; then
+			if stream_active; then assenti=0; else assenti=$((assenti + 1)); fi
+			# Sei sonde senza trasmissione (o altrettanto tempo di pausa): il DAC torna al player.
+			if [ $assenti -ge 6 ] || ! running "$BT_P_PID"; then
+				handoff_end
+				assenti=0
+			fi
+		elif stream_active; then
+			assenti=0
+			handoff_start
+		fi
+		# Ogni circa 30 secondi: niente abbinamento aperto per errore, chiavi
+		# nuove sulla chiavetta (mai durante la trasmissione).
+		if [ $((giri % 30)) -eq 0 ] && [ ! -e "$BT_ATTIVO" ]; then
+			if ! abbina_aperta && bluetoothctl show 2>/dev/null | grep -q 'Discoverable: yes'; then
+				bluetoothctl discoverable off > /dev/null 2>&1
+				bluetoothctl pairable off > /dev/null 2>&1
+			fi
+			imp=$(lib_impronta)
+			if [ "$imp" != "$imp0" ]; then salva; imp0=$imp; fi
+		fi
+		cmd_stato > /dev/null
+		sleep "$BT_SONDA"
+	done
+	say "spento"
+}
+
+handoff_cleanup() {
+	[ -e "$BT_ATTIVO" ] && handoff_end
+	return 0
+}
+
+# --- Comandi ----------------------------------------------------------------------
+
+start() {
+	bt_enabled || { say "spento"; return 0; }
+	running "$BT_SORV_PID" && return 0
+	mkdir -p "$RUN"
+	ripristina
+	start_services || return 1
+	if [ "${SWEETSPOT_TEST:-}" != 1 ]; then
+		setsid "$0" sorveglia > /dev/null 2>&1 < /dev/null &
+		echo $! > "$BT_SORV_PID"
+	fi
+	log "bluetooth: attivo ($(bt_name))"
+	say "pronto, in attesa del telefono"
+	return 0
+}
+
+stop() {
+	local p
+	cmd_chiudi
+	p=$(cat "$BT_SORV_PID" 2>/dev/null)
+	if [ -n "$p" ]; then
+		kill "$p" 2>/dev/null
+		# Il sorvegliante restituisce il DAC prima di uscire.
+		sleep 1
+	fi
+	rm -f "$BT_SORV_PID"
+	[ -e "$BT_ATTIVO" ] && handoff_end
+	stop_services
+	say "spento"
+	return 0
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	avvia) start ;;
+	ferma) stop ;;
+	applica) if bt_enabled; then stop; start; else stop; fi ;;
+	abbina) cmd_abbina "$2" ;;
+	chiudi) cmd_chiudi ;;
+	finestra) finestra "$2" ;;
+	sorveglia) sorveglia ;;
+	elenco) cmd_elenco ;;
+	rimuovi) cmd_rimuovi "$2" ;;
+	stato) cmd_stato ;;
+	conf) main_conf ;;
+	*) echo "uso: $0 avvia|ferma|applica|abbina [minuti]|chiudi|elenco|rimuovi MAC|stato|conf" >&2; exit 1 ;;
+esac
