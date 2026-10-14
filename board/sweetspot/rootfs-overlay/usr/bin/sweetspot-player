@@ -542,17 +542,20 @@ run_player() {
 	fmt=$(dac_native_dsd "$card")
 	# Con la correzione il DSD si converte in PCM (i filtri lavorano sul PCM).
 	[ -n "$dsp" ] && dsd=pcm
+	# Squeezelite non esclude mai il DSD: Lyrion non sa convertire DSF/DFF in
+	# PCM (non ha regole dsf/dff -> pcm), quindi i file arrivano interi e li
+	# decodifica Squeezelite. Nativo o DoP solo con -D; altrimenti (e quando
+	# il DAC non regge la frequenza del DSD) li converte in PCM da solo, alla
+	# frequenza piu' alta che il DAC accetta (patch 0004).
 	case "$dsd" in
 		auto|nativo)
 			if [ -n "$fmt" ]; then
 				set -- "$@" -D "$pausa:$fmt"
 			else
 				[ "$dsd" = nativo ] && log "player: DSD nativo richiesto ma non dichiarato dal DAC"
-				set -- "$@" -e dsd
 			fi ;;
 		dop) set -- "$@" -D "$pausa:dop" ;;
-		pcm) ;;
-		*) set -- "$@" -e dsd ;;
+		*) ;;
 	esac
 
 	printf '%s ' "$@" > "$RUN/player.args"

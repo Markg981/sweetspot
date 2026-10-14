@@ -32,7 +32,7 @@ funzione principale di prodotti come HQPlayer.
 ## Che cosa fa oggi Sweetspot con il DSD
 
 - File DSD (DSF/DFF): al DAC in DSD nativo se lo dichiara, in DoP se scelto,
-  oppure convertiti in PCM dal server (`DSD=auto`, pagina Audio).
+  oppure convertiti in PCM da Squeezelite, alla frequenza più alta che il DAC accetta (`DSD=auto`, pagina Audio).
 - Prova DoP guidata dalla pagina Audio per i DAC senza DSD nativo.
 
 ## Quando riaprirlo

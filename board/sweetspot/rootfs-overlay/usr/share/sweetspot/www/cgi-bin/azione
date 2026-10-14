@@ -178,7 +178,7 @@ case "$F_a" in
 				done_to audio "$(saved_msg $rc "DSD tramite DoP: il player si sta riavviando.")" ;;
 			*)
 				log "audio: prova DoP non riuscita, DSD convertito in PCM"
-				done_to audio "Nessuna modifica: i file DSD restano convertiti in PCM dal server." ;;
+				done_to audio "Nessuna modifica: i file DSD restano convertiti in PCM da Squeezelite." ;;
 		esac ;;
 
 	# --- Musica ------------------------------------------------------------------

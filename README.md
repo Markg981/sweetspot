@@ -465,7 +465,8 @@ sempre svegli. Il Turbo è sempre spento.
 ### Prova di riconoscimento con il file DoP
 
 Con un DAC USB che non dichiara il DSD nativo, `DSD=auto` fa convertire i file
-DSD in PCM dal server (Lyrion), senza provare il DoP. Molti DAC accettano
+DSD in PCM con Squeezelite (alla frequenza più alta che il DAC accetta, ad
+esempio 176,4 kHz per DSD64 su un DAC da 192 kHz), senza provare il DoP. Molti DAC accettano
 comunque il DoP: la pagina **Audio** propone la **Prova DoP**. Genera sul
 player lo stesso file descritto sotto (`sweetspot-prova-dop`), lo fa suonare
 per 6 secondi (con `playlist preview` di Lyrion: la coda di ascolto viene
