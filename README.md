@@ -430,6 +430,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `PASSWORD_WEB` | password delle pagine di Sweetspot (impronta MD5-crypt con sale; accesso da `/cgi-bin/accesso` con sessione: cookie HttpOnly e SameSite=Strict, 8 ore, ID casuale; dopo 5 errori di fila si aspetta 30 secondi per ogni errore in più, fino a 15 minuti; ogni azione richiede sessione e gettone anti-CSRF; il pulsante *Esci* chiude la sessione): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Anche senza password le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
+| `DIARIO`, `DIARIO_ORE`, `DIARIO_KB` | diario di bordo sulla chiavetta (cartella `diagnostica`): `si`/`no`; ogni quante ore (1-24, 2 predefinite) si salvano registro e timeline; dimensione massima in KB di ogni file prima della rotazione (256 predefiniti, tre generazioni). Vedi [Diagnostica](#diagnostica-registro-persistente-timeline-e-crash-dump) | si, 2, 256 |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
 | `ARCHIVIO` | UUID/PARTUUID dell'archivio; nome nelle vecchie configurazioni se univoco | vuoto |
@@ -439,6 +440,46 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 I profili cambiano solo la frequenza della CPU: *silenzio* la fissa alla
 minima, *bilanciato* a metà strada, *prestazioni* alla nominale tenendo i core
 sempre svegli. Il Turbo è sempre spento.
+
+## Diagnostica: registro persistente, timeline e crash dump
+
+Il sistema gira in RAM e il registro di `/var/log` si perde a ogni riavvio.
+Per non restare senza prove dopo un guasto (la reazione udev al DAC era stata
+annullata proprio perché il registro di prima del riavvio non c'era),
+`sweetspot-diario` conserva sulla chiavetta, nella cartella `diagnostica`:
+
+| File | Contenuto |
+|---|---|
+| `sweetspot.log`, `.1`, `.2` | registro di sistema, solo le righe nuove aggiunte in coda |
+| `timeline.log`, `.1`, `.2` | una riga per fatto: `DATA\|SORGENTE\|EVENTO\|DETTAGLI` (avvio, riavvii del player e di Lyrion anche della liveness, XRUN, cambi di frequenza, aggiornamenti, rollback, montaggi della chiavetta, spegnimento) |
+| `kernel.ultimo` | ultime 300 righe del log del kernel all'ultimo salvataggio |
+| `pstore/DATA/` | crash dump del kernel (panic, console) copiati da `/sys/fs/pstore` all'avvio, al massimo 8 raccolte |
+| `pulito` | presente se l'ultimo spegnimento è stato ordinato; l'avvio successivo lo annota ("spegnimento precedente ordinato: no" = corrente tolta o blocco) |
+
+- **Poche scritture**: si aggiunge solo il nuovo, ogni `DIARIO_ORE` ore e subito
+  solo per gli eventi critici (aggiornamenti, rollback, riavvii dei servizi,
+  spegnimento), al massimo una volta al minuto. Durante l'ascolto i salvataggi
+  periodici aspettano (al massimo tre intervalli). Ogni file ruota a `DIARIO_KB`
+  KB e restano tre generazioni, quindi lo spazio è limitato (circa 1,5 MB).
+- **Montaggio**: la chiavetta si monta in scrittura solo per la durata della
+  copia, con il conteggio condiviso degli altri servizi (`stick_mount`); lo
+  spegnimento fa l'ultimo salvataggio (`S04sweetspot-diario stop`).
+- **Crash dump**: il kernel ha pstore con console, `dmesg` al panic e ramoops.
+  Sul Raspberry Pi la regione di memoria è riservata da `dtoverlay=ramoops`
+  in `config.txt`; sul PC si usa efi-pstore (NVRAM UEFI), dove il firmware lo
+  permette. Se né l'una né l'altra c'è, il registro persistente funziona
+  comunque, ma dopo un panic non ci sono crash dump.
+- **Limiti**: XRUN e cambi di frequenza si osservano ogni 5 secondi (un cambio
+  più breve può sfuggire); l'ultima parte prima di un'interruzione di corrente
+  non è sulla chiavetta se non c'è stato un evento critico dopo l'ultimo
+  salvataggio. L'overlay `ramoops` e `CONFIG_EFI_VARS_PSTORE` vanno verificati
+  su hardware.
+- **Pacchetto diagnostico**: pagina **Sistema** → *Scarica il pacchetto
+  diagnostico* (dietro l'accesso, se `PASSWORD_WEB` è impostata): un `tar.gz`
+  con registro e timeline (persistenti e di questo avvio), crash dump, log di
+  Squeezelite e del kernel, configurazione, versioni, `aplay -l`,
+  `/proc/asound` e `stato.json`. Password, chiavi, token, credenziali negli
+  indirizzi e intestazioni di autorizzazione sono oscurati.
 
 ## Verifiche
 
@@ -565,6 +606,7 @@ package/camilladsp, package/alsa-cdsp CamillaDSP e plugin ALSA per la correzione
 scripts/                              compilazione locale e con Docker
 tests/run.sh                          test degli script con /sys e /proc simulati
 tests/cd-simulato.sh                  copia completa di un CD con un lettore finto
+tests/diario.sh                       diario di bordo: timeline, registro persistente, pstore, bundle
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)
 tests/prova-lyrion.sh                 Lyrion avviato nel sistema compilato (CI, anche su ARM)
 tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per ARM

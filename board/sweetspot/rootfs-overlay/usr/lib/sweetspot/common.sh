@@ -32,6 +32,61 @@ STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 log() {
 	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null
 	echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"
+	evento_da_log "$*"
+}
+
+# --- Timeline degli eventi ---------------------------------------------------
+# Una riga per fatto: DATA|SORGENTE|EVENTO|DETTAGLI, in RAM. La copia sulla
+# chiavetta la fa sweetspot-diario (a intervalli lunghi e sugli eventi
+# critici), che sorveglia anche XRUN e cambi di frequenza.
+TIMELINE=${SWEETSPOT_TIMELINE:-$RUN/timeline.log}
+# Presente = c'e' un evento critico da portare sulla chiavetta.
+DIARIO_FLAG=$RUN/diario.urgente
+
+evento() { # sorgente evento [dettagli]
+	local det
+	[ -n "${SWEETSPOT_EVENTO_MUTO:-}" ] && return 0
+	det=$(printf '%s' "${3:-}" | tr '\n\r|' '   ')
+	mkdir -p "$(dirname "$TIMELINE")" 2>/dev/null
+	printf '%s|%s|%s|%s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" "$2" "$det" >> "$TIMELINE" 2>/dev/null
+	case "$2" in
+		spegnimento|riavvio*|aggiornamento*|rollback*|errore*|panic*) : > "$DIARIO_FLAG" 2>/dev/null ;;
+	esac
+	return 0
+}
+
+# Le righe del registro che sono anche fatti della timeline (aggiornamenti,
+# rollback, riavvii della liveness e del sistema): un solo punto, cosi' gli
+# script che le scrivono non cambiano.
+evento_da_log() {
+	local msg=${1#*: }
+	case "$1" in
+		aggiornamento:*)
+			case "$1" in
+				*"alla precedente"*|*"parte la copia"*|*"riavvii consecutivi"*) evento aggiorna rollback "$msg" ;;
+				*) evento aggiorna aggiornamento "$msg" ;;
+			esac ;;
+		liveness:*)
+			case "$1" in
+				*"riavvio squeezelite"*) evento liveness riavvio-player "$msg" ;;
+				*"Lyrion in stallo"*|*"kill -9"*) evento liveness riavvio-lyrion "$msg" ;;
+				*) evento liveness avviso "$msg" ;;
+			esac ;;
+		lyrion:*)
+			case "$1" in
+				*"fermo"*) evento lyrion riavvio-lyrion "$msg" ;;
+				*"riavvio richiesto"*) evento lyrion riavvio-richiesto "$msg" ;;
+				*"avvio sui core"*) evento lyrion avvio "$msg" ;;
+			esac ;;
+		player:*)
+			case "$1" in
+				*"riavvio del player"*|*"terminato subito"*) evento player riavvio-player "$msg" ;;
+				*) evento player stato "$msg" ;;
+			esac ;;
+		riavvio:*) evento sistema riavvio "$msg" ;;
+		watchdog:*) evento watchdog avviso "$msg" ;;
+	esac
+	return 0
 }
 
 # --- Configurazione ----------------------------------------------------------
@@ -960,13 +1015,17 @@ stick_mount() { # [ro|rw]
 	flock 6
 	n=$(cat "$STICK_USERS" 2>/dev/null)
 	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
-		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null
+		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null && evento chiavetta rimontata "rw"
 	else
 		n=0
 		dev=$(stick_device)
 		if [ -n "$dev" ]; then
 			mkdir -p "$STICK_MNT"
-			mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null || rc=1
+			if mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null; then
+				evento chiavetta montata "$mode"
+			else
+				rc=1
+			fi
 		else
 			rc=1
 		fi
@@ -985,7 +1044,7 @@ stick_umount() {
 	n=$(($(cat "$STICK_USERS" 2>/dev/null || echo 1) - 1))
 	sync
 	if [ $n -le 0 ]; then
-		umount "$STICK_MNT" 2>/dev/null
+		umount "$STICK_MNT" 2>/dev/null && evento chiavetta smontata
 		rm -f "$STICK_USERS"
 	else
 		echo $n > "$STICK_USERS"

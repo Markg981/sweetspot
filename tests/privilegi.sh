@@ -56,7 +56,7 @@ else
 	B=$WORK/bin
 	W=$WORK/web
 	mkdir -p "$B" "$W"
-	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot; do
+	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot diario; do
 		printf '#!/bin/sh\nprintf "%%s" "sweetspot-%s" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\nprintf "\\n" >> "%s/chiamata"\n' "$s" "$WORK" "$WORK" "$WORK" > "$B/sweetspot-$s"
 		chmod +x "$B/sweetspot-$s"
 	done
@@ -108,6 +108,8 @@ SSH=si")"
 		expect "azione interna sconosciuta" "NIENTE(126)" "$(priv @shell)"
 		expect "sweetspot-rapporto senza argomenti" "sweetspot-rapporto" "$(priv sweetspot-rapporto)"
 		expect "sweetspot-rapporto con argomenti" "NIENTE(126)" "$(priv sweetspot-rapporto salva)"
+		expect "diario bundle ammesso" "sweetspot-diario|bundle" "$(priv sweetspot-diario bundle)"
+		expect "diario: altri sottocomandi rifiutati" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-diario salva)|$(priv sweetspot-diario bundle x)"
 		# Lyrion: solo i comandi usati dalle pagine.
 		expect "lms plugin installa" "sweetspot-lms|plugin|installa|Qobuz" "$(priv sweetspot-lms plugin installa Qobuz)"
 		expect "lms plugin con nome strano" "NIENTE(126)" "$(priv sweetspot-lms plugin installa '../x')"

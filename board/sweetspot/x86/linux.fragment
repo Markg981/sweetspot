@@ -73,3 +73,9 @@ CONFIG_LPC_ICH=m
 CONFIG_ITCO_WDT=m
 CONFIG_SP5100_TCO=m
 CONFIG_I6300ESB_WDT=m
+
+# --- Diagnostica: crash dump nella NVRAM UEFI (pstore) ----------------------
+# Dove il firmware lo permette, il log del panic sopravvive al riavvio senza
+# riservare memoria. Dove non c'e' UEFI scrivibile non succede nulla: il
+# registro persistente di sweetspot-diario resta comunque attivo.
+CONFIG_EFI_VARS_PSTORE=y

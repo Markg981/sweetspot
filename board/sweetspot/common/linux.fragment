@@ -116,3 +116,13 @@ CONFIG_WATCHDOG_CORE=y
 CONFIG_WATCHDOG_SYSFS=y
 # CONFIG_WATCHDOG_NOWAYOUT is not set
 CONFIG_SOFT_WATCHDOG=m
+
+# --- Diagnostica: pstore / ramoops -------------------------------------------
+# Dopo un panic o un blocco il log del kernel e la console restano in una
+# memoria che sopravvive al riavvio; sweetspot-diario li copia sulla chiavetta
+# all'avvio. Su Raspberry Pi la regione e' riservata da dtoverlay=ramoops
+# (rpi/config.txt), su x86 si usa efi-pstore (x86/linux.fragment).
+CONFIG_PSTORE=y
+CONFIG_PSTORE_DEFLATE_COMPRESS=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_RAM=y
