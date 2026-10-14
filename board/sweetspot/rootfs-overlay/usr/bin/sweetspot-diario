@@ -59,6 +59,7 @@ redigi() {
 
 # Montaggio e smontaggio della chiavetta senza voci nella timeline: ogni
 # salvataggio ne aggiungerebbe e il diario si nutrirebbe di se' stesso.
+# shellcheck disable=SC2034
 monta() { # ro|rw
 	local rc
 	SWEETSPOT_EVENTO_MUTO=1
@@ -67,6 +68,7 @@ monta() { # ro|rw
 	SWEETSPOT_EVENTO_MUTO=
 	return $rc
 }
+# shellcheck disable=SC2034
 smonta() {
 	SWEETSPOT_EVENTO_MUTO=1
 	stick_umount
