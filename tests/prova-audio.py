@@ -1220,18 +1220,18 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
 
 
 # DAC finto che accetta solo 96 kHz (come un DAC che rifiuta 88,2 k): un
-# plugin route sopra snd-aloop con la frequenza dello slave fissa. Il nome non
-# inizia con "hw:", quindi la politica -H non c'entra: conta solo -R vLE.
+# PCM hw su snd-aloop con la frequenza vincolata (il plugin hw ammette rate).
+# Il nome non inizia con "hw:", quindi la politica -H non c'entra: conta solo
+# -R vLE. L'accesso resta mmap, come negli altri casi ALSA.
 REFUSED_DEVICE = "dacfinto96"
 REFUSED_ACCEPTED_RATE = 96000
 REFUSED_SOURCE_RATE = 88200
-# Il plugin route non offre l'accesso mmap: niente mmap (quarto campo a 0).
-REFUSED_BUFFER = "400:4::0"
+REFUSED_BUFFER = "400:4::1"
 REFUSED_ASOUNDRC = """pcm.%s {
-    type route
-    slave { pcm "hw:CARD=Loopback,DEV=0"; rate %d; channels 2 }
-    ttable.0.0 1
-    ttable.1.1 1
+    type hw
+    card Loopback
+    device 0
+    rate %d
 }
 """ % (REFUSED_DEVICE, REFUSED_ACCEPTED_RATE)
 
