@@ -83,6 +83,8 @@ BR2_PACKAGE_ALSA_CDSP=y
 
 # Musica da cartelle condivise in rete (SMB) e archivio condiviso
 BR2_PACKAGE_CIFS_UTILS=y
+# Musica da cartelle condivise in rete (NFS, mount.nfs)
+BR2_PACKAGE_NFS_UTILS=y
 BR2_PACKAGE_KSMBD_TOOLS=y
 
 # Copia dei CD con un lettore USB

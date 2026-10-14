@@ -17,6 +17,10 @@ fixup_file=fixup4.dat
 # Il Bluetooth integrato resta acceso nel firmware ma il servizio e' spento
 # di serie (BLUETOOTH=no): senza servizio nessun processo lo usa.
 
+# Regione di memoria riservata per ramoops/pstore: il log del panic e la
+# console sopravvivono al riavvio (sweetspot-diario li copia sulla chiavetta).
+dtoverlay=ramoops
+
 # Uscita audio integrata (jack e HDMI) spenta: il suono va solo al DAC.
 dtparam=audio=off
 # Nessuna ricerca di fotocamere e schermi DSI, nessuna schermata iniziale.
