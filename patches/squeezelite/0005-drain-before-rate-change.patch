@@ -6,7 +6,7 @@ track still queued in the ALSA ring (400 ms with the default buffer) is
 discarded, so the tail of a 44.1 kHz track disappears when the next one is
 96 kHz.
 
-Before reopening for a new format or rate, wait for snd_pcm_drain() to
+Before reopening for a new format or rate, wait for the ring to empty (snd_pcm_avail) to
 finish, so the tail is played. The wait is bounded by the real buffer
 duration plus 100 ms (at most 1 s) and never blocks the output lock. If the
 player is stopped or switched off while waiting, or the drain does not
@@ -37,7 +37,6 @@ Upstream: Not submitted (local option)
 +	snd_pcm_uframes_t pad_left = alsa.period_size;
 +	size_t frame_bytes;
 +	u8_t *silence = NULL;
-+	int err;
 +	if (!pcmp || !alsa.rate) return;
 +	limit_ms = (unsigned)((unsigned long long)alsa.buffer_size * 1000 / alsa.rate) + 300;
 +	if (limit_ms > 1000) limit_ms = 1000;
@@ -61,10 +60,11 @@ Upstream: Not submitted (local option)
 +			else if (w != -EAGAIN) pad_left = 0;
 +		}
 +		if (!pad_left) {
-+			err = snd_pcm_drain(pcmp);
-+			if (err != -EAGAIN) {
-+				if (err < 0) LOG_INFO("snd_pcm_drain error: %s", snd_strerror(err));
-+				else LOG_INFO("drained %u ms before closing", waited_ms);
++			// ring vuoto = tutto riprodotto, compreso il silenzio di chiusura
++			snd_pcm_sframes_t avail = snd_pcm_avail_update(pcmp);
++			snd_pcm_state_t st = snd_pcm_state(pcmp);
++			if (avail < 0 || avail >= (snd_pcm_sframes_t)alsa.buffer_size || st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP) {
++				LOG_INFO("drained %u ms before closing", waited_ms);
 +				free(silence);
 +				return;
 +			}
@@ -73,7 +73,7 @@ Upstream: Not submitted (local option)
 +		usleep(5000);
 +		waited_ms += 5;
 +	}
-+	LOG_INFO("drain skipped or timed out after %u ms: dropping", waited_ms);
++	LOG_INFO("drain skipped or timed out after %u ms (state %d, avail %ld, pad left %lu): dropping", waited_ms, (int)snd_pcm_state(pcmp), (long)snd_pcm_avail_update(pcmp), (unsigned long)pad_left);
 +	free(silence);
 +	snd_pcm_drop(pcmp);
 +}
