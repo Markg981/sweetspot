@@ -121,7 +121,7 @@ verdict() { # formato frequenza canali
 	elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$hwfmt")" ] 2>/dev/null; then
 		why="il brano ha $src_bits bit, il DAC ne riceve $(alsa_bits "$hwfmt")"
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
-		why="il volume è abbassato dal software, e non è bit-perfect (arrotonda con dither TPDF)"
+		why="il volume è abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
 		why="il ricampionamento è attivo e abbassa il segnale di 1 dB"
 	elif [ "$(lower "$(conf FORMATO_USCITA auto)")" = 16 ] && [ -n "$src_bits" ] && [ "$src_bits" -gt 16 ] 2>/dev/null; then
