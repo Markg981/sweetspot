@@ -1674,7 +1674,7 @@ echo vecchia > "$CC/lms/cache/artwork.db"
 printf '#!/bin/sh\n[ "$1" = archivio ] && echo "%s"\n' "$CC/archivio" > "$CC/bin/sweetspot-dischi"
 chmod +x "$CC/bin/sweetspot-dischi"
 lmsfn() {
-	SWEETSPOT_LMS_DATA=$CC/lms SWEETSPOT_RUN=$CC/run SWEETSPOT_LOG=$CC/log SWEETSPOT_PATH="$CC/bin:$SWEETSPOT_PATH" \
+	SWEETSPOT_MOUNT=${CC_MOUNT:-false} SWEETSPOT_LMS_DATA=$CC/lms SWEETSPOT_RUN=$CC/run SWEETSPOT_LOG=$CC/log SWEETSPOT_PATH="$CC/bin:$SWEETSPOT_PATH" \
 		SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-lms; $1"
 }
 lmsfn link_caches
@@ -1687,6 +1687,33 @@ printf '#!/bin/sh\nexit 0\n' > "$CC/bin/sweetspot-dischi"
 rm -f "$CC/lms/cache/artwork.db"
 lmsfn link_caches
 expect "senza archivio: cache in RAM come prima" "no" "$([ -e "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+# Tmpfs a parte con size= per le cache in RAM (mount finto che registra le opzioni).
+printf '#!/bin/sh\necho "$@" > "%s/mount.args"\n' "$CC" > "$CC/bin/finto-mount"
+chmod +x "$CC/bin/finto-mount"
+rm -f "$CC/lms/cache/artwork.db" "$CC/lms/cache/imgproxy.db"
+mkdir -p "$CC/proc"
+printf 'MemTotal:        8388608 kB\n' > "$CC/proc/meminfo"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "senza archivio: tmpfs delle copertine con size= (4% di 8 GB, tetto 256 MB)" "-t tmpfs -o size=256m,mode=0755,nosuid,nodev tmpfs $CC/lms/artwork-ram" "$(cat "$CC/mount.args")"
+expect "senza archivio: cache collegate al tmpfs a tetto" "$CC/lms/artwork-ram/artwork.db" "$(readlink "$CC/lms/cache/artwork.db")"
+printf 'MemTotal: 262144 kB\n' > "$CC/proc/meminfo"
+art_small=$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)
+printf 'MemTotal: 33554432 kB\n' > "$CC/proc/meminfo"
+expect "tetto dell'artwork: minimo 32 MB, mai oltre 256" "32|256" "$art_small|$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)"
+# Tetti di memoria cgroup di Lyrion e dello scanner (cgroup finto nei file).
+CGT=$CC/cgroup
+mkdir -p "$CGT"
+echo "cpu io memory" > "$CGT/cgroup.controllers"
+: > "$CGT/cgroup.subtree_control"
+printf 'MemTotal:        8388608 kB\n' > "$CC/proc/meminfo"
+SWEETSPOT_CGROUP=$CGT SWEETSPOT_PROCFS=$CC/proc lmsfn lms_cgroups
+expect "cgroup di Lyrion: memory.max 70% della RAM, high all'85%" "6012954150|5111010985" \
+	"$(cat "$CGT/sweetspot-lyrion/memory.max")|$(cat "$CGT/sweetspot-lyrion/memory.high")"
+expect "cgroup dello scanner: memory.max 40% della RAM" "3435973800" "$(cat "$CGT/sweetspot-scanner/memory.max")"
+echo "LYRION_MEM_MB=1000" > "$CC/run/sweetspot.conf"
+SWEETSPOT_CGROUP=$CGT SWEETSPOT_PROCFS=$CC/proc lmsfn lms_cgroups
+expect "LYRION_MEM_MB indicato in MB" "1048576000" "$(cat "$CGT/sweetspot-lyrion/memory.max")"
+rm -f "$CC/run/sweetspot.conf"
 
 echo "Precarico in RAM"
 PRE=$WORK/precarico
@@ -1726,6 +1753,28 @@ printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/ru
 expect "budget stabile: la memoria gia' bloccata conta come libera" "1827652" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+# Brani CUE (URL#inizio-fine): il file e' quello intero, caricato una volta sola.
+expect "URL di un brano CUE: il frammento si scarta" "$PRE/musica/Album è/a.flac" "$(prefn "url_path '$U/a.flac#12.5-100.25'")"
+expect "nome con # (%23): resta nel percorso" "$PRE/musica/Album è/x#y.flac" "$(prefn "url_path '$U/x%23y.flac#1-2'")"
+printf '%s\n' "$U/a.flac#0-60" "$U/a.flac#60-120" "$U/d.flac" "$U/a.flac#120-180" > "$PRE/coda-cue"
+expect "piano: i brani dello stesso file CUE contano una volta" \
+	"SI 3 $PRE/musica/Album è/a.flac|SI 1 $PRE/musica/Album è/d.flac" \
+	"$(prefn "preload_plan 100 100 < '$PRE/coda-cue'" | tr '\n' '|' | sed 's/|$//')"
+# Coda oltre 1000 brani: letta a pagine da 500, dal brano in corso alla fine.
+echo AA:BB > "$PRE/run/player.mac"
+cat > "$PRE/fake-lms.sh" <<'FAKE'
+lms_json() {
+	awk -v start="$3" -v count="$4" -v tot=1200 'BEGIN {
+		if (count == 1) { printf "{\"result\":{\"mode\":\"play\",\"playlist_cur_index\":\"3\",\"playlist_tracks\":%d}}\n", tot; exit }
+		printf "{\"result\":{\"mode\":\"play\",\"playlist_loop\":["
+		for (i = start; i < start + count && i < tot; i++) printf "%s{\"url\":\"file:///m/t%d.flac\"}", (i > start ? "," : ""), i
+		print "]}}" }'
+}
+FAKE
+prefn ". '$PRE/fake-lms.sh'; queue_urls" > "$PRE/coda-lunga"
+expect "coda di 1200 brani: tutti dal brano in corso (3) alla fine" "1197|file:///m/t3.flac|file:///m/t1199.flac" \
+	"$(wc -l < "$PRE/coda-lunga" | tr -d ' ')|$(head -n 1 "$PRE/coda-lunga")|$(tail -n 1 "$PRE/coda-lunga")"
+rm -f "$PRE/run/player.mac"
 printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
 expect "piano: in coda fino al budget, poi si ferma" \
 	"SI 3 $PRE/musica/Album è/a.flac|STREAM http://radio.example/stream|GRANDE 5 $PRE/musica/Album è/grande.dsf|OLTRE 2 $PRE/musica/Album è/b c.flac|MANCA $PRE/musica/Album è/manca.flac|OLTRE 1 $PRE/musica/Album è/d.flac" \
@@ -2509,6 +2558,17 @@ EOF
 for c in hostapd udhcpd dnsd killall flock; do
 	printf '#!/bin/sh\necho "%s $*" >> "$HS_DIR/calls"\nexit 0\n' "$c" > "$HS/bin/$c"
 done
+# qrencode finto: registra il testo del codice e scrive un SVG (o il blocco UTF8).
+cat > "$HS/bin/qrencode" <<'EOF'
+#!/bin/sh
+out=""
+while [ $# -gt 1 ]; do
+	case "$1" in -o) out=$2; shift ;; esac
+	shift
+done
+printf '%s\n' "$1" >> "$HS_DIR/qrtesti"
+if [ -n "$out" ]; then echo '<svg xmlns="http://www.w3.org/2000/svg"/>' > "$out"; else echo "[QR]"; fi
+EOF
 cat > "$HS/bin/sleep" <<'EOF'
 #!/bin/sh
 n=$(cat "$HS_DIR/n" 2>/dev/null || echo 0)
@@ -2525,8 +2585,8 @@ chmod +x "$HS/bin/"* "$HS/net-init"
 
 # hs_env APMODE: computer finto con cavo scollegato e Wi-Fi spento (rfkill).
 hs_env() {
-	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console"
-	mkdir -p "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
+	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console" "$HS/stick" "$HS/qrtesti"
+	mkdir -p "$HS/stick" "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
 		"$HS/sys/class/net/wlan0/wireless" "$HS/sys/class/rfkill/rfkill0" "$HS/sys/class/phy"
 	echo 1 > "$HS/sys/class/net/eth0/type"; echo 0 > "$HS/sys/class/net/eth0/carrier"
 	echo 1 > "$HS/sys/class/net/wlan0/type"
@@ -2545,6 +2605,7 @@ hs_run() {
 		SWEETSPOT_IW=$HS/bin/iw SWEETSPOT_IP=$HS/bin/ip SWEETSPOT_HOSTAPD=$HS/bin/hostapd \
 		SWEETSPOT_UDHCPD=$HS/bin/udhcpd SWEETSPOT_DNSD=$HS/bin/dnsd SWEETSPOT_SLEEP=$HS/bin/sleep SWEETSPOT_NET_INIT=$HS/net-init \
 		SWEETSPOT_CONSOLE=$HS/console SWEETSPOT_TTY=$HS/console \
+		SWEETSPOT_STICK_DIR=$HS/stick SWEETSPOT_QRENCODE=$HS/bin/qrencode \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" "${2:-sorveglia}" > /dev/null 2>&1
 }
@@ -2572,6 +2633,27 @@ echo 'HOTSPOT_PASSWORD=la-mia-password' >> "$HS/run/sweetspot.conf"
 echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
 hs_run
 expect "hotspot: HOTSPOT_PASSWORD scelta dall'utente" "1" "$(grep -c '^Password: la-mia-password$' "$HS/console")"
+
+# 2b. Senza schermo: nome, password e codice QR sulla partizione di avvio; la
+# password resta la stessa alle accensioni successive.
+hs_env ap
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+pw1=$(sed -n 's/^Password: //p' "$HS/stick/sweetspot-hotspot.txt" | head -n 1)
+expect "hotspot: nome e password scritti sulla partizione di avvio" "1|1" \
+	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{10\}$')"
+expect "hotspot: codice QR WIFI: sulla partizione di avvio (SVG) e sullo schermo" "1|1|1" \
+	"$(sort -u "$HS/qrtesti" | grep -c "^WIFI:T:WPA;S:Sweetspot-5E6F;P:$pw1;;\$")|$(grep -c '<svg' "$HS/stick/sweetspot-hotspot.svg")|$(grep -c '^\[QR\]$' "$HS/console")"
+rm -f "$HS/run/hotspot.attivo"
+echo 0 > "$HS/sys/class/net/eth0/carrier"; : > "$HS/console"; rm -f "$HS/n"
+hs_run
+expect "hotspot: password stabile tra un'accensione e l'altra" "1" "$(grep -c "^Password: $pw1\$" "$HS/console")"
+# Caratteri speciali nel QR: \ ; , : " protetti con la barra.
+hs_env ap
+printf '%s\n' 'HOTSPOT_PASSWORD=a;b:c,d\e12' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: QR con i caratteri speciali protetti" 'WIFI:T:WPA;S:Sweetspot-5E6F;P:a\;b\:c\,d\\e12;;' "$(head -n 1 "$HS/qrtesti")"
 
 # 3. Cavo collegato: l'hotspot non si accende mai.
 hs_env ap
@@ -2642,6 +2724,25 @@ for cfg in sweetspot_x86_64 sweetspot_rpi; do
 done
 expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
 
+echo "Codifica UTF-8 delle pagine e portale dell'hotspot"
+bad=""
+for f in "$OVERLAY"/usr/share/sweetspot/www/cgi-bin/* "$OVERLAY"/usr/share/sweetspot/www/*.html "$OVERLAY"/usr/share/sweetspot/www/*.css \
+	"$OVERLAY"/usr/lib/sweetspot/*.sh "$OVERLAY"/usr/bin/sweetspot-*; do
+	[ -f "$f" ] || continue
+	python3 -c 'import sys; sys.exit(0 if (lambda b: (b.decode("utf-8"), b[:3] != b"\xef\xbb\xbf")[1])(open(sys.argv[1], "rb").read()) else 1)' "$f" 2>/dev/null || bad="$bad ${f##*/}"
+done
+expect "pagine e script: tutti in UTF-8 valido, senza BOM" "" "$bad"
+expect "pagine: Content-Type con charset=utf-8 e meta charset" "1|1" \
+	"$(grep -c "Content-Type: text/html; charset=utf-8" "$OVERLAY/usr/lib/sweetspot/web.sh")|$(grep -c '<meta charset="utf-8">' "$OVERLAY/usr/lib/sweetspot/web.sh")"
+for f in hotspot-detect.html canonical.html index.html; do
+	expect "$f: meta charset utf-8" "1" "$(grep -c '<meta charset="utf-8">' "$OVERLAY/usr/share/sweetspot/www/$f")"
+done
+for f in hotspot-detect.html canonical.html; do
+	expect "portale $f: porta alla pagina Rete dell'hotspot" "1" "$(grep -c 'url=http://192.168.4.1/cgi-bin/rete' "$OVERLAY/usr/share/sweetspot/www/$f")"
+done
+expect "defconfig: qrencode e avahi (QR e sweetspot.local)" "4" \
+	"$(cat "$ROOT"/configs/*_defconfig | grep -c '^BR2_PACKAGE_\(LIBQRENCODE_TOOLS\|AVAHI_DAEMON\)=y$')"
+
 echo "Condivisioni di rete: ritentativi"
 RT=$WORK/rete
 mkdir -p "$RT/bin" "$RT/busy" "$RT/run" "$RT/proc" "$RT/media" "$RT/musica"
@@ -2681,6 +2782,54 @@ expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
 	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
 expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"
 
+echo "Cartelle di rete: SMB 2.1 o piu', hard, NFS"
+RV=$WORK/retever
+mkdir -p "$RV/bin" "$RV/run" "$RV/proc" "$RV/media" "$RV/musica"
+: > "$RV/proc/mounts"
+printf 'CONDIVISIONE_1=//192.168.1.10/Musica\nCONDIVISIONE_2=//192.168.1.11/Vecchio\nCONDIVISIONE_2_SMB1=si\nCONDIVISIONE_3=nfs://192.168.1.12/export/musica\n' > "$RV/run/sweetspot.conf"
+# NAS finto che rifiuta tutto e registra le opzioni di ogni tentativo.
+printf '#!/bin/sh\necho "$@" >> "%s/cifs.log"\necho "mount error(112): Host is down" >&2\nexit 32\n' "$RV" > "$RV/bin/mount.cifs"
+printf '#!/bin/sh\necho "$@" >> "%s/nfs.log"\ncase "$*" in *vers=4*) echo "mount.nfs: Connection refused" >&2; exit 32 ;; esac\nexit 0\n' "$RV" > "$RV/bin/mount.nfs"
+printf '#!/bin/sh\nexit 0\n' > "$RV/bin/modprobe"
+chmod +x "$RV"/bin/*
+rv_env() {
+	env SWEETSPOT_RUN=$RV/run SWEETSPOT_PROCFS=$RV/proc SWEETSPOT_LOG=$RV/log SWEETSPOT_PATH="$RV/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_MEDIA=$RV/media SWEETSPOT_MUSICA=$RV/musica "$@"
+}
+rv_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" prova 1 > /dev/null 2>&1
+expect "SMB: tre tentativi (default, 3.0, 2.1) senza SMB1" "3|0" "$(grep -c . "$RV/cifs.log")|$(grep -c 'vers=1' "$RV/cifs.log")"
+expect "SMB: mai un tentativo sotto la 2.1" "0" "$(grep -c 'vers=2.0' "$RV/cifs.log")"
+expect "SMB: montaggio hard, mai soft" "3|0" "$(grep -c 'hard' "$RV/cifs.log")|$(grep -c 'soft' "$RV/cifs.log")"
+rm -f "$RV/cifs.log"
+rv_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" prova 2 > /dev/null 2>&1
+expect "SMB1 solo se richiesto per quella cartella" "4|1" "$(grep -c . "$RV/cifs.log")|$(grep -c 'vers=1.0' "$RV/cifs.log")"
+res=$(rv_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" prova 3)
+expect "NFS: montata con il client del kernel" "OK" "$res"
+expect "NFS: prima la v4, poi la v3 senza lock" "2|1" "$(grep -c . "$RV/nfs.log")|$(grep -c 'vers=3,nolock' "$RV/nfs.log")"
+expect "NFS: hard con timeo e retrans, in sola lettura" "2" "$(grep -c '192.168.1.12:/export/musica .*ro,hard,timeo=[0-9]*,retrans=[0-9]*' "$RV/nfs.log")"
+expect "NFS: collegamento nella libreria" "si" "$([ -L "$RV/musica/Rete - musica" ] && echo si || echo no)"
+nf() { SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RV/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; $1"; }
+expect "NFS: nfs://server/export" "nas.local:/export/musica" "$(nf "normalize_nfs 'nfs://nas.local/export/musica/'")"
+expect "NFS: forma server:/export" "10.0.0.1:/m" "$(nf "normalize_nfs 'nfs:10.0.0.1:/m'")"
+expect "NFS: senza cartella non valido" "no" "$(nf "normalize_nfs 'nfs://nas' > /dev/null && echo si || echo no")"
+expect "NFS: server con caratteri strani non valido" "no" "$(nf "normalize_nfs 'nfs://a b/x' > /dev/null && echo si || echo no")"
+expect "NFS: una voce SMB non e' NFS" "no" "$(nf "is_nfs //nas/Musica && echo si || echo no")"
+for cfg in sweetspot_x86_64 sweetspot_rpi; do
+	expect "$cfg: nfs-utils nel defconfig" "1" "$(grep -c '^BR2_PACKAGE_NFS_UTILS=y$' "$ROOT/configs/${cfg}_defconfig")"
+done
+expect "kernel: client NFS v3 e v4" "3" "$(grep -c '^CONFIG_NFS_\(FS\|V3\|V4\)=m$' "$ROOT/board/sweetspot/common/linux.fragment")"
+expect "pannello Musica: avviso su SMB1 e scelta NFS" "si|si" "$(grep -q 'INSICURO' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/musica" && echo si || echo no)|$(grep -q 'value="nfs"' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/musica" && echo si || echo no)"
+
+echo "Cartella Musica in rete: utente senza privilegi e file interni"
+c=$(arun "ksmbd_conf /media/Musica")
+case "$c" in *"read only = yes"*"guest ok = yes"*) ok "senza password: ospite in sola lettura" ;; *) ko "senza password: ospite in sola lettura" "read only = yes" "$c" ;; esac
+c=$(arun "ksmbd_conf /media/Musica" "ARCHIVIO_PASSWORD=segreta")
+case "$c" in *"read only = no"*"guest ok = no"*) ok "con la password: scrittura autenticata" ;; *) ko "con la password: scrittura autenticata" "read only = no" "$c" ;; esac
+case "$c" in *"force user = nas"*"force group = nas"*) ok "utente non root" ;; *) ko "utente non root" "force user = nas" "$c" ;; esac
+case "$c" in *root*) ko "nessun root nella condivisione" "assente" "presente" ;; *) ok "nessun root nella condivisione" ;; esac
+case "$c" in *"veto files"*artwork.db*imgproxy.db*) ok "file interni (artwork.db) nascosti" ;; *) ko "file interni (artwork.db) nascosti" "veto files" "$c" ;; esac
+expect "utente nas nella tabella degli utenti" "1" "$(grep -c '^nas -1 nas -1 ' "$ROOT/board/sweetspot/users.txt")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
@@ -2704,6 +2853,7 @@ sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+sh "$ROOT/tests/diario.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1

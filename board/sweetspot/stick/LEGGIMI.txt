@@ -31,8 +31,11 @@ Senza cavo e senza modificare il file: l'hotspot
 Se Sweetspot (con un adattatore Wi-Fi compatibile) non trova nessuna rete
 entro circa un minuto dall'accensione, crea da solo una rete Wi-Fi chiamata
 "Sweetspot-XXXX". Nome e password compaiono sullo schermo; se non hai uno
-schermo scrivi tu una password in HOTSPOT_PASSWORD (da 8 a 63 caratteri) in
-sweetspot.txt. Collega il telefono a quella rete, apri http://192.168.4.1/
+schermo li trovi nel file sweetspot-hotspot.txt di questa chiavetta (dopo il
+primo tentativo di accensione), insieme al codice QR sweetspot-hotspot.svg da
+aprire con il browser del computer e inquadrare con il telefono; oppure scrivi
+tu una password in HOTSPOT_PASSWORD (da 8 a 63 caratteri) in sweetspot.txt.
+Collega il telefono a quella rete, apri http://192.168.4.1/
 (pagina Rete), scegli la rete di casa, scrivi la password e premi Collega.
 L'hotspot si spegne e Sweetspot si collega. Se la password e' sbagliata,
 dopo circa un minuto l'hotspot riparte e puoi riprovare. Con la rete che

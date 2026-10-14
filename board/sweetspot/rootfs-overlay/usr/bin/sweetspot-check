@@ -643,6 +643,19 @@ check_library() {
 	else
 		emit ATTENZIONE "Libreria" "vuota: collega un disco o aggiungi una cartella di rete in Musica"
 	fi
+	check_library_saving
+}
+
+# Salvataggio della libreria sulla chiavetta (sweetspot-dati) e cache delle
+# copertine in RAM (sweetspot-lms): avvisi scritti da chi li rileva.
+check_library_saving() {
+	local free need art
+	if [ -s "$RUN/dati.spazio" ]; then
+		read -r free need _ < "$RUN/dati.spazio"
+		emit ATTENZIONE "Salvataggio della libreria" "chiavetta piena: ${free:-?} MB liberi, ne servono ${need:-?}; libreria e impostazioni non vengono salvate (libera spazio sulla chiavetta)"
+	fi
+	art=$(cat "$RUN/lms.artwork.piena" 2>/dev/null)
+	[ -n "$art" ] && emit ATTENZIONE "Copertine in RAM" "cache al ${art}%: le nuove copertine non si salvano fino al prossimo avvio (collega l'archivio musicale per metterle su disco)"
 }
 
 # Precarico della coda in RAM (sweetspot-precarico), dal riepilogo che scrive.

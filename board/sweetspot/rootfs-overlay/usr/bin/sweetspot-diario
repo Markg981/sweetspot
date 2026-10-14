@@ -1,0 +1,385 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - diario di bordo: registro e timeline persistenti sulla
+# chiavetta, crash dump del kernel e bundle diagnostico.
+#
+#   sweetspot-diario avvio       all'avvio: recupera pstore, registra l'avvio
+#   sweetspot-diario sorveglia   osserva XRUN e cambi di frequenza, salva a
+#                                intervalli lunghi e sugli eventi critici
+#   sweetspot-diario salva       porta subito sulla chiavetta quel che manca
+#   sweetspot-diario spegni      allo spegnimento: ultimo salvataggio
+#   sweetspot-diario bundle      stampa un tar.gz diagnostico (senza segreti)
+#
+# Il sistema gira in RAM e i registri si perdevano a ogni riavvio. Sulla
+# chiavetta, nella cartella diagnostica:
+#   sweetspot.log[.1 .2]   registro di sistema (solo le righe nuove)
+#   timeline.log[.1 .2]    una riga per fatto: DATA|SORGENTE|EVENTO|DETTAGLI
+#   kernel.ultimo          ultime righe del log del kernel
+#   pstore/DATA/           crash dump copiati da /sys/fs/pstore all'avvio
+#   pulito                 presente se l'ultimo spegnimento e' stato ordinato
+#
+# Poche scritture, per non consumare la chiavetta: si aggiunge in coda solo
+# il nuovo (mai si riscrive il file), ogni DIARIO_ORE ore (2 predefinite) e
+# subito solo per gli eventi critici (aggiornamenti, rollback, riavvii dei
+# servizi, spegnimento), al massimo una volta al minuto. Durante l'ascolto i
+# salvataggi periodici aspettano (al massimo tre intervalli). La chiavetta si
+# monta in scrittura solo per il tempo della copia, con il conteggio
+# condiviso di stick_mount. Dimensione limitata: ogni file ruota a
+# DIARIO_KB KB (256) e ne restano tre generazioni.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
+PSTORE=${SWEETSPOT_PSTORE:-$SYS/fs/pstore}
+DIARIO_DIR_NAME=diagnostica
+TICK=${SWEETSPOT_DIARIO_TICK:-5}
+DEBOUNCE=${SWEETSPOT_DIARIO_DEBOUNCE:-60}
+PSTORE_MAX=8
+
+# Numero intero positivo da una chiave, altrimenti il predefinito.
+num_chiave() { # chiave predefinito minimo massimo
+	local v
+	v=$(conf "$1" "$2")
+	case "$v" in ''|*[!0-9]*) v=$2 ;; esac
+	[ "$v" -ge "$3" ] && [ "$v" -le "$4" ] || v=$2
+	echo "$v"
+}
+
+attivo() { is_yes "$(conf DIARIO si)"; }
+
+# Maschera i segreti nel testo che passa: password, chiavi, token, credenziali
+# negli indirizzi e intestazioni di autorizzazione.
+redigi() {
+	sed -E -e 's/([Pp][Aa][Ss][Ss][A-Za-z_]*|[Tt][Oo][Kk][Ee][Nn][A-Za-z_]*|[Ss][Ee][Cc][Rr][Ee][Tt][A-Za-z_]*|[Kk][Ee][Yy][A-Za-z_]*|[Pp][Ss][Kk]|[Cc][Hh][Ii][Aa][Vv][Ee][A-Za-z_]*)([=:][[:space:]]*)[^ ,;&"]*/\1\2***/g' \
+		-e 's,://[^/@ ]*:[^/@ ]*@,://***@,g' \
+		-e 's/(Authorization:[[:space:]]*[A-Za-z]*[[:space:]]*)[^ ]*/\1***/g' \
+		-e 's#(Basic[[:space:]])[A-Za-z0-9+/=]{8,}#\1***#g'
+}
+
+# Montaggio e smontaggio della chiavetta senza voci nella timeline: ogni
+# salvataggio ne aggiungerebbe e il diario si nutrirebbe di se' stesso.
+# shellcheck disable=SC2034
+monta() { # ro|rw
+	local rc
+	SWEETSPOT_EVENTO_MUTO=1
+	stick_mount "$1" 2>/dev/null
+	rc=$?
+	SWEETSPOT_EVENTO_MUTO=
+	return $rc
+}
+# shellcheck disable=SC2034
+smonta() {
+	SWEETSPOT_EVENTO_MUTO=1
+	stick_umount
+	SWEETSPOT_EVENTO_MUTO=
+}
+
+# Impostazioni senza segreti: il valore delle chiavi sensibili diventa ***.
+config_senza_segreti() {
+	local f
+	for f in "$CONF" "$RUN/sweetspot.txt"; do
+		[ -s "$f" ] && break
+	done
+	[ -s "$f" ] || return 0
+	tr -d '\r' < "$f" | awk -F= '
+		{ k = toupper($1) }
+		k ~ /PASSWORD|PASSWD|PASSPHRASE|CHIAVE|KEY|TOKEN|SECRET|SEGRETO|PSK|HASH/ && NF > 1 { print $1 "=***"; next }
+		{ print }' | redigi
+}
+
+# --- Salvataggio sulla chiavetta ------------------------------------------------
+
+# Sorgenti del registro persistente: NOME:FILE.
+sorgenti() {
+	echo "sweetspot.log:$LOGFILE"
+	echo "timeline.log:$TIMELINE"
+}
+
+dim_file() { wc -c < "$1" 2>/dev/null | tr -d ' '; }
+
+# Byte gia' portati sulla chiavetta, per sorgente (in RAM: dopo un riavvio
+# il file sorgente e' nuovo e si riparte da zero).
+off_letto() { # nome
+	local v
+	v=$(cat "$RUN/diario.$1.off" 2>/dev/null)
+	case "$v" in ''|*[!0-9]*) v=0 ;; esac
+	echo "$v"
+}
+
+# C'e' qualcosa di nuovo da salvare?
+da_salvare() {
+	local s nome f size off
+	for s in $(sorgenti); do
+		nome=${s%%:*}; f=${s#*:}
+		[ -s "$f" ] || continue
+		size=$(dim_file "$f"); off=$(off_letto "$nome")
+		[ "$size" -ne "$off" ] && return 0
+	done
+	return 1
+}
+
+# Tre generazioni: file, file.1, file.2.
+ruota() { # percorso kb
+	local f=$1 size
+	size=$(dim_file "$f")
+	[ "${size:-0}" -ge $(($2 * 1024)) ] || return 0
+	rm -f "$f.2"
+	[ -f "$f.1" ] && mv "$f.1" "$f.2"
+	mv "$f" "$f.1"
+}
+
+# Aggiunge in coda alla chiavetta le righe nuove. Con "pulito" lascia anche
+# il segno dello spegnimento ordinato. Ritorna 1 se la chiavetta manca.
+salva() { # [pulito]
+	local dir s nome f size off kb rc=0 mnt
+	attivo || return 0
+	if [ "${1:-}" != pulito ] && ! da_salvare; then return 0; fi
+	exec 7> "$RUN/diario.lock" || return 1
+	flock 7
+	monta rw
+	mnt=$?
+	if [ $mnt -ne 0 ]; then
+		flock -u 7; exec 7>&-
+		return 1
+	fi
+	kb=$(num_chiave DIARIO_KB 256 16 4096)
+	dir=$STICK_MNT/$DIARIO_DIR_NAME
+	mkdir -p "$dir" || rc=1
+	if [ $rc -eq 0 ]; then
+		for s in $(sorgenti); do
+			nome=${s%%:*}; f=${s#*:}
+			[ -s "$f" ] || continue
+			size=$(dim_file "$f"); off=$(off_letto "$nome")
+			[ "$size" -lt "$off" ] && off=0
+			[ "$size" -gt "$off" ] || continue
+			if tail -c +$((off + 1)) "$f" | head -c $((size - off)) >> "$dir/$nome"; then
+				echo "$size" > "$RUN/diario.$nome.off"
+				ruota "$dir/$nome" "$kb"
+			else
+				rc=1
+			fi
+		done
+		# Ultime righe del log del kernel: si sovrascrive (stessa dimensione
+		# circa, nessuna crescita).
+		dmesg 2>/dev/null | tail -n 300 | redigi > "$dir/kernel.ultimo.nuovo" &&
+			mv "$dir/kernel.ultimo.nuovo" "$dir/kernel.ultimo"
+		[ "${1:-}" = pulito ] && : > "$dir/pulito"
+	fi
+	smonta
+	flock -u 7; exec 7>&-
+	return $rc
+}
+
+# --- pstore ---------------------------------------------------------------------
+
+# Copia sulla chiavetta i crash dump del kernel e li toglie da pstore (la
+# NVRAM UEFI e' piccola). Restano al massimo PSTORE_MAX raccolte.
+recupera_pstore() {
+	local n dest dir old
+	[ -d "$PSTORE" ] || return 0
+	n=$(ls "$PSTORE" 2>/dev/null | wc -l | tr -d ' ')
+	[ "${n:-0}" -gt 0 ] || return 0
+	monta rw || { log "diario: chiavetta non trovata, crash dump lasciati in pstore"; return 1; }
+	dir=$STICK_MNT/$DIARIO_DIR_NAME/pstore
+	dest=$dir/$(date '+%Y%m%d-%H%M%S')
+	[ -e "$dest" ] && dest=$dest-$$
+	if mkdir -p "$dest" && cp "$PSTORE"/* "$dest/" 2>/dev/null && sync; then
+		rm -f "$PSTORE"/* 2>/dev/null
+		evento kernel pstore "$n file recuperati da pstore in pstore/${dest##*/}"
+		# Le raccolte piu' vecchie oltre il limite.
+		for old in $(ls "$dir" | sort | awk -v m=$PSTORE_MAX '{ a[NR] = $0 } END { for (i = 1; i <= NR - m; i++) print a[i] }'); do
+			rm -rf "${dir:?}/$old"
+		done
+	else
+		rm -rf "$dest"
+		log "diario: copia di pstore non riuscita, crash dump lasciati dove sono"
+	fi
+	smonta
+}
+
+do_avvio() {
+	local pulito=no ver
+	attivo || return 0
+	mkdir -p "$RUN"
+	if monta ro; then
+		[ -f "$STICK_MNT/$DIARIO_DIR_NAME/pulito" ] && pulito=si
+		smonta
+	fi
+	recupera_pstore
+	ver=$(cat /etc/sweetspot-version 2>/dev/null)
+	evento sistema avvio "versione ${ver:-?} kernel $(uname -r) scheda $(boot_type) copia $(running_slot) spegnimento precedente ordinato: $pulito"
+	# Il segno dello spegnimento si toglie dopo averlo letto: solo se c'era.
+	if [ "$pulito" = si ] && monta rw; then
+		rm -f "$STICK_MNT/$DIARIO_DIR_NAME/pulito"
+		smonta
+	fi
+	salva
+}
+
+# --- Osservazione ---------------------------------------------------------------
+
+# Un giro di osservazione: XRUN nuovi nel registro di Squeezelite e
+# cambio di formato/frequenza del PCM aperto. Nessuna scrittura su disco.
+XOFF=
+LAST_FMT=
+osserva() {
+	local size n cur
+	if [ -f "$SQLOG" ]; then
+		size=$(dim_file "$SQLOG")
+		if [ -z "$XOFF" ]; then XOFF=$size
+		else
+			[ "$size" -lt "$XOFF" ] && XOFF=0
+			if [ "$size" -gt "$XOFF" ]; then
+				n=$(tail -c +$((XOFF + 1)) "$SQLOG" | xrun_counts)
+				XOFF=$size
+				[ "${n% *}" -gt 0 ] && evento alsa xrun "${n% *} nuovi, recuperi falliti ${n#* }"
+			fi
+		fi
+	fi
+	cur=$(pcm_aperto)
+	if [ -n "$cur" ] && [ "$cur" != "$LAST_FMT" ]; then
+		if [ -n "$LAST_FMT" ]; then evento alsa frequenza "$cur (prima $LAST_FMT)"
+		else evento alsa frequenza "$cur"; fi
+		LAST_FMT=$cur
+	fi
+}
+
+# "FORMATO FREQUENZA" del primo PCM di riproduzione aperto, vuoto se nessuno.
+pcm_aperto() {
+	local f
+	for f in "$PROC"/asound/card*/pcm*p/sub*/hw_params; do
+		[ -r "$f" ] || continue
+		awk '/^format:/ { fm = $2 } /^rate:/ { r = $2 } END { if (r != "") print fm " " r }' "$f" 2>/dev/null
+	done | head -n 1
+}
+
+adesso() { date +%s; }
+
+do_sorveglia() {
+	local ult sec tardi=0 now
+	attivo || exit 0
+	sec=$(( $(num_chiave DIARIO_ORE 2 1 24) * 3600 ))
+	ult=$(adesso)
+	osserva
+	while true; do
+		sleep "$TICK"
+		osserva
+		now=$(adesso)
+		if [ -f "$DIARIO_FLAG" ]; then
+			# Eventi critici: subito, ma non piu' di una volta al minuto.
+			if [ $((now - ult)) -ge "$DEBOUNCE" ]; then
+				rm -f "$DIARIO_FLAG"
+				# Se la chiavetta manca il segno resta, per il prossimo giro.
+				salva || : > "$DIARIO_FLAG"
+				ult=$now; tardi=0
+			fi
+		elif [ $((now - ult)) -ge "$sec" ]; then
+			# Periodico: non durante l'ascolto, al massimo per tre intervalli.
+			if dac_playing && [ "$tardi" -lt 3 ]; then
+				tardi=$((tardi + 1)); ult=$((ult + sec))
+			else
+				salva && { ult=$now; tardi=0; }
+			fi
+		fi
+	done
+}
+
+do_spegni() {
+	attivo || return 0
+	evento sistema spegnimento "ultimo salvataggio del diario"
+	rm -f "$DIARIO_FLAG"
+	salva pulito
+}
+
+# --- Bundle diagnostico ----------------------------------------------------------
+
+copia_testo() { # origine destinazione: testo senza segreti
+	[ -r "$1" ] || return 0
+	redigi < "$1" > "$2" 2>/dev/null
+}
+
+# Un file ruotato in ordine cronologico: .2, .1, corrente.
+unisci_generazioni() { # percorso
+	local g
+	for g in "$1.2" "$1.1" "$1"; do
+		[ -f "$g" ] && cat "$g"
+	done
+}
+
+do_bundle() {
+	local d w nome f ts dir
+	ts=$(date '+%Y%m%d-%H%M%S')
+	nome=sweetspot-diagnostica-$ts
+	d=$RUN/diario.bundle.$$
+	w=$d/$nome
+	trap 'rm -rf "$d"' EXIT
+	rm -rf "$d"
+	mkdir -p "$w/log" "$w/pstore" "$w/sistema" || exit 1
+
+	# Prima si porta sulla chiavetta quel che manca, cosi' il registro
+	# persistente e' completo.
+	salva > /dev/null 2>&1
+
+	{
+		echo "sweetspot: $(cat /etc/sweetspot-version 2>/dev/null)"
+		echo "bundle: $ts"
+		echo "scheda: $(boot_type)"
+		echo "copia: $(running_slot)"
+		echo "modalita: $(mode)"
+		echo "kernel: $(uname -a)"
+		echo "squeezelite: $(squeezelite -h 2>&1 | head -n 1)"
+		echo "camilladsp: $(camilladsp --version 2>&1 | head -n 1)"
+		[ "$(mode)" = completa ] && echo "lyrion: $(LMS_TIMEOUT=3 lms_get '._version' '' version '?' 2>/dev/null)"
+		echo "uptime: $(cat "$PROC/uptime" 2>/dev/null)"
+	} | redigi > "$w/versioni.txt"
+
+	config_senza_segreti > "$w/configurazione.txt"
+
+	# Registro e timeline: la storia persistente (piu' avvii) e quella di
+	# questo avvio.
+	if monta ro; then
+		dir=$STICK_MNT/$DIARIO_DIR_NAME
+		unisci_generazioni "$dir/sweetspot.log" | redigi > "$w/log/sweetspot.persistente.log"
+		unisci_generazioni "$dir/timeline.log" | redigi > "$w/log/timeline.persistente.log"
+		copia_testo "$dir/kernel.ultimo" "$w/log/kernel.ultimo-persistente"
+		[ -d "$dir/pstore" ] && cp -r "$dir/pstore/." "$w/pstore/" 2>/dev/null
+		smonta
+	fi
+	copia_testo "$LOGFILE" "$w/log/sweetspot.log"
+	copia_testo "$TIMELINE" "$w/log/timeline.log"
+	[ -f "$SQLOG" ] && tail -c 262144 "$SQLOG" | redigi > "$w/log/squeezelite.log"
+	dmesg 2>/dev/null | redigi > "$w/log/kernel.dmesg"
+	# Eventuali crash dump ancora in pstore (la copia sulla chiavetta li
+	# toglie, qui si guardano senza toccarli).
+	if [ -d "$PSTORE" ] && [ -n "$(ls "$PSTORE" 2>/dev/null)" ]; then
+		mkdir -p "$w/pstore/in-memoria"
+		for f in "$PSTORE"/*; do
+			[ -f "$f" ] && redigi < "$f" > "$w/pstore/in-memoria/${f##*/}" 2>/dev/null
+		done
+	fi
+
+	aplay -l 2>&1 | redigi > "$w/sistema/aplay-l.txt"
+	if [ -d "$PROC/asound" ]; then
+		mkdir -p "$w/sistema/asound"
+		cp -r "$PROC/asound/." "$w/sistema/asound/" 2>/dev/null
+	fi
+	copia_testo "$RUN/stato.json" "$w/sistema/stato.json"
+	copia_testo "$PROC/cmdline" "$w/sistema/cmdline.txt"
+	copia_testo "$PROC/meminfo" "$w/sistema/meminfo.txt"
+	{ df 2>&1; echo; mount 2>&1; } | redigi > "$w/sistema/dischi.txt"
+	ps 2>&1 | redigi > "$w/sistema/processi.txt"
+
+	tar -C "$d" -cf - "$nome" | gzip -c
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	avvio) do_avvio ;;
+	sorveglia) do_sorveglia ;;
+	salva) salva ;;
+	spegni) do_spegni ;;
+	bundle) do_bundle ;;
+	*) echo "uso: $0 avvio|sorveglia|salva|spegni|bundle" >&2; exit 1 ;;
+esac
