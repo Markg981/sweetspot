@@ -69,6 +69,8 @@ BR2_PACKAGE_ALSA_CDSP=y
 
 # Musica da cartelle condivise in rete (SMB)
 BR2_PACKAGE_CIFS_UTILS=y
+# Musica da cartelle condivise in rete (NFS, mount.nfs)
+BR2_PACKAGE_NFS_UTILS=y
 # Archivio musicale condiviso in rete (server SMB del kernel)
 BR2_PACKAGE_KSMBD_TOOLS=y
 

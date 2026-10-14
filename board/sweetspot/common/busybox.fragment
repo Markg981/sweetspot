@@ -39,3 +39,7 @@ CONFIG_IONICE=y
 CONFIG_SETSID=y
 # Credenziali di Lyrion nelle richieste JSON (lms_auth_header).
 CONFIG_BASE64=y
+
+# Bundle diagnostico (sweetspot-diario bundle): tar.gz e log del kernel.
+CONFIG_GZIP=y
+CONFIG_DMESG=y

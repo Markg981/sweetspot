@@ -100,6 +100,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-copia", "elimina", "s", "", 0},
 	{"sweetspot-copia", "sorgente", "s", "", 0},
 	{"sweetspot-copia", "stato", "", "", 0},
+	{"sweetspot-diario", "bundle", "", "", 0}, // tar.gz diagnostico sull'uscita standard
 	{"sweetspot-dischi", "archivio", "", "", 0},
 	{"sweetspot-dischi", "monta", "", "", 0},
 	{"sweetspot-dischi", "smonta", "s", "", 0},
@@ -142,6 +143,7 @@ static const struct regola REGOLE[] = {
 //  h  nome o indirizzo di un server
 //  q  identita' di un disco (UUID=..., PARTUUID=...)
 //  l  elenco di nomi di dischi separati da virgole
+//  b  si oppure no
 struct chiave {
 	const char *nome;
 	char valore;
@@ -197,13 +199,16 @@ static int parola_ok(const char *s)
 }
 
 static const struct chiave CHIAVE_CONDIVISIONE = {"CONDIVISIONE", 's', 0};
+static const struct chiave CHIAVE_SMB1 = {"CONDIVISIONE_SMB1", 'b', 0};
 
 static const struct chiave *chiave_cerca(const char *s)
 {
 	int i;
-	// CONDIVISIONE_1..9 con _UTENTE e _PASSWORD
+	// CONDIVISIONE_1..9 con _UTENTE, _PASSWORD e _SMB1
 	if (!strncmp(s, "CONDIVISIONE_", 13) && s[13] >= '1' && s[13] <= '9') {
 		const char *r = s + 14;
+		if (!strcmp(r, "_SMB1"))
+			return &CHIAVE_SMB1; // booleano si/no
 		return (!*r || !strcmp(r, "_UTENTE") || !strcmp(r, "_PASSWORD")) ? &CHIAVE_CONDIVISIONE : NULL;
 	}
 	for (i = 0; CHIAVI[i].nome; i++)
@@ -252,6 +257,7 @@ static int valore_ok(const char *chiave, const char *v)
 	case 'h': return solo(v, 253, c_host);
 	case 'q': return solo(v, 100, c_disco);
 	case 'l': return solo(v, 400, c_elenco);
+	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
 	}
 	return 0;
 }

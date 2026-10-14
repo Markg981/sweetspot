@@ -56,7 +56,7 @@ else
 	B=$WORK/bin
 	W=$WORK/web
 	mkdir -p "$B" "$W"
-	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https; do
+	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https diario; do
 		printf '#!/bin/sh\nprintf "%%s" "sweetspot-%s" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\nprintf "\\n" >> "%s/chiamata"\n' "$s" "$WORK" "$WORK" "$WORK" > "$B/sweetspot-$s"
 		chmod +x "$B/sweetspot-$s"
 	done
@@ -77,6 +77,8 @@ else
 		expect "config valore vuoto ammesso" "sweetspot-config|imposta|DNS|" "$(priv sweetspot-config imposta DNS '')"
 		expect "config condivisione 3 con utente e password" "sweetspot-config|imposta|CONDIVISIONE_3_UTENTE|u|CONDIVISIONE_3_PASSWORD|p" \
 			"$(priv sweetspot-config imposta CONDIVISIONE_3_UTENTE u CONDIVISIONE_3_PASSWORD p)"
+		expect "config condivisione 3 con SMB1" "sweetspot-config|imposta|CONDIVISIONE_3_SMB1|si" \
+			"$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 si)"
 		expect "config condivisione 0 rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_0 x)"
 		expect "config condivisione 10 rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_10 x)"
 		expect "config chiave fuori elenco (LYRION_PASSWORD)" "NIENTE(126)" "$(priv sweetspot-config imposta LYRION_PASSWORD x)"
@@ -108,6 +110,8 @@ SSH=si")"
 		expect "azione interna sconosciuta" "NIENTE(126)" "$(priv @shell)"
 		expect "sweetspot-rapporto senza argomenti" "sweetspot-rapporto" "$(priv sweetspot-rapporto)"
 		expect "sweetspot-rapporto con argomenti" "NIENTE(126)" "$(priv sweetspot-rapporto salva)"
+		expect "diario bundle ammesso" "sweetspot-diario|bundle" "$(priv sweetspot-diario bundle)"
+		expect "diario: altri sottocomandi rifiutati" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-diario salva)|$(priv sweetspot-diario bundle x)"
 		# Lyrion: solo i comandi usati dalle pagine.
 		expect "lms plugin installa" "sweetspot-lms|plugin|installa|Qobuz" "$(priv sweetspot-lms plugin installa Qobuz)"
 		expect "lms plugin con nome strano" "NIENTE(126)" "$(priv sweetspot-lms plugin installa '../x')"
@@ -209,6 +213,7 @@ nameserver 6.6.6.6')"
 		expect "ARCHIVIO: percorso rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta ARCHIVIO /dev/sda1)"
 		expect "ESCLUDI_DISCHI: elenco di nomi" "sweetspot-config|imposta|ESCLUDI_DISCHI|sda,Dati 2" "$(priv sweetspot-config imposta ESCLUDI_DISCHI 'sda,Dati 2')"
 		expect "ESCLUDI_DISCHI: caratteri di shell rifiutati" "NIENTE(126)" "$(priv sweetspot-config imposta ESCLUDI_DISCHI 'sda;id')"
+		expect "CONDIVISIONE_n_SMB1: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 'si;id')|$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 forse)"
 		expect "HTTPS: ammesso dalle pagine" "sweetspot-config|imposta|HTTPS|si|HTTPS_REINDIRIZZA|no" "$(priv sweetspot-config imposta HTTPS si HTTPS_REINDIRIZZA no)"
 		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
 		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"

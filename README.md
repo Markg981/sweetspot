@@ -37,8 +37,16 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      jitter del clock di conversione del DAC.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
    lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
-   normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
-   fine dell'ascolto. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
+   normale quando la musica si ferma; il salvataggio completo sulla chiavetta
+   aspetta la fine dell'ascolto, ma ogni 15 minuti (se la libreria è cambiata)
+   un *checkpoint* dei soli database, con il backup online di SQLite scritto
+   direttamente sulla chiavetta (niente copia in RAM) da un processo a bassa
+   priorità: cgroup con `io.weight` minimo, `ionice` idle, `nice` 19, solo sui
+   core di sistema. Così una lettura lunga durante un ascolto lungo non si perde
+   se manca la corrente. Il riavvio del solo player ("Salva e applica" nella
+   pagina Audio) non fa più alcuna copia del database. Prima di scrivere si
+   controlla lo spazio: a chiavetta piena non si riprova ogni minuto (ogni 30
+   minuti) e la pagina Stato avvisa. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
    `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner
    non resta congelato con una transazione del database aperta. Se il kernel
    non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
@@ -61,7 +69,9 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    un minuto. Con la coda invariata il piano non si ricalcola (niente `stat`
    sulle cartelle di rete a ogni giro). Lo streaming non si precarica, i file
    oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la pagina Stato mostra
-   brani caricati, memoria usata, esclusioni e dischi fermi.
+   brani caricati, memoria usata, esclusioni e dischi fermi. Le righe `#inizio-fine`
+   dei brani CUE contano come il loro file (letto una volta sola) e la coda si
+   legge a pagine da 500: anche le code oltre 1000 brani sono precaricate.
 
 ## Come si usa
 
@@ -150,8 +160,25 @@ voce della tabella delle partizioni: partizione di sistema e avvio non si
 toccano, e il kernel vede la nuova partizione subito, senza riavviare. Lì si copiano cartelle da chiavette, dischi o NAS (la copia si
 sospende mentre la musica suona) e lì finiscono i CD. Con *Condividi in rete*
 l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
-`smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd; password
-facoltativa). Sull'archivio stanno anche le copertine già ridimensionate da
+`smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd, minimo SMB 2.1).
+Con una **password** (utente `sweetspot`) la cartella è in lettura e scrittura,
+per copiare la musica; **senza password** è aperta agli ospiti ma in **sola
+lettura**. Il server lavora come utente `nas`, non come root, e non mostra i
+file interni (cartella `.sweetspot-cache`, `artwork.db`, `imgproxy.db`). Si
+scrive solo dove l'utente `nas` ha i permessi: la cartella radice dell'archivio
+gli viene assegnata, le cartelle già presenti create da altri restano in sola
+lettura finché non se ne cambia il proprietario.
+
+Le **cartelle di rete** della pagina Musica possono essere SMB (NAS, PC
+Windows, Mac) oppure **NFS** (NAS e server Linux; client del kernel, NFSv4 con
+ripiego su NFSv3). SMB usa almeno la versione 2.1, con la 3.x preferita; **SMB1
+è insicuro** (niente firma né cifratura) e va richiesto esplicitamente, cartella
+per cartella, solo per NAS molto vecchi. I montaggi sono `hard`: se il NAS si
+spegne o il Wi-Fi cade, la lettura riprende da sola al ritorno invece di dare
+errori di I/O a Squeezelite o alla scansione (il processo in attesa si può
+sempre interrompere e lo smontaggio è immediato); il montaggio iniziale ha
+invece un tempo massimo e, se fallisce, valgono i ritentativi a intervalli
+crescenti. Sull'archivio stanno anche le copertine già ridimensionate da
 Lyrion (cartella `.sweetspot-cache`): non occupano RAM e non si rifanno a ogni
 avvio.
 
@@ -375,12 +402,21 @@ point, Sweetspot accende la rete **`Sweetspot-XXXX`** (XXXX = ultime cifre del
 MAC), WPA2, canale 6 (2,4 GHz), con DHCP e DNS minimi (`udhcpd`, `dnsd` di
 BusyBox):
 
-1. Il nome e la **password** compaiono sullo schermo (console). La password è
-   casuale a ogni accensione e non finisce nel registro; per un player senza
-   schermo scrivine una tua (8-63 caratteri) in `HOTSPOT_PASSWORD`.
+1. Il nome e la **password** compaiono sullo schermo (console), con il **codice
+   QR** `WIFI:T:WPA;S:...;P:...;;` da inquadrare. Senza schermo: la password è
+   casuale la prima volta, poi resta la stessa e viene scritta, insieme al
+   nome, in `sweetspot-hotspot.txt` sulla partizione di avvio (la chiavetta
+   `SWEETSPOT`, FAT, leggibile da un PC) con il QR in `sweetspot-hotspot.svg`
+   (da aprire col browser del PC). Non finisce nel registro. Per sceglierla tu
+   scrivi `HOTSPOT_PASSWORD` (8-63 caratteri) in `sweetspot.txt`.
 2. Collega il telefono a quella rete e apri `http://192.168.4.1/` (anche
-   `http://sweetspot.local/`, se il telefono usa il DNS dell'hotspot): si apre
-   la pagina **Rete**.
+   `http://sweetspot.local/`, via mDNS con Avahi, se il telefono lo supporta): si
+   apre la pagina **Rete**. Il DNS dell'hotspot risolve i controlli di
+   connettività dei telefoni (Apple, Windows, Firefox, Android...) verso
+   Sweetspot; iPhone, Mac e Firefox aprono la pagina da soli (`hotspot-detect.html`,
+   `canonical.html`), su Android compare "Accedi alla rete" (non c'è una
+   risposta 204 statica: la pagina si apre comunque dall'avviso o digitando
+   l'indirizzo).
 3. In *Collega Sweetspot al Wi-Fi di casa* scegli la rete dall'elenco (o scrivi
    il nome) e la password, poi **Collega**. Il nome e la password sono salvati
    con `sweetspot-config` (chiavetta), l'hotspot si spegne e Sweetspot si
@@ -388,6 +424,10 @@ BusyBox):
 4. **Recupero**: se entro `HOTSPOT_PROVA` secondi (40) la rete scelta non dà un
    indirizzo (password sbagliata, router spento) l'hotspot riparte e puoi
    riprovare. La stessa cosa succede a un avvio con `WIFI_NOME` sbagliato.
+
+**Primo avvio senza schermo**: oppure preconfigura il Wi-Fi di casa prima
+dell'accensione scrivendo `WIFI_NOME` e `WIFI_PASSWORD` in `sweetspot.txt`
+sulla partizione di avvio (da un PC): l'hotspot non serve.
 
 L'hotspot non si accende mai con la rete funzionante e si spegne da solo se
 arriva un cavo. Con `HOTSPOT=no` non si accende mai; le radio Wi-Fi restano
@@ -407,8 +447,10 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `PRECARICO_MB` | `auto` (metà della memoria libera, tolti i buffer di Squeezelite ancora da riempire) o MB; mai oltre la memoria libera meno quei buffer e 256 MB | auto |
 | `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
 | `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
+| `LYRION_MEM_MB`, `SCANNER_MEM_MB` | tetto di memoria (cgroup v2: `memory.max`, con `memory.high` all'85%) di Lyrion e del suo scanner: MB o `auto` (70% e 40% della RAM). Il tmpfs scritto da Lyrion (database della libreria) conta nel suo tetto | auto |
+| `ARTWORK_RAM_MB` | cache delle copertine in RAM, in un tmpfs a parte con `size=`, quando non c'è l'archivio musicale: MB o `auto` (4% della RAM, tra 32 e 256 MB). Piena, la pagina Stato avvisa e le nuove copertine non si salvano | auto |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
-| `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
+| `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD`, `_SMB1` | cartelle di rete (fino a 9): `//server/cartella` (SMB) o `nfs://server/cartella` (NFS); `_SMB1=si` ammette SMB1, insicuro | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
 | `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
 | `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
@@ -431,6 +473,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
 | `SSH`, `SSH_PASSWORD`, `SSH_UTENTE` | accesso remoto per l'assistenza. `SSH_UTENTE` è `root` (predefinito) oppure `assistenza`, un utente senza privilegi (con `assistenza` il login di root è disattivato). Dalla pagina Sistema queste tre chiavi aprono il sistema come amministratore e si cambiano solo con la **conferma forte**: serve avere `PASSWORD_WEB`, riscriverla nel campo di conferma e un gettone monouso (valido 10 minuti) emesso da root; la verifica la fa l'helper privilegiato, non la pagina, e un tentativo sbagliato conta come un errore di accesso. Senza `PASSWORD_WEB` da web non si cambiano: si scrivono in `sweetspot.txt` con il computer | no |
 | `HTTPS`, `HTTPS_REINDIRIZZA` | connessione protetta delle pagine (porta 443) con `stunnel` davanti all'httpd di BusyBox; certificato autofirmato creato al primo avvio con `HTTPS=si` e salvato sulla chiavetta (`sweetspot-https.pem`), impronta SHA-256 nella pagina Sistema. Con HTTPS il cookie di accesso è `Secure`. `HTTPS_REINDIRIZZA=si` fa rimandare a https le pagine richieste in chiaro (non `/cgi-bin/vivo` né le richieste dal computer stesso). Lyrion (porta 9000) resta in chiaro | no |
+| `DIARIO`, `DIARIO_ORE`, `DIARIO_KB` | diario di bordo sulla chiavetta (cartella `diagnostica`): `si`/`no`; ogni quante ore (1-24, 2 predefinite) si salvano registro e timeline; dimensione massima in KB di ogni file prima della rotazione (256 predefiniti, tre generazioni). Vedi [Diagnostica](#diagnostica-registro-persistente-timeline-e-crash-dump) | si, 2, 256 |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
 | `ARCHIVIO` | UUID/PARTUUID dell'archivio; nome nelle vecchie configurazioni se univoco | vuoto |
@@ -440,6 +483,46 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 I profili cambiano solo la frequenza della CPU: *silenzio* la fissa alla
 minima, *bilanciato* a metà strada, *prestazioni* alla nominale tenendo i core
 sempre svegli. Il Turbo è sempre spento.
+
+## Diagnostica: registro persistente, timeline e crash dump
+
+Il sistema gira in RAM e il registro di `/var/log` si perde a ogni riavvio.
+Per non restare senza prove dopo un guasto (la reazione udev al DAC era stata
+annullata proprio perché il registro di prima del riavvio non c'era),
+`sweetspot-diario` conserva sulla chiavetta, nella cartella `diagnostica`:
+
+| File | Contenuto |
+|---|---|
+| `sweetspot.log`, `.1`, `.2` | registro di sistema, solo le righe nuove aggiunte in coda |
+| `timeline.log`, `.1`, `.2` | una riga per fatto: `DATA\|SORGENTE\|EVENTO\|DETTAGLI` (avvio, riavvii del player e di Lyrion anche della liveness, XRUN, cambi di frequenza, aggiornamenti, rollback, montaggi della chiavetta, spegnimento) |
+| `kernel.ultimo` | ultime 300 righe del log del kernel all'ultimo salvataggio |
+| `pstore/DATA/` | crash dump del kernel (panic, console) copiati da `/sys/fs/pstore` all'avvio, al massimo 8 raccolte |
+| `pulito` | presente se l'ultimo spegnimento è stato ordinato; l'avvio successivo lo annota ("spegnimento precedente ordinato: no" = corrente tolta o blocco) |
+
+- **Poche scritture**: si aggiunge solo il nuovo, ogni `DIARIO_ORE` ore e subito
+  solo per gli eventi critici (aggiornamenti, rollback, riavvii dei servizi,
+  spegnimento), al massimo una volta al minuto. Durante l'ascolto i salvataggi
+  periodici aspettano (al massimo tre intervalli). Ogni file ruota a `DIARIO_KB`
+  KB e restano tre generazioni, quindi lo spazio è limitato (circa 1,5 MB).
+- **Montaggio**: la chiavetta si monta in scrittura solo per la durata della
+  copia, con il conteggio condiviso degli altri servizi (`stick_mount`); lo
+  spegnimento fa l'ultimo salvataggio (`S04sweetspot-diario stop`).
+- **Crash dump**: il kernel ha pstore con console, `dmesg` al panic e ramoops.
+  Sul Raspberry Pi la regione di memoria è riservata da `dtoverlay=ramoops`
+  in `config.txt`; sul PC si usa efi-pstore (NVRAM UEFI), dove il firmware lo
+  permette. Se né l'una né l'altra c'è, il registro persistente funziona
+  comunque, ma dopo un panic non ci sono crash dump.
+- **Limiti**: XRUN e cambi di frequenza si osservano ogni 5 secondi (un cambio
+  più breve può sfuggire); l'ultima parte prima di un'interruzione di corrente
+  non è sulla chiavetta se non c'è stato un evento critico dopo l'ultimo
+  salvataggio. L'overlay `ramoops` e `CONFIG_EFI_VARS_PSTORE` vanno verificati
+  su hardware.
+- **Pacchetto diagnostico**: pagina **Sistema** → *Scarica il pacchetto
+  diagnostico* (dietro l'accesso, se `PASSWORD_WEB` è impostata): un `tar.gz`
+  con registro e timeline (persistenti e di questo avvio), crash dump, log di
+  Squeezelite e del kernel, configurazione, versioni, `aplay -l`,
+  `/proc/asound` e `stato.json`. Password, chiavi, token, credenziali negli
+  indirizzi e intestazioni di autorizzazione sono oscurati.
 
 ## Verifiche
 
@@ -566,6 +649,7 @@ package/camilladsp, package/alsa-cdsp CamillaDSP e plugin ALSA per la correzione
 scripts/                              compilazione locale e con Docker
 tests/run.sh                          test degli script con /sys e /proc simulati
 tests/cd-simulato.sh                  copia completa di un CD con un lettore finto
+tests/diario.sh                       diario di bordo: timeline, registro persistente, pstore, bundle
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)
 tests/prova-lyrion.sh                 Lyrion avviato nel sistema compilato (CI, anche su ARM)
 tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per ARM
