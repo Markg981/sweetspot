@@ -1202,9 +1202,22 @@ class AlsaTransitionTailTests(unittest.TestCase):
         for frames in (noise, [(0, 0)] * 44100, self.tono(2177, 44100), self.tono(1000, 44100, peak=1 << 19)):
             self.assertEqual(DRIVER.check_tone_after_tail(frames, 44100, 1000, 1 << 21)["status"], "fail")
 
-    def test_prefisso_troppo_lungo_prima_del_tono_fallisce(self):
-        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=30000), 44100, 1000, 1 << 21)
+    def test_rilettura_del_ring_o_rumore_prima_del_tono_falliscono(self):
+        import random
+        generator = random.Random(2)
+        noise = [(generator.randint(-3 * 10 ** 7, 3 * 10 ** 7),) * 2 for _ in range(3528)]
+        # 80 ms di rumore a pieno livello subito dopo la coda, poi il tono (il difetto reale)
+        replay = noise + self.tono(1000, 44100)
+        self.assertEqual(DRIVER.check_tone_after_tail(replay, 44100, 1000, 1 << 21)["status"], "fail")
+        # contenuto identico a un tratto gia' catturato, anche se breve
+        short = noise[:300] + self.tono(1000, 44100)
+        result = DRIVER.check_tone_after_tail(short, 44100, 1000, 1 << 21, before=noise)
+        self.assertTrue(result["replayed_ring"])
         self.assertEqual(result["status"], "fail")
+
+    def test_silenzio_lungo_prima_del_tono_e_ammesso(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=8820), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "pass", result)
 
     def test_coda_assente_non_viene_localizzata(self):
         with tempfile.TemporaryDirectory() as temp:

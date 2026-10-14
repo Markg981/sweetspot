@@ -722,37 +722,65 @@ def write_tone_wav(path, rate, hz, peak, seconds=1):
     return path
 
 
-def check_tone_after_tail(frames, rate, hz, peak, *, window=2205, min_windows=12, max_prefix=None):
-    """Require, after the first track's tail, the second track's tone.
+def check_tone_after_tail(frames, rate, hz, peak, *, before=(), window=882, min_windows=30, probe=32):
+    """Require, after the first track's tail, only silence and then the second track's tone.
 
     The reopen is in plug mode, so the second track reaches the capture
-    resampled and cannot be compared sample by sample. What follows the tail
-    must be (a) any frames before the tone (silence, or the first frames of the
-    new track that Squeezelite writes at the old rate before it notices the
-    change), at most max_prefix, then (b) consecutive windows whose RMS is
-    within 15 percent of the expected tone and whose frequency (zero
-    crossings) is within 5 percent. Noise, silence or the first track fail.
+    resampled and cannot be compared sample by sample. What follows the tail:
+    (a) any number of zero frames (the silence the patch appends), then
+    (b) at most one analysis window plus a quarter of it of non-tone frames
+    (the resampler's start-up transient, a few ms), then
+    (c) at least min_windows consecutive 20 ms windows whose RMS is within 15
+    percent of the expected tone and whose frequency (zero crossings) is within
+    5 percent.
+    Noise, the first track, a replay of the ring (frames already present in
+    `before`, i.e. stale mmap data read again after the valid data) or a wrong
+    tone fail.
     """
-    max_prefix = rate // 2 if max_prefix is None else max_prefix
+    step = window // 4
+    first_nonzero = next((index for index, frame in enumerate(frames) if frame != (0, 0)), None)
+    result = {"status": "fail", "zero_frames_after_tail": first_nonzero, "transition_frames": None,
+              "tone_windows": 0, "window_frames": window, "expected_hz": hz,
+              "max_transition_frames": window + step, "replayed_ring": False}
+    if first_nonzero is None:
+        return result
+    wanted = tuple(frames[first_nonzero:first_nonzero + probe])
+    if len(wanted) == probe and probe_in(before, wanted):
+        result["replayed_ring"] = True
+        return result
     expected_rms = peak * 256 / math.sqrt(2)  # WAV24 -> signed32 normalization
     good = []
-    for start in range(0, len(frames) - window + 1, window):
+    for start in range(first_nonzero, len(frames) - window + 1, step):
         left = [frame[0] for frame in frames[start:start + window]]
         rms = math.sqrt(sum(value * value for value in left) / window)
-        crossings = sum(1 for a, b in zip(left, left[1:]) if (a < 0) != (b < 0) and a != 0 and b != 0)
-        measured = crossings / 2 * rate / window
+        crossings = [index for index, (a, b) in enumerate(zip(left, left[1:]))
+                     if (a < 0) != (b < 0)]
+        # frequenza dal tratto fra il primo e l'ultimo passaggio per zero (non quantizzata dalla finestra)
+        measured = ((len(crossings) - 1) / 2 * rate / (crossings[-1] - crossings[0])
+                    if len(crossings) > 2 and crossings[-1] > crossings[0] else 0)
         good.append(abs(rms - expected_rms) <= .15 * expected_rms and abs(measured - hz) <= .05 * hz)
     first = next((index for index, ok in enumerate(good) if ok), None)
+    if first is None:
+        return result
     run = 0
-    if first is not None:
-        while first + run < len(good) and good[first + run]:
-            run += 1
-    result = {"status": "fail", "prefix_frames": None if first is None else first * window,
-              "tone_windows": run, "window_frames": window, "expected_hz": hz,
-              "max_prefix_frames": max_prefix}
-    if first is not None and first * window <= max_prefix and run >= min_windows:
+    while first + run < len(good) and good[first + run]:
+        run += 1
+    result["transition_frames"] = first * step
+    result["tone_windows"] = (run * step) // window
+    if first * step <= window + step and run * step >= min_windows * window:
         result["status"] = "pass"
     return result
+
+
+def probe_in(frames, wanted):
+    """True if the run of frames `wanted` appears inside `frames`."""
+    first = wanted[0]
+    size = len(wanted)
+    frames = list(frames)
+    for index in range(len(frames) - size + 1):
+        if frames[index] == first and tuple(frames[index:index + size]) == wanted:
+            return True
+    return False
 
 
 def drain_evidence(log):
@@ -858,11 +886,12 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
         (directory / "capture-tail.raw").write_bytes(raw[start * capture.frame_bytes:tail_end])
         comparison = compare_capture([tail], directory / "capture-tail.raw", capture_format=capture.format,
                                      capture_rate=rate, max_lead_frames=0)
-        # Dopo la coda: il secondo brano ricampionato (tono riconosciuto), poi silenzio.
+        # Dopo la coda: solo silenzio, poi il secondo brano ricampionato (tono); mai la rilettura del ring.
         (directory / "capture-after.raw").write_bytes(raw[tail_end:])
         after = list(_frames(_raw_info(directory / "capture-after.raw", capture.format, rate)))
+        before = list(_frames(_raw_info(directory / "capture-tail.raw", capture.format, rate)))
         report["after_tail"] = check_tone_after_tail(after, rate, ALSA_TRANSITION_TONE_HZ,
-                                                     ALSA_TRANSITION_TONE_PEAK)
+                                                     ALSA_TRANSITION_TONE_PEAK, before=before)
         report["after_tail"]["frames"] = len(after)
         if report["after_tail"]["status"] != "pass":
             comparison["sequence_match"] = False
