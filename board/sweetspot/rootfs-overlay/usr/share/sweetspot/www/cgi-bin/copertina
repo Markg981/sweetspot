@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - copertina del CD nel lettore.
 
-. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 f=$RUN/cd/copertina.jpg
 if [ -f "$f" ]; then
