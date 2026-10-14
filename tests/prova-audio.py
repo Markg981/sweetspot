@@ -55,6 +55,10 @@ PCM_PACING_RATE = 44100
 ALSA_TRANSITIONS = ((44100, 96000),)
 ALSA_TRANSITION_FIRST_SECONDS = 4
 ALSA_TRANSITION_TAIL_SECONDS = 1
+# Secondo brano della transizione: un tono noto (non rumore), cosi' dopo il
+# ricampionamento di plughw: se ne riconoscono frequenza ed energia.
+ALSA_TRANSITION_TONE_HZ = 1000
+ALSA_TRANSITION_TONE_PEAK = 1 << 21
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
@@ -704,6 +708,53 @@ def locate_reference_start(reference, capture, capture_format, rate, probe_frame
     return None
 
 
+def write_tone_wav(path, rate, hz, peak, seconds=1):
+    """WAV24 stereo with a sine tone: the second track of the transition."""
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(2)
+        stream.setsampwidth(3)
+        stream.setframerate(rate)
+        data = bytearray()
+        for index in range(rate * seconds):
+            value = int(round(peak * math.sin(2 * math.pi * hz * index / rate))).to_bytes(3, "little", signed=True)
+            data += value + value
+        stream.writeframes(bytes(data))
+    return path
+
+
+def check_tone_after_tail(frames, rate, hz, peak, *, window=2205, min_windows=12, max_prefix=None):
+    """Require, after the first track's tail, the second track's tone.
+
+    The reopen is in plug mode, so the second track reaches the capture
+    resampled and cannot be compared sample by sample. What follows the tail
+    must be (a) any frames before the tone (silence, or the first frames of the
+    new track that Squeezelite writes at the old rate before it notices the
+    change), at most max_prefix, then (b) consecutive windows whose RMS is
+    within 15 percent of the expected tone and whose frequency (zero
+    crossings) is within 5 percent. Noise, silence or the first track fail.
+    """
+    max_prefix = rate // 2 if max_prefix is None else max_prefix
+    expected_rms = peak * 256 / math.sqrt(2)  # WAV24 -> signed32 normalization
+    good = []
+    for start in range(0, len(frames) - window + 1, window):
+        left = [frame[0] for frame in frames[start:start + window]]
+        rms = math.sqrt(sum(value * value for value in left) / window)
+        crossings = sum(1 for a, b in zip(left, left[1:]) if (a < 0) != (b < 0) and a != 0 and b != 0)
+        measured = crossings / 2 * rate / window
+        good.append(abs(rms - expected_rms) <= .15 * expected_rms and abs(measured - hz) <= .05 * hz)
+    first = next((index for index, ok in enumerate(good) if ok), None)
+    run = 0
+    if first is not None:
+        while first + run < len(good) and good[first + run]:
+            run += 1
+    result = {"status": "fail", "prefix_frames": None if first is None else first * window,
+              "tone_windows": run, "window_frames": window, "expected_hz": hz,
+              "max_prefix_frames": max_prefix}
+    if first is not None and first * window <= max_prefix and run >= min_windows:
+        result["status"] = "pass"
+    return result
+
+
 def drain_evidence(log):
     """Count the drain outcomes Squeezelite (patch 0005) logs at each reopen."""
     text = log.read_text(errors="replace") if log.exists() else ""
@@ -721,9 +772,9 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
     Squeezelite reopens the device for the new rate with no pause between
     tracks (rate delay 0), the case where closing without draining discarded
     the ring: the capture of the first rate must hold the last second of the
-    first track, sample by sample, with only zeros after it.
+    first track, sample by sample; what follows must be the second track's tone.
     """
-    from tools.audio_verification import compare_capture, generate_fixtures
+    from tools.audio_verification import _frames, _raw_info, compare_capture, generate_fixtures
     identity = case_id or "pcm-rate-%s-%s-24-24" % (rate, second_rate)
     directory = output / identity
     directory.mkdir(parents=True, exist_ok=True)
@@ -742,7 +793,9 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
         local_log.unlink(missing_ok=True)
         first = generate_fixtures(directory / ("references-%s" % rate), rate, 24,
                                   frames=rate * ALSA_TRANSITION_FIRST_SECONDS)[0]
-        second = generate_fixtures(directory / ("references-%s" % second_rate), second_rate, 24)[1]
+        (directory / ("references-%s" % second_rate)).mkdir(parents=True, exist_ok=True)
+        second = write_tone_wav(directory / ("references-%s" % second_rate) / ("tone-%s.wav" % second_rate),
+                                second_rate, ALSA_TRANSITION_TONE_HZ, ALSA_TRANSITION_TONE_PEAK)
         tail = write_wav_tail(first, directory / ("tail-%s.wav" % rate), rate * ALSA_TRANSITION_TAIL_SECONDS)
         report["limits"] = {"wall_seconds": 60, "rate_delay_ms": 0}
         with target.fixtures([first, second]) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
@@ -799,9 +852,21 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
         if start is None:
             raise AudioError("the last %s s of the first track are not in the capture" % ALSA_TRANSITION_TAIL_SECONDS)
         raw = (directory / "capture.raw").read_bytes()
-        (directory / "capture-tail.raw").write_bytes(raw[start * capture.frame_bytes:])
+        tail_frames = rate * ALSA_TRANSITION_TAIL_SECONDS
+        tail_end = (start + tail_frames) * capture.frame_bytes
+        # Coda: esattamente la lunghezza del riferimento, confronto campione per campione.
+        (directory / "capture-tail.raw").write_bytes(raw[start * capture.frame_bytes:tail_end])
         comparison = compare_capture([tail], directory / "capture-tail.raw", capture_format=capture.format,
                                      capture_rate=rate, max_lead_frames=0)
+        # Dopo la coda: il secondo brano ricampionato (tono riconosciuto), poi silenzio.
+        (directory / "capture-after.raw").write_bytes(raw[tail_end:])
+        after = list(_frames(_raw_info(directory / "capture-after.raw", capture.format, rate)))
+        report["after_tail"] = check_tone_after_tail(after, rate, ALSA_TRANSITION_TONE_HZ,
+                                                     ALSA_TRANSITION_TONE_PEAK)
+        report["after_tail"]["frames"] = len(after)
+        if report["after_tail"]["status"] != "pass":
+            comparison["sequence_match"] = False
+            comparison["status"] = "fail"
         comparison.update(rate_sequence_match=True, expected_rate_sequence=list(report["source_rates"]),
                           observed_rate_sequence=report["rate_evidence"]["observed_rate_sequence"])
         report["comparison"] = comparison

@@ -1183,6 +1183,29 @@ class AlsaTransitionTailTests(unittest.TestCase):
             result = compare_capture([tail], sliced, capture_format="s24_3le", capture_rate=44100, max_lead_frames=0)
             self.assertEqual(result["status"], "fail")
 
+    def tono(self, hz, frames, peak=1 << 21, lead=0):
+        import math
+        samples = [(0, 0)] * lead
+        for index in range(frames):
+            value = int(peak * 256 * math.sin(2 * math.pi * hz * index / 44100))
+            samples.append((value, value))
+        return samples + [(0, 0)] * 5000
+
+    def test_il_tono_atteso_dopo_la_coda_passa(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=3000), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "pass", result)
+
+    def test_dopo_la_coda_rumore_silenzio_o_tono_sbagliato_falliscono(self):
+        import random
+        generator = random.Random(1)
+        noise = [(generator.randint(-3 * 10 ** 7, 3 * 10 ** 7),) * 2 for _ in range(44100)]
+        for frames in (noise, [(0, 0)] * 44100, self.tono(2177, 44100), self.tono(1000, 44100, peak=1 << 19)):
+            self.assertEqual(DRIVER.check_tone_after_tail(frames, 44100, 1000, 1 << 21)["status"], "fail")
+
+    def test_prefisso_troppo_lungo_prima_del_tono_fallisce(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=30000), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "fail")
+
     def test_coda_assente_non_viene_localizzata(self):
         with tempfile.TemporaryDirectory() as temp:
             _first, tail = self.fixture(temp)

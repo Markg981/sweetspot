@@ -64,7 +64,7 @@ Upstream: Not submitted (local option)
 +			snd_pcm_sframes_t avail = snd_pcm_avail_update(pcmp);
 +			snd_pcm_state_t st = snd_pcm_state(pcmp);
 +			if (avail < 0 || avail >= (snd_pcm_sframes_t)alsa.buffer_size || st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP) {
-+				LOG_INFO("drained %u ms before closing", waited_ms);
++				LOG_INFO("drained %u ms before closing (silence written: %lu of %lu frames)", waited_ms, (unsigned long)(alsa.period_size - pad_left), (unsigned long)alsa.period_size);
 +				free(silence);
 +				return;
 +			}
