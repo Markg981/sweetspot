@@ -162,9 +162,33 @@ echo "Memoria"
 expect "classe 16 GB" "completa" "$(run "$N550" machine_class)"
 expect "classe 2 GB" "essenziale" "$(run "$DUAL" machine_class)"
 expect "classe 1 GB" "leggera" "$(run "$ONE" machine_class)"
-expect "buffer 16 GB" "1048576:2000000" "$(run "$N550" player_buffers)"
-expect "buffer 2 GB" "203094:406189" "$(run "$DUAL" player_buffers)"
-expect "buffer 1 GB" "33928:67856" "$(run "$ONE" player_buffers)"
+expect "buffer 16 GB (senza MemAvailable: totale meno 768 MB)" "180000:360000" "$(run "$N550" player_buffers)"
+expect "buffer 2 GB senza MemAvailable: minimi" "32768:65536" "$(run "$DUAL" player_buffers)"
+expect "buffer 1 GB: minimi" "32768:65536" "$(run "$ONE" player_buffers)"
+# Buffer dal carico reale: MemAvailable, autonomia in secondi, riserva per modalita'.
+BUF=$WORK/buffer
+mkdir -p "$BUF/proc" "$BUF/run" "$BUF/sys"
+bufmem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' "$1" "$2" > "$BUF/proc/meminfo"; }
+bufmem 2097152 1572864
+expect "buffer 2 GiB, Lyrion locale: limitati dalla memoria" "87381:174762" "$(run "$BUF" player_buffers)"
+bufmem 4194304 3670016
+expect "buffer 4 GiB: autonomia piena (60 s stream, 120 s output a 3000 KB/s)" "180000:360000" "$(run "$BUF" player_buffers)"
+bufmem 8388608 7864320
+expect "buffer 8 GiB: come 4 GiB, non cresce con la memoria" "180000:360000" "$(run "$BUF" player_buffers)"
+bufmem 8388608 600000
+expect "buffer 8 GiB ma disponibile bassa: minimi" "32768:65536" "$(run "$BUF" player_buffers)"
+bufmem 8388608 9999999
+expect "MemAvailable oltre il totale: si usa il totale" "180000:360000" "$(run "$BUF" player_buffers)"
+bufmem 2097152 1572864
+printf 'MODALITA=player\n' > "$BUF/run/sweetspot.conf"
+expect "buffer 2 GiB, solo player: riserva minore" "174762:349525" "$(run "$BUF" player_buffers)"
+printf 'MODALITA=completa\nCORREZIONE=si\n' > "$BUF/run/sweetspot.conf"
+expect "buffer 2 GiB con Lyrion e DSP: riserva maggiore" "43690:87381" "$(run "$BUF" player_buffers)"
+rm -f "$BUF/run/sweetspot.conf" "$BUF/log"
+run "$BUF" 'PLAYER_BUFFERS_LOG=1 player_buffers' > /dev/null
+expect "buffer registrati nel log con il motivo" "1" "$(grep -c 'player: buffer stream 87381 KB, output 174762 KB.*Lyrion locale.*limitati dalla memoria' "$BUF/log")"
+run "$BUF" player_buffers > /dev/null
+expect "senza PLAYER_BUFFERS_LOG il log non cresce" "1" "$(wc -l < "$BUF/log" | tr -d ' ')"
 
 echo "Protezione dall'OOM killer"
 OOM=$WORK/oom
@@ -1557,26 +1581,26 @@ prefn() {
 U=file://$PRE/musica/Album%20%C3%A8
 expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
 expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
-# I buffer di Squeezelite (8 GB: 1 GB + 2 GB, player_buffers) si riempiono
+# I buffer di Squeezelite (8 GB: 180 MB + 360 MB circa, player_buffers) si riempiono
 # a poco a poco: senza il player in esecuzione contano per intero.
-expect "buffer del player da riempire: contano per intero senza il player" "3048576" "$(prefn player_reserve_kb)"
-expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "572864" "$(prefn preload_budget_kb)"
+expect "buffer del player da riempire: contano per intero senza il player" "540000" "$(prefn player_reserve_kb)"
+expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "1827152" "$(prefn preload_budget_kb)"
 mkdir -p "$PRE/proc/4321"
 printf 'VmRSS:\t 1048576 kB\n' > "$PRE/proc/4321/status"
 echo 4321 > "$PRE/run/squeezelite.pid"
-expect "buffer del player in parte gia' occupati: conta solo il resto" "2000000|1097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
+expect "buffer del player in parte gia' occupati: conta solo il resto" "0|2097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
 rm -f "$PRE/run/squeezelite.pid"
 echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
 expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
 echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
-expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "883584" "$(prefn preload_budget_kb)"
+expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "3392160" "$(prefn preload_budget_kb)"
 printf 'PRECARICO_FILE_MAX_MB=1 2\n' > "$PRE/run/sweetspot.conf"
 expect "limite dei file non numerico: predefinito, senza errori" "1048576" "$(prefn file_max_kb 2>&1)"
 rm -f "$PRE/run/sweetspot.conf"
 sleep 30 &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
-expect "budget stabile: la memoria gia' bloccata conta come libera" "573364" "$(prefn preload_budget_kb)"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "1827652" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
 printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
