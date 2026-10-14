@@ -869,7 +869,7 @@ stato_richiedi() { # [eta]
 	while [ $i -lt 24 ]; do
 		usleep 500000
 		t2=0
-		read -r t2 every < "$RUN/stato.ts" 2>/dev/null
+		read -r t2 _ < "$RUN/stato.ts" 2>/dev/null
 		case "$t2" in ''|*[!0-9]*) t2=0 ;; esac
 		[ "$t2" -gt "$ts" ] && return 0
 		i=$((i + 1))

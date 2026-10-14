@@ -278,6 +278,8 @@ up_now() {
 }
 
 # Dorme in secondi senza fork: legge una FIFO che nessuno scrive.
+# (read -t c'e' nell'ash di BusyBox, non in dash: shellcheck non lo sa.)
+# shellcheck disable=SC3045
 nap() { read -r -t "$1" _ <&7; }
 
 # Impostazioni usate dal demone, lette dal file solo all'avvio e quando
@@ -660,6 +662,7 @@ do_watch() {
 	[ -r "$pre" ] || pre=/usr/bin/sweetspot-precarico
 	if [ -r "$pre" ]; then
 		SWEETSPOT_TEST=1
+		# shellcheck disable=SC1090
 		. "$pre"
 		unset SWEETSPOT_TEST
 		PRE_OK=1
@@ -672,6 +675,7 @@ do_watch() {
 	while :; do
 		next_wait
 		TIMEDOUT=0
+		# shellcheck disable=SC3045
 		if read -r -t "$W" line <&3; then
 			up_now
 			handle "$line"
