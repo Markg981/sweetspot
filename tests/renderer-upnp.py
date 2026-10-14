@@ -82,6 +82,7 @@ class FakeLyrion:
         self.started = 0.0
         self.paused_at = 0.0
         self.lock = threading.Lock()
+        self.down = False
         owner = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -90,6 +91,11 @@ class FakeLyrion:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if owner.down:
+                    self.send_response(500)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 player, cmd = body["params"]
                 with owner.lock:
                     result = owner.handle(player, cmd)
@@ -274,6 +280,7 @@ def run(args):
             wav_dir = tmp
         else:
             fake = FakeLyrion()
+            fake.down = True    # Lyrion non risponde ancora: come il player non ancora collegato
             servers.append(fake.server)
             lms_port = fake.port
             run_dir = tmp / "run"
@@ -373,7 +380,9 @@ def run(args):
         st, out = soap(base, "ConnectionManager", "GetProtocolInfo")
         check("GetProtocolInfo elenca FLAC e WAV", st == 200 and "audio/flac" in out.get("Sink", "") and "audio/wav" in out.get("Sink", ""), out)
         st, out = soap(base, "AVTransport", "GetTransportInfo", [("InstanceID", 0)])
-        check("GetTransportInfo prima di tutto: NO_MEDIA_PRESENT", st == 200 and out.get("CurrentTransportState") == "NO_MEDIA_PRESENT", out)
+        if fake:
+            fake.down = False
+        check("GetTransportInfo prima di tutto (anche con il player non ancora collegato a Lyrion): NO_MEDIA_PRESENT", st == 200 and out.get("CurrentTransportState") == "NO_MEDIA_PRESENT", out)
         st, out = soap(base, "AVTransport", "Frobnicate", [("InstanceID", 0)])
         check("azione sconosciuta: errore UPnP 401", st == 500 and out.get("errorCode") == "401", (st, out))
         st, out = soap(base, "AVTransport", "Play", [("InstanceID", 0), ("Speed", 1)])

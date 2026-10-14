@@ -157,7 +157,7 @@ sub lms {
 my %S = (
 	uri => '', meta => '', next_uri => '', next_meta => '',
 	owned => 0, loaded => 0, started => 0, index0 => -1, tracks_added => 0,
-	state => 'STOPPED', status => 'OK',
+	state => 'NO_MEDIA_PRESENT', status => 'OK',
 	time => 0, duration => 0, volume => 0, mute => 0, cur_uri => '', cur_meta => '',
 	lyrion => 0, player => '', commands => 0, last_action => '', last_poll => 0,
 );
@@ -195,7 +195,10 @@ sub poll_player {
 	}
 	my $st = lms($mac, 'status', '-', 1, 'tags:du');
 	if (!$st) {
+		# Lyrion o il player non rispondono (ancora): senza una riproduzione
+		# nostra lo stato dipende solo dall'indirizzo impostato dalla app.
 		$S{lyrion} = 0;
+		$S{state} = $S{uri} eq '' ? 'NO_MEDIA_PRESENT' : 'STOPPED' unless $S{owned};
 		return;
 	}
 	$S{lyrion} = 1;
