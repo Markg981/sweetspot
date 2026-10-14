@@ -288,5 +288,46 @@ dischi
 expect 'UUID clonati: selezione distinta tramite PARTUUID' 'PARTUUID=111|PARTUUID=222' "$(cut -d'|' -f7 "$K/run/dischi.list" | tr '\n' '|' | sed 's/|$//')"
 expect 'PARTUUID scelto: un solo disco scrivibile' 'ro rw' "$(cut -d'|' -f6 "$K/run/dischi.list" | tr '\n' ' ' | sed 's/ $//')"
 
+# Montaggio della chiavetta: il conteggio si rilascia su ogni uscita di
+# install_job, anche annullando l'aggiornamento (SIGTERM).
+R=$WORK/rilascio
+mkdir -p "$R"
+rilascio() { # modalita: normale|annulla
+	: > "$R/rilasci"
+	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$R/run SWEETSPOT_LOG=$R/log SWEETSPOT_PROCFS=$U/proc \
+		$TEST_SH -c '. "$1"; mode=$2; r=$3
+			stick_mount() { return 0; }
+			stick_umount() { echo x >> "$r/rilasci"; }
+			prepare_slot() { echo "$r/slot"; }
+			extract_package() { [ "$mode" = annulla ] && { : > "$r/avviato"; sleep 30 & wait $!; }; return 1; }
+			install_job file "$r/x.tar"' sh "$OVERLAY/usr/bin/sweetspot-aggiorna" "$1" "$R" >/dev/null 2>&1 &
+	pid=$!
+	if [ "$1" = annulla ]; then
+		i=0; while [ ! -e "$R/avviato" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+		kill -TERM "$pid" 2>/dev/null
+	fi
+	wait "$pid" 2>/dev/null
+	rm -f "$R/avviato"
+	wc -l < "$R/rilasci" | tr -d ' '
+}
+expect 'chiavetta: uscita normale, un solo rilascio' 1 "$(rilascio normale)"
+expect 'chiavetta: aggiornamento annullato, un solo rilascio' 1 "$(rilascio annulla)"
+
+# Conferma fallita: riavvio automatico (si torna alla copia precedente).
+C=$WORK/conferma
+mkdir -p "$C/run" "$C/proc" "$C/stick/boot/grub"
+echo 'sweetspot.slot=b' > "$C/proc/cmdline"
+confermaprova() { # tentato
+	rm -f "$C/riavvio"
+	printf '#!/bin/sh\necho si > %s/riavvio\n' "$C" > "$C/reboot"; chmod +x "$C/reboot"
+	$TEST_SH -c '. "$1"; grubenv_set "$3/boot/grub/grubenv" slot=a "tentato=$2"' sh "$OVERLAY/usr/lib/sweetspot/common.sh" "$1" "$C/stick" >/dev/null 2>&1
+	SWEETSPOT_TEST=cli SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$C/run SWEETSPOT_LOG=$C/log SWEETSPOT_PROCFS=$C/proc \
+		SWEETSPOT_STICK_DIR=$C/stick SWEETSPOT_AVVIO=$C/avvio SWEETSPOT_CONFERMA_ATTESA=0 SWEETSPOT_CONFERMA_ATTESA_LMS=0 \
+		SWEETSPOT_REBOOT=$C/reboot $TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" conferma >/dev/null 2>&1
+	[ -f "$C/riavvio" ] && echo si || echo no
+}
+expect 'conferma fallita: riavvio automatico' si "$(confermaprova b)"
+expect 'conferma riuscita o nessuna prova: nessun riavvio' no "$(confermaprova "")"
+
 printf '\nOperazioni: %s passati, %s falliti\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

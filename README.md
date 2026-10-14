@@ -415,6 +415,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
+| `LIVENESS` | `si`: liveness applicativa nel demone dello stato (nessun processo in più). Lyrion deve rispondere a una richiesta JSON-RPC `serverstatus` entro `LIVENESS_LYRION_TIMEOUT` s; dopo `LIVENESS_LYRION_FALLIMENTI` fallimenti consecutivi viene riavviato. Se Lyrion dice "play" ma nessun PCM ALSA è RUNNING da `LIVENESS_PLAYER_SECONDI` s, il player risulta "bloccato" e Squeezelite viene riavviato. I riavvii hanno un backoff (da `LIVENESS_BACKOFF_MIN` a `LIVENESS_BACKOFF_MAX` s) e compaiono nel log, nella pagina Stato e in `stato.json` (`liveness`) | si, 8, 3, 20, 60, 900 |
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio | 500, 0 |
 | `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
@@ -465,7 +466,8 @@ sempre svegli. Il Turbo è sempre spento.
 ### Prova di riconoscimento con il file DoP
 
 Con un DAC USB che non dichiara il DSD nativo, `DSD=auto` fa convertire i file
-DSD in PCM dal server (Lyrion), senza provare il DoP. Molti DAC accettano
+DSD in PCM con Squeezelite (alla frequenza più alta che il DAC accetta, ad
+esempio 176,4 kHz per DSD64 su un DAC da 192 kHz), senza provare il DoP. Molti DAC accettano
 comunque il DoP: la pagina **Audio** propone la **Prova DoP**. Genera sul
 player lo stesso file descritto sotto (`sweetspot-prova-dop`), lo fa suonare
 per 6 secondi (con `playlist preview` di Lyrion: la coda di ascolto viene

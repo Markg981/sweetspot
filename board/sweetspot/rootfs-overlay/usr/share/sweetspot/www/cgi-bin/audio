@@ -12,7 +12,7 @@ dsd_without_native_row() {
 	case "$(lower "$(conf DSD auto)")" in
 		dop) info_row OK "DSD" "Tramite DoP, come scelto: i file DSD arrivano al DAC dentro il PCM." ;;
 		no) info_row INFO "DSD" "Convertito in PCM, come scelto." ;;
-		*) info_row INFO "DSD" "Automatico: il DAC non dichiara il DSD nativo, quindi Lyrion converte i file DSD in PCM sul server, senza provare il DoP. Se il DAC supporta il DoP, verificalo con la prova qui sotto." ;;
+		*) info_row INFO "DSD" "Automatico: il DAC non dichiara il DSD nativo, quindi Squeezelite converte i file DSD in PCM alla frequenza più alta che il DAC accetta, senza provare il DoP. Se il DAC supporta il DoP, verificalo con la prova qui sotto." ;;
 	esac
 }
 
@@ -239,7 +239,7 @@ $(volume_note "$vol")
 
 <label for="dsd">DSD</label>
 <select id="dsd" name="dsd">
-$(option auto "Automatico: nativo se il DAC lo dichiara, altrimenti convertito in PCM dal server (consigliato)" "$(conf DSD auto)")
+$(option auto "Automatico: nativo se il DAC lo dichiara, altrimenti convertito in PCM da Squeezelite (consigliato)" "$(conf DSD auto)")
 $(option nativo "Nativo forzato: per DAC che lo supportano senza dichiararlo" "$(conf DSD auto)")
 $(option dop "DoP: solo se il DAC lo supporta, altrimenti forte fruscio" "$(conf DSD auto)")
 $(option no "Convertito in PCM" "$(conf DSD auto)")
