@@ -636,7 +636,7 @@ run "$WEB" "config_build $WEB/s.txt"
 echo "Prova DoP guidata"
 mkdac "$WEB" no
 out=$(page audio)
-case "$out" in *"Automatico: il DAC non dichiara il DSD nativo, quindi Lyrion converte i file DSD in PCM sul server, senza provare il DoP"*) ok "audio: DSD automatico senza nativo spiegato" ;; *) ko "audio DSD automatico" "conversione sul server, senza DoP" "-" ;; esac
+case "$out" in *"Automatico: il DAC non dichiara il DSD nativo, quindi Squeezelite converte i file DSD in PCM alla frequenza più alta che il DAC accetta, senza provare il DoP"*) ok "audio: DSD automatico senza nativo spiegato" ;; *) ko "audio DSD automatico" "conversione di Squeezelite, senza DoP" "-" ;; esac
 case "$out" in *"<h2>Prova DoP</h2>"*"Avvia la prova (6 secondi)"*) ok "audio: prova DoP proposta" ;; *) ko "audio prova DoP" "pulsante della prova" "-" ;; esac
 case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la prova" "nessun esito" "esito presente" ;; *) ok "audio: esito chiesto solo dopo la prova" ;; esac
 case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
@@ -2584,6 +2584,7 @@ python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
+python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
