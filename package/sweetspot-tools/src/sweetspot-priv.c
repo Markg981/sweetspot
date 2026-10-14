@@ -91,6 +91,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-dischi", "monta", "", ""},
 	{"sweetspot-dischi", "smonta", "s", ""},
 	{"sweetspot-dsp", "fir", "", ""},
+	{"sweetspot-dsp", "fir-frequenze", "", ""},
 	{"sweetspot-dsp", "guadagno", "", ""},
 	{"sweetspot-dsp", "leggi", "p", ""},
 	{"sweetspot-dsp", "risposta", "", ""},

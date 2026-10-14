@@ -26,6 +26,9 @@ STICK_LABEL=SWEETSPOT
 # Server websocket di CamillaDSP, solo locale: ne leggiamo i contatori.
 # shellcheck disable=SC2034
 DSP_PORTA=${SWEETSPOT_DSP_PORTA:-1234}
+# Pipe da cui CamillaDSP legge i campioni (stdin): vi scrive il plugin cdsp.
+# shellcheck disable=SC2034
+DSP_FIFO=${SWEETSPOT_DSP_FIFO:-$RUN/camilladsp.fifo}
 # SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
 STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 

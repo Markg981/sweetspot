@@ -102,6 +102,10 @@ I 18 casi a frequenza costante si ripetono ora sul driver ALSA del kernel x86
 di Sweetspot (PREEMPT_RT, avviato in QEMU nella CI), su `hw:Loopback` di
 snd-aloop, con i parametri `hw:`, mmap e periodi del player. Un XRUN o un
 campione diverso blocca la release. Su ARM resta la sola prova stdout.
+Un caso a parte (`tests/camilladsp-sessione.py`) prova CamillaDSP di sessione:
+una sola istanza con il plugin cdsp, un cambio di frequenza 44,1 → 96 kHz dal
+websocket, stesso PID prima e dopo e tono a 1 kHz corretto a entrambe le
+frequenze; salta se l'immagine non include CamillaDSP.
 Il traguardo resta parziale: DSD nativo, DAC reali, cambi PCM/DSD, cambi
 frequenza su ALSA e sui DAC, hotplug, rete e carico prolungato richiedono
 ancora prove.

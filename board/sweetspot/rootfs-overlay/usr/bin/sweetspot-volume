@@ -22,6 +22,13 @@
 
 LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
 
+# Modalita' player: il volume si legge dal Lyrion indicato in SERVER (la
+# porta eventuale e' quella di Squeezelite: qui serve solo l'indirizzo).
+if [ "$(mode)" != completa ] && [ -n "$(conf SERVER)" ]; then
+	LMS_HOST=$(conf SERVER)
+	LMS_HOST=${LMS_HOST%%:*}
+fi
+
 db() { # volume 0-100
 	awk -v v="$1" 'BEGIN {
 		if (v >= 100) { printf "0.0"; exit }

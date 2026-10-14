@@ -116,6 +116,13 @@ echo "== Verifica PCM/DoP sul percorso ALSA del sistema avviato"
 rc=0
 python3 "$TEST_DIR/prova-audio.py" --ssh-port "$SSH_PORT" --backend alsa_loopback \
 	--server http://127.0.0.1:9000 --output "$OUT" --version "$VERSIONE" || rc=1
+
+# CamillaDSP di sessione: una sola istanza (stesso PID) che segue il cambio di
+# frequenza 44,1 -> 96 kHz dal websocket, col plugin cdsp in modalita'
+# sessione; verifica anche l'audio registrato da Loopback. Si salta da solo
+# se l'immagine non include CamillaDSP.
+echo "== CamillaDSP di sessione, cambio di frequenza 44,1 -> 96 kHz"
+python3 "$TEST_DIR/camilladsp-sessione.py" --ssh-port "$SSH_PORT" --output "$OUT/camilladsp-sessione" || rc=1
 guest 'dmesg' > "$OUT/dmesg.txt" 2>&1 || true
 guest 'cat /var/log/messages' > "$OUT/messages.txt" 2>&1 || true
 [ "$rc" -eq 0 ] || { echo "== Verifica ALSA non riuscita"; exit 1; }

@@ -1,0 +1,417 @@
+From: Sweetspot <noreply@sweetspot>
+Subject: [PATCH] Session mode: one long-lived CamillaDSP, rate changes over the websocket
+
+The plugin forks CamillaDSP at every hw_params (every change of sample
+rate or format), from the real-time thread of the player, and waits for it
+to exit at hw_free. Sweetspot wants one instance per session, started by
+the supervisor:
+
+- fifo: named pipe CamillaDSP reads as its stdin (opened read/write by the
+  supervisor, so it never sees EOF). The plugin opens it for writing; if
+  nobody reads it, hw_params fails with ENODEV instead of forking.
+- ws_port, config_rate_prefix: at hw_params the plugin asks the websocket
+  server of CamillaDSP (127.0.0.1) for GetConfigFilePath and, if it is not
+  <prefix><rate>.yml, sends SetConfigFilePath and Reload. CamillaDSP keeps
+  its PID and reopens only its devices. It reads stdin and looks at commands
+  only between two chunks, so one chunk of silence follows the reload.
+- tail_frames, chunk_frames: at hw_free the plugin writes the tail of the
+  filters as silence, up to a chunk boundary (a partial chunk would wait for
+  data), closes the pipe and does not wait for the process.
+- In this mode the plugin offers only S32_LE stereo.
+
+Without "fifo" the behaviour is the original one.
+
+Signed-off-by: Sweetspot <noreply@sweetspot>
+---
+--- a/libasound_module_pcm_cdsp.c
++++ b/libasound_module_pcm_cdsp.c
+@@ -20,6 +20,10 @@
+ #include <sys/eventfd.h>
+ #include <sys/ioctl.h>
+ #include <sys/wait.h>
++#include <sys/socket.h>
++#include <sys/time.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
+ #include <time.h>
+ #include <unistd.h>
+ #include <assert.h>
+@@ -211,6 +215,18 @@
+   // A command to run just before the CamillaDSP process is ended
+   // A good time to update the gain and mute values for example
+   char *camilla_exit_cmd;
++
++  // Sweetspot: persistent session. With "fifo" set the plugin does not fork
++  // CamillaDSP: one long-lived instance reads stdin from this named pipe and
++  // the plugin only writes the samples. The sample rate is changed with the
++  // websocket server (SetConfigFilePath + Reload of <prefix><rate>.yml), so
++  // the process keeps its PID and nothing is forked from the real-time
++  // thread of the player.
++  char *fifo_path;
++  char *cfg_prefix;
++  long ws_port;
++  long tail_frames;
++  long chunk_frames;
+ } cdsp_t;
+ 
+ #if SND_LIB_VERSION < 0x010106
+@@ -234,6 +250,251 @@
+ }
+ #endif
+ 
++// Sweetspot: frames written to the FIFO since CamillaDSP listens on it. The
++// stream is closed on a chunk boundary, so that CamillaDSP does not keep a
++// partial chunk (the end of the track) waiting for data.
++static unsigned long long session_frames;
++#define SESSION_FRAME_BYTES 8 // two S32_LE channels
++
++static int ws_write(int fd, const void *buf, size_t len) {
++  const unsigned char *p = buf;
++  while(len > 0) {
++    ssize_t n = write(fd, p, len);
++    if(n <= 0) return -1;
++    p += n;
++    len -= (size_t)n;
++  }
++  return 0;
++}
++
++static int ws_read(int fd, void *buf, size_t len) {
++  unsigned char *p = buf;
++  while(len > 0) {
++    ssize_t n = read(fd, p, len);
++    if(n <= 0) return -1;
++    p += n;
++    len -= (size_t)n;
++  }
++  return 0;
++}
++
++// One command to the CamillaDSP websocket server (127.0.0.1 only). The text
++// reply is stored in reply. Returns 0 if the reply says "Ok".
++static int ws_command(int port, const char *cmd, char *reply, size_t cap) {
++  static const unsigned char mask[4] = { 0x5e, 0x37, 0xa1, 0x0c };
++  static const unsigned char close_frame[6] = { 0x88, 0x80, 0x5e, 0x37, 0xa1, 0x0c };
++  struct sockaddr_in addr;
++  struct timeval tv = { 2, 0 };
++  unsigned char frame[14 + 512], h[8], junk[64];
++  char req[256], head[1024];
++  size_t len = strlen(cmd), hl = 0, used = 0, i;
++  unsigned long long rlen;
++  int fd, rc = -1;
++
++  if(len > 500 || cap < 2) return -1;
++  reply[0] = '\0';
++  fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
++  if(fd < 0) return -1;
++  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
++  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
++  memset(&addr, 0, sizeof(addr));
++  addr.sin_family = AF_INET;
++  addr.sin_port = htons((unsigned short)port);
++  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++  if(connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) goto out;
++  snprintf(req, sizeof(req),
++      "GET / HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\n"
++      "Connection: Upgrade\r\nSec-WebSocket-Key: c3dlZXRzcG90LWNkc3A=\r\n"
++      "Sec-WebSocket-Version: 13\r\n\r\n", port);
++  if(ws_write(fd, req, strlen(req)) != 0) goto out;
++  while(used < sizeof(head) - 1) {
++    if(read(fd, head + used, 1) != 1) goto out;
++    used++;
++    head[used] = '\0';
++    if(used >= 4 && strcmp(head + used - 4, "\r\n\r\n") == 0) break;
++  }
++  if(strncmp(head, "HTTP/1.1 101", 12) != 0) goto out;
++  frame[hl++] = 0x81;
++  if(len < 126) {
++    frame[hl++] = 0x80 | (unsigned char)len;
++  } else {
++    frame[hl++] = 0x80 | 126;
++    frame[hl++] = (unsigned char)(len >> 8);
++    frame[hl++] = (unsigned char)len;
++  }
++  memcpy(frame + hl, mask, 4);
++  hl += 4;
++  for(i = 0; i < len; i++) frame[hl + i] = (unsigned char)cmd[i] ^ mask[i % 4];
++  if(ws_write(fd, frame, hl + len) != 0) goto out;
++  for(;;) {
++    int opcode;
++    if(ws_read(fd, h, 2) != 0) goto out;
++    opcode = h[0] & 0x0f;
++    rlen = h[1] & 0x7f;
++    if(h[1] & 0x80) goto out;
++    if(rlen == 126) {
++      if(ws_read(fd, h, 2) != 0) goto out;
++      rlen = ((unsigned long long)h[0] << 8) | h[1];
++    } else if(rlen == 127) {
++      goto out;
++    }
++    if(rlen >= cap) goto out;
++    if(ws_read(fd, reply, (size_t)rlen) != 0) goto out;
++    reply[rlen] = '\0';
++    if(opcode == 0x1) break;
++    if(opcode == 0x8) goto out;
++  }
++  rc = strstr(reply, "\"result\":\"Ok\"") ? 0 : -1;
++  // Regular close, otherwise CamillaDSP logs a warning for every command.
++  if(ws_write(fd, close_frame, sizeof(close_frame)) == 0)
++    while(read(fd, junk, sizeof(junk)) > 0)
++      ;
++out:
++  close(fd);
++  return rc;
++}
++
++// Silence in the FIFO, without ever blocking for ever if CamillaDSP stops
++// reading: the limit is the duration of the silence plus two seconds.
++static int session_silence(int fd, unsigned long long frames, unsigned int rate) {
++  static const char zero[4096 * SESSION_FRAME_BYTES];
++  struct pollfd p = { fd, POLLOUT, 0 };
++  struct timespec t0, t;
++  long limit_ms = 2000 + (long)(frames * 1000ULL / (rate ? rate : 44100));
++  int flags = fcntl(fd, F_GETFL), rc = 0;
++
++  if(flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
++  clock_gettime(CLOCK_MONOTONIC, &t0);
++  while(frames > 0 && rc == 0) {
++    size_t n = frames > 4096 ? 4096 : (size_t)frames;
++    size_t bytes = n * SESSION_FRAME_BYTES, off = 0;
++    while(off < bytes) {
++      ssize_t w = write(fd, zero + off, bytes - off);
++      if(w > 0) {
++        off += (size_t)w;
++        continue;
++      }
++      if(w < 0 && errno == EINTR) continue;
++      if(w < 0 && errno != EAGAIN) { rc = -1; break; }
++      clock_gettime(CLOCK_MONOTONIC, &t);
++      if((t.tv_sec - t0.tv_sec) * 1000L + (t.tv_nsec - t0.tv_nsec) / 1000000L > limit_ms) {
++        rc = -1;
++        break;
++      }
++      poll(&p, 1, 100);
++    }
++    if(rc == 0) {
++      frames -= n;
++      session_frames += n;
++    }
++  }
++  fcntl(fd, F_SETFL, flags);
++  return rc;
++}
++
++static unsigned long long session_chunk(const cdsp_t *pcm) {
++  return pcm->chunk_frames > 0 ? (unsigned long long)pcm->chunk_frames : 4096ULL;
++}
++
++// Frames of silence up to the next chunk boundary of CamillaDSP.
++static unsigned long long session_align(const cdsp_t *pcm) {
++  unsigned long long chunk = session_chunk(pcm);
++  return (chunk - session_frames % chunk) % chunk;
++}
++
++// Opens the FIFO of the running CamillaDSP and, if its configuration is not
++// the one of this sample rate, loads it with the websocket server. The same
++// process keeps running: only its devices are reopened by CamillaDSP.
++static int start_session(cdsp_t *pcm) {
++  char path[300], cmd[400], reply[2048];
++  char want[300];
++  int fd, flags;
++
++  if(pcm->io.format != SND_PCM_FORMAT_S32_LE || pcm->io.channels != 2) {
++    SNDERR("Session mode needs S32_LE stereo, got %s %u channels",
++        snd_pcm_format_name(pcm->io.format), pcm->io.channels);
++    return -EINVAL;
++  }
++  // O_NONBLOCK: fails with ENXIO if nobody reads the FIFO (CamillaDSP is not
++  // running). The supervisor restarts it; the player sees the error.
++  fd = open(pcm->fifo_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
++  if(fd < 0) {
++    SNDERR("Cannot open the FIFO %s of CamillaDSP: %s", pcm->fifo_path, strerror(errno));
++    return -ENODEV;
++  }
++  snprintf(want, sizeof(want), "%s%u.yml", pcm->cfg_prefix, pcm->io.rate);
++  path[0] = '\0';
++  if(ws_command((int)pcm->ws_port, "\"GetConfigFilePath\"", reply, sizeof(reply)) == 0) {
++    char *v = strstr(reply, "\"value\":\"");
++    if(v) {
++      size_t n;
++      v += 9;
++      n = strcspn(v, "\"");
++      if(n < sizeof(path)) {
++        memcpy(path, v, n);
++        path[n] = '\0';
++      }
++    }
++  }
++  if(strcmp(path, want) != 0) {
++    info("CamillaDSP: configuration %s\n", want);
++    snprintf(cmd, sizeof(cmd), "{\"SetConfigFilePath\":\"%s\"}", want);
++    if(ws_command((int)pcm->ws_port, cmd, reply, sizeof(reply)) != 0) {
++      SNDERR("CamillaDSP refused the configuration %s: %s", want, reply);
++      close(fd);
++      return -ENODEV;
++    }
++    if(ws_command((int)pcm->ws_port, "\"Reload\"", reply, sizeof(reply)) != 0) {
++      SNDERR("CamillaDSP did not reload the configuration %s: %s", want, reply);
++      close(fd);
++      return -ENODEV;
++    }
++    // The capture thread of CamillaDSP reads stdin and looks at the commands
++    // only between two chunks: one chunk of silence, written after the
++    // command arrived, makes it reopen the devices at the new rate before the
++    // first sample of the track.
++    usleep(30000);
++    if(session_silence(fd, session_align(pcm) + session_chunk(pcm), pcm->io.rate) != 0)
++      warn("Could not flush the capture of CamillaDSP\n");
++  }
++  flags = fcntl(fd, F_GETFL);
++  if(flags >= 0) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
++  pcm->cdsp_pcm_fd = fd;
++  return 0;
++}
++
++// Tail of the filters of this sample rate: the extra_samples of its
++// configuration (the value CamillaDSP would read after the end of the
++// stream), or tail_frames if the file has none.
++static unsigned long long session_tail(const cdsp_t *pcm) {
++  char path[300], line[256];
++  long tail = pcm->tail_frames > 0 ? pcm->tail_frames : 0, v;
++  FILE *f;
++
++  snprintf(path, sizeof(path), "%s%u.yml", pcm->cfg_prefix, pcm->io.rate);
++  f = fopen(path, "r");
++  if(f) {
++    while(fgets(line, sizeof(line), f)) {
++      if(sscanf(line, " extra_samples: %ld", &v) == 1 && v >= 0) {
++        tail = v;
++        break;
++      }
++    }
++    fclose(f);
++  }
++  return (unsigned long long)tail;
++}
++
++// End of the stream in session mode: silence for the tail of the filters,
++// up to a chunk boundary, then the FIFO is closed. The process stays.
++static void end_session(cdsp_t *pcm) {
++  unsigned long long pad;
++  if(pcm->cdsp_pcm_fd == -1) return;
++  pad = session_tail(pcm) + session_align(pcm);
++  if(session_silence(pcm->cdsp_pcm_fd, pad, pcm->io.rate) != 0)
++    warn("Could not write the tail of the track\n");
++}
++
+ // Helper function for closing PCM transport.
+ static int close_transport(cdsp_t *pcm) {
+   int rv = 0;
+@@ -423,6 +684,7 @@
+       head += ret;
+       len -= ret;
+     } while (len != 0);
++    session_frames += frames;
+     io_thread_update_delay(pcm, io_hw_ptr);
+     // Things tend to run a little smoother if writes take at least
+     // some time.  So slow down when the pipe was empty enough that the
+@@ -463,6 +725,8 @@
+ }
+ 
+ static int start_camilla(cdsp_t *pcm) {
++  if(pcm->fifo_path)
++    return start_session(pcm);
+   char sformat[20];
+   switch (pcm->io.format) {
+     case SND_PCM_FORMAT_S16_LE:
+@@ -767,6 +1031,10 @@
+     free((void *)(*pcm)->start_cmd);
+   if((*pcm)->camilla_exit_cmd)
+     free((void *)(*pcm)->camilla_exit_cmd);
++  if((*pcm)->fifo_path)
++    free((void *)(*pcm)->fifo_path);
++  if((*pcm)->cfg_prefix)
++    free((void *)(*pcm)->cfg_prefix);
+   pthread_mutex_destroy(&(*pcm)->mutex);
+   pthread_cond_destroy(&(*pcm)->pause_cond);
+   free((void *)*pcm);
+@@ -795,8 +1063,8 @@
+   // it is possible to modify the size of this buffer we will set is to some
+   // low value, but big enough to prevent audio tearing. Note, that the size
+   // will be rounded up to the page size (typically 4096 bytes).
+-  pcm->delay_fifo_size = 
+-    fcntl(pcm->cdsp_pcm_fd, F_SETPIPE_SZ, 2048) / pcm->frame_size;
++  int pipe_size = fcntl(pcm->cdsp_pcm_fd, F_SETPIPE_SZ, 2048);
++  pcm->delay_fifo_size = pipe_size > 0 ? pipe_size / (int)pcm->frame_size : 0;
+ 
+   info("FIFO buffer size: %ld frames\n", pcm->delay_fifo_size);
+ 
+@@ -823,6 +1091,13 @@
+       SNDERR("Error executing camilla_exit_cmd %s\n", pcm->camilla_exit_cmd);
+     }
+   } 
++  if(pcm->fifo_path) {
++    // Session mode: CamillaDSP is not ours, it is not stopped or waited for.
++    end_session(pcm);
++    if (close_transport(pcm) == -1)
++      return -errno;
++    return err > 0 ? -err : err;
++  }
+   debug("Stopping Camilla\n");
+   if (close_transport(pcm) == -1)
+     return -errno;
+@@ -1322,6 +1597,28 @@
+       if((err = alloc_copy_string(&pcm->start_cmd, temp)) < 0) goto _err;
+       continue;
+     }
++    if(strcmp(id, "fifo") == 0) {
++      if((err = snd_config_get_string(n, &temp)) < 0) goto _err;
++      if((err = alloc_copy_string(&pcm->fifo_path, temp)) < 0) goto _err;
++      continue;
++    }
++    if(strcmp(id, "config_rate_prefix") == 0) {
++      if((err = snd_config_get_string(n, &temp)) < 0) goto _err;
++      if((err = alloc_copy_string(&pcm->cfg_prefix, temp)) < 0) goto _err;
++      continue;
++    }
++    if(strcmp(id, "ws_port") == 0) {
++      if((err = snd_config_get_integer(n, &pcm->ws_port)) < 0) goto _err;
++      continue;
++    }
++    if(strcmp(id, "tail_frames") == 0) {
++      if((err = snd_config_get_integer(n, &pcm->tail_frames)) < 0) goto _err;
++      continue;
++    }
++    if(strcmp(id, "chunk_frames") == 0) {
++      if((err = snd_config_get_integer(n, &pcm->chunk_frames)) < 0) goto _err;
++      continue;
++    }
+     if(strcmp(id, "camilla_exit_cmd") == 0) {
+       if((err = snd_config_get_string(n, &temp)) < 0) goto _err;
+       if((err = alloc_copy_string(&pcm->camilla_exit_cmd, temp)) < 0) goto _err;
+@@ -1356,6 +1653,12 @@
+     }
+   }
+ 
++  if(pcm->fifo_path && (!pcm->cfg_prefix || pcm->ws_port <= 0 || pcm->ws_port > 65535)) {
++    SNDERR("fifo needs config_rate_prefix and ws_port.");
++    err = -EINVAL;
++    goto _err;
++  }
++
+   if(!pcm->cargs[1]) {
+     SNDERR("Must supply config_out file parameter.");
+     err = -EINVAL;
+@@ -1475,7 +1778,11 @@
+     SND_PCM_FORMAT_FLOAT_LE,
+     SND_PCM_FORMAT_FLOAT64_LE
+   };
+-  if((err = snd_pcm_ioplug_set_param_list(&pcm->io, 
++  if(pcm->fifo_path) {
++    // Session mode: CamillaDSP always captures S32_LE.
++    if((err = snd_pcm_ioplug_set_param_list(&pcm->io,
++        SND_PCM_IOPLUG_HW_FORMAT, 1, &format_list[3])) < 0) goto _err;
++  } else if((err = snd_pcm_ioplug_set_param_list(&pcm->io, 
+       SND_PCM_IOPLUG_HW_FORMAT, 6, format_list)) < 0) goto _err;
+ 
+   if((err = snd_pcm_ioplug_set_param_minmax(&pcm->io, 
