@@ -2477,6 +2477,17 @@ EOF
 for c in hostapd udhcpd dnsd killall flock; do
 	printf '#!/bin/sh\necho "%s $*" >> "$HS_DIR/calls"\nexit 0\n' "$c" > "$HS/bin/$c"
 done
+# qrencode finto: registra il testo del codice e scrive un SVG (o il blocco UTF8).
+cat > "$HS/bin/qrencode" <<'EOF'
+#!/bin/sh
+out=""
+while [ $# -gt 1 ]; do
+	case "$1" in -o) out=$2; shift ;; esac
+	shift
+done
+printf '%s\n' "$1" >> "$HS_DIR/qrtesti"
+if [ -n "$out" ]; then echo '<svg xmlns="http://www.w3.org/2000/svg"/>' > "$out"; else echo "[QR]"; fi
+EOF
 cat > "$HS/bin/sleep" <<'EOF'
 #!/bin/sh
 n=$(cat "$HS_DIR/n" 2>/dev/null || echo 0)
@@ -2493,8 +2504,8 @@ chmod +x "$HS/bin/"* "$HS/net-init"
 
 # hs_env APMODE: computer finto con cavo scollegato e Wi-Fi spento (rfkill).
 hs_env() {
-	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console"
-	mkdir -p "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
+	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console" "$HS/stick" "$HS/qrtesti"
+	mkdir -p "$HS/stick" "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
 		"$HS/sys/class/net/wlan0/wireless" "$HS/sys/class/rfkill/rfkill0" "$HS/sys/class/phy"
 	echo 1 > "$HS/sys/class/net/eth0/type"; echo 0 > "$HS/sys/class/net/eth0/carrier"
 	echo 1 > "$HS/sys/class/net/wlan0/type"
@@ -2513,6 +2524,7 @@ hs_run() {
 		SWEETSPOT_IW=$HS/bin/iw SWEETSPOT_IP=$HS/bin/ip SWEETSPOT_HOSTAPD=$HS/bin/hostapd \
 		SWEETSPOT_UDHCPD=$HS/bin/udhcpd SWEETSPOT_DNSD=$HS/bin/dnsd SWEETSPOT_SLEEP=$HS/bin/sleep SWEETSPOT_NET_INIT=$HS/net-init \
 		SWEETSPOT_CONSOLE=$HS/console SWEETSPOT_TTY=$HS/console \
+		SWEETSPOT_STICK_DIR=$HS/stick SWEETSPOT_QRENCODE=$HS/bin/qrencode \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" "${2:-sorveglia}" > /dev/null 2>&1
 }
@@ -2540,6 +2552,27 @@ echo 'HOTSPOT_PASSWORD=la-mia-password' >> "$HS/run/sweetspot.conf"
 echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
 hs_run
 expect "hotspot: HOTSPOT_PASSWORD scelta dall'utente" "1" "$(grep -c '^Password: la-mia-password$' "$HS/console")"
+
+# 2b. Senza schermo: nome, password e codice QR sulla partizione di avvio; la
+# password resta la stessa alle accensioni successive.
+hs_env ap
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+pw1=$(sed -n 's/^Password: //p' "$HS/stick/sweetspot-hotspot.txt" | head -n 1)
+expect "hotspot: nome e password scritti sulla partizione di avvio" "1|1" \
+	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{10\}$')"
+expect "hotspot: codice QR WIFI: sulla partizione di avvio (SVG) e sullo schermo" "1|1|1" \
+	"$(sort -u "$HS/qrtesti" | grep -c "^WIFI:T:WPA;S:Sweetspot-5E6F;P:$pw1;;\$")|$(grep -c '<svg' "$HS/stick/sweetspot-hotspot.svg")|$(grep -c '^\[QR\]$' "$HS/console")"
+rm -f "$HS/run/hotspot.attivo"
+echo 0 > "$HS/sys/class/net/eth0/carrier"; : > "$HS/console"; rm -f "$HS/n"
+hs_run
+expect "hotspot: password stabile tra un'accensione e l'altra" "1" "$(grep -c "^Password: $pw1\$" "$HS/console")"
+# Caratteri speciali nel QR: \ ; , : " protetti con la barra.
+hs_env ap
+printf '%s\n' 'HOTSPOT_PASSWORD=a;b:c,d\e12' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_run
+expect "hotspot: QR con i caratteri speciali protetti" 'WIFI:T:WPA;S:Sweetspot-5E6F;P:a\;b\:c\,d\\e12;;' "$(head -n 1 "$HS/qrtesti")"
 
 # 3. Cavo collegato: l'hotspot non si accende mai.
 hs_env ap
@@ -2609,6 +2642,25 @@ for cfg in sweetspot_x86_64 sweetspot_rpi; do
 	expect "$cfg: hostapd e iw nel defconfig" "2" "$(grep -c '^BR2_PACKAGE_\(HOSTAPD\|IW\)=y$' "$ROOT/configs/${cfg}_defconfig")"
 done
 expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
+
+echo "Codifica UTF-8 delle pagine e portale dell'hotspot"
+bad=""
+for f in "$OVERLAY"/usr/share/sweetspot/www/cgi-bin/* "$OVERLAY"/usr/share/sweetspot/www/*.html "$OVERLAY"/usr/share/sweetspot/www/*.css \
+	"$OVERLAY"/usr/lib/sweetspot/*.sh "$OVERLAY"/usr/bin/sweetspot-*; do
+	[ -f "$f" ] || continue
+	python3 -c 'import sys; sys.exit(0 if (lambda b: (b.decode("utf-8"), b[:3] != b"\xef\xbb\xbf")[1])(open(sys.argv[1], "rb").read()) else 1)' "$f" 2>/dev/null || bad="$bad ${f##*/}"
+done
+expect "pagine e script: tutti in UTF-8 valido, senza BOM" "" "$bad"
+expect "pagine: Content-Type con charset=utf-8 e meta charset" "1|1" \
+	"$(grep -c "Content-Type: text/html; charset=utf-8" "$OVERLAY/usr/lib/sweetspot/web.sh")|$(grep -c '<meta charset="utf-8">' "$OVERLAY/usr/lib/sweetspot/web.sh")"
+for f in hotspot-detect.html canonical.html index.html; do
+	expect "$f: meta charset utf-8" "1" "$(grep -c '<meta charset="utf-8">' "$OVERLAY/usr/share/sweetspot/www/$f")"
+done
+for f in hotspot-detect.html canonical.html; do
+	expect "portale $f: porta alla pagina Rete dell'hotspot" "1" "$(grep -c 'url=http://192.168.4.1/cgi-bin/rete' "$OVERLAY/usr/share/sweetspot/www/$f")"
+done
+expect "defconfig: qrencode e avahi (QR e sweetspot.local)" "4" \
+	"$(cat "$ROOT"/configs/*_defconfig | grep -c '^BR2_PACKAGE_\(LIBQRENCODE_TOOLS\|AVAHI_DAEMON\)=y$')"
 
 echo "Condivisioni di rete: ritentativi"
 RT=$WORK/rete

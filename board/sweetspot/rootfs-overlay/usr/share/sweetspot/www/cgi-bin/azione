@@ -380,7 +380,7 @@ case "$F_a" in
 	# Primo avvio: rete scelta dal telefono collegato all'hotspot. Si salva e
 	# sweetspot-hotspot spegne l'hotspot e prova la rete (poi riparte se fallisce).
 	wifi_connetti)
-		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
+		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non Ã¨ acceso."
 		[ -n "$F_wifi_nome" ] || F_wifi_nome=$F_wifi_scelta
 		[ -n "$F_wifi_nome" ] || done_to rete "Scegli una rete o scrivine il nome."
 		valid_value "$F_wifi_nome" && valid_value "$F_wifi_password" || done_to rete "Dati non validi."
@@ -391,7 +391,7 @@ case "$F_a" in
 		priv sweetspot-hotspot richiesta || done_to rete "L'hotspot non risponde: riprova fra qualche secondo."
 		done_to rete "Mi collego a $F_wifi_nome: l'hotspot si spegne. Ricollega il telefono alla tua rete e apri http://$(cat "$PROC/sys/kernel/hostname" 2>/dev/null).local/ (se non si collega, entro circa un minuto l'hotspot Sweetspot riparte)." ;;
 	wifi_scansiona)
-		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
+		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non Ã¨ acceso."
 		priv sweetspot-hotspot scansiona
 		done_to rete "Elenco delle reti aggiornato." ;;
 
