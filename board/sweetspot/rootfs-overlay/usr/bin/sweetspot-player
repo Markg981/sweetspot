@@ -18,6 +18,7 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 SQLOG=/var/log/squeezelite.log
+DSPLOG=${SWEETSPOT_DSPLOG:-/var/log/camilladsp.log}
 STATE=$RUN/player.stato
 
 # Ritardo prima di riavviare squeezelite terminato da solo: raddoppia
@@ -172,6 +173,26 @@ session_start() {
 	printf 'inizio=%s\nsqlog=%s\ncore=%s\n' "$(date +%s)" "${size:-0}" "$LAYOUT_AUDIO" > "$RUN/sessione"
 	irq_cpu_counts "$LAYOUT_AUDIO" > "$RUN/sessione.irq"
 	rm -f "$RUN/dsp.clip" "$RUN/latenza.ascolto" "$RUN/sessione.xrun"
+	# Underrun di CamillaDSP: si contano dal registro da questo punto in poi.
+	size=0
+	[ -f "$DSPLOG" ] && size=$(wc -c < "$DSPLOG" | tr -d ' ')
+	echo "${size:-0} 0" > "$RUN/dsp.underrun"
+}
+
+# Underrun di CamillaDSP nella sessione. CamillaDSP li scrive solo nel
+# registro (-o, livello warn: "buffer underrun") e non ha un contatore nel
+# websocket: a ogni giro si contano le righe nuove dall'ultima posizione
+# letta. Il registro puo' ricominciare da capo (nuovo processo, rotazione):
+# se e' piu' corto della posizione si riparte da zero. Riga: POSIZIONE TOTALE.
+dsp_underrun_poll() {
+	local off=0 total=0 size n
+	[ -f "$RUN/correzione.attiva" ] || return 0
+	[ -f "$DSPLOG" ] || return 0
+	[ -s "$RUN/dsp.underrun" ] && read -r off total < "$RUN/dsp.underrun"
+	size=$(wc -c < "$DSPLOG" | tr -d ' ')
+	[ "${off:-0}" -le "$size" ] || off=0
+	n=$(tail -c +"$((off + 1))" "$DSPLOG" | head -c "$((size - off))" | awk 'tolower($0) ~ /underrun/ { n++ } END { print n + 0 }')
+	echo "$size $((${total:-0} + n))" > "$RUN/dsp.underrun"
 }
 
 # Campioni tagliati da CamillaDSP nella sessione. Il suo contatore riparte
@@ -207,7 +228,7 @@ dsp_picco() { # comando campo-precedente -> "a,b" massimo per canale
 }
 
 dsp_stato_poll() {
-	local p st clip="" pin pout via pol err
+	local p st clip="" pin pout via pol err und=0
 	p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
 	pol=$(dsp_politica)
 	if [ -f "$RUN/correzione.attiva" ]; then via=camilladsp
@@ -225,10 +246,12 @@ dsp_stato_poll() {
 		pin=$(dsp_picco GetCaptureSignalPeak "$pin")
 		pout=$(dsp_picco GetPlaybackSignalPeak "$pout")
 		[ -s "$RUN/dsp.clip" ] && read -r _ _ clip < "$RUN/dsp.clip"
+		[ -s "$RUN/dsp.underrun" ] && read -r _ und < "$RUN/dsp.underrun"
 	fi
 	{
 		printf 'percorso=%s\npolitica=%s\nerrore=%s\nprocesso=%s\nstato=%s\n' "$via" "$pol" "$err" "${p:-}" "$st"
 		printf 'picco_ingresso=%s\npicco_uscita=%s\ncampioni_tagliati=%s\naggiornato=%s\n' "$pin" "$pout" "${clip:-0}" "$(date +%s)"
+		printf 'underrun=%s\n' "${und:-0}"
 	} > "$RUN/dsp.stato.tmp" && mv "$RUN/dsp.stato.tmp" "$RUN/dsp.stato"
 }
 
@@ -440,8 +463,23 @@ resample_args() {
 	printf '%s' "$recipe"
 }
 
+# Correzione chiesta ma non applicabile: il motivo va in correzione.errore
+# (Stato). Con blocca il player non parte (esce con 1); con diretto suona
+# senza correzione, con l'avviso nel registro e in Stato.
+correzione_non_applicabile() { # motivo
+	echo "$1" > "$RUN/correzione.errore"
+	if [ "$(dsp_politica)" = blocca ]; then
+		log "player: correzione ambientale non applicabile ($1), riproduzione bloccata (CORREZIONE_SE_ASSENTE=diretto per suonare senza)"
+		dsp_stato_poll
+		return 1
+	fi
+	log "player: ATTENZIONE correzione ambientale non applicabile ($1), uscita diretta sul DAC senza correzione (CORREZIONE_SE_ASSENTE=diretto)"
+	dsp_stato_poll
+	return 0
+}
+
 run_player() {
-	local card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp top
+	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp top
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	name=$(conf NOME_PLAYER Sweetspot)
@@ -465,8 +503,14 @@ run_player() {
 	# correzione.attiva: CamillaDSP e' nel percorso; correzione.filtri: con i
 	# filtri della stanza; volume.modo: dsp (volume a 64 bit) o riserva.
 	dsp=""
-	rm -f "$RUN/correzione.attiva" "$RUN/correzione.filtri" "$RUN/correzione.errore" "$RUN/volume.modo"
-	if sweetspot-dsp attiva; then
+	rm -f "$RUN/correzione.attiva" "$RUN/correzione.filtri" "$RUN/correzione.errore" "$RUN/correzione.motivo" "$RUN/volume.modo"
+	# Correzione chiesta ma file mancanti, illeggibili, malformati o
+	# incoerenti: errore visibile in Stato e, con la politica blocca, niente
+	# riproduzione. Mai suono senza correzione in silenzio.
+	problema=$(sweetspot-dsp problema)
+	if [ -n "$problema" ]; then
+		correzione_non_applicabile "$problema" || return 1
+	elif sweetspot-dsp attiva; then
 		if dsp=$(sweetspot-dsp prepara "$card"); then
 			echo "$dsp" > "$RUN/correzione.attiva"
 			if sweetspot-dsp correzione; then
@@ -479,14 +523,9 @@ run_player() {
 			fi
 		else
 			dsp=""
-			if sweetspot-dsp correzione; then
-				echo "configurazione dei filtri non valida" > "$RUN/correzione.errore"
-				if [ "$(dsp_politica)" = blocca ]; then
-					log "player: correzione ambientale non applicabile, riproduzione bloccata (CORREZIONE_SE_ASSENTE=diretto per suonare senza)"
-					dsp_stato_poll
-					return 1
-				fi
-				log "player: ATTENZIONE correzione ambientale non applicabile, uscita diretta sul DAC senza correzione (CORREZIONE_SE_ASSENTE=diretto)"
+			if sweetspot-dsp richiesta; then
+				problema=$(cat "$RUN/correzione.motivo" 2>/dev/null)
+				correzione_non_applicabile "${problema:-preparazione di CamillaDSP non riuscita}" || return 1
 			fi
 		fi
 	fi
@@ -507,9 +546,13 @@ run_player() {
 		-b "$(PLAYER_BUFFERS_LOG=1 player_buffers)" -C 30 -p "$prio" \
 		-d output=info -d decode=info -f "$SQLOG"
 	[ -n "$server" ] && set -- "$@" -s "$server"
+	# Pausa fra brani a frequenza diversa: Squeezelite svuota il buffer ALSA
+	# (patch 0005) prima di riaprire il DAC; la pausa minima e' quanto il
+	# buffer reale impiega a uscire, PAUSA_FREQUENZA_MS puo' solo allungarla.
+	[ "$rate_ms" -lt "$alsa" ] && rate_ms=$alsa
 	if [ "$maxrate" -gt 0 ]; then
 		set -- "$@" -r "$maxrate:$rate_ms"
-	elif [ "$rate_ms" -gt 0 ]; then
+	else
 		set -- "$@" -r ":$rate_ms"
 	fi
 	rs=$(resample_args)
@@ -723,6 +766,7 @@ player_loop() {
 			pin_output_thread "$PID"
 			pin_dsp
 			dsp_clip_poll
+			dsp_underrun_poll
 			dsp_stato_poll
 			sqlog_rotate "$SQLOG"
 			zones_sync "$card"

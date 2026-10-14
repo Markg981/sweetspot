@@ -43,7 +43,7 @@ env_run() {
 	shift
 	rm -f "$E/run/sweetspot.conf"
 	[ -n "$en" ] && echo "ENERGIA=$en" > "$E/run/sweetspot.conf"
-	SWEETSPOT_SYSFS=$E/sys SWEETSPOT_PROCFS=$E/proc SWEETSPOT_RUN=$E/run SWEETSPOT_LOG=$E/log \
+	SWEETSPOT_SYSFS=$E/sys SWEETSPOT_PROCFS=$E/proc SWEETSPOT_RUN=$E/run SWEETSPOT_LOG=$E/log SWEETSPOT_SQLOG=$E/sq.log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf "$@"
 }
 LIB=$SWEETSPOT_LIB/common.sh
@@ -98,6 +98,25 @@ has "PSI memoria" "psi_memoria=0.25"
 has "temperatura massima" "temp_max_mC=61000"
 has "frequenza media" "freq_media_kHz=1600000"
 has "throttling assente" "throttling=0"
+# XRUN recuperati fra due campioni: lo stato resta RUNNING, ma le fonti
+# cumulative crescono (finto sleep: un XRUN a ogni attesa).
+printf 'state: RUNNING\ndelay : 100\n' > "$E/proc/asound/card0/pcm0p/sub0/status"
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/sleep" <<'EOS'
+#!/bin/sh
+[ -f "$FINTO_CONTATORE" ] && echo $(( $(cat "$FINTO_CONTATORE") + 1 )) > "$FINTO_CONTATORE"
+[ -n "$FINTO_REGISTRO" ] && echo "[12:00:00] _output_frames:1 XRUN" >> "$FINTO_REGISTRO"
+exit 0
+EOS
+chmod +x "$WORK/bin/sleep"
+xrun_run() { env_run conservativo env SWEETSPOT_PATH="$WORK/bin" "$@" sh "$OVERLAY/usr/bin/sweetspot-energia" misura 3 1 | sed -n 's/^xrun_campioni=//p'; }
+expect "XRUN brevi: senza fonti cumulative lo stato RUNNING non ne vede" "0" "$(xrun_run)"
+echo 5 > "$E/proc/asound/card0/pcm0p/sub0/xrun_counter"
+expect "XRUN brevi: xrun_counter del kernel" "3" "$(xrun_run FINTO_CONTATORE="$E/proc/asound/card0/pcm0p/sub0/xrun_counter")"
+rm -f "$E/proc/asound/card0/pcm0p/sub0/xrun_counter"
+printf '[12:00:00] _output_frames:1 XRUN\n' > "$WORK/squeezelite.log"
+expect "XRUN brevi: registro di Squeezelite" "3" "$(xrun_run SWEETSPOT_SQLOG="$WORK/squeezelite.log" FINTO_REGISTRO="$WORK/squeezelite.log")"
+printf 'state: XRUN\ndelay : 4096\n' > "$E/proc/asound/card0/pcm0p/sub0/status"
 env_run fisso sh "$OVERLAY/usr/bin/sweetspot-energia" misura 1 0 "$WORK/b.txt" >/dev/null
 printf '%s\n' "$out" > "$WORK/a.txt"
 tab=$(sh "$OVERLAY/usr/bin/sweetspot-energia" confronta "$WORK/a.txt" "$WORK/b.txt")
