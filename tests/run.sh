@@ -2485,7 +2485,7 @@ while [ $# -gt 1 ]; do
 	case "$1" in -o) out=$2; shift ;; esac
 	shift
 done
-echo "$1" >> "$HS_DIR/qrtesti"
+printf '%s\n' "$1" >> "$HS_DIR/qrtesti"
 if [ -n "$out" ]; then echo '<svg xmlns="http://www.w3.org/2000/svg"/>' > "$out"; else echo "[QR]"; fi
 EOF
 cat > "$HS/bin/sleep" <<'EOF'
