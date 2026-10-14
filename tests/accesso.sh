@@ -199,7 +199,7 @@ expect "pagina normale: frame-ancestors 'none'" "1" "$(printf '%s' "$out" | grep
 expect "pagina normale: X-Frame-Options DENY" "DENY" "$(header "$out" X-Frame-Options)"
 expect "pagina normale: X-Content-Type-Options nosniff" "nosniff" "$(header "$out" X-Content-Type-Options)"
 expect "pagina normale: Referrer-Policy" "same-origin" "$(header "$out" Referrer-Policy)"
-expect "pagina normale: form-action e base-uri limitati" "2" "$(printf '%s' "$out" | grep "^Content-Security-Policy" | grep -c -e "form-action 'self'" -e "base-uri 'self'")"
+expect "pagina normale: form-action e base-uri limitati" "1|1" "$(printf '%s' "$out" | grep "^Content-Security-Policy" | grep -c "form-action 'self'")|$(printf '%s' "$out" | grep "^Content-Security-Policy" | grep -c "base-uri 'self'")"
 for pg in audio stato accesso; do
 	out=$(sec /cgi-bin/$pg)
 	expect "$pg: incorporabile da Material (porta 9000) e da se stessa" "1" "$(printf '%s' "$out" | grep -c "^Content-Security-Policy: frame-ancestors 'self' http://\*:9000 https://\*:9000")"

@@ -471,7 +471,8 @@ static int password_ok(void)
 	if (pid < 0)
 		return 0;
 	if (pid == 0) {
-		char *a[] = {BIN_DIR "sweetspot-accesso", "verifica", NULL};
+		char sub[] = "verifica";
+		char *a[] = {BIN_DIR "sweetspot-accesso", sub, NULL};
 		dup2(p[0], 0);
 		close(p[0]);
 		close(p[1]);
