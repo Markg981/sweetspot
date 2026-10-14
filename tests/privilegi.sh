@@ -77,6 +77,8 @@ else
 		expect "config valore vuoto ammesso" "sweetspot-config|imposta|DNS|" "$(priv sweetspot-config imposta DNS '')"
 		expect "config condivisione 3 con utente e password" "sweetspot-config|imposta|CONDIVISIONE_3_UTENTE|u|CONDIVISIONE_3_PASSWORD|p" \
 			"$(priv sweetspot-config imposta CONDIVISIONE_3_UTENTE u CONDIVISIONE_3_PASSWORD p)"
+		expect "config condivisione 3 con SMB1" "sweetspot-config|imposta|CONDIVISIONE_3_SMB1|si" \
+			"$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 si)"
 		expect "config condivisione 0 rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_0 x)"
 		expect "config condivisione 10 rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_10 x)"
 		expect "config chiave fuori elenco (LYRION_PASSWORD)" "NIENTE(126)" "$(priv sweetspot-config imposta LYRION_PASSWORD x)"

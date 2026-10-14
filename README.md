@@ -150,8 +150,25 @@ voce della tabella delle partizioni: partizione di sistema e avvio non si
 toccano, e il kernel vede la nuova partizione subito, senza riavviare. Lì si copiano cartelle da chiavette, dischi o NAS (la copia si
 sospende mentre la musica suona) e lì finiscono i CD. Con *Condividi in rete*
 l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
-`smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd; password
-facoltativa). Sull'archivio stanno anche le copertine già ridimensionate da
+`smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd, minimo SMB 2.1).
+Con una **password** (utente `sweetspot`) la cartella è in lettura e scrittura,
+per copiare la musica; **senza password** è aperta agli ospiti ma in **sola
+lettura**. Il server lavora come utente `nas`, non come root, e non mostra i
+file interni (cartella `.sweetspot-cache`, `artwork.db`, `imgproxy.db`). Si
+scrive solo dove l'utente `nas` ha i permessi: la cartella radice dell'archivio
+gli viene assegnata, le cartelle già presenti create da altri restano in sola
+lettura finché non se ne cambia il proprietario.
+
+Le **cartelle di rete** della pagina Musica possono essere SMB (NAS, PC
+Windows, Mac) oppure **NFS** (NAS e server Linux; client del kernel, NFSv4 con
+ripiego su NFSv3). SMB usa almeno la versione 2.1, con la 3.x preferita; **SMB1
+è insicuro** (niente firma né cifratura) e va richiesto esplicitamente, cartella
+per cartella, solo per NAS molto vecchi. I montaggi sono `hard`: se il NAS si
+spegne o il Wi-Fi cade, la lettura riprende da sola al ritorno invece di dare
+errori di I/O a Squeezelite o alla scansione (il processo in attesa si può
+sempre interrompere e lo smontaggio è immediato); il montaggio iniziale ha
+invece un tempo massimo e, se fallisce, valgono i ritentativi a intervalli
+crescenti. Sull'archivio stanno anche le copertine già ridimensionate da
 Lyrion (cartella `.sweetspot-cache`): non occupano RAM e non si rifanno a ogni
 avvio.
 
@@ -421,7 +438,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
 | `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
-| `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD` | cartelle di rete (fino a 9) | vuoto |
+| `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD`, `_SMB1` | cartelle di rete (fino a 9): `//server/cartella` (SMB) o `nfs://server/cartella` (NFS); `_SMB1=si` ammette SMB1, insicuro | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
 | `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
 | `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |

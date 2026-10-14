@@ -89,7 +89,11 @@ for i in 1 2 3 4 5 6 7 8 9; do
 		detail="$detail. In attesa: nuovo tentativo tra circa $(( (left + 59) / 60 )) min"
 	fi
 	printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div>' "$cls" "$(esc "$path")"
-	printf '<div class="v">%s%s</div></div>' "$(esc "${detail:-in collegamento}")" "$(esc "${user:+, utente $user}")"
+	proto=SMB
+	is_nfs "$path" && proto=NFS
+	smb1=""
+	is_yes "$(conf "CONDIVISIONE_${i}_SMB1" no)" && smb1=", SMB1 ammesso (insicuro)"
+	printf '<div class="v">%s, %s%s%s</div></div>' "$(esc "${detail:-in collegamento}")" "$proto" "$(esc "${user:+, utente $user}")" "$smb1"
 	button rimuovi_condivisione "Rimuovi" n "$i" danger
 	echo '</div>'
 done
@@ -101,15 +105,28 @@ cat <<HTML
 <form method="post" action="/cgi-bin/azione">
 <input type="hidden" name="t" value="$(token)">
 <input type="hidden" name="a" value="aggiungi_condivisione">
+<label for="prot">Tipo di cartella</label>
+<select id="prot" name="protocollo">
+<option value="smb" selected>SMB: NAS, PC Windows, Mac (Condivisione di rete)</option>
+<option value="nfs">NFS: NAS e server Linux (esportazione NFS)</option>
+</select>
 <label for="srv">Indirizzo del NAS o del computer <span>(meglio l'indirizzo IP, es. 192.168.1.10)</span></label>
 <input id="srv" name="server" required autocapitalize="off" autocorrect="off" placeholder="192.168.1.10">
-<label for="dir">Cartella condivisa <span>(es. Musica, oppure Musica/FLAC)</span></label>
+<label for="dir">Cartella condivisa <span>(SMB: Musica o Musica/FLAC; NFS: il percorso esportato, es. export/musica)</span></label>
 <input id="dir" name="cartella" required autocapitalize="off" placeholder="Musica">
-<label for="usr">Utente <span>(vuoto se la cartella è aperta a tutti)</span></label>
+<label for="usr">Utente <span>(solo SMB; vuoto se la cartella è aperta a tutti)</span></label>
 <input id="usr" name="utente" autocapitalize="off" autocorrect="off" autocomplete="off">
 <label for="pwd">Password</label>
 <input id="pwd" name="password" type="password" autocomplete="new-password">
-<p class="sub">Sweetspot legge soltanto: non modifica e non cancella nulla sul NAS.
+<label for="smb1">Vecchi NAS <span>(solo SMB)</span></label>
+<select id="smb1" name="smb1">
+<option value="no" selected>Solo SMB 2.1 o più recente (consigliato)</option>
+<option value="si">Ammetti anche SMB1: INSICURO, solo per NAS molto vecchi</option>
+</select>
+<p class="sub">SMB1 è un protocollo obsoleto e insicuro (senza firma né cifratura, attaccabile
+da chiunque sia nella rete): usalo solo se il NAS non supporta altro, meglio ancora aggiornando il NAS.
+Sweetspot legge soltanto: non modifica e non cancella nulla sul NAS.
+Se il NAS si spegne durante l'ascolto, la musica riprende da sola quando torna.
 La password resta salvata in sweetspot.txt sulla chiavetta.</p>
 <button class="primary">Aggiungi la cartella</button>
 </form>

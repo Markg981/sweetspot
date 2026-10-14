@@ -158,10 +158,10 @@ static int parola_ok(const char *s)
 static int chiave_ok(const char *s)
 {
 	int i;
-	// CONDIVISIONE_1..9 con _UTENTE e _PASSWORD
+	// CONDIVISIONE_1..9 con _UTENTE, _PASSWORD e _SMB1
 	if (!strncmp(s, "CONDIVISIONE_", 13) && s[13] >= '1' && s[13] <= '9') {
 		const char *r = s + 14;
-		return !*r || !strcmp(r, "_UTENTE") || !strcmp(r, "_PASSWORD");
+		return !*r || !strcmp(r, "_UTENTE") || !strcmp(r, "_PASSWORD") || !strcmp(r, "_SMB1");
 	}
 	for (i = 0; CHIAVI[i]; i++)
 		if (!strcmp(s, CHIAVI[i]))
