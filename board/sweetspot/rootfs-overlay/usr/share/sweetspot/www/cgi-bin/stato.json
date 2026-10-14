@@ -4,7 +4,7 @@
 # demone sweetspot-stato. Protetto dalla stessa password del pannello (la
 # regola "/" di httpd.conf copre anche questo percorso).
 
-. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 if [ -s "$RUN/stato.json" ]; then
 	printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
