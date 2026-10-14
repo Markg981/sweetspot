@@ -1,7 +1,0 @@
-OK watchdog i6300ESB attivo e alimentato
-OK DAC collegato: player attivo (attivo su QEMU USB Audio)
-OK DAC scollegato: player fermo in attesa
-OK DAC ricollegato: player ripartito (processo 6732 -> 9567)
-OK blocco: ripartito da solo dopo circa 60 secondi
-OK dopo il riavvio il player e' di nuovo attivo
-OK chiavetta integra (fsck.fat)

@@ -1,2 +1,0 @@
-fsck.fat 4.2 (2021-01-31)
-/tmp/tmp.a8NZY16LjD/chiavetta.img: 19 files, 21322/130811 clusters

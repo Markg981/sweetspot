@@ -1,6 +1,0 @@
-Your locale was detected as C, you may have problems with non-Latin filenames.  Consider changing your LANG variable to the correct locale, i.e. en_US.utf8
-[26-10-14 12:47:09.5082] main::init (282) Starting Lyrion Music Server (v9.1.1, TRUNK, UNKNOWN) perl 5.042003 - x86_64-linux
-Your locale was detected as C, you may have problems with non-Latin filenames.  Consider changing your LANG variable to the correct locale, i.e. en_US.utf8
-[26-10-14 12:47:09.8075] main::init (555) Server done init: http://10.1.0.115:9000
-[26-10-14 12:47:11.1187] Slim::Utils::Misc::msg (1346) Warning: [12:47:11.1185] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
-[26-10-14 12:47:11.8091] Slim::Utils::Misc::msg (1346) Warning: [12:47:11.8090] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.

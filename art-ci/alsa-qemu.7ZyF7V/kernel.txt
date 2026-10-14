@@ -1,3 +1,0 @@
-Linux sweetspot 6.18.56-sweetspot #1 SMP PREEMPT_RT Wed Oct 14 12:42:18 UTC 2026 x86_64 GNU/Linux
- 0 [Loopback       ]: Loopback - Loopback
-                      Loopback 1

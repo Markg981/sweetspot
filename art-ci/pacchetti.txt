@@ -1,2 +1,0 @@
-compilazione: https://github.com/Markg981/sweetspot/actions/runs/38557371737
-ricompilato in questa esecuzione: true
