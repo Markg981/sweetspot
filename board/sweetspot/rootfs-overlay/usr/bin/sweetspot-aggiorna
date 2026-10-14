@@ -261,6 +261,13 @@ verify_and_install() { # cartella_estratta cartella_copia copia
 	echo "$v"
 }
 
+# Rilascia il montaggio preso da install_job, una sola volta.
+release_stick() {
+	[ "${STICK_HELD:-0}" = 1 ] || return 0
+	STICK_HELD=0
+	stick_umount
+}
+
 # Estrae il pacchetto (da internet o da un file) e lo installa.
 install_job() { # url|file SORGENTE
 	local kind="$1" src="$2" d x other archive err="" v try=1 rc=0
@@ -270,9 +277,14 @@ install_job() { # url|file SORGENTE
 		state "errore|chiavetta (o disco di sistema) non trovata"
 		return 1
 	fi
+	# Il conteggio dei montaggi si rilascia su ogni uscita (anche annullando
+	# l'aggiornamento con SIGTERM), altrimenti la chiavetta resta montata rw.
+	STICK_HELD=1
+	trap release_stick EXIT
+	trap 'exit 143' TERM INT HUP
 	if ! d=$(prepare_slot); then
 		state "errore|impossibile scrivere sulla chiavetta"
-		stick_umount
+		release_stick
 		return 1
 	fi
 	x=$STICK_MNT/aggiornamento.tmp
@@ -313,7 +325,7 @@ install_job() { # url|file SORGENTE
 	rm -rf "$x"
 	rm -f "$STICK_MNT/aggiornamento.tar.tmp" "$DIR/membri" "$DIR/tar.list" "$DIR/manifesto" "$DIR/manifesto.atteso" "$DIR/file.reali"
 	sync
-	stick_umount
+	release_stick
 	return "$rc"
 }
 
@@ -588,7 +600,7 @@ healthy() {
 }
 
 do_confirm() {
-	local slot env def tried
+	local slot env def tried fail_reboot=0
 	slot=$(running_slot)
 	mkdir -p "$DIR"
 	stick_mount rw || return 0
@@ -619,11 +631,24 @@ do_confirm() {
 			# cosi' la versione di prima lo mostra dopo il ritorno.
 			echo "$CHECK_FAILED" > "$STICK_MNT/boot/conferma-fallita" 2>/dev/null
 			log "aggiornamento: conferma non riuscita (${CHECK_FAILED%%|*}: ${CHECK_FAILED#*|}), al prossimo avvio riparte la precedente"
+			fail_reboot=1
 		fi
 	elif [ -z "$def" ]; then
 		grubenv_set "$env" "slot=$slot"
 	fi
 	stick_umount
+	# Conferma fallita: si riavvia subito. La prova di GRUB e' a colpo unico
+	# (sul Pi config.txt resta sulla copia di prima), quindi riparte la copia
+	# precedente senza aspettare un riavvio manuale.
+	if [ "$fail_reboot" = 1 ]; then
+		sync
+		if [ -n "${SWEETSPOT_REBOOT:-}" ]; then
+			"$SWEETSPOT_REBOOT"
+		elif [ -z "${SWEETSPOT_TEST:-}" ]; then
+			sleep 5
+			reboot
+		fi
+	fi
 }
 
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
