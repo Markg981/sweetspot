@@ -1,0 +1,1578 @@
+Oct 14 12:55:15 sweetspot syslog.info syslogd started: BusyBox v1.38.0
+Oct 14 12:55:15 sweetspot kern.notice kernel: klogd started: BusyBox v1.38.0 (2026-10-14 11:57:09 UTC)
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.000000] Linux version 6.18.56-sweetspot (runner@runnervmb40mh) (x86_64-linux-gcc.br_real (Buildroot 2021.11-18033-g83947c7bb6) 15.1.0, GNU ld (GNU Binutils) 2.44) #1 SMP PREEMPT_RT Wed Oct 14 12:42:18 UTC 2026
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] Command line: BOOT_IMAGE=/bzImage console=tty0 console=ttyS0,115200 usbcore.autosuspend=-1 audit=0 panic=10 intel_idle.max_cstate=1 processor.max_cstate=1 isolcpus=managed_irq,domain,2,3 nohz_full=2,3 rcu_nocbs=2,
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-provided physical RAM map:
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x000000000009fc00-0x000000000009ffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x00000000000f0000-0x00000000000fffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x0000000000100000-0x000000007ffddfff] usable
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x000000007ffde000-0x000000007fffffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x00000000b0000000-0x00000000bfffffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x00000000fed1c000-0x00000000fed1ffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x00000000feffc000-0x00000000feffffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x00000000fffc0000-0x00000000ffffffff] reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] BIOS-e820: [mem 0x0000000100000000-0x000000017fffffff] usable
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] NX (Execute Disable) protection: active
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] APIC: Static calls initialized
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] SMBIOS 2.8 present.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] DMI: QEMU Standard PC (Q35 + ICH9, 2009), BIOS 1.17.0-debian-1.17.0-1ubuntu1 04/01/2014
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] DMI: Memory slots populated: 1/1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] Hypervisor detected: KVM
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] last_pfn = 0x7ffde max_arch_pfn = 0x10000000000
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] kvm-clock: Using msrs 4b564d01 and 4b564d00
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000000] kvm-clock: using sched offset of 24354666046 cycles
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000002] clocksource: kvm-clock: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000005] tsc: Detected 2299.998 MHz processor
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.000947] e820: update [mem 0x00000000-0x00000fff] usable ==> reserved
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.000949] e820: remove [mem 0x000a0000-0x000fffff] usable
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.000954] last_pfn = 0x180000 max_arch_pfn = 0x10000000000
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.001100] MTRR map: 4 entries (3 fixed + 1 variable; max 19), built from 8 variable MTRRs
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.001106] x86/PAT: Configuration [0-7]: WB  WC  UC- UC  WB  WP  UC- WT  
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.001276] last_pfn = 0x7ffde max_arch_pfn = 0x10000000000
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004504] found SMP MP-table at [mem 0x000f5450-0x000f545f]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004519] Using GB pages for direct mapping
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004682] RAMDISK: [mem 0x2fc41000-0x33e17fff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004686] ACPI: Early table checksum verification disabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004689] ACPI: RSDP 0x00000000000F5260 000014 (v00 BOCHS )
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004694] ACPI: RSDT 0x000000007FFE2479 000038 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004699] ACPI: FACP 0x000000007FFE2259 0000F4 (v03 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004703] ACPI: DSDT 0x000000007FFE0040 002219 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004706] ACPI: FACS 0x000000007FFE0000 000040
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004708] ACPI: APIC 0x000000007FFE234D 000090 (v03 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004710] ACPI: HPET 0x000000007FFE23DD 000038 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004712] ACPI: MCFG 0x000000007FFE2415 00003C (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004713] ACPI: WAET 0x000000007FFE2451 000028 (v01 BOCHS  BXPC     00000001 BXPC 00000001)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004715] ACPI: Reserving FACP table memory at [mem 0x7ffe2259-0x7ffe234c]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004716] ACPI: Reserving DSDT table memory at [mem 0x7ffe0040-0x7ffe2258]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004717] ACPI: Reserving FACS table memory at [mem 0x7ffe0000-0x7ffe003f]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004717] ACPI: Reserving APIC table memory at [mem 0x7ffe234d-0x7ffe23dc]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004718] ACPI: Reserving HPET table memory at [mem 0x7ffe23dd-0x7ffe2414]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004718] ACPI: Reserving MCFG table memory at [mem 0x7ffe2415-0x7ffe2450]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.004719] ACPI: Reserving WAET table memory at [mem 0x7ffe2451-0x7ffe2478]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005494] No NUMA configuration found
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005494] Faking a node at [mem 0x0000000000000000-0x000000017fffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005497] NODE_DATA(0) allocated [mem 0x17fffa780-0x17fffdfff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005634] Zone ranges:
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005635]   DMA      [mem 0x0000000000001000-0x0000000000ffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005636]   DMA32    [mem 0x0000000001000000-0x00000000ffffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005637]   Normal   [mem 0x0000000100000000-0x000000017fffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005638] Movable zone start for each node
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005639] Early memory node ranges
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005639]   node   0: [mem 0x0000000000001000-0x000000000009efff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005640]   node   0: [mem 0x0000000000100000-0x000000007ffddfff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005641]   node   0: [mem 0x0000000100000000-0x000000017fffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005642] Initmem setup node 0 [mem 0x0000000000001000-0x000000017fffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005656] On node 0, zone DMA: 1 pages in unavailable ranges
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.005698] On node 0, zone DMA: 97 pages in unavailable ranges
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.016088] On node 0, zone Normal: 34 pages in unavailable ranges
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017143] ACPI: PM-Timer IO Port: 0x608
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017171] ACPI: LAPIC_NMI (acpi_id[0xff] dfl dfl lint[0x1])
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017254] IOAPIC[0]: apic_id 0, version 17, address 0xfec00000, GSI 0-23
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017257] ACPI: INT_SRC_OVR (bus 0 bus_irq 0 global_irq 2 dfl dfl)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017258] ACPI: INT_SRC_OVR (bus 0 bus_irq 5 global_irq 5 high level)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017259] ACPI: INT_SRC_OVR (bus 0 bus_irq 9 global_irq 9 high level)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017260] ACPI: INT_SRC_OVR (bus 0 bus_irq 10 global_irq 10 high level)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017261] ACPI: INT_SRC_OVR (bus 0 bus_irq 11 global_irq 11 high level)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017265] ACPI: Using ACPI (MADT) for SMP configuration information
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017266] ACPI: HPET id: 0x8086a201 base: 0xfed00000
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017270] TSC deadline timer available
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017275] CPU topo: Max. logical packages:   1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017276] CPU topo: Max. logical dies:       1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017276] CPU topo: Max. dies per package:   1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017280] CPU topo: Max. threads per core:   1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017281] CPU topo: Num. cores per package:     4
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017281] CPU topo: Num. threads per package:   4
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017282] CPU topo: Allowing 4 present CPUs plus 0 hotplug CPUs
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017309] kvm-guest: APIC: eoi() replaced with kvm_guest_apic_eoi_write()
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017340] kvm-guest: KVM setup pv remote TLB flush
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017354] kvm-guest: setup PV sched yield
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017364] [mem 0xc0000000-0xfed1bfff] available for PCI devices
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017366] Booting paravirtualized kernel on KVM
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.017367] clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 1910969940391419 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.022422] setup_percpu: NR_CPUS:64 nr_cpumask_bits:4 nr_cpu_ids:4 nr_node_ids:1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.022713] percpu: Embedded 52 pages/cpu s175088 r8192 d29712 u524288
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.022717] pcpu-alloc: s175088 r8192 d29712 u524288 alloc=1*2097152
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.022720] pcpu-alloc: [0] 0 1 2 3 
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.022783] Kernel command line: BOOT_IMAGE=/bzImage console=tty0 console=ttyS0,115200 usbcore.autosuspend=-1 audit=0 panic=10 intel_idle.max_cstate=1 processor.max_cstate=1 isolcpus=managed_irq,domain,2,3 nohz_full=2,3 rcu_n
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.022810] audit: disabled (until reboot)
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.022864] random: crng init done
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.022865] printk: log buffer data + meta data: 262144 + 917504 = 1179648 bytes
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.023373] Dentry cache hash table entries: 524288 (order: 10, 4194304 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.023641] Inode-cache hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.023750] software IO TLB: area num 4.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.040765] Fallback order for Node 0: 0 
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.040771] Built 1 zonelists, mobility grouping on.  Total pages: 1048444
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.040772] Policy zone: Normal
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.040774] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.047744] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=4, Nodes=1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048241] Dynamic Preempt: lazy
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048290] rcu: Preemptible hierarchical RCU implementation.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048291] rcu: 	RCU event tracing is enabled.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048291] rcu: 	RCU restricting CPUs from NR_CPUS=64 to nr_cpu_ids=4.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048292] rcu: 	RCU priority boosting: priority 1 delay 500 ms.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048294] rcu: 	RCU_SOFTIRQ processing moved to rcuc kthreads.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048294] 	No expedited grace period (rcu_normal_after_boot).
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048295] 	Trampoline variant of Tasks RCU enabled.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048296] 	Tracing variant of Tasks RCU enabled.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048297] rcu: RCU calculated value of scheduler-enlistment delay is 100 jiffies.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048297] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=4
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048304] RCU Tasks: Setting shift to 2 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=4.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.048307] RCU Tasks Trace: Setting shift to 2 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=4.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.049565] NR_IRQS: 4352, nr_irqs: 456, preallocated irqs: 16
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.049853] NO_HZ: Full dynticks CPUs: 2-3.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.049855] rcu: 	Offload RCU callbacks from CPUs: 2-3.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.049857] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.049870] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 1911260446275000 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.066566] Console: colour VGA+ 80x25
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.066569] printk: legacy console [tty0] enabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.066644] printk: legacy console [ttyS0] enabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.066658] ACPI: Core revision 20250807
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.066892] clocksource: hpet: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604467 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.067102] APIC: Switch to symmetric I/O mode setup
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.067683] x2apic enabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.068338] APIC: Switched APIC routing to: physical x2apic
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.068345] kvm-guest: APIC: send_IPI_mask() replaced with kvm_send_ipi_mask()
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.068350] kvm-guest: APIC: send_IPI_mask_allbutself() replaced with kvm_send_ipi_mask_allbutself()
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.068351] kvm-guest: setup PV IPIs
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.071116] ..TIMER: vector=0x30 apic1=0 pin1=2 apic2=-1 pin2=-1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.071167] clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0x212733415c7, max_idle_ns: 440795236380 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.071172] Calibrating delay loop (skipped) preset value.. 4599.99 BogoMIPS (lpj=2299998)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.071750] x86/cpu: User Mode Instruction Prevention (UMIP) activated
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072000] Last level iTLB entries: 4KB 0, 2MB 0, 4MB 0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072001] Last level dTLB entries: 4KB 0, 2MB 0, 4MB 0, 1GB 0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072013] mitigations: Enabled attack vectors: user_kernel, user_user, SMT mitigations: auto
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072015] Speculative Store Bypass: Vulnerable
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072017] Spectre V2 : Mitigation: Retpolines
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072017] RETBleed: Vulnerable
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072018] ITS: Mitigation: Aligned branch/return thunks
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072019] Spectre V1 : Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072019] Spectre V2 : Spectre v2 / SpectreRSB: Filling RSB on context switch and VMEXIT
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072021] active return thunk: its_return_thunk
+Oct 14 12:55:15 sweetspot kern.err kernel: [    0.072283] XFEATURE_XTILE_DATA: calculated size is 0 bytes, cpu state 8192 bytes
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072290] CPUID[0d, 00]: eax=000600e7 ebx=00002b00 ecx=00002b00 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072297] CPUID[0d, 01]: eax=0000001f ebx=000029c0 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072303] CPUID[0d, 02]: eax=00000100 ebx=00000240 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072310] CPUID[0d, 03]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072317] CPUID[0d, 04]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072323] CPUID[0d, 05]: eax=00000040 ebx=00000440 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072329] CPUID[0d, 06]: eax=00000200 ebx=00000480 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072335] CPUID[0d, 07]: eax=00000400 ebx=00000680 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072342] CPUID[0d, 08]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072348] CPUID[0d, 09]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072354] CPUID[0d, 0a]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072361] CPUID[0d, 0b]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072367] CPUID[0d, 0c]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072373] CPUID[0d, 0d]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072380] CPUID[0d, 0e]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072386] CPUID[0d, 0f]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072394] CPUID[0d, 10]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072401] CPUID[0d, 11]: eax=00000040 ebx=00000ac0 ecx=00000002 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072407] CPUID[0d, 12]: eax=00002000 ebx=00000b00 ecx=00000006 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072413] CPUID[0d, 13]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072420] CPUID[0d, 14]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072426] CPUID[0d, 15]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072432] CPUID[0d, 16]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072438] CPUID[0d, 17]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072444] CPUID[0d, 18]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072450] CPUID[0d, 19]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072456] CPUID[0d, 1a]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072463] CPUID[0d, 1b]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072469] CPUID[0d, 1c]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.warn kernel: [    0.072475] CPUID[0d, 1d]: eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072476] x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072477] x86/fpu: Supporting XSAVE feature 0x002: 'SSE registers'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072477] x86/fpu: Supporting XSAVE feature 0x004: 'AVX registers'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072478] x86/fpu: Supporting XSAVE feature 0x020: 'AVX-512 opmask'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072479] x86/fpu: Supporting XSAVE feature 0x040: 'AVX-512 Hi256'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072479] x86/fpu: Supporting XSAVE feature 0x080: 'AVX-512 ZMM_Hi256'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072479] x86/fpu: Supporting XSAVE feature 0x20000: 'AMX Tile config'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072480] x86/fpu: Supporting XSAVE feature 0x40000: 'AMX Tile data'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072480] x86/fpu: xstate_offset[2]:  576, xstate_sizes[2]:  256
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072481] x86/fpu: xstate_offset[5]:  832, xstate_sizes[5]:   64
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072482] x86/fpu: xstate_offset[6]:  896, xstate_sizes[6]:  512
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072482] x86/fpu: xstate_offset[7]: 1408, xstate_sizes[7]: 1024
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072483] x86/fpu: xstate_offset[17]: 2432, xstate_sizes[17]:   64
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072484] x86/fpu: xstate_offset[18]: 2496, xstate_sizes[18]: 8192
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.072484] x86/fpu: Enabled xstate features 0x600e7, context size is 10688 bytes, using 'compacted' format.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088322] Freeing SMP alternatives memory: 44K
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088328] pid_max: default: 32768 minimum: 301
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088352] LSM: initializing lsm=capability,selinux
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088373] SELinux:  Initializing.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088509] Mount-cache hash table entries: 8192 (order: 4, 65536 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088518] Mountpoint-cache hash table entries: 8192 (order: 4, 65536 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.088885] smpboot: CPU0: Intel INTEL(R) XEON(R) PLATINUM 8573C (family: 0x6, model: 0xcf, stepping: 0x2)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.089067] Performance Events: unsupported CPU family 6 model 207 no PMU driver, software events only.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.089161] signal: max sigframe size: 11952
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.089169] rcu: Hierarchical SRCU implementation.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.089169] rcu: 	Max phase no-delay instances is 400.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.099181] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.339181] smp: Bringing up secondary CPUs ...
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.345274] smpboot: x86: Booting SMP configuration:
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.345276] .... node  #0, CPUs:      #1 #2 #3
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.449330] smp: Brought up 1 node, 4 CPUs
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.449335] smpboot: Total of 4 processors activated (18399.98 BogoMIPS)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.464273] Memory: 3948180K/4193776K available (14919K kernel code, 2368K rwdata, 5928K rodata, 2476K init, 1068K bss, 240768K reserved, 0K cma-reserved)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.467280] devtmpfs: initialized
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.467726] posixtimers hash table entries: 2048 (order: 5, 81920 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.467754] futex hash table entries: 1024 (65536 bytes on 1 NUMA nodes, total 64 KiB, linear).
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.468072] PM: RTC time: 12:55:12, date: 2026-10-14
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.469169] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.469169] thermal_sys: Registered thermal governor 'step_wise'
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.471364] cpuidle: using governor menu
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.471586] PCI: ECAM [mem 0xb0000000-0xbfffffff] (base 0xb0000000) for domain 0000 [bus 00-ff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.471591] PCI: ECAM [mem 0xb0000000-0xbfffffff] reserved as E820 entry
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.471605] PCI: Using configuration type 1 for base access
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.474300] kprobes: kprobe jump-optimization is enabled. All kprobes are optimized if possible.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.475249] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.475250] HugeTLB: 28 KiB vmemmap can be freed for a 2.00 MiB page
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.665554] ACPI: Added _OSI(Module Device)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.665554] ACPI: Added _OSI(Processor Device)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.665554] ACPI: Added _OSI(Processor Aggregator Device)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.666273] ACPI: 1 ACPI AML tables successfully acquired and loaded
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.669310] ACPI: Interpreter enabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.669322] ACPI: PM: (supports S0 S3 S5)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.669323] ACPI: Using IOAPIC for interrupt routing
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.669347] PCI: Using host bridge windows from ACPI; if necessary, use "pci=nocrs" and report a bug
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.669348] PCI: Using E820 reservations for host bridge windows
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.669476] ACPI: Enabled 2 GPEs in block 00 to 3F
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671542] ACPI: PCI Root Bridge [PCI0] (domain 0000 [bus 00-ff])
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671549] acpi PNP0A08:00: _OSC: OS supports [ExtendedConfig ASPM ClockPM Segments MSI HPX-Type3]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671590] acpi PNP0A08:00: _OSC: platform does not support [LTR]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671648] acpi PNP0A08:00: _OSC: OS now controls [PME PCIeCapability]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671704] PCI host bridge to bus 0000:00
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671706] pci_bus 0000:00: root bus resource [io  0x0000-0x0cf7 window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671708] pci_bus 0000:00: root bus resource [io  0x0d00-0xffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671709] pci_bus 0000:00: root bus resource [mem 0x000a0000-0x000bffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671710] pci_bus 0000:00: root bus resource [mem 0x80000000-0xafffffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671710] pci_bus 0000:00: root bus resource [mem 0xc0000000-0xfebfffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671711] pci_bus 0000:00: root bus resource [mem 0x180000000-0x97fffffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671712] pci_bus 0000:00: root bus resource [bus 00-ff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.671850] pci 0000:00:00.0: [8086:29c0] type 00 class 0x060000 conventional PCI endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.673464] pci 0000:00:01.0: [1234:1111] type 00 class 0x030000 conventional PCI endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.676227] pci 0000:00:01.0: BAR 0 [mem 0xfd000000-0xfdffffff pref]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.676277] pci 0000:00:01.0: BAR 2 [mem 0xfebb4000-0xfebb4fff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.676379] pci 0000:00:01.0: ROM [mem 0xfeba0000-0xfebaffff pref]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.676534] pci 0000:00:01.0: Video device with shadowed ROM at [mem 0x000c0000-0x000dffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.677005] pci 0000:00:02.0: [8086:100e] type 00 class 0x020000 conventional PCI endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.679099] pci 0000:00:02.0: BAR 0 [mem 0xfeb80000-0xfeb9ffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.679123] pci 0000:00:02.0: BAR 1 [io  0xc000-0xc03f]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.679243] pci 0000:00:02.0: ROM [mem 0xfeb00000-0xfeb7ffff pref]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.679866] pci 0000:00:03.0: [1b36:000d] type 00 class 0x0c0330 PCIe Root Complex Integrated Endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.681231] pci 0000:00:03.0: BAR 0 [mem 0xfebb0000-0xfebb3fff 64bit]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.681501] pci 0000:00:03.0: enabling Extended Tags
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.683553] pci 0000:00:1f.0: [8086:2918] type 00 class 0x060100 conventional PCI endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.685034] pci 0000:00:1f.0: quirk: [io  0x0600-0x067f] claimed by ICH6 ACPI/GPIO/TCO
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.685169] pci 0000:00:1f.2: [8086:2922] type 00 class 0x010601 conventional PCI endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.687343] pci 0000:00:1f.2: BAR 4 [io  0xc080-0xc09f]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.687372] pci 0000:00:1f.2: BAR 5 [mem 0xfebb5000-0xfebb5fff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.688572] pci 0000:00:1f.3: [8086:2930] type 00 class 0x0c0500 conventional PCI endpoint
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.690159] pci 0000:00:1f.3: BAR 4 [io  0x0700-0x073f]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.694842] ACPI: PCI: Interrupt link LNKA configured for IRQ 10
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.694971] ACPI: PCI: Interrupt link LNKB configured for IRQ 10
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695162] ACPI: PCI: Interrupt link LNKC configured for IRQ 11
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695284] ACPI: PCI: Interrupt link LNKD configured for IRQ 11
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695433] ACPI: PCI: Interrupt link LNKE configured for IRQ 10
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695557] ACPI: PCI: Interrupt link LNKF configured for IRQ 10
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695679] ACPI: PCI: Interrupt link LNKG configured for IRQ 11
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695800] ACPI: PCI: Interrupt link LNKH configured for IRQ 11
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695855] ACPI: PCI: Interrupt link GSIA configured for IRQ 16
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695861] ACPI: PCI: Interrupt link GSIB configured for IRQ 17
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695866] ACPI: PCI: Interrupt link GSIC configured for IRQ 18
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695872] ACPI: PCI: Interrupt link GSID configured for IRQ 19
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695877] ACPI: PCI: Interrupt link GSIE configured for IRQ 20
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695883] ACPI: PCI: Interrupt link GSIF configured for IRQ 21
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695888] ACPI: PCI: Interrupt link GSIG configured for IRQ 22
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.695894] ACPI: PCI: Interrupt link GSIH configured for IRQ 23
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.696357] iommu: Default domain type: Translated
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.696358] iommu: DMA domain TLB invalidation policy: lazy mode
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.697234] SCSI subsystem initialized
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.697286] libata version 3.00 loaded.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697316] ACPI: bus type USB registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697333] usbcore: registered new interface driver usbfs
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697340] usbcore: registered new interface driver hub
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697345] usbcore: registered new device driver usb
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697359] pps_core: LinuxPPS API ver. 1 registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697359] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697362] PTP clock support registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.697415] Advanced Linux Sound Architecture Driver Initialized.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.699273] NetLabel: Initializing
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.699274] NetLabel:  domain hash size = 128
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.699275] NetLabel:  protocols = UNLABELED CIPSOv4 CALIPSO
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.699287] NetLabel:  unlabeled traffic allowed by default
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.699474] PCI: Using ACPI for IRQ routing
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.898324] PCI: pci_cache_line_size set to 64 bytes
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.898642] e820: reserve RAM buffer [mem 0x0009fc00-0x0009ffff]
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    0.898648] e820: reserve RAM buffer [mem 0x7ffde000-0x7fffffff]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.898822] pci 0000:00:01.0: vgaarb: setting as boot VGA device
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.898824] pci 0000:00:01.0: vgaarb: bridge control possible
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.898825] pci 0000:00:01.0: vgaarb: VGA device added: decodes=io+mem,owns=io+mem,locks=none
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.898827] vgaarb: loaded
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.899266] hpet0: at MMIO 0xfed00000, IRQs 2, 8, 0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.899270] hpet0: 3 comparators, 64-bit 100.000000 MHz counter
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.903303] clocksource: Switched to clocksource kvm-clock
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.903415] VFS: Disk quotas dquot_6.6.0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.903419] VFS: Dquot-cache hash table entries: 512 (order 0, 4096 bytes)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.904821] pnp: PnP ACPI init
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.904966] system 00:04: [mem 0xb0000000-0xbfffffff window] has been reserved
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.905383] pnp: PnP ACPI: found 5 devices
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.911341] clocksource: acpi_pm: mask: 0xffffff max_cycles: 0xffffff, max_idle_ns: 2085701024 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.911372] NET: Registered PF_INET protocol family
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.911455] IP idents hash table entries: 65536 (order: 7, 524288 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912082] tcp_listen_portaddr_hash hash table entries: 2048 (order: 5, 81920 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912123] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912125] TCP established hash table entries: 32768 (order: 6, 262144 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912179] TCP bind hash table entries: 32768 (order: 10, 2621440 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912592] TCP: Hash tables configured (established 32768 bind 32768)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912630] UDP hash table entries: 2048 (order: 7, 327680 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912686] UDP-Lite hash table entries: 2048 (order: 7, 327680 bytes, linear)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912772] NET: Registered PF_UNIX/PF_LOCAL protocol family
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912788] pci_bus 0000:00: resource 4 [io  0x0000-0x0cf7 window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912791] pci_bus 0000:00: resource 5 [io  0x0d00-0xffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912792] pci_bus 0000:00: resource 6 [mem 0x000a0000-0x000bffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912793] pci_bus 0000:00: resource 7 [mem 0x80000000-0xafffffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912794] pci_bus 0000:00: resource 8 [mem 0xc0000000-0xfebfffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.912795] pci_bus 0000:00: resource 9 [mem 0x180000000-0x97fffffff window]
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.913160] ACPI: \_SB_.GSIH: Enabled at IRQ 23
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914058] PCI: CLS 0 bytes, default 64
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914192] PCI-DMA: Using software bounce buffering for IO (SWIOTLB)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914193] software IO TLB: mapped [mem 0x000000007bfde000-0x000000007ffde000] (64MB)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914248] RAPL PMU: API unit is 2^-32 Joules, 1 fixed counters, 10737418240 ms ovfl timer
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914249] RAPL PMU: hw unit of domain psys 2^-0 Joules
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914261] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x212733415c7, max_idle_ns: 440795236380 ns
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.914381] Unpacking initramfs...
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.937647] Initialise system trusted keyrings
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.938389] workingset: timestamp_bits=56 max_order=20 bucket_order=0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.938517] 9p: Installing v9fs 9p2000 file system support
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.949169] Key type asymmetric registered
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.949172] Asymmetric key parser 'x509' registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.949193] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 250)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.949205] io scheduler mq-deadline registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.949206] io scheduler kyber registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.952448] input: Power Button as /devices/LNXSYSTM:00/LNXPWRBN:00/input/input0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.955350] ACPI: button: Power Button [PWRF]
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    0.955375] ACPI: processor limited to max C-state 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    0.960434] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.052633] 00:03: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.053283] Non-volatile memory driver v1.3
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.053284] Linux agpgart interface v0.103
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.053422] ACPI: bus type drm_connector registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.058930] loop: module loaded
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.065746] ACPI: \_SB_.GSIA: Enabled at IRQ 16
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.070590] ahci 0000:00:1f.2: AHCI vers 0001.0000, 32 command slots, 1.5 Gbps, SATA mode
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.070593] ahci 0000:00:1f.2: 6/6 ports implemented (port mask 0x3f)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.070595] ahci 0000:00:1f.2: flags: 64bit ncq only 
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.080105] scsi host0: ahci
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.080203] scsi host1: ahci
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.081405] scsi host2: ahci
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.081527] scsi host3: ahci
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085587] scsi host4: ahci
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085719] scsi host5: ahci
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085778] ata1: SATA max UDMA/133 abar m4096@0xfebb5000 port 0xfebb5100 irq 24 lpm-pol 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085791] ata2: SATA max UDMA/133 abar m4096@0xfebb5000 port 0xfebb5180 irq 24 lpm-pol 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085802] ata3: SATA max UDMA/133 abar m4096@0xfebb5000 port 0xfebb5200 irq 24 lpm-pol 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085814] ata4: SATA max UDMA/133 abar m4096@0xfebb5000 port 0xfebb5280 irq 24 lpm-pol 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085826] ata5: SATA max UDMA/133 abar m4096@0xfebb5000 port 0xfebb5300 irq 24 lpm-pol 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.085838] ata6: SATA max UDMA/133 abar m4096@0xfebb5000 port 0xfebb5380 irq 24 lpm-pol 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.086088] e100: Intel(R) PRO/100 Network Driver
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.086089] e100: Copyright(c) 1999-2006 Intel Corporation
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.086100] e1000: Intel(R) PRO/1000 Network Driver
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.086100] e1000: Copyright (c) 1999-2006 Intel Corporation.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.116898] ACPI: \_SB_.GSIG: Enabled at IRQ 22
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.427977] ata1: SATA link down (SStatus 0 SControl 300)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.428364] ata5: SATA link down (SStatus 0 SControl 300)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.428733] ata4: SATA link down (SStatus 0 SControl 300)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.429087] ata6: SATA link down (SStatus 0 SControl 300)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.429561] ata3: SATA link up 1.5 Gbps (SStatus 113 SControl 300)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.429888] ata2: SATA link down (SStatus 0 SControl 300)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.430075] ata3.00: ATAPI: QEMU DVD-ROM, 2.5+, max UDMA/100
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.430078] ata3.00: applying bridge limits
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.431349] ata3.00: configured for UDMA/100
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    1.433334] scsi 2:0:0:0: CD-ROM            QEMU     QEMU DVD-ROM     2.5+ PQ: 0 ANSI: 5
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.465330] sr 2:0:0:0: [sr0] scsi3-mmc drive: 4x/4x cd/rw xa/form2 tray
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.494358] cdrom: Uniform CD-ROM driver Revision: 3.20
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    1.513380] sr 2:0:0:0: Attached scsi CD-ROM sr0
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    1.514485] sr 2:0:0:0: Attached scsi generic sg0 type 5
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.532356] e1000 0000:00:02.0 eth0: (PCI:33MHz:32-bit) 52:54:00:12:34:56
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.532364] e1000 0000:00:02.0 eth0: Intel(R) PRO/1000 Network Connection
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.532396] sky2: driver version 1.30
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.540929] xhci_hcd 0000:00:03.0: xHCI Host Controller
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.543494] xhci_hcd 0000:00:03.0: new USB bus registered, assigned bus number 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.544066] xhci_hcd 0000:00:03.0: hcc params 0x00087001 hci version 0x100 quirks 0x0000000000000010
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551743] xhci_hcd 0000:00:03.0: xHCI Host Controller
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551787] xhci_hcd 0000:00:03.0: new USB bus registered, assigned bus number 2
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551789] xhci_hcd 0000:00:03.0: Host supports USB 3.0 SuperSpeed
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551908] usb usb1: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.18
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551910] usb usb1: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551911] usb usb1: Product: xHCI Host Controller
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551912] usb usb1: Manufacturer: Linux 6.18.56-sweetspot xhci-hcd
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.551913] usb usb1: SerialNumber: 0000:00:03.0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.552009] hub 1-0:1.0: USB hub found
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.552059] hub 1-0:1.0: 4 ports detected
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575142] usb usb2: We don't know the algorithms for LPM for this host, disabling LPM.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575162] usb usb2: New USB device found, idVendor=1d6b, idProduct=0003, bcdDevice= 6.18
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575164] usb usb2: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575165] usb usb2: Product: xHCI Host Controller
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575166] usb usb2: Manufacturer: Linux 6.18.56-sweetspot xhci-hcd
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575166] usb usb2: SerialNumber: 0000:00:03.0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.575275] hub 2-0:1.0: USB hub found
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.587345] Freeing initrd memory: 67420K
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.593653] hub 2-0:1.0: 4 ports detected
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.594034] usbcore: registered new interface driver usblp
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.594155] usbcore: registered new interface driver uas
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.594169] usbcore: registered new interface driver usb-storage
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.594200] i8042: PNP: PS/2 Controller [PNP0303:KBD,PNP0f13:MOU] at 0x60,0x64 irq 1,12
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.596601] irq/12-i8042 (108) used greatest stack depth: 15376 bytes left
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.599436] serio: i8042 KBD port at 0x60,0x64 irq 1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.599446] serio: i8042 AUX port at 0x60,0x64 irq 12
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.599690] rtc_cmos PNP0B00:00: RTC can wake from S4
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.600770] input: AT Translated Set 2 keyboard as /devices/platform/i8042/serio0/input/input1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.603715] rtc_cmos PNP0B00:00: registered as rtc0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.603851] rtc_cmos PNP0B00:00: alarms up to one day, y3k, 242 bytes nvram, hpet irqs
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.604431] device-mapper: ioctl: 4.50.0-ioctl (2025-04-28) initialised: dm-devel@lists.linux.dev
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.604438] intel_pstate: CPU model not supported
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.604480] hid: raw HID events driver (C) Jiri Kosina
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.604671] usbcore: registered new interface driver usbhid
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.604672] usbhid: USB HID core driver
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.604743] usbcore: registered new interface driver snd-usb-audio
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.605027] Initializing XFRM netlink socket
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.605038] NET: Registered PF_INET6 protocol family
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607473] Segment Routing with IPv6
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607479] In-situ OAM (IOAM) with IPv6
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607498] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607624] NET: Registered PF_PACKET protocol family
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607632] 9pnet: Installing 9P2000 support
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    1.607646] Key type dns_resolver registered
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607808] i801_smbus 0000:00:1f.3: SMBus using PCI interrupt
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.607928] i2c i2c-0: Memory type 0x07 not supported yet, not instantiating SPD
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.608958] IPI shorthand broadcast: enabled
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.611486] sched_clock: Marking stable (1592014288, 19299817)->(1636906313, -25592208)
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.611809] registered taskstats version 1
+Oct 14 12:55:15 sweetspot kern.notice kernel: [    1.611810] Loading compiled-in X.509 certificates
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.614205] Demotion targets for Node 0: null
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.614259] PM:   Magic number: 14:240:936
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.614338] netconsole: network logging started
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.614395] ALSA device list:
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.614396]   No soundcards found.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.691627] Freeing unused kernel image (initmem) memory: 2476K
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.691645] Write protecting the kernel read-only data: 22528k
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.692367] Freeing unused kernel image (text/rodata gap) memory: 1464K
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.692539] Freeing unused kernel image (rodata/data gap) memory: 216K
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.743782] x86/mm: Checked W+X mappings: passed, no W+X pages found.
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.743792] Run /init as init process
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    1.743793]   with arguments:
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    1.743793]     /init
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    1.743794]   with environment:
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    1.743795]     HOME=/
+Oct 14 12:55:15 sweetspot kern.debug kernel: [    1.743795]     TERM=linux
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.746491] mount (117) used greatest stack depth: 12912 bytes left
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.896265] findfs (160) used greatest stack depth: 12728 bytes left
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.918566] usb 2-1: new SuperSpeed USB device number 2 using xhci_hcd
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.931119] usb 2-1: New USB device found, idVendor=46f4, idProduct=0001, bcdDevice= 0.00
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.931124] usb 2-1: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.931125] usb 2-1: Product: QEMU USB HARDDRIVE
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.931127] usb 2-1: Manufacturer: QEMU
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.931128] usb 2-1: SerialNumber: 1-0000:00:03.0-1
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.932415] usb-storage 2-1:1.0: USB Mass Storage device detected
+Oct 14 12:55:15 sweetspot kern.info kernel: [    1.932558] scsi host6: usb-storage 2-1:1.0
+Oct 14 12:55:15 sweetspot kern.info kernel: [    2.032581] input: ImExPS/2 Generic Explorer Mouse as /devices/platform/i8042/serio1/input/input3
+Oct 14 12:55:16 sweetspot kern.notice kernel: [    2.982154] scsi 6:0:0:0: Direct-Access     QEMU     QEMU HARDDISK    2.5+ PQ: 0 ANSI: 5
+Oct 14 12:55:16 sweetspot kern.notice kernel: [    2.983511] sd 6:0:0:0: Attached scsi generic sg1 type 0
+Oct 14 12:55:16 sweetspot kern.notice kernel: [    2.984987] sd 6:0:0:0: [sda] 1050624 512-byte logical blocks: (538 MB/513 MiB)
+Oct 14 12:55:16 sweetspot kern.notice kernel: [    2.985357] sd 6:0:0:0: [sda] Write Protect is off
+Oct 14 12:55:16 sweetspot kern.debug kernel: [    2.985359] sd 6:0:0:0: [sda] Mode Sense: 63 00 10 08
+Oct 14 12:55:16 sweetspot kern.notice kernel: [    2.985780] sd 6:0:0:0: [sda] Write cache: enabled, read cache: enabled, supports DPO and FUA
+Oct 14 12:55:16 sweetspot kern.info kernel: [    3.006933]  sda: sda1
+Oct 14 12:55:16 sweetspot kern.notice kernel: [    3.007066] sd 6:0:0:0: [sda] Attached SCSI disk
+Oct 14 12:55:17 sweetspot daemon.info kernel: [    4.177051] udevd[2079]: starting version 3.2.14
+Oct 14 12:55:17 sweetspot daemon.info kernel: [    4.178057] udevd[2079]: starting eudev-3.2.14
+Oct 14 12:55:17 sweetspot kern.info kernel: [    4.205448] e1000 0000:00:02.0 enp0s2: renamed from eth0
+Oct 14 12:55:17 sweetspot kern.notice kernel: [    4.205612] lpc_ich 0000:00:1f.0: I/O space for GPIO uninitialized
+Oct 14 12:55:17 sweetspot kern.info kernel: [    4.249228] iTCO_wdt iTCO_wdt.1.auto: Found a ICH9 TCO device (Version=2, TCOBASE=0x0660)
+Oct 14 12:55:17 sweetspot kern.info kernel: [    4.252705] iTCO_wdt iTCO_wdt.1.auto: initialized. heartbeat=30 sec (nowayout=0)
+Oct 14 12:55:17 sweetspot kern.info kernel: [    4.594034] e1000: enp0s2 NIC Link is Up 1000 Mbps Full Duplex, Flow Control: RX
+Oct 14 12:55:17 sweetspot daemon.info udhcpc[2476]: started, v1.38.0
+Oct 14 12:55:17 sweetspot daemon.info udhcpc[2476]: broadcasting discover
+Oct 14 12:55:18 sweetspot daemon.info udhcpc[2476]: broadcasting select for 10.0.2.15, server 10.0.2.2
+Oct 14 12:55:18 sweetspot daemon.info udhcpc[2476]: lease of 10.0.2.15 obtained from 10.0.2.2, lease time 86400
+Oct 14 12:55:18 sweetspot user.info chpasswd: password for 'root' changed
+Oct 14 12:55:18 sweetspot authpriv.info dropbear[2629]: Running in background
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Found user 'avahi' (UID 100) and group 'avahi' (GID 101).
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Successfully dropped root privileges.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: avahi-daemon 0.8 starting up.
+Oct 14 12:55:19 sweetspot daemon.warn avahi-daemon[2650]: WARNING: No NSS support for mDNS detected, consider installing nss-mdns!
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: No service file found in /etc/avahi/services.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Joining mDNS multicast group on interface enp0s2.IPv6 with address fe80::5054:ff:fe12:3456.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: New relevant interface enp0s2.IPv6 for mDNS.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Joining mDNS multicast group on interface enp0s2.IPv4 with address 10.0.2.15.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: New relevant interface enp0s2.IPv4 for mDNS.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Joining mDNS multicast group on interface lo.IPv6 with address ::1.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: New relevant interface lo.IPv6 for mDNS.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Joining mDNS multicast group on interface lo.IPv4 with address 127.0.0.1.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: New relevant interface lo.IPv4 for mDNS.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Network interface enumeration completed.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Registering new address record for fe80::5054:ff:fe12:3456 on enp0s2.*.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Registering new address record for 10.0.2.15 on enp0s2.IPv4.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Registering new address record for ::1 on lo.*.
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Registering new address record for 127.0.0.1 on lo.IPv4.
+Oct 14 12:55:19 sweetspot cron.info crond[2669]: crond (busybox 1.38.0) started, log level 8
+Oct 14 12:55:19 sweetspot auth.notice su: + none root:lms
+Oct 14 12:55:19 sweetspot kern.info kernel: [    6.015085] tr (3147) used greatest stack depth: 12528 bytes left
+Oct 14 12:55:19 sweetspot daemon.info : starting pid 3216, tty '/dev/tty2': '/sbin/getty -L  tty2 0 vt100 '
+Oct 14 12:55:19 sweetspot daemon.info avahi-daemon[2650]: Server startup complete. Host name is sweetspot.local. Local service cookie is 3398194205.
+Oct 14 12:55:20 sweetspot kern.info kernel: [    6.749588] stat (3826) used greatest stack depth: 12512 bytes left
+Oct 14 12:55:20 sweetspot authpriv.info dropbear[3828]: Child connection from 10.0.2.2:42478
+Oct 14 12:55:20 sweetspot authpriv.info dropbear[3828]: Generated hostkey /etc/dropbear/dropbear_ed25519_host_key, fingerprint is SHA256:DjfjoDmEaP+v1th9DY7InSPEG6AyK099ihghjOOiT/Y
+Oct 14 12:55:20 sweetspot authpriv.notice dropbear[3828]: Password auth succeeded for 'root' from 10.0.2.2:42478
+Oct 14 12:55:20 sweetspot authpriv.info dropbear[3828]: Exit (root) from <10.0.2.2:42478>: Disconnect received
+Oct 14 12:55:21 sweetspot daemon.info avahi-daemon[2650]: Leaving mDNS multicast group on interface enp0s2.IPv6 with address fe80::5054:ff:fe12:3456.
+Oct 14 12:55:21 sweetspot daemon.info avahi-daemon[2650]: Joining mDNS multicast group on interface enp0s2.IPv6 with address fec0::5054:ff:fe12:3456.
+Oct 14 12:55:21 sweetspot daemon.info avahi-daemon[2650]: Registering new address record for fec0::5054:ff:fe12:3456 on enp0s2.*.
+Oct 14 12:55:21 sweetspot daemon.info avahi-daemon[2650]: Withdrawing address record for fe80::5054:ff:fe12:3456 on enp0s2.
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4653]: Child connection from 10.0.2.2:56394
+Oct 14 12:55:25 sweetspot authpriv.notice dropbear[4653]: Password auth succeeded for 'root' from 10.0.2.2:56394
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4653]: Exit (root) from <10.0.2.2:56394>: Disconnect received
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4681]: Child connection from 10.0.2.2:56396
+Oct 14 12:55:25 sweetspot authpriv.notice dropbear[4681]: Password auth succeeded for 'root' from 10.0.2.2:56396
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4681]: Exit (root) from <10.0.2.2:56396>: Disconnect received
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4683]: Child connection from 10.0.2.2:56402
+Oct 14 12:55:25 sweetspot authpriv.notice dropbear[4683]: Password auth succeeded for 'root' from 10.0.2.2:56402
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4683]: Exit (root) from <10.0.2.2:56402>: Disconnect received
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4685]: Child connection from 10.0.2.2:56416
+Oct 14 12:55:25 sweetspot authpriv.notice dropbear[4685]: Password auth succeeded for 'root' from 10.0.2.2:56416
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4685]: Exit (root) from <10.0.2.2:56416>: Disconnect received
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4689]: Child connection from 10.0.2.2:56432
+Oct 14 12:55:25 sweetspot authpriv.notice dropbear[4689]: Password auth succeeded for 'root' from 10.0.2.2:56432
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4689]: Exit (root) from <10.0.2.2:56432>: Disconnect received
+Oct 14 12:55:25 sweetspot authpriv.info dropbear[4692]: Child connection from 10.0.2.2:56448
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4692]: Password auth succeeded for 'root' from 10.0.2.2:56448
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4692]: Exit (root) from <10.0.2.2:56448>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4695]: Child connection from 10.0.2.2:56458
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4695]: Password auth succeeded for 'root' from 10.0.2.2:56458
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4695]: Exit (root) from <10.0.2.2:56458>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4698]: Child connection from 10.0.2.2:56474
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4698]: Password auth succeeded for 'root' from 10.0.2.2:56474
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4698]: Exit (root) from <10.0.2.2:56474>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4700]: Child connection from 10.0.2.2:56478
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4700]: Password auth succeeded for 'root' from 10.0.2.2:56478
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4700]: Exit (root) from <10.0.2.2:56478>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4702]: Child connection from 10.0.2.2:56494
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4702]: Password auth succeeded for 'root' from 10.0.2.2:56494
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4702]: Exit (root) from <10.0.2.2:56494>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4704]: Child connection from 10.0.2.2:56498
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4704]: Password auth succeeded for 'root' from 10.0.2.2:56498
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4704]: Exit (root) from <10.0.2.2:56498>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4706]: Child connection from 10.0.2.2:56510
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4706]: Password auth succeeded for 'root' from 10.0.2.2:56510
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4706]: Exit (root) from <10.0.2.2:56510>: Disconnect received
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4708]: Child connection from 10.0.2.2:56526
+Oct 14 12:55:26 sweetspot authpriv.notice dropbear[4708]: Password auth succeeded for 'root' from 10.0.2.2:56526
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4713]: Child connection from 10.0.2.2:56530
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4714]: Child connection from 10.0.2.2:48840
+Oct 14 12:55:26 sweetspot authpriv.info dropbear[4714]: Exit before auth from <10.0.2.2:48840>: Exited normally
+Oct 14 12:55:27 sweetspot authpriv.notice dropbear[4713]: Password auth succeeded for 'root' from 10.0.2.2:56530
+Oct 14 12:55:27 sweetspot authpriv.info dropbear[4713]: Exit (root) from <10.0.2.2:56530>: Disconnect received
+Oct 14 12:55:27 sweetspot authpriv.info dropbear[4716]: Child connection from 10.0.2.2:56538
+Oct 14 12:55:27 sweetspot authpriv.notice dropbear[4716]: Password auth succeeded for 'root' from 10.0.2.2:56538
+Oct 14 12:55:27 sweetspot authpriv.info dropbear[4716]: Exit (root) from <10.0.2.2:56538>: Disconnect received
+Oct 14 12:55:27 sweetspot authpriv.info dropbear[4718]: Child connection from 10.0.2.2:56540
+Oct 14 12:55:27 sweetspot authpriv.notice dropbear[4718]: Password auth succeeded for 'root' from 10.0.2.2:56540
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[4718]: Exit (root) from <10.0.2.2:56540>: Disconnect received
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[4708]: Exit (root) from <10.0.2.2:56526>: Disconnect received
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5960]: Child connection from 10.0.2.2:44406
+Oct 14 12:55:40 sweetspot authpriv.notice dropbear[5960]: Password auth succeeded for 'root' from 10.0.2.2:44406
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5960]: Exit (root) from <10.0.2.2:44406>: Disconnect received
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5982]: Child connection from 10.0.2.2:44416
+Oct 14 12:55:40 sweetspot authpriv.notice dropbear[5982]: Password auth succeeded for 'root' from 10.0.2.2:44416
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5982]: Exit (root) from <10.0.2.2:44416>: Disconnect received
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5984]: Child connection from 10.0.2.2:44428
+Oct 14 12:55:40 sweetspot kern.info kernel: [   27.316636] squeezelite (4710) used greatest stack depth: 12144 bytes left
+Oct 14 12:55:40 sweetspot authpriv.notice dropbear[5984]: Password auth succeeded for 'root' from 10.0.2.2:44428
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5984]: Exit (root) from <10.0.2.2:44428>: Disconnect received
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5986]: Child connection from 10.0.2.2:50064
+Oct 14 12:55:40 sweetspot authpriv.notice dropbear[5986]: Password auth succeeded for 'root' from 10.0.2.2:50064
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[5986]: Exit (root) from <10.0.2.2:50064>: Disconnect received
+Oct 14 12:55:40 sweetspot authpriv.info dropbear[6062]: Child connection from 10.0.2.2:50066
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6062]: Password auth succeeded for 'root' from 10.0.2.2:50066
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6062]: Exit (root) from <10.0.2.2:50066>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6246]: Child connection from 10.0.2.2:50074
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6246]: Password auth succeeded for 'root' from 10.0.2.2:50074
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6246]: Exit (root) from <10.0.2.2:50074>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6403]: Child connection from 10.0.2.2:50076
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6403]: Password auth succeeded for 'root' from 10.0.2.2:50076
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6403]: Exit (root) from <10.0.2.2:50076>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6653]: Child connection from 10.0.2.2:50088
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6653]: Password auth succeeded for 'root' from 10.0.2.2:50088
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6653]: Exit (root) from <10.0.2.2:50088>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6721]: Child connection from 10.0.2.2:50102
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6721]: Password auth succeeded for 'root' from 10.0.2.2:50102
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6721]: Exit (root) from <10.0.2.2:50102>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6723]: Child connection from 10.0.2.2:50106
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6723]: Password auth succeeded for 'root' from 10.0.2.2:50106
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6723]: Exit (root) from <10.0.2.2:50106>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6725]: Child connection from 10.0.2.2:50122
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6725]: Password auth succeeded for 'root' from 10.0.2.2:50122
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6725]: Exit (root) from <10.0.2.2:50122>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6727]: Child connection from 10.0.2.2:50128
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6727]: Password auth succeeded for 'root' from 10.0.2.2:50128
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6727]: Exit (root) from <10.0.2.2:50128>: Disconnect received
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6729]: Child connection from 10.0.2.2:50130
+Oct 14 12:55:41 sweetspot authpriv.notice dropbear[6729]: Password auth succeeded for 'root' from 10.0.2.2:50130
+Oct 14 12:55:41 sweetspot authpriv.info dropbear[6729]: Exit (root) from <10.0.2.2:50130>: Disconnect received
+Oct 14 12:55:42 sweetspot authpriv.info dropbear[6731]: Child connection from 10.0.2.2:50138
+Oct 14 12:55:42 sweetspot authpriv.notice dropbear[6731]: Password auth succeeded for 'root' from 10.0.2.2:50138
+Oct 14 12:55:42 sweetspot authpriv.info dropbear[6736]: Child connection from 10.0.2.2:50152
+Oct 14 12:55:42 sweetspot authpriv.notice dropbear[6736]: Password auth succeeded for 'root' from 10.0.2.2:50152
+Oct 14 12:55:42 sweetspot authpriv.info dropbear[6736]: Exit (root) from <10.0.2.2:50152>: Disconnect received
+Oct 14 12:55:42 sweetspot authpriv.info dropbear[6738]: Child connection from 10.0.2.2:50164
+Oct 14 12:55:42 sweetspot authpriv.notice dropbear[6738]: Password auth succeeded for 'root' from 10.0.2.2:50164
+Oct 14 12:55:42 sweetspot authpriv.info dropbear[6738]: Exit (root) from <10.0.2.2:50164>: Disconnect received
+Oct 14 12:55:42 sweetspot authpriv.info dropbear[6740]: Child connection from 10.0.2.2:50170
+Oct 14 12:55:42 sweetspot authpriv.notice dropbear[6740]: Password auth succeeded for 'root' from 10.0.2.2:50170
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[6740]: Exit (root) from <10.0.2.2:50170>: Disconnect received
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[6731]: Exit (root) from <10.0.2.2:50138>: Disconnect received
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7813]: Child connection from 10.0.2.2:36538
+Oct 14 12:55:55 sweetspot authpriv.notice dropbear[7813]: Password auth succeeded for 'root' from 10.0.2.2:36538
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7813]: Exit (root) from <10.0.2.2:36538>: Disconnect received
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7816]: Child connection from 10.0.2.2:36554
+Oct 14 12:55:55 sweetspot authpriv.notice dropbear[7816]: Password auth succeeded for 'root' from 10.0.2.2:36554
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7816]: Exit (root) from <10.0.2.2:36554>: Disconnect received
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7818]: Child connection from 10.0.2.2:36560
+Oct 14 12:55:55 sweetspot authpriv.notice dropbear[7818]: Password auth succeeded for 'root' from 10.0.2.2:36560
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7818]: Exit (root) from <10.0.2.2:36560>: Disconnect received
+Oct 14 12:55:55 sweetspot authpriv.info dropbear[7820]: Child connection from 10.0.2.2:36574
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7820]: Password auth succeeded for 'root' from 10.0.2.2:36574
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7820]: Exit (root) from <10.0.2.2:36574>: Disconnect received
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7822]: Child connection from 10.0.2.2:36576
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7822]: Password auth succeeded for 'root' from 10.0.2.2:36576
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7822]: Exit (root) from <10.0.2.2:36576>: Disconnect received
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7826]: Child connection from 10.0.2.2:36578
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7826]: Password auth succeeded for 'root' from 10.0.2.2:36578
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7826]: Exit (root) from <10.0.2.2:36578>: Disconnect received
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7829]: Child connection from 10.0.2.2:36588
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7829]: Password auth succeeded for 'root' from 10.0.2.2:36588
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7829]: Exit (root) from <10.0.2.2:36588>: Disconnect received
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7832]: Child connection from 10.0.2.2:36590
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7832]: Password auth succeeded for 'root' from 10.0.2.2:36590
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7832]: Exit (root) from <10.0.2.2:36590>: Disconnect received
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7835]: Child connection from 10.0.2.2:36604
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7835]: Password auth succeeded for 'root' from 10.0.2.2:36604
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7835]: Exit (root) from <10.0.2.2:36604>: Disconnect received
+Oct 14 12:55:56 sweetspot authpriv.info dropbear[7837]: Child connection from 10.0.2.2:36606
+Oct 14 12:55:56 sweetspot authpriv.notice dropbear[7837]: Password auth succeeded for 'root' from 10.0.2.2:36606
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7837]: Exit (root) from <10.0.2.2:36606>: Disconnect received
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7839]: Child connection from 10.0.2.2:36614
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7839]: Password auth succeeded for 'root' from 10.0.2.2:36614
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7839]: Exit (root) from <10.0.2.2:36614>: Disconnect received
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7841]: Child connection from 10.0.2.2:36620
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7841]: Password auth succeeded for 'root' from 10.0.2.2:36620
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7841]: Exit (root) from <10.0.2.2:36620>: Disconnect received
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7843]: Child connection from 10.0.2.2:36632
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7843]: Password auth succeeded for 'root' from 10.0.2.2:36632
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7843]: Exit (root) from <10.0.2.2:36632>: Disconnect received
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7845]: Child connection from 10.0.2.2:36646
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7845]: Password auth succeeded for 'root' from 10.0.2.2:36646
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7850]: Child connection from 10.0.2.2:36650
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7850]: Password auth succeeded for 'root' from 10.0.2.2:36650
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7850]: Exit (root) from <10.0.2.2:36650>: Disconnect received
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7852]: Child connection from 10.0.2.2:36662
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7852]: Password auth succeeded for 'root' from 10.0.2.2:36662
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7852]: Exit (root) from <10.0.2.2:36662>: Disconnect received
+Oct 14 12:55:57 sweetspot authpriv.info dropbear[7854]: Child connection from 10.0.2.2:36668
+Oct 14 12:55:57 sweetspot authpriv.notice dropbear[7854]: Password auth succeeded for 'root' from 10.0.2.2:36668
+Oct 14 12:56:10 sweetspot authpriv.info dropbear[7854]: Exit (root) from <10.0.2.2:36668>: Disconnect received
+Oct 14 12:56:10 sweetspot authpriv.info dropbear[7845]: Exit (root) from <10.0.2.2:36646>: Disconnect received
+Oct 14 12:56:10 sweetspot authpriv.info dropbear[9098]: Child connection from 10.0.2.2:53588
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9098]: Password auth succeeded for 'root' from 10.0.2.2:53588
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9098]: Exit (root) from <10.0.2.2:53588>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9101]: Child connection from 10.0.2.2:53596
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9101]: Password auth succeeded for 'root' from 10.0.2.2:53596
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9101]: Exit (root) from <10.0.2.2:53596>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9103]: Child connection from 10.0.2.2:53604
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9103]: Password auth succeeded for 'root' from 10.0.2.2:53604
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9103]: Exit (root) from <10.0.2.2:53604>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9105]: Child connection from 10.0.2.2:53606
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9105]: Password auth succeeded for 'root' from 10.0.2.2:53606
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9105]: Exit (root) from <10.0.2.2:53606>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9107]: Child connection from 10.0.2.2:53620
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9107]: Password auth succeeded for 'root' from 10.0.2.2:53620
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9107]: Exit (root) from <10.0.2.2:53620>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9111]: Child connection from 10.0.2.2:53632
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9111]: Password auth succeeded for 'root' from 10.0.2.2:53632
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9111]: Exit (root) from <10.0.2.2:53632>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9114]: Child connection from 10.0.2.2:53636
+Oct 14 12:56:11 sweetspot authpriv.notice dropbear[9114]: Password auth succeeded for 'root' from 10.0.2.2:53636
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9114]: Exit (root) from <10.0.2.2:53636>: Disconnect received
+Oct 14 12:56:11 sweetspot authpriv.info dropbear[9117]: Child connection from 10.0.2.2:53642
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9117]: Password auth succeeded for 'root' from 10.0.2.2:53642
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9117]: Exit (root) from <10.0.2.2:53642>: Disconnect received
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9120]: Child connection from 10.0.2.2:53648
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9120]: Password auth succeeded for 'root' from 10.0.2.2:53648
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9120]: Exit (root) from <10.0.2.2:53648>: Disconnect received
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9122]: Child connection from 10.0.2.2:53658
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9122]: Password auth succeeded for 'root' from 10.0.2.2:53658
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9122]: Exit (root) from <10.0.2.2:53658>: Disconnect received
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9260]: Child connection from 10.0.2.2:53670
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9260]: Password auth succeeded for 'root' from 10.0.2.2:53670
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9260]: Exit (root) from <10.0.2.2:53670>: Disconnect received
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9426]: Child connection from 10.0.2.2:53684
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9426]: Password auth succeeded for 'root' from 10.0.2.2:53684
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9426]: Exit (root) from <10.0.2.2:53684>: Disconnect received
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9595]: Child connection from 10.0.2.2:53698
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9595]: Password auth succeeded for 'root' from 10.0.2.2:53698
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9595]: Exit (root) from <10.0.2.2:53698>: Disconnect received
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9809]: Child connection from 10.0.2.2:53708
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9809]: Password auth succeeded for 'root' from 10.0.2.2:53708
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9855]: Child connection from 10.0.2.2:53716
+Oct 14 12:56:12 sweetspot authpriv.notice dropbear[9855]: Password auth succeeded for 'root' from 10.0.2.2:53716
+Oct 14 12:56:12 sweetspot authpriv.info dropbear[9855]: Exit (root) from <10.0.2.2:53716>: Disconnect received
+Oct 14 12:56:13 sweetspot authpriv.info dropbear[9857]: Child connection from 10.0.2.2:53732
+Oct 14 12:56:13 sweetspot authpriv.notice dropbear[9857]: Password auth succeeded for 'root' from 10.0.2.2:53732
+Oct 14 12:56:13 sweetspot authpriv.info dropbear[9857]: Exit (root) from <10.0.2.2:53732>: Disconnect received
+Oct 14 12:56:13 sweetspot authpriv.info dropbear[9859]: Child connection from 10.0.2.2:53746
+Oct 14 12:56:13 sweetspot authpriv.notice dropbear[9859]: Password auth succeeded for 'root' from 10.0.2.2:53746
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[9859]: Exit (root) from <10.0.2.2:53746>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[9809]: Exit (root) from <10.0.2.2:53708>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11091]: Child connection from 10.0.2.2:49380
+Oct 14 12:56:26 sweetspot authpriv.notice dropbear[11091]: Password auth succeeded for 'root' from 10.0.2.2:49380
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11091]: Exit (root) from <10.0.2.2:49380>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11094]: Child connection from 10.0.2.2:49396
+Oct 14 12:56:26 sweetspot authpriv.notice dropbear[11094]: Password auth succeeded for 'root' from 10.0.2.2:49396
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11094]: Exit (root) from <10.0.2.2:49396>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11096]: Child connection from 10.0.2.2:49412
+Oct 14 12:56:26 sweetspot authpriv.notice dropbear[11096]: Password auth succeeded for 'root' from 10.0.2.2:49412
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11096]: Exit (root) from <10.0.2.2:49412>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11098]: Child connection from 10.0.2.2:49414
+Oct 14 12:56:26 sweetspot authpriv.notice dropbear[11098]: Password auth succeeded for 'root' from 10.0.2.2:49414
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11098]: Exit (root) from <10.0.2.2:49414>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11100]: Child connection from 10.0.2.2:49420
+Oct 14 12:56:26 sweetspot authpriv.notice dropbear[11100]: Password auth succeeded for 'root' from 10.0.2.2:49420
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11100]: Exit (root) from <10.0.2.2:49420>: Disconnect received
+Oct 14 12:56:26 sweetspot authpriv.info dropbear[11104]: Child connection from 10.0.2.2:49434
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11104]: Password auth succeeded for 'root' from 10.0.2.2:49434
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11104]: Exit (root) from <10.0.2.2:49434>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11107]: Child connection from 10.0.2.2:49438
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11107]: Password auth succeeded for 'root' from 10.0.2.2:49438
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11107]: Exit (root) from <10.0.2.2:49438>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11110]: Child connection from 10.0.2.2:49452
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11110]: Password auth succeeded for 'root' from 10.0.2.2:49452
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11110]: Exit (root) from <10.0.2.2:49452>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11113]: Child connection from 10.0.2.2:49466
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11113]: Password auth succeeded for 'root' from 10.0.2.2:49466
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11113]: Exit (root) from <10.0.2.2:49466>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11115]: Child connection from 10.0.2.2:49476
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11115]: Password auth succeeded for 'root' from 10.0.2.2:49476
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11115]: Exit (root) from <10.0.2.2:49476>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11117]: Child connection from 10.0.2.2:49484
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11117]: Password auth succeeded for 'root' from 10.0.2.2:49484
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11117]: Exit (root) from <10.0.2.2:49484>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11119]: Child connection from 10.0.2.2:49500
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11119]: Password auth succeeded for 'root' from 10.0.2.2:49500
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11119]: Exit (root) from <10.0.2.2:49500>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11121]: Child connection from 10.0.2.2:49508
+Oct 14 12:56:27 sweetspot authpriv.notice dropbear[11121]: Password auth succeeded for 'root' from 10.0.2.2:49508
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11121]: Exit (root) from <10.0.2.2:49508>: Disconnect received
+Oct 14 12:56:27 sweetspot authpriv.info dropbear[11123]: Child connection from 10.0.2.2:49512
+Oct 14 12:56:28 sweetspot authpriv.notice dropbear[11123]: Password auth succeeded for 'root' from 10.0.2.2:49512
+Oct 14 12:56:28 sweetspot authpriv.info dropbear[11128]: Child connection from 10.0.2.2:49516
+Oct 14 12:56:28 sweetspot authpriv.notice dropbear[11128]: Password auth succeeded for 'root' from 10.0.2.2:49516
+Oct 14 12:56:28 sweetspot authpriv.info dropbear[11128]: Exit (root) from <10.0.2.2:49516>: Disconnect received
+Oct 14 12:56:28 sweetspot authpriv.info dropbear[11130]: Child connection from 10.0.2.2:49520
+Oct 14 12:56:28 sweetspot authpriv.notice dropbear[11130]: Password auth succeeded for 'root' from 10.0.2.2:49520
+Oct 14 12:56:28 sweetspot authpriv.info dropbear[11130]: Exit (root) from <10.0.2.2:49520>: Disconnect received
+Oct 14 12:56:28 sweetspot authpriv.info dropbear[11132]: Child connection from 10.0.2.2:49530
+Oct 14 12:56:28 sweetspot authpriv.notice dropbear[11132]: Password auth succeeded for 'root' from 10.0.2.2:49530
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[11132]: Exit (root) from <10.0.2.2:49530>: Disconnect received
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[11123]: Exit (root) from <10.0.2.2:49512>: Disconnect received
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12376]: Child connection from 10.0.2.2:54656
+Oct 14 12:56:41 sweetspot authpriv.notice dropbear[12376]: Password auth succeeded for 'root' from 10.0.2.2:54656
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12376]: Exit (root) from <10.0.2.2:54656>: Disconnect received
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12379]: Child connection from 10.0.2.2:54660
+Oct 14 12:56:41 sweetspot authpriv.notice dropbear[12379]: Password auth succeeded for 'root' from 10.0.2.2:54660
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12379]: Exit (root) from <10.0.2.2:54660>: Disconnect received
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12381]: Child connection from 10.0.2.2:54674
+Oct 14 12:56:41 sweetspot authpriv.notice dropbear[12381]: Password auth succeeded for 'root' from 10.0.2.2:54674
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12381]: Exit (root) from <10.0.2.2:54674>: Disconnect received
+Oct 14 12:56:41 sweetspot authpriv.info dropbear[12383]: Child connection from 10.0.2.2:54682
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12383]: Password auth succeeded for 'root' from 10.0.2.2:54682
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12383]: Exit (root) from <10.0.2.2:54682>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12385]: Child connection from 10.0.2.2:54686
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12385]: Password auth succeeded for 'root' from 10.0.2.2:54686
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12385]: Exit (root) from <10.0.2.2:54686>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12389]: Child connection from 10.0.2.2:54690
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12389]: Password auth succeeded for 'root' from 10.0.2.2:54690
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12389]: Exit (root) from <10.0.2.2:54690>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12392]: Child connection from 10.0.2.2:54702
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12392]: Password auth succeeded for 'root' from 10.0.2.2:54702
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12392]: Exit (root) from <10.0.2.2:54702>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12395]: Child connection from 10.0.2.2:54718
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12395]: Password auth succeeded for 'root' from 10.0.2.2:54718
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12395]: Exit (root) from <10.0.2.2:54718>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12398]: Child connection from 10.0.2.2:54732
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12398]: Password auth succeeded for 'root' from 10.0.2.2:54732
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12398]: Exit (root) from <10.0.2.2:54732>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12400]: Child connection from 10.0.2.2:54742
+Oct 14 12:56:42 sweetspot authpriv.notice dropbear[12400]: Password auth succeeded for 'root' from 10.0.2.2:54742
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12400]: Exit (root) from <10.0.2.2:54742>: Disconnect received
+Oct 14 12:56:42 sweetspot authpriv.info dropbear[12402]: Child connection from 10.0.2.2:54756
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12402]: Password auth succeeded for 'root' from 10.0.2.2:54756
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12402]: Exit (root) from <10.0.2.2:54756>: Disconnect received
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12404]: Child connection from 10.0.2.2:54764
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12404]: Password auth succeeded for 'root' from 10.0.2.2:54764
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12404]: Exit (root) from <10.0.2.2:54764>: Disconnect received
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12406]: Child connection from 10.0.2.2:54776
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12406]: Password auth succeeded for 'root' from 10.0.2.2:54776
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12406]: Exit (root) from <10.0.2.2:54776>: Disconnect received
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12408]: Child connection from 10.0.2.2:54778
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12408]: Password auth succeeded for 'root' from 10.0.2.2:54778
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12425]: Child connection from 10.0.2.2:54786
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12425]: Password auth succeeded for 'root' from 10.0.2.2:54786
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12425]: Exit (root) from <10.0.2.2:54786>: Disconnect received
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12631]: Child connection from 10.0.2.2:54790
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12631]: Password auth succeeded for 'root' from 10.0.2.2:54790
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12631]: Exit (root) from <10.0.2.2:54790>: Disconnect received
+Oct 14 12:56:43 sweetspot authpriv.info dropbear[12821]: Child connection from 10.0.2.2:54796
+Oct 14 12:56:43 sweetspot authpriv.notice dropbear[12821]: Password auth succeeded for 'root' from 10.0.2.2:54796
+Oct 14 12:56:56 sweetspot authpriv.info dropbear[12821]: Exit (root) from <10.0.2.2:54796>: Disconnect received
+Oct 14 12:56:56 sweetspot authpriv.info dropbear[12408]: Exit (root) from <10.0.2.2:54778>: Disconnect received
+Oct 14 12:56:56 sweetspot authpriv.info dropbear[14210]: Child connection from 10.0.2.2:43922
+Oct 14 12:56:57 sweetspot authpriv.notice dropbear[14210]: Password auth succeeded for 'root' from 10.0.2.2:43922
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14210]: Exit (root) from <10.0.2.2:43922>: Disconnect received
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14213]: Child connection from 10.0.2.2:43938
+Oct 14 12:56:57 sweetspot authpriv.notice dropbear[14213]: Password auth succeeded for 'root' from 10.0.2.2:43938
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14213]: Exit (root) from <10.0.2.2:43938>: Disconnect received
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14215]: Child connection from 10.0.2.2:43950
+Oct 14 12:56:57 sweetspot authpriv.notice dropbear[14215]: Password auth succeeded for 'root' from 10.0.2.2:43950
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14215]: Exit (root) from <10.0.2.2:43950>: Disconnect received
+Oct 14 12:56:57 sweetspot kern.info kernel: [  104.011517] squeezelite (12410) used greatest stack depth: 12048 bytes left
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14217]: Child connection from 10.0.2.2:43954
+Oct 14 12:56:57 sweetspot authpriv.notice dropbear[14217]: Password auth succeeded for 'root' from 10.0.2.2:43954
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14217]: Exit (root) from <10.0.2.2:43954>: Disconnect received
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14219]: Child connection from 10.0.2.2:43956
+Oct 14 12:56:57 sweetspot authpriv.notice dropbear[14219]: Password auth succeeded for 'root' from 10.0.2.2:43956
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14219]: Exit (root) from <10.0.2.2:43956>: Disconnect received
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14223]: Child connection from 10.0.2.2:43958
+Oct 14 12:56:57 sweetspot authpriv.notice dropbear[14223]: Password auth succeeded for 'root' from 10.0.2.2:43958
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14223]: Exit (root) from <10.0.2.2:43958>: Disconnect received
+Oct 14 12:56:57 sweetspot authpriv.info dropbear[14226]: Child connection from 10.0.2.2:43966
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14226]: Password auth succeeded for 'root' from 10.0.2.2:43966
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14226]: Exit (root) from <10.0.2.2:43966>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14229]: Child connection from 10.0.2.2:43972
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14229]: Password auth succeeded for 'root' from 10.0.2.2:43972
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14229]: Exit (root) from <10.0.2.2:43972>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14232]: Child connection from 10.0.2.2:43986
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14232]: Password auth succeeded for 'root' from 10.0.2.2:43986
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14232]: Exit (root) from <10.0.2.2:43986>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14234]: Child connection from 10.0.2.2:44000
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14234]: Password auth succeeded for 'root' from 10.0.2.2:44000
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14234]: Exit (root) from <10.0.2.2:44000>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14236]: Child connection from 10.0.2.2:44014
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14236]: Password auth succeeded for 'root' from 10.0.2.2:44014
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14236]: Exit (root) from <10.0.2.2:44014>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14238]: Child connection from 10.0.2.2:44016
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14238]: Password auth succeeded for 'root' from 10.0.2.2:44016
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14238]: Exit (root) from <10.0.2.2:44016>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14250]: Child connection from 10.0.2.2:44024
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14250]: Password auth succeeded for 'root' from 10.0.2.2:44024
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14250]: Exit (root) from <10.0.2.2:44024>: Disconnect received
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14261]: Child connection from 10.0.2.2:44038
+Oct 14 12:56:58 sweetspot authpriv.notice dropbear[14261]: Password auth succeeded for 'root' from 10.0.2.2:44038
+Oct 14 12:56:58 sweetspot authpriv.info dropbear[14266]: Child connection from 10.0.2.2:44052
+Oct 14 12:56:59 sweetspot authpriv.notice dropbear[14266]: Password auth succeeded for 'root' from 10.0.2.2:44052
+Oct 14 12:56:59 sweetspot authpriv.info dropbear[14266]: Exit (root) from <10.0.2.2:44052>: Disconnect received
+Oct 14 12:56:59 sweetspot authpriv.info dropbear[14268]: Child connection from 10.0.2.2:44062
+Oct 14 12:56:59 sweetspot authpriv.notice dropbear[14268]: Password auth succeeded for 'root' from 10.0.2.2:44062
+Oct 14 12:56:59 sweetspot authpriv.info dropbear[14268]: Exit (root) from <10.0.2.2:44062>: Disconnect received
+Oct 14 12:56:59 sweetspot authpriv.info dropbear[14270]: Child connection from 10.0.2.2:44066
+Oct 14 12:56:59 sweetspot authpriv.notice dropbear[14270]: Password auth succeeded for 'root' from 10.0.2.2:44066
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[14270]: Exit (root) from <10.0.2.2:44066>: Disconnect received
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[14261]: Exit (root) from <10.0.2.2:44038>: Disconnect received
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15495]: Child connection from 10.0.2.2:38296
+Oct 14 12:57:12 sweetspot authpriv.notice dropbear[15495]: Password auth succeeded for 'root' from 10.0.2.2:38296
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15495]: Exit (root) from <10.0.2.2:38296>: Disconnect received
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15498]: Child connection from 10.0.2.2:38302
+Oct 14 12:57:12 sweetspot authpriv.notice dropbear[15498]: Password auth succeeded for 'root' from 10.0.2.2:38302
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15498]: Exit (root) from <10.0.2.2:38302>: Disconnect received
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15500]: Child connection from 10.0.2.2:38314
+Oct 14 12:57:12 sweetspot authpriv.notice dropbear[15500]: Password auth succeeded for 'root' from 10.0.2.2:38314
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15500]: Exit (root) from <10.0.2.2:38314>: Disconnect received
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15502]: Child connection from 10.0.2.2:38328
+Oct 14 12:57:12 sweetspot authpriv.notice dropbear[15502]: Password auth succeeded for 'root' from 10.0.2.2:38328
+Oct 14 12:57:12 sweetspot authpriv.info dropbear[15502]: Exit (root) from <10.0.2.2:38328>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15504]: Child connection from 10.0.2.2:38340
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15504]: Password auth succeeded for 'root' from 10.0.2.2:38340
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15504]: Exit (root) from <10.0.2.2:38340>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15508]: Child connection from 10.0.2.2:38350
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15508]: Password auth succeeded for 'root' from 10.0.2.2:38350
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15508]: Exit (root) from <10.0.2.2:38350>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15511]: Child connection from 10.0.2.2:38354
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15511]: Password auth succeeded for 'root' from 10.0.2.2:38354
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15511]: Exit (root) from <10.0.2.2:38354>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15514]: Child connection from 10.0.2.2:38364
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15514]: Password auth succeeded for 'root' from 10.0.2.2:38364
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15514]: Exit (root) from <10.0.2.2:38364>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15517]: Child connection from 10.0.2.2:38370
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15517]: Password auth succeeded for 'root' from 10.0.2.2:38370
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15517]: Exit (root) from <10.0.2.2:38370>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15519]: Child connection from 10.0.2.2:38372
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15519]: Password auth succeeded for 'root' from 10.0.2.2:38372
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15519]: Exit (root) from <10.0.2.2:38372>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15540]: Child connection from 10.0.2.2:38386
+Oct 14 12:57:13 sweetspot authpriv.notice dropbear[15540]: Password auth succeeded for 'root' from 10.0.2.2:38386
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15540]: Exit (root) from <10.0.2.2:38386>: Disconnect received
+Oct 14 12:57:13 sweetspot authpriv.info dropbear[15542]: Child connection from 10.0.2.2:38394
+Oct 14 12:57:14 sweetspot authpriv.notice dropbear[15542]: Password auth succeeded for 'root' from 10.0.2.2:38394
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15542]: Exit (root) from <10.0.2.2:38394>: Disconnect received
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15544]: Child connection from 10.0.2.2:38406
+Oct 14 12:57:14 sweetspot authpriv.notice dropbear[15544]: Password auth succeeded for 'root' from 10.0.2.2:38406
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15544]: Exit (root) from <10.0.2.2:38406>: Disconnect received
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15546]: Child connection from 10.0.2.2:38422
+Oct 14 12:57:14 sweetspot authpriv.notice dropbear[15546]: Password auth succeeded for 'root' from 10.0.2.2:38422
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15557]: Child connection from 10.0.2.2:38434
+Oct 14 12:57:14 sweetspot authpriv.notice dropbear[15557]: Password auth succeeded for 'root' from 10.0.2.2:38434
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15557]: Exit (root) from <10.0.2.2:38434>: Disconnect received
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15563]: Child connection from 10.0.2.2:38450
+Oct 14 12:57:14 sweetspot authpriv.notice dropbear[15563]: Password auth succeeded for 'root' from 10.0.2.2:38450
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15563]: Exit (root) from <10.0.2.2:38450>: Disconnect received
+Oct 14 12:57:14 sweetspot authpriv.info dropbear[15565]: Child connection from 10.0.2.2:38464
+Oct 14 12:57:14 sweetspot authpriv.notice dropbear[15565]: Password auth succeeded for 'root' from 10.0.2.2:38464
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[15565]: Exit (root) from <10.0.2.2:38464>: Disconnect received
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[15546]: Exit (root) from <10.0.2.2:38422>: Disconnect received
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[17489]: Child connection from 10.0.2.2:48268
+Oct 14 12:57:27 sweetspot authpriv.notice dropbear[17489]: Password auth succeeded for 'root' from 10.0.2.2:48268
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[17489]: Exit (root) from <10.0.2.2:48268>: Disconnect received
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[17492]: Child connection from 10.0.2.2:48272
+Oct 14 12:57:27 sweetspot authpriv.notice dropbear[17492]: Password auth succeeded for 'root' from 10.0.2.2:48272
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[17492]: Exit (root) from <10.0.2.2:48272>: Disconnect received
+Oct 14 12:57:27 sweetspot authpriv.info dropbear[17494]: Child connection from 10.0.2.2:48288
+Oct 14 12:57:28 sweetspot authpriv.notice dropbear[17494]: Password auth succeeded for 'root' from 10.0.2.2:48288
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17494]: Exit (root) from <10.0.2.2:48288>: Disconnect received
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17496]: Child connection from 10.0.2.2:48292
+Oct 14 12:57:28 sweetspot authpriv.notice dropbear[17496]: Password auth succeeded for 'root' from 10.0.2.2:48292
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17496]: Exit (root) from <10.0.2.2:48292>: Disconnect received
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17498]: Child connection from 10.0.2.2:48304
+Oct 14 12:57:28 sweetspot authpriv.notice dropbear[17498]: Password auth succeeded for 'root' from 10.0.2.2:48304
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17498]: Exit (root) from <10.0.2.2:48304>: Disconnect received
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17502]: Child connection from 10.0.2.2:48320
+Oct 14 12:57:28 sweetspot authpriv.notice dropbear[17502]: Password auth succeeded for 'root' from 10.0.2.2:48320
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17502]: Exit (root) from <10.0.2.2:48320>: Disconnect received
+Oct 14 12:57:28 sweetspot authpriv.info dropbear[17524]: Child connection from 10.0.2.2:48322
+Oct 14 12:57:28 sweetspot authpriv.notice dropbear[17524]: Password auth succeeded for 'root' from 10.0.2.2:48322
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17524]: Exit (root) from <10.0.2.2:48322>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17527]: Child connection from 10.0.2.2:48324
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17527]: Password auth succeeded for 'root' from 10.0.2.2:48324
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17527]: Exit (root) from <10.0.2.2:48324>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17530]: Child connection from 10.0.2.2:48328
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17530]: Password auth succeeded for 'root' from 10.0.2.2:48328
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17530]: Exit (root) from <10.0.2.2:48328>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17532]: Child connection from 10.0.2.2:48332
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17532]: Password auth succeeded for 'root' from 10.0.2.2:48332
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17532]: Exit (root) from <10.0.2.2:48332>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17537]: Child connection from 10.0.2.2:48340
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17537]: Password auth succeeded for 'root' from 10.0.2.2:48340
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17537]: Exit (root) from <10.0.2.2:48340>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17544]: Child connection from 10.0.2.2:48346
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17544]: Password auth succeeded for 'root' from 10.0.2.2:48346
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17544]: Exit (root) from <10.0.2.2:48346>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17546]: Child connection from 10.0.2.2:48356
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17546]: Password auth succeeded for 'root' from 10.0.2.2:48356
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17546]: Exit (root) from <10.0.2.2:48356>: Disconnect received
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17548]: Child connection from 10.0.2.2:48370
+Oct 14 12:57:29 sweetspot authpriv.notice dropbear[17548]: Password auth succeeded for 'root' from 10.0.2.2:48370
+Oct 14 12:57:29 sweetspot authpriv.info dropbear[17573]: Child connection from 10.0.2.2:48372
+Oct 14 12:57:30 sweetspot authpriv.notice dropbear[17573]: Password auth succeeded for 'root' from 10.0.2.2:48372
+Oct 14 12:57:30 sweetspot authpriv.info dropbear[17573]: Exit (root) from <10.0.2.2:48372>: Disconnect received
+Oct 14 12:57:30 sweetspot authpriv.info dropbear[17575]: Child connection from 10.0.2.2:48386
+Oct 14 12:57:30 sweetspot authpriv.notice dropbear[17575]: Password auth succeeded for 'root' from 10.0.2.2:48386
+Oct 14 12:57:30 sweetspot authpriv.info dropbear[17575]: Exit (root) from <10.0.2.2:48386>: Disconnect received
+Oct 14 12:57:30 sweetspot authpriv.info dropbear[17577]: Child connection from 10.0.2.2:48392
+Oct 14 12:57:30 sweetspot authpriv.notice dropbear[17577]: Password auth succeeded for 'root' from 10.0.2.2:48392
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[17577]: Exit (root) from <10.0.2.2:48392>: Disconnect received
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[17548]: Exit (root) from <10.0.2.2:48370>: Disconnect received
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18789]: Child connection from 10.0.2.2:45160
+Oct 14 12:57:43 sweetspot authpriv.notice dropbear[18789]: Password auth succeeded for 'root' from 10.0.2.2:45160
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18789]: Exit (root) from <10.0.2.2:45160>: Disconnect received
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18792]: Child connection from 10.0.2.2:45164
+Oct 14 12:57:43 sweetspot authpriv.notice dropbear[18792]: Password auth succeeded for 'root' from 10.0.2.2:45164
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18792]: Exit (root) from <10.0.2.2:45164>: Disconnect received
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18794]: Child connection from 10.0.2.2:45174
+Oct 14 12:57:43 sweetspot authpriv.notice dropbear[18794]: Password auth succeeded for 'root' from 10.0.2.2:45174
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18794]: Exit (root) from <10.0.2.2:45174>: Disconnect received
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18796]: Child connection from 10.0.2.2:45188
+Oct 14 12:57:43 sweetspot authpriv.notice dropbear[18796]: Password auth succeeded for 'root' from 10.0.2.2:45188
+Oct 14 12:57:43 sweetspot authpriv.info dropbear[18796]: Exit (root) from <10.0.2.2:45188>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18817]: Child connection from 10.0.2.2:45196
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18817]: Password auth succeeded for 'root' from 10.0.2.2:45196
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18817]: Exit (root) from <10.0.2.2:45196>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18821]: Child connection from 10.0.2.2:45206
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18821]: Password auth succeeded for 'root' from 10.0.2.2:45206
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18821]: Exit (root) from <10.0.2.2:45206>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18824]: Child connection from 10.0.2.2:45218
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18824]: Password auth succeeded for 'root' from 10.0.2.2:45218
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18824]: Exit (root) from <10.0.2.2:45218>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18835]: Child connection from 10.0.2.2:45222
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18835]: Password auth succeeded for 'root' from 10.0.2.2:45222
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18835]: Exit (root) from <10.0.2.2:45222>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18838]: Child connection from 10.0.2.2:45232
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18838]: Password auth succeeded for 'root' from 10.0.2.2:45232
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18838]: Exit (root) from <10.0.2.2:45232>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18840]: Child connection from 10.0.2.2:45244
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18840]: Password auth succeeded for 'root' from 10.0.2.2:45244
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18840]: Exit (root) from <10.0.2.2:45244>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18842]: Child connection from 10.0.2.2:45250
+Oct 14 12:57:44 sweetspot authpriv.notice dropbear[18842]: Password auth succeeded for 'root' from 10.0.2.2:45250
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18842]: Exit (root) from <10.0.2.2:45250>: Disconnect received
+Oct 14 12:57:44 sweetspot authpriv.info dropbear[18844]: Child connection from 10.0.2.2:45260
+Oct 14 12:57:45 sweetspot authpriv.notice dropbear[18844]: Password auth succeeded for 'root' from 10.0.2.2:45260
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18844]: Exit (root) from <10.0.2.2:45260>: Disconnect received
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18846]: Child connection from 10.0.2.2:45262
+Oct 14 12:57:45 sweetspot authpriv.notice dropbear[18846]: Password auth succeeded for 'root' from 10.0.2.2:45262
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18846]: Exit (root) from <10.0.2.2:45262>: Disconnect received
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18848]: Child connection from 10.0.2.2:45272
+Oct 14 12:57:45 sweetspot authpriv.notice dropbear[18848]: Password auth succeeded for 'root' from 10.0.2.2:45272
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18853]: Child connection from 10.0.2.2:45276
+Oct 14 12:57:45 sweetspot authpriv.notice dropbear[18853]: Password auth succeeded for 'root' from 10.0.2.2:45276
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18853]: Exit (root) from <10.0.2.2:45276>: Disconnect received
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18855]: Child connection from 10.0.2.2:45286
+Oct 14 12:57:45 sweetspot authpriv.notice dropbear[18855]: Password auth succeeded for 'root' from 10.0.2.2:45286
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18855]: Exit (root) from <10.0.2.2:45286>: Disconnect received
+Oct 14 12:57:45 sweetspot authpriv.info dropbear[18857]: Child connection from 10.0.2.2:45294
+Oct 14 12:57:45 sweetspot authpriv.notice dropbear[18857]: Password auth succeeded for 'root' from 10.0.2.2:45294
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[18857]: Exit (root) from <10.0.2.2:45294>: Disconnect received
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[18848]: Exit (root) from <10.0.2.2:45272>: Disconnect received
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[20622]: Child connection from 10.0.2.2:54572
+Oct 14 12:57:58 sweetspot authpriv.notice dropbear[20622]: Password auth succeeded for 'root' from 10.0.2.2:54572
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[20622]: Exit (root) from <10.0.2.2:54572>: Disconnect received
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[20625]: Child connection from 10.0.2.2:54578
+Oct 14 12:57:58 sweetspot authpriv.notice dropbear[20625]: Password auth succeeded for 'root' from 10.0.2.2:54578
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[20625]: Exit (root) from <10.0.2.2:54578>: Disconnect received
+Oct 14 12:57:58 sweetspot authpriv.info dropbear[20646]: Child connection from 10.0.2.2:54580
+Oct 14 12:57:59 sweetspot authpriv.notice dropbear[20646]: Password auth succeeded for 'root' from 10.0.2.2:54580
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20646]: Exit (root) from <10.0.2.2:54580>: Disconnect received
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20648]: Child connection from 10.0.2.2:54594
+Oct 14 12:57:59 sweetspot authpriv.notice dropbear[20648]: Password auth succeeded for 'root' from 10.0.2.2:54594
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20648]: Exit (root) from <10.0.2.2:54594>: Disconnect received
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20658]: Child connection from 10.0.2.2:54610
+Oct 14 12:57:59 sweetspot authpriv.notice dropbear[20658]: Password auth succeeded for 'root' from 10.0.2.2:54610
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20658]: Exit (root) from <10.0.2.2:54610>: Disconnect received
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20662]: Child connection from 10.0.2.2:54622
+Oct 14 12:57:59 sweetspot authpriv.notice dropbear[20662]: Password auth succeeded for 'root' from 10.0.2.2:54622
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20662]: Exit (root) from <10.0.2.2:54622>: Disconnect received
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20665]: Child connection from 10.0.2.2:54630
+Oct 14 12:57:59 sweetspot authpriv.notice dropbear[20665]: Password auth succeeded for 'root' from 10.0.2.2:54630
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20665]: Exit (root) from <10.0.2.2:54630>: Disconnect received
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20668]: Child connection from 10.0.2.2:54642
+Oct 14 12:57:59 sweetspot authpriv.notice dropbear[20668]: Password auth succeeded for 'root' from 10.0.2.2:54642
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20668]: Exit (root) from <10.0.2.2:54642>: Disconnect received
+Oct 14 12:57:59 sweetspot authpriv.info dropbear[20671]: Child connection from 10.0.2.2:54646
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20671]: Password auth succeeded for 'root' from 10.0.2.2:54646
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20671]: Exit (root) from <10.0.2.2:54646>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20693]: Child connection from 10.0.2.2:54648
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20693]: Password auth succeeded for 'root' from 10.0.2.2:54648
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20693]: Exit (root) from <10.0.2.2:54648>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20695]: Child connection from 10.0.2.2:54654
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20695]: Password auth succeeded for 'root' from 10.0.2.2:54654
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20695]: Exit (root) from <10.0.2.2:54654>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20697]: Child connection from 10.0.2.2:54658
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20697]: Password auth succeeded for 'root' from 10.0.2.2:54658
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20697]: Exit (root) from <10.0.2.2:54658>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20699]: Child connection from 10.0.2.2:54670
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20699]: Password auth succeeded for 'root' from 10.0.2.2:54670
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20699]: Exit (root) from <10.0.2.2:54670>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20701]: Child connection from 10.0.2.2:54672
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20701]: Password auth succeeded for 'root' from 10.0.2.2:54672
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20706]: Child connection from 10.0.2.2:54682
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20706]: Password auth succeeded for 'root' from 10.0.2.2:54682
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20706]: Exit (root) from <10.0.2.2:54682>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20708]: Child connection from 10.0.2.2:44534
+Oct 14 12:58:00 sweetspot authpriv.notice dropbear[20708]: Password auth succeeded for 'root' from 10.0.2.2:44534
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20708]: Exit (root) from <10.0.2.2:44534>: Disconnect received
+Oct 14 12:58:00 sweetspot authpriv.info dropbear[20779]: Child connection from 10.0.2.2:44544
+Oct 14 12:58:01 sweetspot authpriv.notice dropbear[20779]: Password auth succeeded for 'root' from 10.0.2.2:44544
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[20779]: Exit (root) from <10.0.2.2:44544>: Disconnect received
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[20701]: Exit (root) from <10.0.2.2:54672>: Disconnect received
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21941]: Child connection from 10.0.2.2:48292
+Oct 14 12:58:14 sweetspot authpriv.notice dropbear[21941]: Password auth succeeded for 'root' from 10.0.2.2:48292
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21941]: Exit (root) from <10.0.2.2:48292>: Disconnect received
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21944]: Child connection from 10.0.2.2:48300
+Oct 14 12:58:14 sweetspot authpriv.notice dropbear[21944]: Password auth succeeded for 'root' from 10.0.2.2:48300
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21944]: Exit (root) from <10.0.2.2:48300>: Disconnect received
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21946]: Child connection from 10.0.2.2:48308
+Oct 14 12:58:14 sweetspot authpriv.notice dropbear[21946]: Password auth succeeded for 'root' from 10.0.2.2:48308
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21946]: Exit (root) from <10.0.2.2:48308>: Disconnect received
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21958]: Child connection from 10.0.2.2:48314
+Oct 14 12:58:14 sweetspot authpriv.notice dropbear[21958]: Password auth succeeded for 'root' from 10.0.2.2:48314
+Oct 14 12:58:14 sweetspot authpriv.info dropbear[21958]: Exit (root) from <10.0.2.2:48314>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21960]: Child connection from 10.0.2.2:48316
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21960]: Password auth succeeded for 'root' from 10.0.2.2:48316
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21960]: Exit (root) from <10.0.2.2:48316>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21964]: Child connection from 10.0.2.2:48328
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21964]: Password auth succeeded for 'root' from 10.0.2.2:48328
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21964]: Exit (root) from <10.0.2.2:48328>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21967]: Child connection from 10.0.2.2:48340
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21967]: Password auth succeeded for 'root' from 10.0.2.2:48340
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21967]: Exit (root) from <10.0.2.2:48340>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21970]: Child connection from 10.0.2.2:48356
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21970]: Password auth succeeded for 'root' from 10.0.2.2:48356
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21970]: Exit (root) from <10.0.2.2:48356>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21973]: Child connection from 10.0.2.2:48358
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21973]: Password auth succeeded for 'root' from 10.0.2.2:48358
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21973]: Exit (root) from <10.0.2.2:48358>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21975]: Child connection from 10.0.2.2:48362
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21975]: Password auth succeeded for 'root' from 10.0.2.2:48362
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21975]: Exit (root) from <10.0.2.2:48362>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21977]: Child connection from 10.0.2.2:48376
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21977]: Password auth succeeded for 'root' from 10.0.2.2:48376
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21977]: Exit (root) from <10.0.2.2:48376>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21979]: Child connection from 10.0.2.2:48378
+Oct 14 12:58:15 sweetspot authpriv.notice dropbear[21979]: Password auth succeeded for 'root' from 10.0.2.2:48378
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21979]: Exit (root) from <10.0.2.2:48378>: Disconnect received
+Oct 14 12:58:15 sweetspot authpriv.info dropbear[21981]: Child connection from 10.0.2.2:48386
+Oct 14 12:58:16 sweetspot authpriv.notice dropbear[21981]: Password auth succeeded for 'root' from 10.0.2.2:48386
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[21981]: Exit (root) from <10.0.2.2:48386>: Disconnect received
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[22052]: Child connection from 10.0.2.2:48396
+Oct 14 12:58:16 sweetspot authpriv.notice dropbear[22052]: Password auth succeeded for 'root' from 10.0.2.2:48396
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[22057]: Child connection from 10.0.2.2:48402
+Oct 14 12:58:16 sweetspot authpriv.notice dropbear[22057]: Password auth succeeded for 'root' from 10.0.2.2:48402
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[22057]: Exit (root) from <10.0.2.2:48402>: Disconnect received
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[22059]: Child connection from 10.0.2.2:48416
+Oct 14 12:58:16 sweetspot authpriv.notice dropbear[22059]: Password auth succeeded for 'root' from 10.0.2.2:48416
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[22059]: Exit (root) from <10.0.2.2:48416>: Disconnect received
+Oct 14 12:58:16 sweetspot authpriv.info dropbear[22061]: Child connection from 10.0.2.2:48426
+Oct 14 12:58:16 sweetspot authpriv.notice dropbear[22061]: Password auth succeeded for 'root' from 10.0.2.2:48426
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[22061]: Exit (root) from <10.0.2.2:48426>: Disconnect received
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[22052]: Exit (root) from <10.0.2.2:48396>: Disconnect received
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[23945]: Child connection from 10.0.2.2:46092
+Oct 14 12:58:29 sweetspot authpriv.notice dropbear[23945]: Password auth succeeded for 'root' from 10.0.2.2:46092
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[23945]: Exit (root) from <10.0.2.2:46092>: Disconnect received
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[23948]: Child connection from 10.0.2.2:46100
+Oct 14 12:58:29 sweetspot authpriv.notice dropbear[23948]: Password auth succeeded for 'root' from 10.0.2.2:46100
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[23948]: Exit (root) from <10.0.2.2:46100>: Disconnect received
+Oct 14 12:58:29 sweetspot authpriv.info dropbear[23950]: Child connection from 10.0.2.2:46110
+Oct 14 12:58:30 sweetspot authpriv.notice dropbear[23950]: Password auth succeeded for 'root' from 10.0.2.2:46110
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23950]: Exit (root) from <10.0.2.2:46110>: Disconnect received
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23972]: Child connection from 10.0.2.2:46124
+Oct 14 12:58:30 sweetspot authpriv.notice dropbear[23972]: Password auth succeeded for 'root' from 10.0.2.2:46124
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23972]: Exit (root) from <10.0.2.2:46124>: Disconnect received
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23974]: Child connection from 10.0.2.2:46128
+Oct 14 12:58:30 sweetspot authpriv.notice dropbear[23974]: Password auth succeeded for 'root' from 10.0.2.2:46128
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23974]: Exit (root) from <10.0.2.2:46128>: Disconnect received
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23978]: Child connection from 10.0.2.2:39836
+Oct 14 12:58:30 sweetspot authpriv.notice dropbear[23978]: Password auth succeeded for 'root' from 10.0.2.2:39836
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23978]: Exit (root) from <10.0.2.2:39836>: Disconnect received
+Oct 14 12:58:30 sweetspot authpriv.info dropbear[23981]: Child connection from 10.0.2.2:39842
+Oct 14 12:58:30 sweetspot authpriv.notice dropbear[23981]: Password auth succeeded for 'root' from 10.0.2.2:39842
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[23981]: Exit (root) from <10.0.2.2:39842>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[23984]: Child connection from 10.0.2.2:39844
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[23984]: Password auth succeeded for 'root' from 10.0.2.2:39844
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[23984]: Exit (root) from <10.0.2.2:39844>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[23987]: Child connection from 10.0.2.2:39850
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[23987]: Password auth succeeded for 'root' from 10.0.2.2:39850
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[23987]: Exit (root) from <10.0.2.2:39850>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24058]: Child connection from 10.0.2.2:39860
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[24058]: Password auth succeeded for 'root' from 10.0.2.2:39860
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24058]: Exit (root) from <10.0.2.2:39860>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24060]: Child connection from 10.0.2.2:39864
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[24060]: Password auth succeeded for 'root' from 10.0.2.2:39864
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24060]: Exit (root) from <10.0.2.2:39864>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24062]: Child connection from 10.0.2.2:39880
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[24062]: Password auth succeeded for 'root' from 10.0.2.2:39880
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24062]: Exit (root) from <10.0.2.2:39880>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24064]: Child connection from 10.0.2.2:39894
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[24064]: Password auth succeeded for 'root' from 10.0.2.2:39894
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24064]: Exit (root) from <10.0.2.2:39894>: Disconnect received
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24066]: Child connection from 10.0.2.2:39908
+Oct 14 12:58:31 sweetspot authpriv.notice dropbear[24066]: Password auth succeeded for 'root' from 10.0.2.2:39908
+Oct 14 12:58:31 sweetspot authpriv.info dropbear[24071]: Child connection from 10.0.2.2:39922
+Oct 14 12:58:32 sweetspot authpriv.notice dropbear[24071]: Password auth succeeded for 'root' from 10.0.2.2:39922
+Oct 14 12:58:32 sweetspot authpriv.info dropbear[24071]: Exit (root) from <10.0.2.2:39922>: Disconnect received
+Oct 14 12:58:32 sweetspot authpriv.info dropbear[24073]: Child connection from 10.0.2.2:39936
+Oct 14 12:58:32 sweetspot authpriv.notice dropbear[24073]: Password auth succeeded for 'root' from 10.0.2.2:39936
+Oct 14 12:58:32 sweetspot authpriv.info dropbear[24073]: Exit (root) from <10.0.2.2:39936>: Disconnect received
+Oct 14 12:58:32 sweetspot authpriv.info dropbear[24094]: Child connection from 10.0.2.2:39950
+Oct 14 12:58:32 sweetspot authpriv.notice dropbear[24094]: Password auth succeeded for 'root' from 10.0.2.2:39950
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[24094]: Exit (root) from <10.0.2.2:39950>: Disconnect received
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[24066]: Exit (root) from <10.0.2.2:39908>: Disconnect received
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[25244]: Child connection from 10.0.2.2:60996
+Oct 14 12:58:45 sweetspot authpriv.notice dropbear[25244]: Password auth succeeded for 'root' from 10.0.2.2:60996
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[25244]: Exit (root) from <10.0.2.2:60996>: Disconnect received
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[25247]: Child connection from 10.0.2.2:32772
+Oct 14 12:58:45 sweetspot authpriv.notice dropbear[25247]: Password auth succeeded for 'root' from 10.0.2.2:32772
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[25247]: Exit (root) from <10.0.2.2:32772>: Disconnect received
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[25249]: Child connection from 10.0.2.2:32776
+Oct 14 12:58:45 sweetspot authpriv.notice dropbear[25249]: Password auth succeeded for 'root' from 10.0.2.2:32776
+Oct 14 12:58:45 sweetspot authpriv.info dropbear[25249]: Exit (root) from <10.0.2.2:32776>: Disconnect received
+Oct 14 12:58:49 sweetspot authpriv.info dropbear[26067]: Child connection from 10.0.2.2:32778
+Oct 14 12:58:49 sweetspot authpriv.notice dropbear[26067]: Password auth succeeded for 'root' from 10.0.2.2:32778
+Oct 14 12:58:49 sweetspot authpriv.info dropbear[26067]: Exit (root) from <10.0.2.2:32778>: Disconnect received
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26108]: Child connection from 10.0.2.2:32788
+Oct 14 12:58:50 sweetspot authpriv.notice dropbear[26108]: Password auth succeeded for 'root' from 10.0.2.2:32788
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26108]: Exit (root) from <10.0.2.2:32788>: Disconnect received
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26112]: Child connection from 10.0.2.2:32790
+Oct 14 12:58:50 sweetspot authpriv.notice dropbear[26112]: Password auth succeeded for 'root' from 10.0.2.2:32790
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26112]: Exit (root) from <10.0.2.2:32790>: Disconnect received
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26115]: Child connection from 10.0.2.2:32802
+Oct 14 12:58:50 sweetspot authpriv.notice dropbear[26115]: Password auth succeeded for 'root' from 10.0.2.2:32802
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26115]: Exit (root) from <10.0.2.2:32802>: Disconnect received
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26118]: Child connection from 10.0.2.2:49554
+Oct 14 12:58:50 sweetspot authpriv.notice dropbear[26118]: Password auth succeeded for 'root' from 10.0.2.2:49554
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26118]: Exit (root) from <10.0.2.2:49554>: Disconnect received
+Oct 14 12:58:50 sweetspot authpriv.info dropbear[26121]: Child connection from 10.0.2.2:49560
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26121]: Password auth succeeded for 'root' from 10.0.2.2:49560
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26121]: Exit (root) from <10.0.2.2:49560>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26123]: Child connection from 10.0.2.2:49562
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26123]: Password auth succeeded for 'root' from 10.0.2.2:49562
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26123]: Exit (root) from <10.0.2.2:49562>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26125]: Child connection from 10.0.2.2:49572
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26125]: Password auth succeeded for 'root' from 10.0.2.2:49572
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26125]: Exit (root) from <10.0.2.2:49572>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26127]: Child connection from 10.0.2.2:49584
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26127]: Password auth succeeded for 'root' from 10.0.2.2:49584
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26127]: Exit (root) from <10.0.2.2:49584>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26195]: Child connection from 10.0.2.2:49596
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26195]: Password auth succeeded for 'root' from 10.0.2.2:49596
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26195]: Exit (root) from <10.0.2.2:49596>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26200]: Child connection from 10.0.2.2:49602
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26200]: Password auth succeeded for 'root' from 10.0.2.2:49602
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26205]: Child connection from 10.0.2.2:49608
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26205]: Password auth succeeded for 'root' from 10.0.2.2:49608
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26205]: Exit (root) from <10.0.2.2:49608>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26207]: Child connection from 10.0.2.2:49612
+Oct 14 12:58:51 sweetspot authpriv.notice dropbear[26207]: Password auth succeeded for 'root' from 10.0.2.2:49612
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26207]: Exit (root) from <10.0.2.2:49612>: Disconnect received
+Oct 14 12:58:51 sweetspot authpriv.info dropbear[26209]: Child connection from 10.0.2.2:49622
+Oct 14 12:58:52 sweetspot authpriv.notice dropbear[26209]: Password auth succeeded for 'root' from 10.0.2.2:49622
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[26209]: Exit (root) from <10.0.2.2:49622>: Disconnect received
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[26200]: Exit (root) from <10.0.2.2:49602>: Disconnect received
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[27363]: Child connection from 10.0.2.2:34160
+Oct 14 12:59:05 sweetspot authpriv.notice dropbear[27363]: Password auth succeeded for 'root' from 10.0.2.2:34160
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[27363]: Exit (root) from <10.0.2.2:34160>: Disconnect received
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[27366]: Child connection from 10.0.2.2:34164
+Oct 14 12:59:05 sweetspot authpriv.notice dropbear[27366]: Password auth succeeded for 'root' from 10.0.2.2:34164
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[27366]: Exit (root) from <10.0.2.2:34164>: Disconnect received
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[27387]: Child connection from 10.0.2.2:34174
+Oct 14 12:59:05 sweetspot authpriv.notice dropbear[27387]: Password auth succeeded for 'root' from 10.0.2.2:34174
+Oct 14 12:59:05 sweetspot authpriv.info dropbear[27387]: Exit (root) from <10.0.2.2:34174>: Disconnect received
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28310]: Child connection from 10.0.2.2:34294
+Oct 14 12:59:13 sweetspot authpriv.notice dropbear[28310]: Password auth succeeded for 'root' from 10.0.2.2:34294
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28310]: Exit (root) from <10.0.2.2:34294>: Disconnect received
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28312]: Child connection from 10.0.2.2:34296
+Oct 14 12:59:13 sweetspot authpriv.notice dropbear[28312]: Password auth succeeded for 'root' from 10.0.2.2:34296
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28312]: Exit (root) from <10.0.2.2:34296>: Disconnect received
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28316]: Child connection from 10.0.2.2:34310
+Oct 14 12:59:13 sweetspot authpriv.notice dropbear[28316]: Password auth succeeded for 'root' from 10.0.2.2:34310
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28316]: Exit (root) from <10.0.2.2:34310>: Disconnect received
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28319]: Child connection from 10.0.2.2:34326
+Oct 14 12:59:13 sweetspot authpriv.notice dropbear[28319]: Password auth succeeded for 'root' from 10.0.2.2:34326
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28319]: Exit (root) from <10.0.2.2:34326>: Disconnect received
+Oct 14 12:59:13 sweetspot authpriv.info dropbear[28322]: Child connection from 10.0.2.2:34332
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28322]: Password auth succeeded for 'root' from 10.0.2.2:34332
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28322]: Exit (root) from <10.0.2.2:34332>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28325]: Child connection from 10.0.2.2:34336
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28325]: Password auth succeeded for 'root' from 10.0.2.2:34336
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28325]: Exit (root) from <10.0.2.2:34336>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28327]: Child connection from 10.0.2.2:34346
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28327]: Password auth succeeded for 'root' from 10.0.2.2:34346
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28327]: Exit (root) from <10.0.2.2:34346>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28348]: Child connection from 10.0.2.2:34352
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28348]: Password auth succeeded for 'root' from 10.0.2.2:34352
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28348]: Exit (root) from <10.0.2.2:34352>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28350]: Child connection from 10.0.2.2:34362
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28350]: Password auth succeeded for 'root' from 10.0.2.2:34362
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28350]: Exit (root) from <10.0.2.2:34362>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28352]: Child connection from 10.0.2.2:34366
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28352]: Password auth succeeded for 'root' from 10.0.2.2:34366
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28352]: Exit (root) from <10.0.2.2:34366>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28356]: Child connection from 10.0.2.2:34378
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28356]: Password auth succeeded for 'root' from 10.0.2.2:34378
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28361]: Child connection from 10.0.2.2:34392
+Oct 14 12:59:14 sweetspot authpriv.notice dropbear[28361]: Password auth succeeded for 'root' from 10.0.2.2:34392
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28361]: Exit (root) from <10.0.2.2:34392>: Disconnect received
+Oct 14 12:59:14 sweetspot authpriv.info dropbear[28363]: Child connection from 10.0.2.2:34404
+Oct 14 12:59:15 sweetspot authpriv.notice dropbear[28363]: Password auth succeeded for 'root' from 10.0.2.2:34404
+Oct 14 12:59:15 sweetspot authpriv.info dropbear[28363]: Exit (root) from <10.0.2.2:34404>: Disconnect received
+Oct 14 12:59:15 sweetspot authpriv.info dropbear[28365]: Child connection from 10.0.2.2:34418
+Oct 14 12:59:15 sweetspot authpriv.notice dropbear[28365]: Password auth succeeded for 'root' from 10.0.2.2:34418
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[28365]: Exit (root) from <10.0.2.2:34418>: Disconnect received
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[28356]: Exit (root) from <10.0.2.2:34378>: Disconnect received
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[29586]: Child connection from 10.0.2.2:37588
+Oct 14 12:59:28 sweetspot authpriv.notice dropbear[29586]: Password auth succeeded for 'root' from 10.0.2.2:37588
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[29586]: Exit (root) from <10.0.2.2:37588>: Disconnect received
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[29589]: Child connection from 10.0.2.2:37590
+Oct 14 12:59:28 sweetspot authpriv.notice dropbear[29589]: Password auth succeeded for 'root' from 10.0.2.2:37590
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[29589]: Exit (root) from <10.0.2.2:37590>: Disconnect received
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[29591]: Child connection from 10.0.2.2:37598
+Oct 14 12:59:28 sweetspot authpriv.notice dropbear[29591]: Password auth succeeded for 'root' from 10.0.2.2:37598
+Oct 14 12:59:28 sweetspot authpriv.info dropbear[29591]: Exit (root) from <10.0.2.2:37598>: Disconnect received
+Oct 14 12:59:32 sweetspot authpriv.info dropbear[30445]: Child connection from 10.0.2.2:55618
+Oct 14 12:59:32 sweetspot authpriv.notice dropbear[30445]: Password auth succeeded for 'root' from 10.0.2.2:55618
+Oct 14 12:59:32 sweetspot authpriv.info dropbear[30445]: Exit (root) from <10.0.2.2:55618>: Disconnect received
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30447]: Child connection from 10.0.2.2:55628
+Oct 14 12:59:33 sweetspot authpriv.notice dropbear[30447]: Password auth succeeded for 'root' from 10.0.2.2:55628
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30447]: Exit (root) from <10.0.2.2:55628>: Disconnect received
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30451]: Child connection from 10.0.2.2:55632
+Oct 14 12:59:33 sweetspot authpriv.notice dropbear[30451]: Password auth succeeded for 'root' from 10.0.2.2:55632
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30451]: Exit (root) from <10.0.2.2:55632>: Disconnect received
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30454]: Child connection from 10.0.2.2:55636
+Oct 14 12:59:33 sweetspot authpriv.notice dropbear[30454]: Password auth succeeded for 'root' from 10.0.2.2:55636
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30454]: Exit (root) from <10.0.2.2:55636>: Disconnect received
+Oct 14 12:59:33 sweetspot authpriv.info dropbear[30457]: Child connection from 10.0.2.2:55640
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30457]: Password auth succeeded for 'root' from 10.0.2.2:55640
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30457]: Exit (root) from <10.0.2.2:55640>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30460]: Child connection from 10.0.2.2:55648
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30460]: Password auth succeeded for 'root' from 10.0.2.2:55648
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30460]: Exit (root) from <10.0.2.2:55648>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30462]: Child connection from 10.0.2.2:55656
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30462]: Password auth succeeded for 'root' from 10.0.2.2:55656
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30462]: Exit (root) from <10.0.2.2:55656>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30464]: Child connection from 10.0.2.2:55666
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30464]: Password auth succeeded for 'root' from 10.0.2.2:55666
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30464]: Exit (root) from <10.0.2.2:55666>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30466]: Child connection from 10.0.2.2:55676
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30466]: Password auth succeeded for 'root' from 10.0.2.2:55676
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30466]: Exit (root) from <10.0.2.2:55676>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30468]: Child connection from 10.0.2.2:55682
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30468]: Password auth succeeded for 'root' from 10.0.2.2:55682
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30468]: Exit (root) from <10.0.2.2:55682>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30472]: Child connection from 10.0.2.2:55684
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30472]: Password auth succeeded for 'root' from 10.0.2.2:55684
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30477]: Child connection from 10.0.2.2:55692
+Oct 14 12:59:34 sweetspot authpriv.notice dropbear[30477]: Password auth succeeded for 'root' from 10.0.2.2:55692
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30477]: Exit (root) from <10.0.2.2:55692>: Disconnect received
+Oct 14 12:59:34 sweetspot authpriv.info dropbear[30479]: Child connection from 10.0.2.2:55706
+Oct 14 12:59:35 sweetspot authpriv.notice dropbear[30479]: Password auth succeeded for 'root' from 10.0.2.2:55706
+Oct 14 12:59:35 sweetspot authpriv.info dropbear[30479]: Exit (root) from <10.0.2.2:55706>: Disconnect received
+Oct 14 12:59:35 sweetspot authpriv.info dropbear[30481]: Child connection from 10.0.2.2:55718
+Oct 14 12:59:35 sweetspot authpriv.notice dropbear[30481]: Password auth succeeded for 'root' from 10.0.2.2:55718
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[30481]: Exit (root) from <10.0.2.2:55718>: Disconnect received
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[30472]: Exit (root) from <10.0.2.2:55684>: Disconnect received
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[31712]: Child connection from 10.0.2.2:47504
+Oct 14 12:59:48 sweetspot authpriv.notice dropbear[31712]: Password auth succeeded for 'root' from 10.0.2.2:47504
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[31712]: Exit (root) from <10.0.2.2:47504>: Disconnect received
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[31715]: Child connection from 10.0.2.2:47508
+Oct 14 12:59:48 sweetspot authpriv.notice dropbear[31715]: Password auth succeeded for 'root' from 10.0.2.2:47508
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[31715]: Exit (root) from <10.0.2.2:47508>: Disconnect received
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[31717]: Child connection from 10.0.2.2:47518
+Oct 14 12:59:48 sweetspot authpriv.notice dropbear[31717]: Password auth succeeded for 'root' from 10.0.2.2:47518
+Oct 14 12:59:48 sweetspot authpriv.info dropbear[31717]: Exit (root) from <10.0.2.2:47518>: Disconnect received
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32573]: Child connection from 10.0.2.2:58168
+Oct 14 12:59:56 sweetspot authpriv.notice dropbear[32573]: Password auth succeeded for 'root' from 10.0.2.2:58168
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32573]: Exit (root) from <10.0.2.2:58168>: Disconnect received
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32594]: Child connection from 10.0.2.2:58176
+Oct 14 12:59:56 sweetspot authpriv.notice dropbear[32594]: Password auth succeeded for 'root' from 10.0.2.2:58176
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32594]: Exit (root) from <10.0.2.2:58176>: Disconnect received
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32598]: Child connection from 10.0.2.2:58192
+Oct 14 12:59:56 sweetspot authpriv.notice dropbear[32598]: Password auth succeeded for 'root' from 10.0.2.2:58192
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32598]: Exit (root) from <10.0.2.2:58192>: Disconnect received
+Oct 14 12:59:56 sweetspot authpriv.info dropbear[32601]: Child connection from 10.0.2.2:58198
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32601]: Password auth succeeded for 'root' from 10.0.2.2:58198
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32601]: Exit (root) from <10.0.2.2:58198>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32604]: Child connection from 10.0.2.2:58204
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32604]: Password auth succeeded for 'root' from 10.0.2.2:58204
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32604]: Exit (root) from <10.0.2.2:58204>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32676]: Child connection from 10.0.2.2:58214
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32676]: Password auth succeeded for 'root' from 10.0.2.2:58214
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32676]: Exit (root) from <10.0.2.2:58214>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32678]: Child connection from 10.0.2.2:58222
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32678]: Password auth succeeded for 'root' from 10.0.2.2:58222
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32678]: Exit (root) from <10.0.2.2:58222>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32680]: Child connection from 10.0.2.2:58230
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32680]: Password auth succeeded for 'root' from 10.0.2.2:58230
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32680]: Exit (root) from <10.0.2.2:58230>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32682]: Child connection from 10.0.2.2:58242
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32682]: Password auth succeeded for 'root' from 10.0.2.2:58242
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32682]: Exit (root) from <10.0.2.2:58242>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32684]: Child connection from 10.0.2.2:58244
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32684]: Password auth succeeded for 'root' from 10.0.2.2:58244
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32684]: Exit (root) from <10.0.2.2:58244>: Disconnect received
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32686]: Child connection from 10.0.2.2:58246
+Oct 14 12:59:57 sweetspot authpriv.notice dropbear[32686]: Password auth succeeded for 'root' from 10.0.2.2:58246
+Oct 14 12:59:57 sweetspot authpriv.info dropbear[32691]: Child connection from 10.0.2.2:58254
+Oct 14 12:59:58 sweetspot authpriv.notice dropbear[32691]: Password auth succeeded for 'root' from 10.0.2.2:58254
+Oct 14 12:59:58 sweetspot authpriv.info dropbear[32691]: Exit (root) from <10.0.2.2:58254>: Disconnect received
+Oct 14 12:59:58 sweetspot authpriv.info dropbear[32693]: Child connection from 10.0.2.2:58270
+Oct 14 12:59:58 sweetspot authpriv.notice dropbear[32693]: Password auth succeeded for 'root' from 10.0.2.2:58270
+Oct 14 12:59:58 sweetspot authpriv.info dropbear[32693]: Exit (root) from <10.0.2.2:58270>: Disconnect received
+Oct 14 12:59:58 sweetspot authpriv.info dropbear[32695]: Child connection from 10.0.2.2:58274
+Oct 14 12:59:58 sweetspot authpriv.notice dropbear[32695]: Password auth succeeded for 'root' from 10.0.2.2:58274
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[32695]: Exit (root) from <10.0.2.2:58274>: Disconnect received
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[32686]: Exit (root) from <10.0.2.2:58246>: Disconnect received
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[1398]: Child connection from 10.0.2.2:52330
+Oct 14 13:00:11 sweetspot authpriv.notice dropbear[1398]: Password auth succeeded for 'root' from 10.0.2.2:52330
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[1398]: Exit (root) from <10.0.2.2:52330>: Disconnect received
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[1401]: Child connection from 10.0.2.2:52334
+Oct 14 13:00:11 sweetspot authpriv.notice dropbear[1401]: Password auth succeeded for 'root' from 10.0.2.2:52334
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[1401]: Exit (root) from <10.0.2.2:52334>: Disconnect received
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[1422]: Child connection from 10.0.2.2:52342
+Oct 14 13:00:11 sweetspot authpriv.notice dropbear[1422]: Password auth succeeded for 'root' from 10.0.2.2:52342
+Oct 14 13:00:11 sweetspot authpriv.info dropbear[1422]: Exit (root) from <10.0.2.2:52342>: Disconnect received
+Oct 14 13:00:15 sweetspot authpriv.info dropbear[2242]: Child connection from 10.0.2.2:52356
+Oct 14 13:00:15 sweetspot authpriv.notice dropbear[2242]: Password auth succeeded for 'root' from 10.0.2.2:52356
+Oct 14 13:00:15 sweetspot authpriv.info dropbear[2242]: Exit (root) from <10.0.2.2:52356>: Disconnect received
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2244]: Child connection from 10.0.2.2:52366
+Oct 14 13:00:16 sweetspot authpriv.notice dropbear[2244]: Password auth succeeded for 'root' from 10.0.2.2:52366
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2244]: Exit (root) from <10.0.2.2:52366>: Disconnect received
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2248]: Child connection from 10.0.2.2:52368
+Oct 14 13:00:16 sweetspot authpriv.notice dropbear[2248]: Password auth succeeded for 'root' from 10.0.2.2:52368
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2248]: Exit (root) from <10.0.2.2:52368>: Disconnect received
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2251]: Child connection from 10.0.2.2:52378
+Oct 14 13:00:16 sweetspot authpriv.notice dropbear[2251]: Password auth succeeded for 'root' from 10.0.2.2:52378
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2251]: Exit (root) from <10.0.2.2:52378>: Disconnect received
+Oct 14 13:00:16 sweetspot authpriv.info dropbear[2254]: Child connection from 10.0.2.2:52386
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2254]: Password auth succeeded for 'root' from 10.0.2.2:52386
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2254]: Exit (root) from <10.0.2.2:52386>: Disconnect received
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2257]: Child connection from 10.0.2.2:52392
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2257]: Password auth succeeded for 'root' from 10.0.2.2:52392
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2257]: Exit (root) from <10.0.2.2:52392>: Disconnect received
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2259]: Child connection from 10.0.2.2:52394
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2259]: Password auth succeeded for 'root' from 10.0.2.2:52394
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2259]: Exit (root) from <10.0.2.2:52394>: Disconnect received
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2330]: Child connection from 10.0.2.2:52402
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2330]: Password auth succeeded for 'root' from 10.0.2.2:52402
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2330]: Exit (root) from <10.0.2.2:52402>: Disconnect received
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2332]: Child connection from 10.0.2.2:52418
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2332]: Password auth succeeded for 'root' from 10.0.2.2:52418
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2332]: Exit (root) from <10.0.2.2:52418>: Disconnect received
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2353]: Child connection from 10.0.2.2:52426
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2353]: Password auth succeeded for 'root' from 10.0.2.2:52426
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2353]: Exit (root) from <10.0.2.2:52426>: Disconnect received
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2355]: Child connection from 10.0.2.2:52434
+Oct 14 13:00:17 sweetspot authpriv.notice dropbear[2355]: Password auth succeeded for 'root' from 10.0.2.2:52434
+Oct 14 13:00:17 sweetspot authpriv.info dropbear[2360]: Child connection from 10.0.2.2:52442
+Oct 14 13:00:18 sweetspot authpriv.notice dropbear[2360]: Password auth succeeded for 'root' from 10.0.2.2:52442
+Oct 14 13:00:18 sweetspot authpriv.info dropbear[2360]: Exit (root) from <10.0.2.2:52442>: Disconnect received
+Oct 14 13:00:18 sweetspot authpriv.info dropbear[2362]: Child connection from 10.0.2.2:52458
+Oct 14 13:00:18 sweetspot authpriv.notice dropbear[2362]: Password auth succeeded for 'root' from 10.0.2.2:52458
+Oct 14 13:00:18 sweetspot authpriv.info dropbear[2362]: Exit (root) from <10.0.2.2:52458>: Disconnect received
+Oct 14 13:00:18 sweetspot authpriv.info dropbear[2364]: Child connection from 10.0.2.2:52460
+Oct 14 13:00:18 sweetspot authpriv.notice dropbear[2364]: Password auth succeeded for 'root' from 10.0.2.2:52460
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[2364]: Exit (root) from <10.0.2.2:52460>: Disconnect received
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[2355]: Exit (root) from <10.0.2.2:52434>: Disconnect received
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[3558]: Child connection from 10.0.2.2:57886
+Oct 14 13:00:31 sweetspot authpriv.notice dropbear[3558]: Password auth succeeded for 'root' from 10.0.2.2:57886
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[3558]: Exit (root) from <10.0.2.2:57886>: Disconnect received
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[3561]: Child connection from 10.0.2.2:57888
+Oct 14 13:00:31 sweetspot authpriv.notice dropbear[3561]: Password auth succeeded for 'root' from 10.0.2.2:57888
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[3561]: Exit (root) from <10.0.2.2:57888>: Disconnect received
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[3563]: Child connection from 10.0.2.2:57900
+Oct 14 13:00:31 sweetspot authpriv.notice dropbear[3563]: Password auth succeeded for 'root' from 10.0.2.2:57900
+Oct 14 13:00:31 sweetspot authpriv.info dropbear[3563]: Exit (root) from <10.0.2.2:57900>: Disconnect received
+Oct 14 13:00:39 sweetspot authpriv.info dropbear[4489]: Child connection from 10.0.2.2:57914
+Oct 14 13:00:39 sweetspot authpriv.notice dropbear[4489]: Password auth succeeded for 'root' from 10.0.2.2:57914
+Oct 14 13:00:39 sweetspot authpriv.info dropbear[4489]: Exit (root) from <10.0.2.2:57914>: Disconnect received
+Oct 14 13:00:39 sweetspot authpriv.info dropbear[4493]: Child connection from 10.0.2.2:57916
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4493]: Password auth succeeded for 'root' from 10.0.2.2:57916
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4493]: Exit (root) from <10.0.2.2:57916>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4497]: Child connection from 10.0.2.2:57920
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4497]: Password auth succeeded for 'root' from 10.0.2.2:57920
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4497]: Exit (root) from <10.0.2.2:57920>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4500]: Child connection from 10.0.2.2:57936
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4500]: Password auth succeeded for 'root' from 10.0.2.2:57936
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4500]: Exit (root) from <10.0.2.2:57936>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4503]: Child connection from 10.0.2.2:57942
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4503]: Password auth succeeded for 'root' from 10.0.2.2:57942
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4503]: Exit (root) from <10.0.2.2:57942>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4506]: Child connection from 10.0.2.2:57948
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4506]: Password auth succeeded for 'root' from 10.0.2.2:57948
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4506]: Exit (root) from <10.0.2.2:57948>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4508]: Child connection from 10.0.2.2:57956
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4508]: Password auth succeeded for 'root' from 10.0.2.2:57956
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4508]: Exit (root) from <10.0.2.2:57956>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4530]: Child connection from 10.0.2.2:57960
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4530]: Password auth succeeded for 'root' from 10.0.2.2:57960
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4530]: Exit (root) from <10.0.2.2:57960>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4532]: Child connection from 10.0.2.2:51514
+Oct 14 13:00:40 sweetspot authpriv.notice dropbear[4532]: Password auth succeeded for 'root' from 10.0.2.2:51514
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4532]: Exit (root) from <10.0.2.2:51514>: Disconnect received
+Oct 14 13:00:40 sweetspot authpriv.info dropbear[4534]: Child connection from 10.0.2.2:51520
+Oct 14 13:00:41 sweetspot authpriv.notice dropbear[4534]: Password auth succeeded for 'root' from 10.0.2.2:51520
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4534]: Exit (root) from <10.0.2.2:51520>: Disconnect received
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4536]: Child connection from 10.0.2.2:51534
+Oct 14 13:00:41 sweetspot authpriv.notice dropbear[4536]: Password auth succeeded for 'root' from 10.0.2.2:51534
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4541]: Child connection from 10.0.2.2:51550
+Oct 14 13:00:41 sweetspot authpriv.notice dropbear[4541]: Password auth succeeded for 'root' from 10.0.2.2:51550
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4541]: Exit (root) from <10.0.2.2:51550>: Disconnect received
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4543]: Child connection from 10.0.2.2:51554
+Oct 14 13:00:41 sweetspot authpriv.notice dropbear[4543]: Password auth succeeded for 'root' from 10.0.2.2:51554
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4543]: Exit (root) from <10.0.2.2:51554>: Disconnect received
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4545]: Child connection from 10.0.2.2:51570
+Oct 14 13:00:41 sweetspot authpriv.notice dropbear[4545]: Password auth succeeded for 'root' from 10.0.2.2:51570
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4566]: Child connection from 10.0.2.2:51576
+Oct 14 13:00:41 sweetspot authpriv.notice dropbear[4566]: Password auth succeeded for 'root' from 10.0.2.2:51576
+Oct 14 13:00:41 sweetspot authpriv.info dropbear[4566]: Exit (root) from <10.0.2.2:51576>: Disconnect received
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4568]: Child connection from 10.0.2.2:51588
+Oct 14 13:00:42 sweetspot authpriv.notice dropbear[4568]: Password auth succeeded for 'root' from 10.0.2.2:51588
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4568]: Exit (root) from <10.0.2.2:51588>: Disconnect received
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4570]: Child connection from 10.0.2.2:51592
+Oct 14 13:00:42 sweetspot authpriv.notice dropbear[4570]: Password auth succeeded for 'root' from 10.0.2.2:51592
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4570]: Exit (root) from <10.0.2.2:51592>: Disconnect received
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4572]: Child connection from 10.0.2.2:51598
+Oct 14 13:00:42 sweetspot authpriv.notice dropbear[4572]: Password auth succeeded for 'root' from 10.0.2.2:51598
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4572]: Exit (root) from <10.0.2.2:51598>: Disconnect received
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4737]: Child connection from 10.0.2.2:51604
+Oct 14 13:00:42 sweetspot authpriv.notice dropbear[4737]: Password auth succeeded for 'root' from 10.0.2.2:51604
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4737]: Exit (root) from <10.0.2.2:51604>: Disconnect received
+Oct 14 13:00:42 sweetspot authpriv.info dropbear[4796]: Child connection from 10.0.2.2:51606
+Oct 14 13:00:43 sweetspot authpriv.notice dropbear[4796]: Password auth succeeded for 'root' from 10.0.2.2:51606
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4796]: Exit (root) from <10.0.2.2:51606>: Disconnect received
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4798]: Child connection from 10.0.2.2:51614
+Oct 14 13:00:43 sweetspot authpriv.notice dropbear[4798]: Password auth succeeded for 'root' from 10.0.2.2:51614
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4798]: Exit (root) from <10.0.2.2:51614>: Disconnect received
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4800]: Child connection from 10.0.2.2:51618
+Oct 14 13:00:43 sweetspot authpriv.notice dropbear[4800]: Password auth succeeded for 'root' from 10.0.2.2:51618
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4800]: Exit (root) from <10.0.2.2:51618>: Disconnect received
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4802]: Child connection from 10.0.2.2:51626
+Oct 14 13:00:43 sweetspot authpriv.notice dropbear[4802]: Password auth succeeded for 'root' from 10.0.2.2:51626
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4802]: Exit (root) from <10.0.2.2:51626>: Disconnect received
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4804]: Child connection from 10.0.2.2:51630
+Oct 14 13:00:43 sweetspot authpriv.notice dropbear[4804]: Password auth succeeded for 'root' from 10.0.2.2:51630
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4804]: Exit (root) from <10.0.2.2:51630>: Disconnect received
+Oct 14 13:00:43 sweetspot authpriv.info dropbear[4908]: Child connection from 10.0.2.2:51634
+Oct 14 13:00:44 sweetspot authpriv.notice dropbear[4908]: Password auth succeeded for 'root' from 10.0.2.2:51634
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[4908]: Exit (root) from <10.0.2.2:51634>: Disconnect received
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5200]: Child connection from 10.0.2.2:51636
+Oct 14 13:00:44 sweetspot authpriv.notice dropbear[5200]: Password auth succeeded for 'root' from 10.0.2.2:51636
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5200]: Exit (root) from <10.0.2.2:51636>: Disconnect received
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5527]: Child connection from 10.0.2.2:51638
+Oct 14 13:00:44 sweetspot authpriv.notice dropbear[5527]: Password auth succeeded for 'root' from 10.0.2.2:51638
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5527]: Exit (root) from <10.0.2.2:51638>: Disconnect received
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5529]: Child connection from 10.0.2.2:51654
+Oct 14 13:00:44 sweetspot authpriv.notice dropbear[5529]: Password auth succeeded for 'root' from 10.0.2.2:51654
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5529]: Exit (root) from <10.0.2.2:51654>: Disconnect received
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5564]: Child connection from 10.0.2.2:51658
+Oct 14 13:00:44 sweetspot authpriv.notice dropbear[5564]: Password auth succeeded for 'root' from 10.0.2.2:51658
+Oct 14 13:00:44 sweetspot authpriv.info dropbear[5564]: Exit (root) from <10.0.2.2:51658>: Disconnect received
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5566]: Child connection from 10.0.2.2:51670
+Oct 14 13:00:45 sweetspot authpriv.notice dropbear[5566]: Password auth succeeded for 'root' from 10.0.2.2:51670
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5566]: Exit (root) from <10.0.2.2:51670>: Disconnect received
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5568]: Child connection from 10.0.2.2:51686
+Oct 14 13:00:45 sweetspot authpriv.notice dropbear[5568]: Password auth succeeded for 'root' from 10.0.2.2:51686
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5568]: Exit (root) from <10.0.2.2:51686>: Disconnect received
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5570]: Child connection from 10.0.2.2:51694
+Oct 14 13:00:45 sweetspot authpriv.notice dropbear[5570]: Password auth succeeded for 'root' from 10.0.2.2:51694
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5570]: Exit (root) from <10.0.2.2:51694>: Disconnect received
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5572]: Child connection from 10.0.2.2:51700
+Oct 14 13:00:45 sweetspot authpriv.notice dropbear[5572]: Password auth succeeded for 'root' from 10.0.2.2:51700
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5572]: Exit (root) from <10.0.2.2:51700>: Disconnect received
+Oct 14 13:00:45 sweetspot authpriv.info dropbear[5574]: Child connection from 10.0.2.2:51716
+Oct 14 13:00:46 sweetspot authpriv.notice dropbear[5574]: Password auth succeeded for 'root' from 10.0.2.2:51716
+Oct 14 13:00:46 sweetspot authpriv.info dropbear[5574]: Exit (root) from <10.0.2.2:51716>: Disconnect received
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[4545]: Exit (root) from <10.0.2.2:51570>: Disconnect received
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[4536]: Exit (root) from <10.0.2.2:51534>: Disconnect received
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5576]: Child connection from 10.0.2.2:51730
+Oct 14 13:00:47 sweetspot authpriv.notice dropbear[5576]: Password auth succeeded for 'root' from 10.0.2.2:51730
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5576]: Exit (root) from <10.0.2.2:51730>: Disconnect received
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5648]: Child connection from 10.0.2.2:51738
+Oct 14 13:00:47 sweetspot authpriv.notice dropbear[5648]: Password auth succeeded for 'root' from 10.0.2.2:51738
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5648]: Exit (root) from <10.0.2.2:51738>: Disconnect received
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5669]: Child connection from 10.0.2.2:51750
+Oct 14 13:00:47 sweetspot authpriv.notice dropbear[5669]: Password auth succeeded for 'root' from 10.0.2.2:51750
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5669]: Exit (root) from <10.0.2.2:51750>: Disconnect received
+Oct 14 13:00:47 sweetspot authpriv.info dropbear[5671]: Child connection from 10.0.2.2:51758
+Oct 14 13:00:48 sweetspot authpriv.notice dropbear[5671]: Password auth succeeded for 'root' from 10.0.2.2:51758
+Oct 14 13:00:48 sweetspot authpriv.info dropbear[5671]: Exit (root) from <10.0.2.2:51758>: Disconnect received
+Oct 14 13:00:48 sweetspot authpriv.info dropbear[5673]: Child connection from 10.0.2.2:51772
+Oct 14 13:00:48 sweetspot authpriv.notice dropbear[5673]: Password auth succeeded for 'root' from 10.0.2.2:51772
+Oct 14 13:00:48 sweetspot authpriv.info dropbear[5673]: Exit (root) from <10.0.2.2:51772>: Disconnect received
+Oct 14 13:00:48 sweetspot authpriv.info dropbear[5675]: Child connection from 10.0.2.2:51784
+Oct 14 13:00:48 sweetspot authpriv.notice dropbear[5675]: Password auth succeeded for 'root' from 10.0.2.2:51784

@@ -1,0 +1,16 @@
+
+/usr/bin/squeezelite -o hw:CARD=Loopback,DEV=0 -a 400:4::1 -r 44100-44100 -s 127.0.0.1 -m 02:cc:8e:de:f8:df -n Audio-test -f /tmp/audio-verification.log -d output=info 
+[12:55:26.852329] output_init_alsa:978 init output
+[12:55:26.852354] output_init_alsa:1017 requested alsa_buffer: 400 alsa_period: 4 format: any mmap: 1
+[12:55:26.852401] output_init_common:426 supported rates: 44100 
+[12:55:26.860939] output_init_alsa:1044 memory locked
+[12:55:26.860957] output_init_alsa:1050 glibc detected using mallopt
+[12:55:26.861861] output_thread:727 open output device: hw:CARD=Loopback,DEV=0
+[12:55:26.861875] alsa_open:390 opening device at: 44100
+[12:55:26.861944] alsa_open:465 opened device hw:CARD=Loopback,DEV=0 using format: S32_LE sample rate: 44100 mmap: 1
+[12:55:26.861962] alsa_open:556 buffer: 400 period: 4 -> buffer size: 17640 period size: 4410
+[12:55:27.463759] output_flush:439 flush output buffer (full)
+[12:55:27.666830] _output_frames:65 start buffer frames: 44100
+[12:55:27.666882] _output_frames:153 track start sample rate: 44100 replay_gain: 0
+[12:55:28.667812] _output_frames:153 track start sample rate: 44100 replay_gain: 0
+[12:55:40.578212] output_close_alsa:1075 close output

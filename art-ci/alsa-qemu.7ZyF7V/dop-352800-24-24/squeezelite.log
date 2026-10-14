@@ -1,0 +1,20 @@
+
+/usr/bin/squeezelite -o hw:CARD=Loopback,DEV=0 -a 400:4::1 -r 352800-352800 -s 127.0.0.1 -m 02:1f:04:c6:0e:57 -n Audio-test -f /tmp/audio-verification.log -D 0:dop -d output=info 
+[12:58:51.638445] output_init_alsa:978 init output
+[12:58:51.638469] output_init_alsa:1017 requested alsa_buffer: 400 alsa_period: 4 format: any mmap: 1
+[12:58:51.638499] output_init_common:426 supported rates: 352800 
+[12:58:51.647225] output_init_alsa:1044 memory locked
+[12:58:51.647252] output_init_alsa:1050 glibc detected using mallopt
+[12:58:51.648049] output_thread:727 open output device: hw:CARD=Loopback,DEV=0
+[12:58:51.648060] alsa_open:390 opening device at: 352800
+[12:58:51.648112] alsa_open:465 opened device hw:CARD=Loopback,DEV=0 using format: S32_LE sample rate: 352800 mmap: 1
+[12:58:51.648126] alsa_open:556 buffer: 400 period: 4 -> buffer size: 141120 period size: 35280
+[12:58:52.245201] output_flush:439 flush output buffer (full)
+[12:58:52.354817] _output_frames:65 start buffer frames: 349524
+[12:58:52.354873] _output_frames:153 track start sample rate: 352800 replay_gain: 0
+[12:58:53.069178] alsa_drain_before_close:297 drain skipped or timed out after 700 ms: dropping
+[12:58:53.069238] output_thread:727 open output device: hw:CARD=Loopback,DEV=0
+[12:58:53.069447] alsa_open:390 opening device at: 352800
+[12:58:53.069649] alsa_open:465 opened device hw:CARD=Loopback,DEV=0 using format: S32_LE sample rate: 352800 mmap: 1
+[12:58:53.069661] alsa_open:556 buffer: 400 period: 4 -> buffer size: 141120 period size: 35280
+[12:58:53.675101] _output_frames:153 track start sample rate: 352800 replay_gain: 0

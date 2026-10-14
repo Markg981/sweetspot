@@ -1,0 +1,504 @@
+{
+  "alsa": {
+    "capture": {
+      "bytes_before_playlist": 48000
+    },
+    "output": {
+      "capture_overruns": 0,
+      "device": "hw:CARD=Loopback,DEV=0",
+      "opens": 1,
+      "path": "/home/runner/work/_temp/sweetspot-audio-evidence/alsa-qemu.7ZyF7V/pcm-48000-16-16/squeezelite.log",
+      "sha256": "213d7ab974d6dda97af23b001e004063d1d5d411930357761c44d327ea9faf4a",
+      "status": "pass",
+      "xrun_recover_failures": 0,
+      "xruns": 0
+    },
+    "playback": {
+      "access": "MMAP_INTERLEAVED",
+      "buffer_size": 19200,
+      "channels": 2,
+      "format": "S32_LE",
+      "hw_params": "access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 48000 (48000/1)\nperiod_size: 4800\nbuffer_size: 19200\n",
+      "period_size": 4800,
+      "rate": 48000,
+      "state": "RUNNING"
+    }
+  },
+  "bits": 16,
+  "capture": {
+    "bytes": 4992000,
+    "error": null,
+    "path": "/home/runner/work/_temp/sweetspot-audio-evidence/alsa-qemu.7ZyF7V/pcm-48000-16-16/capture.raw",
+    "reason": "byte_limit"
+  },
+  "capture_command": [
+    "sshpass",
+    "-e",
+    "ssh",
+    "-p",
+    "2222",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    "-o",
+    "ServerAliveInterval=5",
+    "root@127.0.0.1",
+    "exec /usr/bin/aplay -C -q -D hw:CARD=Loopback,DEV=1 -t raw -f S32_LE -c 2 -r 48000 -d 13"
+  ],
+  "command": [
+    "sshpass",
+    "-e",
+    "ssh",
+    "-p",
+    "2222",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    "-o",
+    "ServerAliveInterval=5",
+    "root@127.0.0.1",
+    "exec /usr/bin/squeezelite -o hw:CARD=Loopback,DEV=0 -a 400:4::1 -r 48000-48000 -s 127.0.0.1 -m 02:f9:26:43:07:e0 -n Audio-test -f /tmp/audio-verification.log -d output=info"
+  ],
+  "comparison": {
+    "alignment": "automatic",
+    "boundaries": [
+      {
+        "after_reference": "/home/runner/work/_temp/sweetspot-audio-evidence/alsa-qemu.7ZyF7V/pcm-48000-16-16/references/pcm-48000-16-track-1.wav",
+        "capture_frame": 72800,
+        "expected_frame": 48000,
+        "match": true
+      }
+    ],
+    "capture": {
+      "bits": 32,
+      "channels": 2,
+      "format": "s32_le",
+      "frames": 624000,
+      "path": "/home/runner/work/_temp/sweetspot-audio-evidence/alsa-qemu.7ZyF7V/pcm-48000-16-16/capture.raw",
+      "rate": 48000,
+      "sha256": "b83e589383ea0cc92ae428037dba6d06fa29afb098ab0e6db4a109aac5a528a0"
+    },
+    "compared_frames": 96000,
+    "expected_frames": 96000,
+    "first_mismatch": null,
+    "leading_frames": 24800,
+    "max_lead_frames": 480000,
+    "references": [
+      {
+        "bits": 16,
+        "channels": 2,
+        "format": "wav_pcm_s16_le",
+        "frames": 48000,
+        "path": "/home/runner/work/_temp/sweetspot-audio-evidence/alsa-qemu.7ZyF7V/pcm-48000-16-16/references/pcm-48000-16-track-1.wav",
+        "rate": 48000,
+        "sha256": "9c5ce9452c03dc74dd0f3ff282c35a527447dc40dfeb022cb066a1bb09edcdcc"
+      },
+      {
+        "bits": 16,
+        "channels": 2,
+        "format": "wav_pcm_s16_le",
+        "frames": 48000,
+        "path": "/home/runner/work/_temp/sweetspot-audio-evidence/alsa-qemu.7ZyF7V/pcm-48000-16-16/references/pcm-48000-16-track-2.wav",
+        "rate": 48000,
+        "sha256": "632b9e0540265ea1344b3dbd907f817395b6052df8a5a572ff03e222dc5c8571"
+      }
+    ],
+    "sample_match": true,
+    "sequence_match": true,
+    "status": "pass",
+    "trailing_frames": 503200
+  },
+  "elapsed_seconds": 15.279,
+  "id": "pcm-48000-16-16",
+  "kind": "pcm",
+  "limits": {
+    "capture_format": "s32_le",
+    "capture_seconds": 13,
+    "channels": 2,
+    "max_bytes": 4992000,
+    "max_lead_frames": 480000,
+    "wall_seconds": 16
+  },
+  "player_mac": "02:f9:26:43:07:e0",
+  "playlist": {
+    "can_seek": 1,
+    "digital_volume_control": 0,
+    "duration": 1,
+    "mixer volume": 100,
+    "mode": "play",
+    "player_connected": 1,
+    "player_ip": "127.0.0.1:46594",
+    "player_name": "Audio-test",
+    "playlist mode": "off",
+    "playlist repeat": 0,
+    "playlist shuffle": 0,
+    "playlist_cur_index": "0",
+    "playlist_loop": [
+      {
+        "id": 5,
+        "playlist index": 0,
+        "title": "pcm-48000-16-track-1",
+        "url": "file:///tmp/sweetspot-audio-MFNKYB/pcm-48000-16-track-1.wav"
+      },
+      {
+        "id": 6,
+        "playlist index": 1,
+        "title": "pcm-48000-16-track-2",
+        "url": "file:///tmp/sweetspot-audio-MFNKYB/pcm-48000-16-track-2.wav"
+      }
+    ],
+    "playlist_timestamp": 1791982542.71947,
+    "playlist_tracks": 2,
+    "power": 1,
+    "randomplay": 0,
+    "rate": 1,
+    "seq_no": 0,
+    "signalstrength": 0,
+    "time": 0,
+    "use_volume_control": 0,
+    "waitingToPlay": 1
+  },
+  "rate": 48000,
+  "rpc": [
+    {
+      "command": [
+        "players",
+        0,
+        100
+      ],
+      "player": "",
+      "result": {
+        "count": 1,
+        "players_loop": [
+          {
+            "canpoweroff": 1,
+            "connected": 0,
+            "displaytype": "none",
+            "firmware": "2.0.0-1541",
+            "ip": "127.0.0.1:58184",
+            "isplayer": 1,
+            "isplaying": 0,
+            "model": "squeezelite",
+            "modelname": "SqueezeLite",
+            "name": "Audio-test",
+            "playerid": "02:cc:8e:de:f8:df",
+            "playerindex": "0",
+            "power": 1,
+            "seq_no": 0,
+            "uuid": null
+          }
+        ]
+      }
+    },
+    {
+      "command": [
+        "players",
+        0,
+        100
+      ],
+      "player": "",
+      "result": {
+        "count": 1,
+        "players_loop": [
+          {
+            "canpoweroff": 1,
+            "connected": 0,
+            "displaytype": "none",
+            "firmware": "2.0.0-1541",
+            "ip": "127.0.0.1:58184",
+            "isplayer": 1,
+            "isplaying": 0,
+            "model": "squeezelite",
+            "modelname": "SqueezeLite",
+            "name": "Audio-test",
+            "playerid": "02:cc:8e:de:f8:df",
+            "playerindex": "0",
+            "power": 1,
+            "seq_no": 0,
+            "uuid": null
+          }
+        ]
+      }
+    },
+    {
+      "command": [
+        "players",
+        0,
+        100
+      ],
+      "player": "",
+      "result": {
+        "count": 2,
+        "players_loop": [
+          {
+            "canpoweroff": 1,
+            "connected": 0,
+            "displaytype": "none",
+            "firmware": "2.0.0-1541",
+            "ip": "127.0.0.1:58184",
+            "isplayer": 1,
+            "isplaying": 0,
+            "model": "squeezelite",
+            "modelname": "SqueezeLite",
+            "name": "Audio-test",
+            "playerid": "02:cc:8e:de:f8:df",
+            "playerindex": "0",
+            "power": 1,
+            "seq_no": 0,
+            "uuid": null
+          },
+          {
+            "canpoweroff": 1,
+            "connected": 1,
+            "displaytype": "none",
+            "firmware": "2.0.0-1541",
+            "ip": "127.0.0.1:46594",
+            "isplayer": 1,
+            "isplaying": 0,
+            "model": "squeezelite",
+            "modelname": "SqueezeLite",
+            "name": "Audio-test",
+            "playerid": "02:f9:26:43:07:e0",
+            "playerindex": 1,
+            "power": 1,
+            "seq_no": 0,
+            "uuid": null
+          }
+        ]
+      }
+    },
+    {
+      "command": [
+        "playerpref",
+        "digitalVolumeControl",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "playerpref",
+        "replayGainMode",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "playerpref",
+        "transitionType",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "playerpref",
+        "transitionDuration",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "playerpref",
+        "maxBitrate",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "mixer",
+        "volume",
+        100
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "playlist",
+        "shuffle",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "playlist",
+        "repeat",
+        0
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "players",
+        0,
+        100,
+        "playerprefs:digitalVolumeControl,replayGainMode,transitionType,transitionDuration,maxBitrate"
+      ],
+      "player": "",
+      "result": {
+        "count": 2,
+        "players_loop": [
+          {
+            "canpoweroff": 1,
+            "connected": 0,
+            "digitalVolumeControl": "0",
+            "displaytype": "none",
+            "firmware": "2.0.0-1541",
+            "ip": "127.0.0.1:58184",
+            "isplayer": 1,
+            "isplaying": 0,
+            "maxBitrate": "0",
+            "model": "squeezelite",
+            "modelname": "SqueezeLite",
+            "name": "Audio-test",
+            "playerid": "02:cc:8e:de:f8:df",
+            "playerindex": "0",
+            "power": 1,
+            "replayGainMode": 0,
+            "seq_no": 0,
+            "transitionDuration": "0",
+            "transitionType": 0,
+            "uuid": null
+          },
+          {
+            "canpoweroff": 1,
+            "connected": 1,
+            "digitalVolumeControl": "0",
+            "displaytype": "none",
+            "firmware": "2.0.0-1541",
+            "ip": "127.0.0.1:46594",
+            "isplayer": 1,
+            "isplaying": 0,
+            "maxBitrate": "0",
+            "model": "squeezelite",
+            "modelname": "SqueezeLite",
+            "name": "Audio-test",
+            "playerid": "02:f9:26:43:07:e0",
+            "playerindex": 1,
+            "power": 1,
+            "replayGainMode": 0,
+            "seq_no": 0,
+            "transitionDuration": "0",
+            "transitionType": 0,
+            "uuid": null
+          }
+        ]
+      }
+    },
+    {
+      "command": [
+        "status",
+        "-",
+        1
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {
+        "digital_volume_control": 0,
+        "mixer volume": 100,
+        "mode": "stop",
+        "player_connected": 1,
+        "player_ip": "127.0.0.1:46594",
+        "player_name": "Audio-test",
+        "playlist mode": "off",
+        "playlist repeat": 0,
+        "playlist shuffle": 0,
+        "playlist_tracks": 0,
+        "power": 1,
+        "randomplay": 0,
+        "seq_no": 0,
+        "signalstrength": 0,
+        "use_volume_control": 0
+      }
+    },
+    {
+      "command": [
+        "playlist",
+        "play",
+        "/tmp/sweetspot-audio-MFNKYB/pair.m3u"
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {}
+    },
+    {
+      "command": [
+        "status",
+        0,
+        2,
+        "tags:u"
+      ],
+      "player": "02:f9:26:43:07:e0",
+      "result": {
+        "can_seek": 1,
+        "digital_volume_control": 0,
+        "duration": 1,
+        "mixer volume": 100,
+        "mode": "play",
+        "player_connected": 1,
+        "player_ip": "127.0.0.1:46594",
+        "player_name": "Audio-test",
+        "playlist mode": "off",
+        "playlist repeat": 0,
+        "playlist shuffle": 0,
+        "playlist_cur_index": "0",
+        "playlist_loop": [
+          {
+            "id": 5,
+            "playlist index": 0,
+            "title": "pcm-48000-16-track-1",
+            "url": "file:///tmp/sweetspot-audio-MFNKYB/pcm-48000-16-track-1.wav"
+          },
+          {
+            "id": 6,
+            "playlist index": 1,
+            "title": "pcm-48000-16-track-2",
+            "url": "file:///tmp/sweetspot-audio-MFNKYB/pcm-48000-16-track-2.wav"
+          }
+        ],
+        "playlist_timestamp": 1791982542.71947,
+        "playlist_tracks": 2,
+        "power": 1,
+        "randomplay": 0,
+        "rate": 1,
+        "seq_no": 0,
+        "signalstrength": 0,
+        "time": 0,
+        "use_volume_control": 0,
+        "waitingToPlay": 1
+      }
+    }
+  ],
+  "scope": "alsa_loopback",
+  "settings": {
+    "digitalVolumeControl": "0",
+    "maxBitrate": "0",
+    "mixer volume": 100,
+    "playlist repeat": 0,
+    "playlist shuffle": 0,
+    "replayGainMode": 0,
+    "transitionDuration": "0",
+    "transitionType": 0
+  },
+  "source_bits": [
+    16,
+    16
+  ],
+  "status": "pass"
+}

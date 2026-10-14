@@ -1,0 +1,73 @@
+
+/usr/bin/squeezelite -o - -a 32 -r 176400 -s 127.0.0.1 -m 02:81:ea:6c:99:f9 -n Audio-test -f /tmp/audio-verification.log -D 0:dop -d decode=info -d stream=info 
+[12:51:55.688382] stream_init:758 init stream
+[12:51:55.689322] decode_init:153 init decode
+[12:51:55.689365] register_dsd:921 using dsd to decode dsf,dff
+[12:51:55.689376] register_ff:793 using ffmpeg to decode alc
+[12:51:55.689378] register_ff:777 using ffmpeg to decode wma,wmap,wmal
+[12:51:55.689383] register_faad:663 using faad to decode aac
+[12:51:55.689385] register_vorbis:378 using vorbis to decode ogg
+[12:51:55.689388] register_flac:389 using flac to decode ogf,flc
+[12:51:55.689391] register_pcm:483 using pcm to decode aif,pcm
+[12:51:55.689407] register_mad:423 using mad to decode mp3
+[12:51:55.812599] decode_flush:244 decode flush
+[12:51:55.816244] codec_open:278 codec open: 'd'
+[12:51:55.816278] connect_socket:237 connecting to 127.0.0.1:9000
+[12:51:55.816331] stream_sock:923 header: GET /stream.mp3?player=02:81:ea:6c:99:f9 HTTP/1.0
+
+
+[12:51:55.891164] stream_thread:630 headers: len: 474
+HTTP/1.1 200 OK
+Server: Lyrion Music Server (9.1.1 - TRUNK)
+Connection: close
+Content-Type: audio/dff
+Set-Cookie: Squeezebox-albumView=; path=/
+Set-Cookie: Squeezebox-expandPlayerControl=; path=/
+Set-Cookie: Squeezebox-expanded-MY_MUSIC=; path=/
+Set-Cookie: Squeezebox-expanded-FAVORITES=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGINS=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGIN_MY_APPS_MODULE_NAME=; path=/
+Set-Cookie: Squeezebox-expanded-RADIO=; path=/
+
+
+[12:51:55.989698] _read_header:139 DSDIFF version: 1.5.0.0
+[12:51:55.989826] _read_header:144 sample rate: 2822400
+[12:51:55.989829] _read_header:148 channels: 2
+[12:51:55.989832] _read_header:151 found dsd len: 705600
+[12:51:55.989835] dsd_decode:778 setting track_start
+[12:51:55.989838] dsd_decode:834 DSD64 stream, format: DOP, rate: 176400Hz
+
+[12:51:55.990545] _decode_dsdiff:723 end of track samples
+[12:51:56.292359] stream_thread:704 end of stream (705730 bytes)
+[12:51:56.390885] decode_thread:100 decode complete
+[12:51:56.395058] codec_open:278 codec open: 'd'
+[12:51:56.395104] connect_socket:237 connecting to 127.0.0.1:9000
+[12:51:56.395168] stream_sock:923 header: GET /stream.mp3?player=02:81:ea:6c:99:f9 HTTP/1.0
+
+
+[12:51:56.494405] stream_thread:630 headers: len: 474
+HTTP/1.1 200 OK
+Server: Lyrion Music Server (9.1.1 - TRUNK)
+Connection: close
+Content-Type: audio/dff
+Set-Cookie: Squeezebox-albumView=; path=/
+Set-Cookie: Squeezebox-expandPlayerControl=; path=/
+Set-Cookie: Squeezebox-expanded-MY_MUSIC=; path=/
+Set-Cookie: Squeezebox-expanded-FAVORITES=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGINS=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGIN_MY_APPS_MODULE_NAME=; path=/
+Set-Cookie: Squeezebox-expanded-RADIO=; path=/
+
+
+[12:51:56.591111] _read_header:139 DSDIFF version: 1.5.0.0
+[12:51:56.591156] _read_header:144 sample rate: 2822400
+[12:51:56.591160] _read_header:148 channels: 2
+[12:51:56.591162] _read_header:151 found dsd len: 705600
+[12:51:56.591165] dsd_decode:778 setting track_start
+[12:51:56.591167] dsd_decode:834 DSD64 stream, format: DOP, rate: 176400Hz
+
+[12:51:56.591922] _decode_dsdiff:723 end of track samples
+[12:51:56.895685] stream_thread:704 end of stream (705730 bytes)
+[12:51:56.992382] decode_thread:100 decode complete
+[12:52:08.778168] decode_close:229 close decode
+[12:52:08.803365] stream_close:831 close stream

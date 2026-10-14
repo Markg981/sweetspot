@@ -1,0 +1,85 @@
+[26-10-14 12:47:09.5083] main::init (282) Starting Lyrion Music Server (v9.1.1, TRUNK, UNKNOWN) perl 5.042003 - x86_64-linux
+[26-10-14 12:47:09.8076] main::init (555) Server done init: http://10.1.0.115:9000
+[26-10-14 12:47:11.1188] Slim::Utils::Misc::msg (1346) Warning: [12:47:11.1185] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:11.8092] Slim::Utils::Misc::msg (1346) Warning: [12:47:11.8090] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:14.3613] Slim::Utils::Misc::msg (1346) Warning: [12:47:14.3611] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:18.1206] Slim::Utils::Misc::msg (1346) Warning: [12:47:18.1204] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:18.8102] Slim::Utils::Misc::msg (1346) Warning: [12:47:18.8100] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:21.3644] Slim::Utils::Misc::msg (1346) Warning: [12:47:21.3642] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:28.1209] Slim::Utils::Misc::msg (1346) Warning: [12:47:28.1207] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:28.8110] Slim::Utils::Misc::msg (1346) Warning: [12:47:28.8108] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:31.3661] Slim::Utils::Misc::msg (1346) Warning: [12:47:31.3659] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:33.8111] Slim::Formats::XML::gotErrorViaHTTP (289) Error: getting http://opml.radiotime.com/Index.aspx?partnerId=16
+Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:47:33.8112] Slim::Plugin::InternetRadio::Plugin::_gotRadioError (65) Unable to retrieve radio directory: Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:47:36.3670] Slim::Plugin::RadioArtwork::Plugin::__ANON__ (285) Error updating kill words: do {
+  my $a = bless([
+    sub { ... },
+    sub { ... },
+    { cache => 1 },
+    bless({
+      additivity     => 1,
+      ALL            => sub { ... },
+      appender_names => [],
+      category       => "network.asynchttp",
+      DEBUG          => 'fix',
+      ERROR          => sub { ... },
+      FATAL          => 'fix',
+      INFO           => 'fix',
+      is_ALL         => 0,
+      is_DEBUG       => 0,
+      is_ERROR       => 1,
+      is_FATAL       => 1,
+      is_INFO        => 0,
+      is_OFF         => 1,
+      is_TRACE       => 0,
+      is_WARN        => 0,
+      layout         => undef,
+      level          => 40000,
+      num_appenders  => 0,
+      OFF            => 'fix',
+      TRACE          => 'fix',
+      WARN           => 'fix',
+    }, "Slim::Utils::Log"),
+    "GET",
+    "https://api.lms-community.org/music/metadata/killwords",
+    "Couldn't resolve IP address for: api.lms-community.org",
+    undef,
+    undef,
+    undef,
+    undef,
+    undef,
+    undef,
+  ], "Slim::Networking::SimpleAsyncHTTP");
+  $a->[3]{DEBUG} = $a->[3]{ALL};
+  $a->[3]{FATAL} = $a->[3]{ERROR};
+  $a->[3]{INFO} = $a->[3]{ALL};
+  $a->[3]{OFF} = $a->[3]{ERROR};
+  $a->[3]{TRACE} = $a->[3]{ALL};
+  $a->[3]{WARN} = $a->[3]{ALL};
+  $a;
+}
+[26-10-14 12:47:45.0020] Slim::Utils::Misc::msg (1346) Warning: [12:47:45.0018] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:47:52.0042] Slim::Utils::Misc::msg (1346) Warning: [12:47:52.0040] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:48:02.0066] Slim::Utils::Misc::msg (1346) Warning: [12:48:02.0064] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:48:07.0065] Slim::Formats::XML::gotErrorViaHTTP (289) Error: getting http://opml.radiotime.com/Index.aspx?partnerId=16
+Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:48:07.0066] Slim::Plugin::InternetRadio::Plugin::_gotRadioError (65) Unable to retrieve radio directory: Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:48:29.0058] Slim::Utils::Misc::msg (1346) Warning: [12:48:29.0056] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:48:36.0073] Slim::Utils::Misc::msg (1346) Warning: [12:48:36.0071] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:48:46.0088] Slim::Utils::Misc::msg (1346) Warning: [12:48:46.0085] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:48:51.0087] Slim::Formats::XML::gotErrorViaHTTP (289) Error: getting http://opml.radiotime.com/Index.aspx?partnerId=16
+Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:48:51.0088] Slim::Plugin::InternetRadio::Plugin::_gotRadioError (65) Unable to retrieve radio directory: Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:49:33.0046] Slim::Utils::Misc::msg (1346) Warning: [12:49:33.0044] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:49:40.0058] Slim::Utils::Misc::msg (1346) Warning: [12:49:40.0056] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:49:50.0079] Slim::Utils::Misc::msg (1346) Warning: [12:49:50.0076] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:49:55.0078] Slim::Formats::XML::gotErrorViaHTTP (289) Error: getting http://opml.radiotime.com/Index.aspx?partnerId=16
+Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:49:55.0079] Slim::Plugin::InternetRadio::Plugin::_gotRadioError (65) Unable to retrieve radio directory: Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:51:17.0019] Slim::Utils::Misc::msg (1346) Warning: [12:51:16.0017] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:51:24.0061] Slim::Utils::Misc::msg (1346) Warning: [12:51:24.0059] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:51:34.0073] Slim::Utils::Misc::msg (1346) Warning: [12:51:34.0071] EV: error in callback (ignoring): pack_sockaddr: invalid host at /opt/lms/lib/AnyEvent/DNS.pm line 1114.
+[26-10-14 12:51:39.0103] Slim::Formats::XML::gotErrorViaHTTP (289) Error: getting http://opml.radiotime.com/Index.aspx?partnerId=16
+Couldn't resolve IP address for: opml.radiotime.com
+[26-10-14 12:51:39.0104] Slim::Plugin::InternetRadio::Plugin::_gotRadioError (65) Unable to retrieve radio directory: Couldn't resolve IP address for: opml.radiotime.com

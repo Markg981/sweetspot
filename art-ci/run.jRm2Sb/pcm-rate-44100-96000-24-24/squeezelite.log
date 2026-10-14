@@ -1,0 +1,9 @@
+
+/usr/bin/squeezelite -o - -a 32 -r 44100,48000,96000:0 -s 127.0.0.1 -m 02:a5:ea:d0:b2:c2 -n Audio-test -f /tmp/audio-verification.log -d output=info 
+[12:53:11.326663] output_init_stdout:130 init output stdout
+[12:53:11.326715] output_init_common:426 supported rates: 96000 48000 44100 
+[12:53:11.448843] output_flush:439 flush output buffer (full)
+[12:53:11.640503] _output_frames:65 start buffer frames: 44100
+[12:53:11.640565] _output_frames:153 track start sample rate: 44100 replay_gain: 0
+[12:53:12.620558] _output_frames:153 track start sample rate: 96000 replay_gain: 0
+[12:53:25.143224] output_close_stdout:174 close output

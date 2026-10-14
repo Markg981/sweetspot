@@ -1,0 +1,92 @@
+
+/usr/bin/squeezelite -o hw:CARD=Loopback,DEV=0 -a 400:4::1 -r 176400-176400 -s 127.0.0.1 -m 02:24:b0:80:f6:6c -n Audio-test -f /tmp/audio-verification.log -D 0:dop -d decode=info -d stream=info -d output=info 
+[12:59:57.843587] stream_init:758 init stream
+[12:59:57.844463] output_init_alsa:978 init output
+[12:59:57.844476] output_init_alsa:1017 requested alsa_buffer: 400 alsa_period: 4 format: any mmap: 1
+[12:59:57.844507] output_init_common:426 supported rates: 176400 
+[12:59:57.853494] output_init_alsa:1044 memory locked
+[12:59:57.853513] output_init_alsa:1050 glibc detected using mallopt
+[12:59:57.853622] decode_init:153 init decode
+[12:59:57.853640] register_dsd:921 using dsd to decode dsf,dff
+[12:59:57.853644] register_ff:793 using ffmpeg to decode alc
+[12:59:57.853646] register_ff:777 using ffmpeg to decode wma,wmap,wmal
+[12:59:57.853649] register_faad:663 using faad to decode aac
+[12:59:57.853652] register_vorbis:378 using vorbis to decode ogg
+[12:59:57.853655] register_flac:389 using flac to decode ogf,flc
+[12:59:57.853657] register_pcm:483 using pcm to decode aif,pcm
+[12:59:57.853662] register_mad:423 using mad to decode mp3
+[12:59:57.854216] output_thread:727 open output device: hw:CARD=Loopback,DEV=0
+[12:59:57.854226] alsa_open:390 opening device at: 176400
+[12:59:57.854278] alsa_open:465 opened device hw:CARD=Loopback,DEV=0 using format: S32_LE sample rate: 176400 mmap: 1
+[12:59:57.854292] alsa_open:556 buffer: 400 period: 4 -> buffer size: 70560 period size: 17640
+[12:59:58.466112] decode_flush:244 decode flush
+[12:59:58.466138] output_flush:439 flush output buffer (full)
+[12:59:58.470153] codec_open:278 codec open: 'd'
+[12:59:58.470174] connect_socket:237 connecting to 127.0.0.1:9000
+[12:59:58.470213] stream_sock:923 header: GET /stream.mp3?player=02:24:b0:80:f6:6c HTTP/1.0
+
+
+[12:59:58.548160] stream_thread:630 headers: len: 474
+HTTP/1.1 200 OK
+Server: Lyrion Music Server (9.1.1 - TRUNK)
+Connection: close
+Content-Type: audio/dff
+Set-Cookie: Squeezebox-albumView=; path=/
+Set-Cookie: Squeezebox-expandPlayerControl=; path=/
+Set-Cookie: Squeezebox-expanded-MY_MUSIC=; path=/
+Set-Cookie: Squeezebox-expanded-FAVORITES=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGINS=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGIN_MY_APPS_MODULE_NAME=; path=/
+Set-Cookie: Squeezebox-expanded-RADIO=; path=/
+
+
+[12:59:58.554779] _read_header:139 DSDIFF version: 1.5.0.0
+[12:59:58.554871] _read_header:144 sample rate: 2822400
+[12:59:58.554874] _read_header:148 channels: 2
+[12:59:58.554877] _read_header:151 found dsd len: 705600
+[12:59:58.554880] dsd_decode:778 setting track_start
+[12:59:58.554882] dsd_decode:834 DSD64 stream, format: DOP, rate: 176400Hz
+
+[12:59:58.555157] _decode_dsdiff:723 end of track samples
+[12:59:58.555809] _output_frames:65 start buffer frames: 176400
+[12:59:58.555826] _output_frames:153 track start sample rate: 176400 replay_gain: 0
+[12:59:58.952466] stream_thread:704 end of stream (705730 bytes)
+[12:59:58.955661] decode_thread:100 decode complete
+[12:59:58.959774] codec_open:278 codec open: 'd'
+[12:59:58.959808] connect_socket:237 connecting to 127.0.0.1:9000
+[12:59:58.959851] stream_sock:923 header: GET /stream.mp3?player=02:24:b0:80:f6:6c HTTP/1.0
+
+
+[12:59:59.054957] stream_thread:630 headers: len: 474
+HTTP/1.1 200 OK
+Server: Lyrion Music Server (9.1.1 - TRUNK)
+Connection: close
+Content-Type: audio/dff
+Set-Cookie: Squeezebox-albumView=; path=/
+Set-Cookie: Squeezebox-expandPlayerControl=; path=/
+Set-Cookie: Squeezebox-expanded-MY_MUSIC=; path=/
+Set-Cookie: Squeezebox-expanded-FAVORITES=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGINS=; path=/
+Set-Cookie: Squeezebox-expanded-PLUGIN_MY_APPS_MODULE_NAME=; path=/
+Set-Cookie: Squeezebox-expanded-RADIO=; path=/
+
+
+[12:59:59.055784] _read_header:139 DSDIFF version: 1.5.0.0
+[12:59:59.055797] _read_header:144 sample rate: 2822400
+[12:59:59.055800] _read_header:148 channels: 2
+[12:59:59.055802] _read_header:151 found dsd len: 705600
+[12:59:59.055805] dsd_decode:778 setting track_start
+[12:59:59.055808] dsd_decode:834 DSD64 stream, format: DOP, rate: 176400Hz
+
+[12:59:59.056054] _decode_dsdiff:723 end of track samples
+[12:59:59.269660] alsa_drain_before_close:297 drain skipped or timed out after 700 ms: dropping
+[12:59:59.269737] output_thread:727 open output device: hw:CARD=Loopback,DEV=0
+[12:59:59.269862] alsa_open:390 opening device at: 176400
+[12:59:59.270144] alsa_open:465 opened device hw:CARD=Loopback,DEV=0 using format: S32_LE sample rate: 176400 mmap: 1
+[12:59:59.270175] alsa_open:556 buffer: 400 period: 4 -> buffer size: 70560 period size: 17640
+[12:59:59.457782] stream_thread:704 end of stream (705730 bytes)
+[12:59:59.556588] decode_thread:100 decode complete
+[12:59:59.874860] _output_frames:153 track start sample rate: 176400 replay_gain: 0
+[13:00:11.538417] decode_close:229 close decode
+[13:00:11.576763] stream_close:831 close stream
+[13:00:11.677054] output_close_alsa:1075 close output
