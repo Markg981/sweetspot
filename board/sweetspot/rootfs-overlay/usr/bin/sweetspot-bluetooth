@@ -41,6 +41,7 @@ BT_STATO=$RUN/bluetooth.stato
 BT_ABBINA=$RUN/bluetooth.abbina
 BT_ABBINA_PID=$RUN/bluetooth.abbina.pid
 BT_ATTIVO=$RUN/bluetooth.attivo
+BT_DAC=$RUN/dac.bluetooth
 BT_LIB=${SWEETSPOT_BT_LIB:-/var/lib/bluetooth}
 BT_SORV_PID=$RUN/bluetooth.pid
 BT_D_PID=$RUN/bluetoothd.pid
@@ -367,6 +368,7 @@ handoff_start() {
 		return 1
 	fi
 	dev=$(dac_playback_dev "$card") || dev=0
+	echo "$card" > "$BT_DAC"
 	stop_player
 	echo "$card" > "$BT_ATTIVO"
 	# Prima l'uscita diretta (hw:); se il DAC non accetta il formato A2DP
@@ -389,6 +391,8 @@ handoff_end() {
 	[ -n "$p" ] && kill "$p" 2>/dev/null
 	rm -f "$BT_P_PID" "$BT_ATTIVO"
 	# Il DAC deve essere libero prima che il player lo riapra.
+	sleep 1
+	rm -f "$BT_DAC"
 	sleep 1
 	start_player
 	log "bluetooth: DAC restituito al player"
@@ -477,6 +481,7 @@ start() {
 	bt_enabled || { say "spento"; return 0; }
 	running "$BT_SORV_PID" && return 0
 	mkdir -p "$RUN"
+	rm -f "$BT_DAC" "$BT_ATTIVO"
 	ripristina
 	start_services || return 1
 	if [ "${SWEETSPOT_TEST:-}" != 1 ]; then
@@ -499,6 +504,7 @@ stop() {
 	fi
 	rm -f "$BT_SORV_PID"
 	[ -e "$BT_ATTIVO" ] && handoff_end
+	rm -f "$BT_DAC"
 	stop_services
 	say "spento"
 	return 0

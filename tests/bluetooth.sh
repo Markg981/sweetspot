@@ -195,6 +195,14 @@ expect "passaggio: bluealsa-aplay sui core di sistema" "1" "$(grep -c '^taskset 
 expect "passaggio: esito ok" "0" "$(cat "$T/rc")"
 expect "fine: il player riparte" "1" "$(grep -c '^start-stop-daemon -S .*sweetspot-player' "$BTLOG")"
 expect "fine: segnale di passaggio rimosso" "no" "$([ -e "$T/run/bluetooth.attivo" ] && echo si || echo no)"
+expect "segnale dac.bluetooth: creato col passaggio, rimosso alla fine" "si|no" \
+	"$(bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start >/dev/null 2>&1; [ -e $RUN/dac.bluetooth ] && a=si || a=no; handoff_end >/dev/null 2>&1; [ -e $RUN/dac.bluetooth ] && b=si || b=no; echo "$a|$b"')"
+echo 1 > "$T/run/dac.bluetooth"
+bt '' 'rm -f $BT_DAC'
+bt 'BLUETOOTH=si' 'start >/dev/null 2>&1'
+expect "segnale dac.bluetooth orfano ripulito all'avvio" "no" "$([ -e "$T/run/dac.bluetooth" ] && echo si || echo no)"
+expect "supervisore: attende finche' il DAC e' del Bluetooth" "1" "$(grep -c 'dac.bluetooth' "$OVERLAY/usr/bin/sweetspot-player")"
+expect "liveness: DAC del Bluetooth non e' un blocco ne' un errore" "1" "$(grep -c 'DAC in uso dal Bluetooth' "$OVERLAY/usr/bin/sweetspot-stato")"
 : > "$BTLOG"
 : > "$BTDIR/hw-rifiutato"
 bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; handoff_end' >/dev/null 2>&1
