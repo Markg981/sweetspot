@@ -42,7 +42,8 @@ expect "build: post-build.sh verifica i pacchetti Bluetooth" "1" "$(grep -c 'man
 expect "build: D-Bus non parte da solo all'avvio" "1" "$(grep -c 'S30dbus.*init.d/dbus' "$ROOT/board/sweetspot/post-build.sh")"
 expect "init: S58sweetspot-bluetooth chiama il servizio" "1" "$(grep -c 'sweetspot-bluetooth avvia' "$OVERLAY/etc/init.d/S58sweetspot-bluetooth")"
 expect "priv: abbina, chiudi, elenco, rimuovi, applica" "5" "$(grep -c '"sweetspot-bluetooth", "' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
-expect "priv: chiavi BLUETOOTH e BLUETOOTH_NOME modificabili" "1" "$(grep -c '"BLUETOOTH", "BLUETOOTH_NOME"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
+expect "priv: chiavi BLUETOOTH (si/no) e BLUETOOTH_NOME (nome ristretto)" "1" "$(grep -c '{"BLUETOOTH", .b., 0}, {"BLUETOOTH_NOME", .m., 0}' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
+expect "pagina Bluetooth: intestazioni di sicurezza dalle funzioni comuni (page_start)" "1" "$(grep -c 'page_start "Bluetooth"' "$CGI/bluetooth")"
 expect "pannello: voce Bluetooth nel menu" "2" "$(grep -c 'bluetooth:Bluetooth' "$OVERLAY/usr/lib/sweetspot/web.sh")"
 
 # --- Ambiente finto -------------------------------------------------------------
