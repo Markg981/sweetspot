@@ -5,7 +5,9 @@
 #   sweetspot-latenza [secondi]     (predefinito 60)
 #   sweetspot-latenza --ascolto CORE
 # Meglio eseguirlo a riproduzione ferma: il risultato e' il ritardo
-# massimo con cui il kernel risveglia un thread real-time.
+# massimo con cui il kernel risveglia un thread real-time: riguarda lo
+# scheduler e l'alimentazione dei buffer, non il jitter del clock del DAC
+# (per il margine del buffer ALSA vedi sweetspot-alsa-misura).
 # Con --ascolto (lo avvia il player se LATENZA_ASCOLTO=si) misura per
 # tutta la sessione, solo mentre l'uscita audio suona, con 100 risvegli
 # al secondo invece di 2000: il thread di misura toglie al core della
