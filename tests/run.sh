@@ -1891,6 +1891,32 @@ expect "clipping: nuovo processo, si somma da zero" "5000 3 28" "$(DSP_PID=5000 
 expect "clipping: contatore ripartito nello stesso processo" "5000 1 29" "$(DSP_PID=5000 clip 1)"
 : > "$DSP/run/camilla.valore"
 expect "clipping: CamillaDSP che non risponde non cambia il totale" "5000 1 29" "$(DSP_PID=5000 clip '')"
+# Stato del percorso trasformativo (dsp.stato) e politica se manca la correzione.
+mkdir -p "$DSP/bin2"
+cat > "$DSP/bin2/sweetspot-camilla" <<'EOS'
+#!/bin/sh
+case "$2" in
+GetState) echo '{"GetState":{"result":"Ok","value":"Running"}}' ;;
+GetCaptureSignalPeak) echo "{\"GetCaptureSignalPeak\":{\"result\":\"Ok\",\"value\":[$(cat "$SWEETSPOT_RUN/picco.in")]}}" ;;
+GetPlaybackSignalPeak) echo "{\"GetPlaybackSignalPeak\":{\"result\":\"Ok\",\"value\":[$(cat "$SWEETSPOT_RUN/picco.out")]}}" ;;
+esac
+EOS
+chmod +x "$DSP/bin2/sweetspot-camilla"
+stato() { dspfn 1 "PATH=$DSP/bin2:\$PATH; dsp_stato_poll"; sed -n "s/^$1=//p" "$DSP/run/dsp.stato"; }
+echo "-20.5,-18.0" > "$DSP/run/picco.in"; echo "-6.0,-9.5" > "$DSP/run/picco.out"
+echo "5000 0 29" > "$DSP/run/dsp.clip"
+rm -f "$DSP/run/dsp.stato"
+expect "stato DSP: processo CamillaDSP in esecuzione" "camilladsp Running" "$(stato percorso) $(stato stato)"
+expect "stato DSP: picchi per canale" "-20.5,-18.0 -6.0,-9.5" "$(stato picco_ingresso) $(stato picco_uscita)"
+echo "-30.0,-3.0" > "$DSP/run/picco.in"
+expect "stato DSP: picco massimo della sessione per canale" "-20.5,-3.0" "$(stato picco_ingresso)"
+expect "stato DSP: campioni tagliati" "29" "$(stato campioni_tagliati)"
+rm -f "$DSP/run/correzione.attiva"; echo "configurazione dei filtri non valida" > "$DSP/run/correzione.errore"
+expect "politica: predefinita blocca, stato bloccato" "blocca bloccato" "$(dspfn 1 dsp_politica) $(stato percorso)"
+echo "CORREZIONE_SE_ASSENTE=diretto" > "$DSP/run/sweetspot.conf"
+expect "politica diretto: stato visibile come senza correzione" "diretto diretto-senza-correzione assente" "$(dspfn 1 dsp_politica) $(stato percorso) $(stato stato)"
+rm -f "$DSP/run/correzione.errore" "$DSP/run/sweetspot.conf" "$DSP/run/dsp.stato"
+touch "$DSP/run/correzione.attiva"
 livecheck() { # voce
 	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$DSP/squeezelite.log \
