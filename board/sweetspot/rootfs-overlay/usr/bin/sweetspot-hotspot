@@ -6,6 +6,7 @@
 #   sweetspot-hotspot sorveglia    (lanciato da S40sweetspot-net, in secondo piano)
 #   sweetspot-hotspot scansiona    cerca le reti Wi-Fi e aggiorna l'elenco
 #   sweetspot-hotspot stato        scrive il nome della scheda se l'hotspot e' acceso
+#   sweetspot-hotspot richiesta    (dalle pagine) prova la rete Wi-Fi appena salvata
 #
 # Se dopo HOTSPOT_ATTESA secondi dall'avvio non c'e' nessuna connessione
 # (nessun cavo con collegamento, nessun indirizzo, Wi-Fi non configurato o non
@@ -289,5 +290,7 @@ case "$1" in
 		[ -n "$i" ] || i=$(ap_iface) || exit 1
 		scan "$i" ;;
 	stato) cat "$RUN/hotspot.attivo" 2>/dev/null ;;
-	*) echo "uso: $0 sorveglia|scansiona|stato" >&2; exit 1 ;;
+	# La pagina gira come "web" e non scrive in $RUN: passa da sweetspot-priv.
+	richiesta) [ -s "$RUN/hotspot.attivo" ] && : > "$RICHIESTA" ;;
+	*) echo "uso: $0 sorveglia|scansiona|stato|richiesta" >&2; exit 1 ;;
 esac

@@ -388,11 +388,11 @@ case "$F_a" in
 		priv sweetspot-config imposta WIFI_NOME "$F_wifi_nome" WIFI_PASSWORD "$F_wifi_password"
 		rc=$?
 		[ $rc -eq 0 ] || [ $rc -eq 2 ] || done_to rete "$(saved_msg $rc)"
-		: > "$RUN/hotspot.richiesta"
+		priv sweetspot-hotspot richiesta || done_to rete "L'hotspot non risponde: riprova fra qualche secondo."
 		done_to rete "Mi collego a $F_wifi_nome: l'hotspot si spegne. Ricollega il telefono alla tua rete e apri http://$(cat "$PROC/sys/kernel/hostname" 2>/dev/null).local/ (se non si collega, entro circa un minuto l'hotspot Sweetspot riparte)." ;;
 	wifi_scansiona)
 		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
-		sweetspot-hotspot scansiona
+		priv sweetspot-hotspot scansiona
 		done_to rete "Elenco delle reti aggiornato." ;;
 
 	# Scheda DAC I2S del Raspberry Pi: la carica il firmware all'avvio, quindi

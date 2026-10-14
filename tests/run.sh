@@ -2498,6 +2498,15 @@ hs_run
 expect "hotspot: rete scelta che risponde, hotspot spento e sorveglianza finita" "1|1|0" \
 	"$(grep -c 'collegato alla rete Wi-Fi' "$HS/log")|$(hs_calls hostapd)|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)"
 
+# 9. Richiesta dalla pagina (via sweetspot-priv): solo con l'hotspot acceso.
+hs_env ap
+rm -f "$HS/run/hotspot.attivo" "$HS/run/hotspot.richiesta"
+if hs_run 0 richiesta; then rc=0; else rc=1; fi
+expect "hotspot: richiesta rifiutata con l'hotspot spento" "1|0" "$rc|$([ -e "$HS/run/hotspot.richiesta" ] && echo 1 || echo 0)"
+echo wlan0 > "$HS/run/hotspot.attivo"
+if hs_run 0 richiesta; then rc=0; else rc=1; fi
+expect "hotspot: richiesta registrata con l'hotspot acceso" "0|1" "$rc|$([ -e "$HS/run/hotspot.richiesta" ] && echo 1 || echo 0)"
+
 # S40: la scheda Wi-Fi configurata si collega con il nuovo comando 'wifi'.
 expect "S40sweetspot-net: comando wifi e avvio della sorveglianza" "1|1" \
 	"$(grep -c 'wifi) *$' "$OVERLAY/etc/init.d/S40sweetspot-net")|$(grep -c 'sweetspot-hotspot sorveglia' "$OVERLAY/etc/init.d/S40sweetspot-net")"
