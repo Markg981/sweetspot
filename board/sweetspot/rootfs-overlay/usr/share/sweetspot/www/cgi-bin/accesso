@@ -57,6 +57,7 @@ if [ "$F_a" = esci ]; then
 	if session_valid && [ -n "$F_t" ] && [ "$F_t" = "$(token)" ]; then
 		session_end
 		printf 'Status: 303 See Other\r\nLocation: /cgi-bin/accesso\r\nCache-Control: no-store\r\n'
+		sec_headers
 		session_cookie ""
 		printf '\r\n'
 	else
@@ -88,6 +89,7 @@ if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso 
 	login_ok globale
 	log "accesso alle pagine da ${REMOTE_ADDR:-?}"
 	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n' "$(safe_next "$F_next")"
+	sec_headers
 	session_cookie "$id"
 	printf '\r\n'
 	exit 0

@@ -4,5 +4,8 @@
 # per confermare che una versione appena aggiornata e' partita bene).
 # shellcheck disable=SC2034
 WEB_PUBLIC=1 # la chiave sola; il resto e' dietro l'accesso
+WEB_NO_REDIRECT=1 # la verifica degli aggiornamenti parla in chiaro, mai verso https
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
-printf 'Content-Type: text/plain\r\n\r\nok %s\n' "$(running_slot)"
+printf 'Content-Type: text/plain\r\n'
+sec_headers
+printf '\r\nok %s\n' "$(running_slot)"

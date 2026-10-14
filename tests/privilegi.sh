@@ -31,7 +31,7 @@ expect "helper setuid installato (4755)" "1" "$(grep -c 'sweetspot-priv f 4755 0
 echo "Le pagine non chiamano piu' direttamente le operazioni di root"
 # Ogni chiamata a uno script privilegiato, nelle pagine, passa da priv.
 direct=$(grep -nE '(^|[^a-z-])sweetspot-(config|lms|rete|dischi|nas|copia|cd|spazio|aggiorna|installa|dsp|accesso|check|hotspot)( |$|\))' \
-	"$OVERLAY"/usr/share/sweetspot/www/cgi-bin/* | grep -v 'priv sweetspot-' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -v '[<>]' || true)
+	"$OVERLAY"/usr/share/sweetspot/www/cgi-bin/* | grep -v 'priv sweetspot-' | grep -v 'priv_confirm "[^"]*" "[^"]*" sweetspot-' | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -v '[<>]' || true)
 expect "nessuna chiamata diretta" "" "$direct"
 expect "azione non scrive piu' in \$RUN" "0" "$(grep -c '>> *"\$RUN/\|: > *"\$RUN/\|touch "\$RUN/\|mkdir -p "\$RUN' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione")"
 
@@ -56,7 +56,7 @@ else
 	B=$WORK/bin
 	W=$WORK/web
 	mkdir -p "$B" "$W"
-	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot diario; do
+	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https diario; do
 		printf '#!/bin/sh\nprintf "%%s" "sweetspot-%s" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\nprintf "\\n" >> "%s/chiamata"\n' "$s" "$WORK" "$WORK" "$WORK" > "$B/sweetspot-$s"
 		chmod +x "$B/sweetspot-$s"
 	done
@@ -73,6 +73,12 @@ else
 			if [ -f "$WORK/chiamata" ]; then cat "$WORK/chiamata"; else echo "NIENTE($rc)"; fi
 		}
 		expect "config imposta ammesso" "sweetspot-config|imposta|VOLUME|fisso|DSD|dop" "$(priv sweetspot-config imposta VOLUME fisso DSD dop)"
+		for m in 0 0.0 -0 -3 -1.5 -12 -23.9 -24 -24.0; do
+			expect "config margine DSD $m ammesso" "sweetspot-config|imposta|DSD_PCM_MARGINE_DB|$m" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
+		done
+		for m in 1 +1 3 -24.1 -25 -100 -3.55 -3. .5 -.5 -3x 1e1 "-3 " "- 3" abc "-3;reboot" '$(id)' --3 0x1; do
+			expect "config margine DSD '$m' rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
+		done
 		expect "config chiave minuscola non ammessa" "NIENTE(126)" "$(priv sweetspot-config imposta volume fisso)"
 		expect "config valore vuoto ammesso" "sweetspot-config|imposta|DNS|" "$(priv sweetspot-config imposta DNS '')"
 		expect "config condivisione 3 con utente e password" "sweetspot-config|imposta|CONDIVISIONE_3_UTENTE|u|CONDIVISIONE_3_PASSWORD|p" \
@@ -141,6 +147,82 @@ SSH=si")"
 		SWEETSPOT_PATH=/evil LD_PRELOAD=/x IFS=x "$WORK/priv" sweetspot-check --dati > /dev/null 2>&1
 		expect "ambiente ripulito" "PATH=/usr/sbin:/usr/bin:/sbin:/bin" "$(grep -E '^(PATH|SWEETSPOT_PATH|LD_PRELOAD|IFS)=' "$WORK/env" | head -n 1)"
 		expect "nessuna variabile ereditata" "0" "$(grep -cE '^(SWEETSPOT_PATH|LD_PRELOAD|IFS)=' "$WORK/env")"
+
+		# Chiavi che aprono root: mai con l'elenco normale, solo con @conferma
+		# (gettone monouso + password del pannello, verificata da root).
+		echo "Helper privilegiato: chiavi che aprono root"
+		printf '#!/bin/sh\nif [ "$1" = verifica ]; then read -r pw; [ "$pw" = segreta ] || exit 1; exit 0; fi\nprintf "sweetspot-accesso" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\n' "$WORK" "$WORK" > "$B/sweetspot-accesso"
+		chmod +x "$B/sweetspot-accesso"
+		# sconf PASSWORD ARGOMENTI...: come "priv" ma con la password sull'ingresso standard.
+		sconf() {
+			local pw=$1
+			shift
+			rm -f "$WORK/chiamata"
+			printf '%s\n' "$pw" | "$WORK/priv" "$@" > /dev/null 2>&1
+			rc=$?
+			if [ -f "$WORK/chiamata" ]; then cat "$WORK/chiamata"; else echo "NIENTE($rc)"; fi
+		}
+		for k in SSH SSH_PASSWORD SSH_UTENTE; do
+			expect "config $k senza conferma: rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta "$k" si)"
+		done
+		expect "config SSH insieme a chiavi normali: tutto rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta VOLUME fisso SSH si)"
+		expect "config SSH_PASSWORD in coda: rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta NOME_PLAYER x SSH_PASSWORD segreta)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "gettone: 32 cifre esadecimali" "1" "$(printf '%s' "$tok" | grep -cE '^[0-9a-f]{32}$')"
+		expect "gettone: file nella cartella di root" "si" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
+		expect "conferma con la password giusta" "sweetspot-config|imposta|SSH|si|SSH_PASSWORD|nuova" \
+			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si SSH_PASSWORD nuova)"
+		expect "il gettone e' monouso" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si)"
+		expect "gettone consumato: il file non c'e' piu'" "no" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "password sbagliata: rifiutata" "NIENTE(126)" "$(sconf sbagliata @conferma "$tok" sweetspot-config imposta SSH si)"
+		expect "password sbagliata: il gettone e' bruciato" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "password vuota: rifiutata" "NIENTE(126)" "$(sconf '' @conferma "$tok" sweetspot-config imposta SSH si)"
+		expect "gettone inventato: rifiutato" "NIENTE(126)" "$(sconf segreta @conferma 00000000000000000000000000000000 sweetspot-config imposta SSH si)"
+		expect "gettone con percorso: rifiutato" "NIENTE(126)" "$(sconf segreta @conferma ../../../etc/passwd sweetspot-config imposta SSH si)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma non sblocca script fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-player restart)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma non sblocca chiavi fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta LYRION_PASSWORD x)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma vale anche l'utente di assistenza" "sweetspot-config|imposta|SSH_UTENTE|assistenza" \
+			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH_UTENTE assistenza)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma non basta con l'a capo nel valore" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH_PASSWORD "a
+SSH=si")"
+		# Gettone scaduto: il file piu' vecchio di 10 minuti non vale.
+		tok=$("$WORK/priv" @conferma-nuova)
+		touch -d '20 minutes ago' "$W/conferma/$tok" 2> /dev/null && \
+			expect "gettone scaduto: rifiutato" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si)"
+		# Troppi gettoni: il piu' vecchio cede il posto, la cartella non cresce.
+		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do "$WORK/priv" @conferma-nuova > /dev/null; done
+		expect "al massimo 16 gettoni validi" "si" "$([ "$(ls "$W/conferma" | wc -l | tr -d ' ')" -le 16 ] && echo si || echo no)"
+
+		# Valori controllati chiave per chiave: niente injection nei posti dove finiscono.
+		echo "Helper privilegiato: valori delle chiavi"
+		expect "SCHEDA_I2S: overlay ammesso" "sweetspot-config|imposta|SCHEDA_I2S|hifiberry-dacplus" "$(priv sweetspot-config imposta SCHEDA_I2S hifiberry-dacplus)"
+		expect "SCHEDA_I2S: parametri del kernel rifiutati" "NIENTE(126)" "$(priv sweetspot-config imposta SCHEDA_I2S 'x init=/bin/sh')"
+		expect "SCHEDA_I2S: virgola e parametri dell'overlay rifiutati" "NIENTE(126)" "$(priv sweetspot-config imposta SCHEDA_I2S 'x,y=1')"
+		expect "IP_FISSO: indirizzo con maschera" "sweetspot-config|imposta|IP_FISSO|192.168.1.50/24" "$(priv sweetspot-config imposta IP_FISSO 192.168.1.50/24)"
+		expect "IP_FISSO: comando rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta IP_FISSO '1.2.3.4; reboot')"
+		expect "GATEWAY: sostituzione di comando rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta GATEWAY '$(id)')"
+		expect "DNS: solo indirizzo" "NIENTE(126)" "$(priv sweetspot-config imposta DNS 'x
+nameserver 6.6.6.6')"
+		expect "SERVER: nome o indirizzo" "sweetspot-config|imposta|SERVER|lyrion.local" "$(priv sweetspot-config imposta SERVER lyrion.local)"
+		expect "SERVER: opzioni del player rifiutate" "NIENTE(126)" "$(priv sweetspot-config imposta SERVER '1.2.3.4 -o /dev/null')"
+		expect "NOME_RETE: lettere minuscole, cifre, trattini" "NIENTE(126)" "$(priv sweetspot-config imposta NOME_RETE 'Casa Mia')"
+		expect "FREQUENZA_MAX: solo cifre" "NIENTE(126)" "$(priv sweetspot-config imposta FREQUENZA_MAX '192000;id')"
+		expect "FREQUENZA_MAX: cifre" "sweetspot-config|imposta|FREQUENZA_MAX|192000" "$(priv sweetspot-config imposta FREQUENZA_MAX 192000)"
+		expect "VOLUME: una parola" "NIENTE(126)" "$(priv sweetspot-config imposta VOLUME 'fisso x')"
+		expect "ARCHIVIO: identita' del disco" "sweetspot-config|imposta|ARCHIVIO|UUID=1234-ABCD" "$(priv sweetspot-config imposta ARCHIVIO UUID=1234-ABCD)"
+		expect "ARCHIVIO: percorso rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta ARCHIVIO /dev/sda1)"
+		expect "ESCLUDI_DISCHI: elenco di nomi" "sweetspot-config|imposta|ESCLUDI_DISCHI|sda,Dati 2" "$(priv sweetspot-config imposta ESCLUDI_DISCHI 'sda,Dati 2')"
+		expect "ESCLUDI_DISCHI: caratteri di shell rifiutati" "NIENTE(126)" "$(priv sweetspot-config imposta ESCLUDI_DISCHI 'sda;id')"
+		expect "CONDIVISIONE_n_SMB1: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 'si;id')|$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 forse)"
+		expect "HTTPS: ammesso dalle pagine" "sweetspot-config|imposta|HTTPS|si|HTTPS_REINDIRIZZA|no" "$(priv sweetspot-config imposta HTTPS si HTTPS_REINDIRIZZA no)"
+		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
+		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"
 	fi
 fi
 
@@ -192,6 +274,37 @@ expect "correzione: nessun file nuovo nella cartella di root" "0" "$(ls "$A/run/
 printf 't=sbagliato&a=riavvia' | SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="$A/run" SWEETSPOT_LOG="$A/log" \
 	REQUEST_METHOD=POST CONTENT_LENGTH=21 sh "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione" > /dev/null
 expect "senza gettone nessuna operazione privilegiata" "0" "$(wc -c < "$A/priv.log" | tr -d ' ')"
+# SSH e la sua password aprono root: la sola sessione non basta.
+SISTEMA="a=sistema&nome=Salotto&modalita=completa&profilo=bilanciato&ascolto=si&ottimizzazioni=si"
+rm -f "$A/run/sweetspot.conf"
+printf 'NOME_PLAYER=Prova\n' > "$A/run/sweetspot.web"
+: > "$A/priv.log"
+out=$(act "$SISTEMA&ssh=si&ssh_password=nuova" | tr -d '\r')
+expect "SSH senza password del pannello: non si cambia" "0" "$(grep -c 'SSH' "$A/priv.log")"
+msg=$(httpd -d "$(printf '%s\n' "$out" | grep '^Location: ' | sed 's/^.*msg=//')")
+case "$msg" in *"imposta prima una password"*) ok "SSH senza password del pannello: il messaggio dice cosa fare" ;; *) expect "messaggio" "imposta prima una password" "$msg" ;; esac
+printf 'PASSWORD_WEB=*\nNOME_PLAYER=Prova\n' > "$A/run/sweetspot.web"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_password=nuova" > /dev/null
+expect "SSH con password del pannello ma senza conferma: non si cambia" "0" "$(grep -c 'SSH' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_password=nuova&ct=gettone1&conferma_password=segreta" > /dev/null
+expect "SSH con conferma: passa dalla conferma forte dell'helper" "1" "$(grep -c '^@conferma gettone1 sweetspot-config imposta SSH si SSH_UTENTE root SSH_PASSWORD nuova$' "$A/priv.log")"
+expect "SSH: le impostazioni normali non portano le chiavi di root" "0" "$(grep '^sweetspot-config imposta NOME_PLAYER' "$A/priv.log" | grep -c 'SSH')"
+expect "le altre impostazioni si salvano comunque" "1" "$(grep -c '^sweetspot-config imposta NOME_PLAYER Salotto' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=no&ssh_password=" > /dev/null
+expect "senza cambiare SSH non serve alcuna conferma" "0" "$(grep -c '@conferma\|SSH' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=no&ssh_password=&ssh_utente=assistenza&ct=g2&conferma_password=segreta" > /dev/null
+expect "cambio dell'utente SSH: conferma forte" "1" "$(grep -c '^@conferma g2 sweetspot-config imposta SSH no SSH_UTENTE assistenza$' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_utente=root%0aSSH%3dsi&ct=g3&conferma_password=segreta" > /dev/null
+expect "utente SSH inventato: ignorato, resta root" "1" "$(grep -c '^@conferma g3 sweetspot-config imposta SSH si SSH_UTENTE root$' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_password=a%0aSSH%3dsi&ct=g4&conferma_password=segreta" > /dev/null
+expect "password SSH con a capo: non arriva all'helper" "0" "$(grep -c 'SSH' "$A/priv.log")"
+
 # Con l'helper le pagine leggono la copia senza password.
 printf 'PASSWORD_WEB=*\nNOME_PLAYER=Visibile\n' > "$A/run/sweetspot.web"
 printf 'PASSWORD_WEB=$1$vero$hash\nNOME_PLAYER=Visibile\n' > "$A/run/sweetspot.conf"

@@ -1449,13 +1449,38 @@ host_allowed() {
 	return 1
 }
 
+# Intestazioni di sicurezza di ogni risposta delle pagine. Nessuna pagina puo'
+# essere incorporata in un'altra (clickjacking), tranne Audio, Stato e Accesso:
+# l'interfaccia Material di Lyrion (porta 9000) le mostra in un riquadro, e
+# li' frame-ancestors ammette solo la stessa origine e la porta 9000. Dove
+# l'incorporamento e' consentito manca X-Frame-Options (non sa dire "porta
+# 9000"; i browser con CSP lo ignorano comunque quando c'e' frame-ancestors).
+sec_headers() {
+	local anc="'none'" xfo="X-Frame-Options: DENY\r\n"
+	case "${SCRIPT_NAME:-}" in
+		*/audio|*/stato|*/accesso)
+			anc="'self' http://*:9000 https://*:9000"
+			xfo="" ;;
+	esac
+	printf "Content-Security-Policy: frame-ancestors %s; base-uri 'self'; form-action 'self'; object-src 'none'\r\n" "$anc"
+	printf '%b' "$xfo"
+	printf 'X-Content-Type-Options: nosniff\r\nReferrer-Policy: same-origin\r\n'
+}
+
 # Chiamato all'inizio di ogni pagina (CGI): Host non riconosciuto -> 403 e
 # nessuna azione. Fuori da una richiesta web (script di sistema, test) non fa nulla.
+# L'ordine conta: questa funzione gira appena si carica common.sh, quando le
+# pagine (utente "web") non hanno ancora scelto la configurazione leggibile
+# (web.sh lo fa dopo). Con la configurazione completa, solo di root, NOME_RETE
+# risulterebbe vuoto e ogni nome scelto dall'utente avrebbe avuto un 403.
 host_guard() {
 	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
+	local CONF=$CONF
+	[ -r "$CONF" ] || CONF=$CONF_WEB
 	host_allowed "${HTTP_HOST:-}" "${REMOTE_ADDR:-}" && return 0
-	printf 'Status: 403 Forbidden\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\nindirizzo non valido: usa http://%s.local/\n' \
-		"$(conf NOME_RETE sweetspot)"
+	printf 'Status: 403 Forbidden\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
+	sec_headers
+	printf '\r\nindirizzo non valido: usa http://%s.local/\n' "$(conf NOME_RETE sweetspot)"
 	exit 0
 }
 host_guard

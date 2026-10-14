@@ -1,0 +1,152 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - HTTPS opzionale per le pagine.
+#
+#   sweetspot-https applica     avvia o ferma il terminatore TLS secondo
+#                               HTTPS e HTTPS_REINDIRIZZA di sweetspot.txt
+#   sweetspot-https httpd       (interno) l'httpd di BusyBox in modalita'
+#                               inetd, lanciato da stunnel per ogni connessione
+#
+# Come funziona: l'httpd di BusyBox non parla TLS e le pagine sono CGI di
+# shell, quindi davanti ci va un terminatore TLS che non cambia le pagine.
+# Si usa stunnel in modalita' "exec": per ogni connessione cifrata lancia
+# questo script, che esegue l'httpd con la connessione gia' decifrata sul
+# proprio ingresso. Cosi' non c'e' un secondo server in ascolto e le pagine
+# conoscono l'indirizzo vero di chi si collega (REMOTE_HOST di stunnel):
+# il limite ai tentativi di accesso resta per indirizzo, non per "127.0.0.1".
+# stunnel lascia root appena aperta la porta 443 (setuid = web).
+#
+# Il certificato e' autofirmato, creato al primo avvio con HTTPS acceso e
+# salvato sulla chiavetta (sweetspot-https.pem) per non cambiarlo a ogni
+# accensione: il browser lo accetta una volta e se ne ricorda. La chiave
+# privata sta sulla chiavetta come le password in sweetspot.txt.
+#
+# File per le pagine, in $RUN (scritti da root, leggibili da tutti):
+#   https.attivo       esiste se HTTPS e' in funzione
+#   https.reindirizza  esiste se le pagine in chiaro devono rimandare a https
+#   https.impronta     impronta SHA-256 del certificato
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+CERT=$RUN/https.pem
+STICK_CERT=sweetspot-https.pem
+STUNNEL_CONF=$RUN/stunnel.conf
+STUNNEL_PID=$RUN/stunnel.pid
+HTTPD_CONF=$RUN/httpd.conf
+WWW=${SWEETSPOT_WWW:-/usr/share/sweetspot/www}
+
+# Nome in rete come lo usano S40sweetspot-net e host_allowed.
+net_name() {
+	lower "$(conf NOME_RETE sweetspot)" | tr -c 'a-z0-9-' '-' | sed 's/^-*//; s/-*$//' | cut -c1-32
+}
+
+fingerprint() {
+	openssl x509 -in "$CERT" -noout -fingerprint -sha256 2>/dev/null | sed 's/^[^=]*=//' > "$RUN/https.impronta.nuovo" &&
+		chmod 644 "$RUN/https.impronta.nuovo" && mv "$RUN/https.impronta.nuovo" "$RUN/https.impronta"
+}
+
+# Certificato e chiave in un solo file (formato di stunnel).
+make_cert() {
+	local name ip san tmp
+	name=$(net_name)
+	[ -n "$name" ] || name=sweetspot
+	san="DNS:$name.local,DNS:$name"
+	ip=$(net_ipv4 2>/dev/null)
+	[ -n "$ip" ] && san="$san,IP:$ip"
+	tmp=$RUN/https.nuovo
+	( umask 077
+	  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
+		-subj "/CN=$name.local/O=Sweetspot" -addext "subjectAltName=$san" \
+		-keyout "$tmp.key" -out "$tmp.crt" > /dev/null 2>&1 &&
+	  cat "$tmp.key" "$tmp.crt" > "$tmp" )
+	rm -f "$tmp.key" "$tmp.crt"
+	[ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+	chmod 600 "$tmp"
+	mv "$tmp" "$CERT"
+}
+
+ensure_cert() {
+	if [ ! -s "$CERT" ] && stick_mount ro 2> /dev/null; then
+		if [ -s "$STICK_MNT/$STICK_CERT" ]; then
+			cp "$STICK_MNT/$STICK_CERT" "$CERT" && chmod 600 "$CERT"
+		fi
+		stick_umount
+	fi
+	[ -s "$CERT" ] && openssl x509 -in "$CERT" -noout 2> /dev/null && return 0
+	rm -f "$CERT"
+	make_cert || return 1
+	log "https: certificato autofirmato creato"
+	# Sulla chiavetta, se c'e' e si scrive: senza, vale fino al riavvio.
+	if stick_mount rw 2> /dev/null; then
+		cp "$CERT" "$STICK_MNT/$STICK_CERT.nuovo" && mv "$STICK_MNT/$STICK_CERT.nuovo" "$STICK_MNT/$STICK_CERT"
+		stick_umount
+	fi
+	return 0
+}
+
+stop_stunnel() {
+	local pid
+	pid=$(cat "$STUNNEL_PID" 2> /dev/null)
+	case "$pid" in ''|*[!0-9]*) ;; *) kill "$pid" 2> /dev/null ;; esac
+	rm -f "$STUNNEL_PID"
+}
+
+write_conf() {
+	cat > "$STUNNEL_CONF" <<EOF
+# Generato da sweetspot-https: non modificare.
+pid = $STUNNEL_PID
+foreground = no
+setuid = web
+setgid = web
+syslog = no
+
+[sweetspot]
+accept = 443
+cert = $CERT
+exec = /usr/bin/sweetspot-https
+execargs = sweetspot-https httpd
+EOF
+}
+
+apply() {
+	mkdir -p "$RUN"
+	stop_stunnel
+	rm -f "$RUN/https.attivo" "$RUN/https.reindirizza"
+	is_yes "$(conf HTTPS no)" || return 0
+	if ! command -v stunnel > /dev/null 2>&1 || ! command -v openssl > /dev/null 2>&1; then
+		log "https: stunnel o openssl mancano in questa immagine"
+		return 1
+	fi
+	ensure_cert || { log "https: certificato non creato"; return 1; }
+	fingerprint
+	write_conf
+	# stunnel e' il demone: niente descrittori della pagina o dell'avvio.
+	stunnel "$STUNNEL_CONF" < /dev/null > /dev/null 2>&1
+	sleep 1
+	if ! kill -0 "$(cat "$STUNNEL_PID" 2> /dev/null)" 2> /dev/null; then
+		log "https: stunnel non e' partito"
+		return 1
+	fi
+	: > "$RUN/https.attivo"
+	chmod 644 "$RUN/https.attivo"
+	if is_yes "$(conf HTTPS_REINDIRIZZA no)"; then
+		: > "$RUN/https.reindirizza"
+		chmod 644 "$RUN/https.reindirizza"
+	fi
+	log "https: attivo sulla porta 443"
+	return 0
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	applica) apply ;;
+	httpd)
+		# Una connessione gia' decifrata: l'httpd la serve da stdin/stdout.
+		HTTPS=on
+		export HTTPS
+		exec httpd -i -h "$WWW" -c "$HTTPD_CONF"
+		;;
+	*) echo "uso: $0 applica" >&2; exit 1 ;;
+esac

@@ -10,7 +10,12 @@
 #                                   correzione o per il volume a 64 bit)
 #   sweetspot-dsp correzione        esce con 0 se la correzione va usata
 #                                   (CORREZIONE=si o confronto, filtri validi)
-#   sweetspot-dsp volume            esce con 0 con VOLUME=dsp (modalita' completa)
+#   sweetspot-dsp richiesta         esce con 0 se la correzione e' chiesta
+#                                   (CORREZIONE=si o confronto)
+#   sweetspot-dsp problema          stampa perche' la correzione chiesta non e'
+#                                   applicabile (file mancanti, illeggibili,
+#                                   malformati, incoerenti); nulla se va bene
+#   sweetspot-dsp volume           esce con 0 con VOLUME=dsp (modalita' completa)
 #   sweetspot-dsp stato DB [muto]   volume di partenza dei prossimi processi
 #   sweetspot-dsp guadagno          margine conservativo in dB dei filtri
 #   sweetspot-dsp risposta          curva della correzione: "Hz sinistro destro"
@@ -126,8 +131,15 @@ dsp_mode() {
 	esac
 }
 
+# Correzione chiesta (CORREZIONE=si o confronto), a prescindere dai file.
+correction_requested() {
+	[ "$(dsp_mode)" != no ]
+}
+
+# La correzione e' in uso solo se chiesta e se TUTTI i file presenti sono
+# validi: un FIR rotto accanto a filtri di REW buoni non si ignora in silenzio.
 correction_active() {
-	[ "$(dsp_mode)" != no ] && { filters_ok || fir_ok; }
+	correction_requested && correction_problem > /dev/null
 }
 
 # --- Filtri FIR (convoluzione) ------------------------------------------------
@@ -204,6 +216,69 @@ fir_ok() {
 	r=$(wav_info "$DSP_DIR/fir-destro.wav") || return 1
 	# Stessa frequenza per i due canali.
 	[ "${l% *}" = "${r% *}" ]
+}
+
+# Problema di un file di filtri REW: una riga di spiegazione, esce con 1.
+rew_problem() { # file nome
+	local out rc
+	[ -r "$1" ] || { echo "$2 illeggibile"; return 1; }
+	if ! tr -d '\r' < "$1" | grep -Eq '^[[:space:]]*Filter[[:space:]]+[0-9]+[[:space:]]*:'; then
+		echo "$2 non e' un'esportazione di REW (nessuna riga \"Filter N:\")"
+		return 1
+	fi
+	out=$(parse_rew "$1" 2>/dev/null); rc=$?
+	[ "$rc" = 0 ] && return 0
+	echo "$2 non valido: $(printf '%s\n' "$out" | sed -n 's/^errore|\([0-9]*\)|\(.*\)$/\2 (riga \1)/p' | head -n 1)"
+	return 1
+}
+
+# Problema dei file FIR presenti: leggibili, WAV validi, sotto il limite di
+# dimensione, stessa frequenza e stesso numero di canali nei due file.
+fir_problem() {
+	local f side l r
+	for side in sinistro destro; do
+		f=$DSP_DIR/fir-$side.wav
+		[ -e "$f" ] || continue
+		[ -r "$f" ] || { echo "fir-$side.wav illeggibile"; return 1; }
+		[ -s "$f" ] || { echo "fir-$side.wav vuoto"; return 1; }
+		[ "$(( $(wc -c < "$f") / 1024 ))" -le "$FIR_MAX_KB" ] ||
+			{ echo "fir-$side.wav supera $((FIR_MAX_KB / 1024)) MB"; return 1; }
+		wav_info "$f" > /dev/null ||
+			{ echo "fir-$side.wav non e' un WAV valido (mono o stereo, almeno 8000 Hz)"; return 1; }
+	done
+	if [ ! -s "$DSP_DIR/fir-sinistro.wav" ]; then
+		echo "c'e' fir-destro.wav ma manca fir-sinistro.wav"
+		return 1
+	fi
+	[ -s "$DSP_DIR/fir-destro.wav" ] || return 0
+	l=$(wav_info "$DSP_DIR/fir-sinistro.wav")
+	r=$(wav_info "$DSP_DIR/fir-destro.wav")
+	[ "${l% *}" = "${r% *}" ] ||
+		{ echo "i FIR hanno frequenze diverse (sinistro ${l% *} Hz, destro ${r% *} Hz)"; return 1; }
+	[ "${l#* }" = "${r#* }" ] ||
+		{ echo "i FIR hanno canali diversi (sinistro ${l#* }, destro ${r#* })"; return 1; }
+	return 0
+}
+
+# Perche' la correzione chiesta non e' applicabile: una riga e uscita 1; con
+# la correzione spenta o i file a posto, nessun output e uscita 0.
+correction_problem() {
+	local have=0 side msg
+	correction_requested || return 0
+	if [ -s "$DSP_DIR/sinistro.txt" ] || [ -s "$DSP_DIR/destro.txt" ]; then
+		have=1
+		[ -s "$DSP_DIR/sinistro.txt" ] || { echo "c'e' destro.txt ma manca sinistro.txt"; return 1; }
+		for side in sinistro destro; do
+			[ -s "$DSP_DIR/$side.txt" ] || continue
+			msg=$(rew_problem "$DSP_DIR/$side.txt" "$side.txt") || { echo "$msg"; return 1; }
+		done
+	fi
+	if [ -e "$DSP_DIR/fir-sinistro.wav" ] || [ -e "$DSP_DIR/fir-destro.wav" ]; then
+		have=1
+		msg=$(fir_problem) || { echo "$msg"; return 1; }
+	fi
+	[ "$have" = 1 ] || { echo "nessun filtro trovato (servono sinistro.txt o fir-sinistro.wav)"; return 1; }
+	return 0
 }
 
 fir_margin() {
@@ -372,6 +447,14 @@ do_gain() {
 
 # --- Configurazione di CamillaDSP e del dispositivo ALSA ---------------------------
 
+# Motivo per cui la preparazione e' fallita: nel registro e in
+# $RUN/correzione.motivo, da dove il player lo porta in Stato.
+fail_reason() {
+	log "correzione: $1"
+	mkdir -p "$RUN"
+	echo "$1" > "$RUN/correzione.motivo"
+}
+
 # Formato di uscita verso il DAC, il migliore che accetta (nomi di CamillaDSP).
 dsp_out_format() {
 	local f
@@ -408,7 +491,7 @@ write_config() { # scheda
 	local card=$1 id dev fmt gain=0.0 ch pre side bits fir="" rate=44100 alsafmt extra=8192
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
-	fmt=$(dsp_out_format "$card") || { log "correzione: formato PCM del playback non disponibile"; return 1; }
+	fmt=$(dsp_out_format "$card") || { fail_reason "formato PCM del playback non disponibile"; return 1; }
 	correction_active && gain=$(do_gain)
 	# Con i FIR CamillaDSP lavora (e suona sul DAC) alla frequenza dei file.
 	if fir_in_use; then
@@ -416,7 +499,7 @@ write_config() { # scheda
 		rate=$(fir_rate)
 		case "$fmt" in S24_3_LE) alsafmt=S24_3LE ;; S24_4_RJ_LE) alsafmt=S24_LE ;; *) alsafmt=$fmt ;; esac
 		if ! printf ' %s ' "$(dac_rates "$card" "$alsafmt" 2 | tr '\n' ' ')" | grep -q " $rate "; then
-			log "correzione: il DAC non accetta $rate Hz, la frequenza dei filtri FIR"
+			fail_reason "il DAC non accetta $rate Hz, la frequenza dei filtri FIR"
 			return 1
 		fi
 		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
@@ -516,7 +599,7 @@ dsp_rates() {
 
 write_asound() { # scheda
 	local rates
-	rates=$(dsp_rates "$1") || { log "correzione: frequenze PCM del playback non disponibili"; return 1; }
+	rates=$(dsp_rates "$1") || { fail_reason "frequenze PCM del playback non disponibili"; return 1; }
 	{
 		echo "# Generato da Sweetspot (sweetspot-dsp): correzione ambientale."
 		echo "pcm.$DSP_PCM {"
@@ -536,10 +619,11 @@ write_asound() { # scheda
 do_prepare() { # scheda
 	active || return 1
 	mkdir -p "$RUN"
+	rm -f "$RUN/correzione.motivo"
 	write_config "$1" && write_asound "$1" || return 1
 	dsp_state_prepare
 	if [ -x "$CAMILLADSP" ] && ! "$CAMILLADSP" -c "$DSP_YML" > "$RUN/camilladsp.verifica" 2>&1; then
-		log "correzione: configurazione rifiutata da CamillaDSP: $(tail -n 1 "$RUN/camilladsp.verifica")"
+		fail_reason "configurazione rifiutata da CamillaDSP: $(tail -n 1 "$RUN/camilladsp.verifica")"
 		return 1
 	fi
 	echo "$DSP_PCM"
@@ -585,6 +669,8 @@ case "$1" in
 	leggi) parse_rew "$2" ;;
 	attiva) active ;;
 	correzione) correction_active ;;
+	richiesta) correction_requested ;;
+	problema) correction_problem; exit 0 ;;
 	fir)
 		# "FREQUENZA CANALI DESTRO(proprio|sinistro) MARGINE_DB"
 		fir_ok || exit 1

@@ -1005,7 +1005,15 @@ class DriverTests(unittest.TestCase):
 
         def complete_case(_rootfs, _client, destination, rate, bits, **kwargs):
             backends.append(kwargs.get("backend"))
-            return {"id": kwargs["case_id"], "status": "pass"}
+            result = {"id": kwargs["case_id"], "status": "pass"}
+            if kwargs.get("second_rate"):
+                rates = [rate, kwargs["second_rate"]]
+                result.update(rate_evidence={"status": "pass", "expected_rate_sequence": rates,
+                                             "observed_rate_sequence": rates, "path": "log", "sha256": "0" * 64},
+                              comparison={"status": "pass", "sample_match": True, "sequence_match": True,
+                                          "rate_sequence_match": True, "expected_rate_sequence": rates,
+                                          "observed_rate_sequence": rates})
+            return result
 
         def complete_dsd_pcm(_client, _output, case, **_kwargs):
             dsd_pcm.append(case["id"])
@@ -1023,13 +1031,14 @@ class DriverTests(unittest.TestCase):
             report = json.loads((output / "report.json").read_text())
         self.assertEqual(rc, 0)
         self.assertEqual(report["scope"], "alsa_loopback")
-        # Rate transitions are not yet verified on ALSA: the 18 constant-rate cases remain,
-        # then the DSD to PCM cases towards a DAC limited to 192 kHz.
+        # Su ALSA restano i 18 casi a frequenza costante piu' il cambio 44,1 k -> 96 k,
+        # poi i casi DSD -> PCM verso un DAC limitato a 192 kHz.
         self.assertEqual([case["id"] for case in report["cases"]],
-                         [case["id"] for case in DRIVER.CASES if case["kind"] != "pcm_rate_transition"]
+                         [case["id"] for case in DRIVER.CASES
+                          if case["kind"] != "pcm_rate_transition" or case["id"] == "pcm-rate-44100-96000-24-24"]
                          + ["dsf-2822400-pcm", "dff-5644800-pcm"])
-        self.assertEqual(len(report["cases"]), 20)
-        self.assertEqual(backends, ["alsa_loopback"] * 18)
+        self.assertEqual(len(report["cases"]), 21)
+        self.assertEqual(backends, ["alsa_loopback"] * 19)
         self.assertEqual(dsd_pcm, ["dsf-2822400-pcm", "dff-5644800-pcm"])
 
     def test_dsd_pcm_cases_are_only_on_the_alsa_backend(self):
@@ -1298,6 +1307,86 @@ class DsdPcmContentTests(unittest.TestCase):
             path = self.capture(temp, swapped, margin_db=-6)
             result = self.av.analyze_dsd_pcm_capture(path, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
             self.assertEqual(result["status"], "fail")
+
+class AlsaTransitionTailTests(unittest.TestCase):
+    """Parti pure della prova 44,1 k -> 96 k: coda del brano, ricerca, evidenze."""
+
+    def fixture(self, temp, frames=2000):
+        from tools.audio_verification import generate_fixtures
+        first = generate_fixtures(Path(temp) / "ref", 44100, 24, frames=frames)[0]
+        tail = DRIVER.write_wav_tail(first, Path(temp) / "tail.wav", 500)
+        return first, tail
+
+    def capture_of(self, temp, first, lead=300, drop_last=0):
+        with DRIVER.wave.open(str(first), "rb") as stream:
+            data = stream.readframes(stream.getnframes())
+        data = data[:len(data) - drop_last * 6]
+        # S24_3LE stereo: 6 byte per frame; teste perse, silenzio in coda
+        raw = Path(temp) / "capture.raw"
+        raw.write_bytes(bytes(6 * lead) + data[6 * 700:] + bytes(6 * 100))
+        return raw
+
+    def test_la_coda_intera_viene_trovata_e_confrontata_campione_per_campione(self):
+        from tools.audio_verification import compare_capture
+        with tempfile.TemporaryDirectory() as temp:
+            first, tail = self.fixture(temp)
+            raw = self.capture_of(temp, first)
+            start = DRIVER.locate_reference_start(tail, raw, "s24_3le", 44100)
+            self.assertEqual(start, 300 + (2000 - 500) - 700)
+            sliced = Path(temp) / "tail.raw"
+            sliced.write_bytes(raw.read_bytes()[start * 6:])
+            result = compare_capture([tail], sliced, capture_format="s24_3le", capture_rate=44100, max_lead_frames=0)
+            self.assertEqual(result["status"], "pass")
+
+    def test_una_coda_troncata_non_passa(self):
+        from tools.audio_verification import compare_capture
+        with tempfile.TemporaryDirectory() as temp:
+            first, tail = self.fixture(temp)
+            raw = self.capture_of(temp, first, drop_last=200)
+            start = DRIVER.locate_reference_start(tail, raw, "s24_3le", 44100)
+            sliced = Path(temp) / "tail.raw"
+            sliced.write_bytes(raw.read_bytes()[start * 6:])
+            result = compare_capture([tail], sliced, capture_format="s24_3le", capture_rate=44100, max_lead_frames=0)
+            self.assertEqual(result["status"], "fail")
+
+    def tono(self, hz, frames, peak=1 << 21, lead=0):
+        import math
+        samples = [(0, 0)] * lead
+        for index in range(frames):
+            value = int(peak * 256 * math.sin(2 * math.pi * hz * index / 44100))
+            samples.append((value, value))
+        return samples + [(0, 0)] * 5000
+
+    def test_il_tono_atteso_dopo_la_coda_passa(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=3000), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "pass", result)
+
+    def test_dopo_la_coda_rumore_silenzio_o_tono_sbagliato_falliscono(self):
+        import random
+        generator = random.Random(1)
+        noise = [(generator.randint(-3 * 10 ** 7, 3 * 10 ** 7),) * 2 for _ in range(44100)]
+        for frames in (noise, [(0, 0)] * 44100, self.tono(2177, 44100), self.tono(1000, 44100, peak=1 << 19)):
+            self.assertEqual(DRIVER.check_tone_after_tail(frames, 44100, 1000, 1 << 21)["status"], "fail")
+
+    def test_prefisso_troppo_lungo_prima_del_tono_fallisce(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=30000), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "fail")
+
+    def test_coda_assente_non_viene_localizzata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _first, tail = self.fixture(temp)
+            raw = Path(temp) / "capture.raw"
+            raw.write_bytes(bytes(6 * 1000))
+            self.assertIsNone(DRIVER.locate_reference_start(tail, raw, "s24_3le", 44100))
+
+    def test_evidenza_del_drain_nel_registro(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "squeezelite.log"
+            log.write_text("open output device: %s\ndrained 380 ms before closing\n"
+                           "open output device: %s\n" % (DRIVER.ALSA_PLAYBACK, DRIVER.ALSA_PLAYBACK))
+            evidence = DRIVER.drain_evidence(log)
+        self.assertEqual((evidence["opens"], evidence["drained"], evidence["dropped"], evidence["xruns"]),
+                         (2, 1, 0, 0))
 
 
 if __name__ == "__main__":

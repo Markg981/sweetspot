@@ -186,6 +186,16 @@ PERIFERICHE_INUTILIZZATE=spente
 # Accesso remoto per l'assistenza tecnica (SSH).
 SSH=no
 SSH_PASSWORD=
+# Utente del login SSH: root (predefinito) oppure assistenza, senza privilegi.
+# Dalle pagine, SSH, utente e password si cambiano solo riscrivendo la
+# password delle pagine (PASSWORD_WEB): aprono il sistema come amministratore.
+SSH_UTENTE=root
+
+# Connessione protetta (HTTPS) delle pagine, con certificato autofirmato
+# creato al primo avvio e salvato su questa chiavetta (sweetspot-https.pem).
+# HTTPS_REINDIRIZZA=si fa rimandare a https chi apre le pagine in chiaro.
+HTTPS=no
+HTTPS_REINDIRIZZA=no
 
 # Password delle pagine di Sweetspot (utente admin). Vuota = pagine aperte
 # a chi e' nella rete di casa. Dalla pagina Sistema si salva come impronta

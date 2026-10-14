@@ -13,7 +13,7 @@ S=$WORK/asound/card1/pcm0p/sub0
 mkdir -p "$S"
 printf 'access: RW_INTERLEAVED\nformat: S32_LE\nrate: 48000 (48000/1)\nperiod_size: 1024\nbuffer_size: 4096\n' > "$S/hw_params"
 status() { printf 'state: %s\nowner_pid   : 10\ntstamp      : 0.0\ndelay       : %s\navail       : %s\navail_max   : %s\n' "$1" "$2" "$3" "$3" > "$S/status"; }
-run() { SWEETSPOT_PROCFS=$WORK SWEETSPOT_CAMPIONI=3 sh "$TOOL" -c 1 -i 0 "$@"; }
+run() { SWEETSPOT_PROCFS=$WORK SWEETSPOT_SQLOG=$WORK/squeezelite.log SWEETSPOT_CAMPIONI=3 sh "$TOOL" -c 1 -i 0 "$@"; }
 riga() { echo "$1" | grep "^$2" | head -n 1; }
 
 status RUNNING 3000 1096
@@ -34,6 +34,29 @@ echo 7 > "$S/xrun_counter"
 out=$(run)
 expect "xrun_counter costante: nessun XRUN" "XRUN: 0" "$(riga "$out" XRUN)"
 rm -f "$S/xrun_counter"
+
+# XRUN recuperati entro l'intervallo: lo stato resta RUNNING a ogni campione,
+# ma le fonti cumulative crescono fra un campione e l'altro. Un finto sleep
+# le fa avanzare (un XRUN a ogni attesa fra due campioni).
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/sleep" <<'EOS'
+#!/bin/sh
+[ -f "$FINTO_CONTATORE" ] && echo $(( $(cat "$FINTO_CONTATORE") + 1 )) > "$FINTO_CONTATORE"
+[ -n "$FINTO_REGISTRO" ] && echo "[12:00:00] _output_frames:1 XRUN" >> "$FINTO_REGISTRO"
+exit 0
+EOS
+chmod +x "$WORK/bin/sleep"
+status RUNNING 100 3900
+echo 7 > "$S/xrun_counter"
+out=$(PATH=$WORK/bin:$PATH; export PATH; FINTO_CONTATORE=$S/xrun_counter; export FINTO_CONTATORE; run); rc=$?
+expect "xrun_counter cresciuto fra i campioni: XRUN recuperati contati" "XRUN: 2|3" "$(riga "$out" XRUN)|$rc"
+rm -f "$S/xrun_counter"
+printf '[12:00:00] _output_frames:1 XRUN\n[12:00:01] _output_frames:2 XRUN recover failed: -32\n' > "$WORK/squeezelite.log"
+out=$(PATH=$WORK/bin:$PATH; export PATH; FINTO_REGISTRO=$WORK/squeezelite.log; export FINTO_REGISTRO; run); rc=$?
+expect "registro di Squeezelite: XRUN recuperati contati (non i recuperi falliti)" "XRUN: 2|3" "$(riga "$out" XRUN)|$rc"
+rm -f "$WORK/squeezelite.log"
+out=$(run)
+expect "senza fonti cumulative e stato RUNNING: nessun XRUN" "XRUN: 0" "$(riga "$out" XRUN)"
 
 status CLOSED 0 0
 out=$(run)

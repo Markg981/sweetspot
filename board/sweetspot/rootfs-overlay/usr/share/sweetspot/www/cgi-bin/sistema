@@ -51,15 +51,38 @@ $(option no "Spenta: i lavori di fondo continuano anche durante la musica" "$(li
 <summary>Opzioni per esperti</summary>
 <label for="ssh">Accesso SSH</label>
 <select id="ssh" name="ssh">
-$(option no "Spento" "$(conf SSH no)")
-$(option si "Acceso (utente root)" "$(conf SSH no)")
+$(option no "Spento" "$(if is_yes "$(conf SSH no)"; then echo si; else echo no; fi)")
+$(option si "Acceso" "$(if is_yes "$(conf SSH no)"; then echo si; else echo no; fi)")
+</select>
+<label for="sshu">Utente SSH</label>
+<select id="sshu" name="ssh_utente">
+$(option assistenza "assistenza: utente senza privilegi (consigliato)" "$(lower "$(conf SSH_UTENTE root)")")
+$(option root "root: accesso completo al sistema" "$(lower "$(conf SSH_UTENTE root)")")
 </select>
 <label for="sshp">Password SSH <span>(lascia vuoto per non cambiarla)</span></label>
 <input id="sshp" name="ssh_password" type="password" autocomplete="new-password">
+$(if [ -n "$(conf PASSWORD_WEB)" ]; then
+	printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
+	echo '<label for="cpw">Conferma con la password di queste pagine <span>(serve solo se cambi accesso SSH, utente o password SSH)</span></label>'
+	echo '<input id="cpw" name="conferma_password" type="password" autocomplete="current-password">'
+else
+	echo '<p class="sub">Per cambiare l'"'"'accesso SSH da qui imposta prima una password per queste pagine: SSH apre il sistema come amministratore e la modifica richiede di riscriverla. In alternativa scrivi SSH nel file sweetspot.txt con il computer.</p>'
+fi)
 <label for="webp">Password di queste pagine <span>(utente admin; lascia vuoto per non cambiarla)</span></label>
 <input id="webp" name="web_password" type="password" autocomplete="new-password">
 $(if [ -n "$(conf PASSWORD_WEB)" ]; then echo '<label class="check"><input type="checkbox" name="web_libero" value="si"> Togli la password: pagine aperte a chi è nella rete di casa</label>'; fi)
 <p class="sub">Con la password ogni pagina chiede utente <b>admin</b> e password; vale subito. Se la dimentichi, togli la riga PASSWORD_WEB da sweetspot.txt sulla chiavetta.</p>
+<label for="https">Connessione protetta (HTTPS)</label>
+<select id="https" name="https">
+$(option no "Spenta: pagine solo in chiaro (http)" "$(if is_yes "$(conf HTTPS no)"; then echo si; else echo no; fi)")
+$(option si "Accesa: anche https://$(web_host)/ con certificato autofirmato" "$(if is_yes "$(conf HTTPS no)"; then echo si; else echo no; fi)")
+</select>
+<label for="httpsr">Pagine in chiaro</label>
+<select id="httpsr" name="https_reindirizza">
+$(option no "Restano raggiungibili (http)" "$(if is_yes "$(conf HTTPS_REINDIRIZZA no)"; then echo si; else echo no; fi)")
+$(option si "Rimandano a https (se HTTPS e' accesa)" "$(if is_yes "$(conf HTTPS_REINDIRIZZA no)"; then echo si; else echo no; fi)")
+</select>
+<p class="sub">Il certificato lo crea Sweetspot al primo avvio con HTTPS accesa e resta sulla chiavetta: il browser avvisa che non e' di un ente riconosciuto, e va accettato una volta. $(if [ -s "$RUN/https.impronta" ]; then printf 'Impronta SHA-256 da confrontare: <code>%s</code>.' "$(esc "$(cat "$RUN/https.impronta")")"; fi) Con HTTPS accesa il cookie di accesso viaggia solo cifrato. Lyrion (porta 9000) resta in chiaro. Il rimando a https non vale per i comandi dati dal computer stesso.</p>
 <label for="ott">Ottimizzazioni del sistema</label>
 <select id="ott" name="ottimizzazioni">
 $(option si "Attive: core dedicati, frequenza fissa, interruzioni isolate (consigliato)" "$(conf OTTIMIZZAZIONI si)")
