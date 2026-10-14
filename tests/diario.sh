@@ -185,7 +185,7 @@ expect "versioni: squeezelite e camilladsp" "1|1" "$(grep -c 'squeezelite: Squee
 expect "configurazione: valori normali conservati" "1" "$(grep -c '^WIFI_NOME=CasaRossi' "$B/configurazione.txt")"
 secrets=$(grep -rl 'segreto-web-123\|segreto-wifi-456\|segreto-ssh-789\|segreto-url-000\|hunter2\|abc123\|QWxhZGRpbjpvcGVu\|zzz9' "$B" 2>/dev/null | wc -l | tr -d ' ')
 expect "nessun segreto in nessun file del bundle" "0" "$secrets"
-expect "le chiavi sensibili sono oscurate, non omesse" "1|1" "$(grep -c '^PASSWORD_WEB=\*\*\*' "$B/configurazione.txt")|$(grep -c '^WIFI_PASSWORD=\*\*\*' "$B/configurazione.txt")"
+expect "le chiavi sensibili sono oscurate, non omesse" "PASSWORD_WEB=***|WIFI_PASSWORD=***" "$(grep '^PASSWORD_WEB=' "$B/configurazione.txt" | sort -u)|$(grep '^WIFI_PASSWORD=' "$B/configurazione.txt" | sort -u)"
 expect "il bundle non tocca pstore in memoria" "1" "$(ls "$E/pstore" | grep -c dmesg-ramoops-2)"
 
 echo "Pagina scaricabile solo con l'accesso"
