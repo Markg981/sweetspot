@@ -62,6 +62,7 @@ struct regola {
 static const struct regola REGOLE[] = {
 	{"sweetspot-accesso", "applica", "", ""},
 	{"sweetspot-accesso", "hash", "s", ""},
+	{"sweetspot-accesso", "verifica", "", ""}, // password dall'ingresso standard
 	{"sweetspot-aggiorna", "altra", "", ""},
 	{"sweetspot-aggiorna", "annulla", "", ""},
 	{"sweetspot-aggiorna", "cerca", "", ""},
@@ -93,6 +94,8 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-dsp", "leggi", "p", ""},
 	{"sweetspot-dsp", "risposta", "", ""},
 	{"sweetspot-dsp", "salva", "pp", ""},
+	{"sweetspot-hotspot", "richiesta", "", ""},
+	{"sweetspot-hotspot", "scansiona", "", ""},
 	{"sweetspot-installa", "avvia", "ss", ""},
 	{"sweetspot-installa", "dischi", "", ""},
 	{"sweetspot-installa", "stato", "", ""},

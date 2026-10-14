@@ -9,6 +9,11 @@
 # Gli altri script registrano i propri lavori in $RUN/sospendibili/NOME,
 # con il numero del gruppo di processi.
 #
+# Nelle voci di ascolto.fermi, accanto al PID (o -GRUPPO), c'e' lo starttime
+# del processo: alla ripresa un PID riusato da altri non riceve segnali.
+# Direzione futura (non ancora fatta): sospensione cooperativa, cioe' i
+# lavori controllano da soli un file di pausa invece di subire SIGSTOP.
+#
 # Il salvataggio sulla chiavetta (sweetspot-dati) aspetta gia' da solo la
 # fine dell'ascolto; i plugin di Lyrion si aggiornano solo su richiesta.
 #
@@ -92,17 +97,42 @@ unslow_all() {
 	done
 }
 
+# Momento di nascita (starttime, campo 22 di /proc/PID/stat) di un processo:
+# insieme al PID ne dice l'identita'. Vuoto se il processo non c'e'. Il nome
+# (comm) puo' contenere spazi e parentesi: si conta dopo l'ultima ")".
+proc_start() {
+	local st
+	st=$(cat "${SWEETSPOT_PROCFS:-/proc}/$1/stat" 2>/dev/null) || return 1
+	st=${st##*) }
+	set -- $st
+	echo "${20}"
+}
+
+# Il processo annotato e' ancora lo stesso? $1 = voce ("-GRUPPO" o PID),
+# $2 = starttime annotato. Il PID puo' essere stato riusato da un altro
+# processo: in quel caso niente segnali. Senza starttime (elenco di una
+# versione precedente) vale come prima. Di un gruppo si guarda il capogruppo:
+# se non c'e' piu' il numero non puo' essere stato riusato da altri finche'
+# il gruppo ha membri, quindi il segnale va al gruppo giusto.
+stesso_processo() {
+	local ora
+	[ -n "$2" ] || return 0
+	ora=$(proc_start "${1#-}") || { case "$1" in -*) return 0 ;; *) return 1 ;; esac; }
+	[ "$ora" = "$2" ]
+}
+
 # Rallenta (cgroup) o, in mancanza, sospende (SIGSTOP) un lavoro.
 # $1 = voce da annotare ("-GRUPPO" o PID), $2 = descrizione, poi i PID.
 throttle() {
-	local entry=$1 what=$2 pids=$3
+	local entry=$1 what=$2 pids=$3 st
 	if cg_ready && slow_pids "$pids"; then
 		grep -qx -- "$entry" "$SLOWED" 2>/dev/null && return 0
 		echo "$entry" >> "$SLOWED" && log "ascolto: $what rallentato durante l'ascolto"
 		return 0
 	fi
-	grep -qx -- "$entry" "$STOPPED" 2>/dev/null && return 0
-	kill -STOP -- "$entry" 2>/dev/null && echo "$entry" >> "$STOPPED" &&
+	grep -q -- "^$entry\( \|\$\)" "$STOPPED" 2>/dev/null && return 0
+	st=$(proc_start "${entry#-}")
+	kill -STOP -- "$entry" 2>/dev/null && echo "$entry${st:+ $st}" >> "$STOPPED" &&
 		log "ascolto: $what sospeso durante l'ascolto"
 }
 
@@ -123,10 +153,15 @@ pause_work() {
 # Chiamata anche all'avvio: dopo un riavvio del demone (o kill -9, senza trap)
 # i processi elencati in $STOPPED resterebbero fermi per sempre.
 resume_work() {
-	local pid
+	local pid st
 	if [ -s "$STOPPED" ]; then
-		while read -r pid; do
-			kill -CONT -- "$pid" 2>/dev/null
+		while read -r pid st; do
+			[ -n "$pid" ] || continue
+			if stesso_processo "$pid" "$st"; then
+				kill -CONT -- "$pid" 2>/dev/null
+			else
+				log "ascolto: $pid non e' piu' il processo sospeso (PID riusato), nessun segnale"
+			fi
 		done < "$STOPPED"
 		: > "$STOPPED"
 		log "ascolto: lavori ripresi"

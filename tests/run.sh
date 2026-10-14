@@ -162,9 +162,33 @@ echo "Memoria"
 expect "classe 16 GB" "completa" "$(run "$N550" machine_class)"
 expect "classe 2 GB" "essenziale" "$(run "$DUAL" machine_class)"
 expect "classe 1 GB" "leggera" "$(run "$ONE" machine_class)"
-expect "buffer 16 GB" "1048576:2000000" "$(run "$N550" player_buffers)"
-expect "buffer 2 GB" "203094:406189" "$(run "$DUAL" player_buffers)"
-expect "buffer 1 GB" "33928:67856" "$(run "$ONE" player_buffers)"
+expect "buffer 16 GB (senza MemAvailable: totale meno 768 MB)" "180000:360000" "$(run "$N550" player_buffers)"
+expect "buffer 2 GB senza MemAvailable: minimi" "32768:65536" "$(run "$DUAL" player_buffers)"
+expect "buffer 1 GB: minimi" "32768:65536" "$(run "$ONE" player_buffers)"
+# Buffer dal carico reale: MemAvailable, autonomia in secondi, riserva per modalita'.
+BUF=$WORK/buffer
+mkdir -p "$BUF/proc" "$BUF/run" "$BUF/sys"
+bufmem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' "$1" "$2" > "$BUF/proc/meminfo"; }
+bufmem 2097152 1572864
+expect "buffer 2 GiB, Lyrion locale: limitati dalla memoria" "87381:174762" "$(run "$BUF" player_buffers)"
+bufmem 4194304 3670016
+expect "buffer 4 GiB: autonomia piena (60 s stream, 120 s output a 3000 KB/s)" "180000:360000" "$(run "$BUF" player_buffers)"
+bufmem 8388608 7864320
+expect "buffer 8 GiB: come 4 GiB, non cresce con la memoria" "180000:360000" "$(run "$BUF" player_buffers)"
+bufmem 8388608 600000
+expect "buffer 8 GiB ma disponibile bassa: minimi" "32768:65536" "$(run "$BUF" player_buffers)"
+bufmem 8388608 9999999
+expect "MemAvailable oltre il totale: si usa il totale" "180000:360000" "$(run "$BUF" player_buffers)"
+bufmem 2097152 1572864
+printf 'MODALITA=player\n' > "$BUF/run/sweetspot.conf"
+expect "buffer 2 GiB, solo player: riserva minore" "174762:349525" "$(run "$BUF" player_buffers)"
+printf 'MODALITA=completa\nCORREZIONE=si\n' > "$BUF/run/sweetspot.conf"
+expect "buffer 2 GiB con Lyrion e DSP: riserva maggiore" "43690:87381" "$(run "$BUF" player_buffers)"
+rm -f "$BUF/run/sweetspot.conf" "$BUF/log"
+run "$BUF" 'PLAYER_BUFFERS_LOG=1 player_buffers' > /dev/null
+expect "buffer registrati nel log con il motivo" "1" "$(grep -c 'player: buffer stream 87381 KB, output 174762 KB.*Lyrion locale.*limitati dalla memoria' "$BUF/log")"
+run "$BUF" player_buffers > /dev/null
+expect "senza PLAYER_BUFFERS_LOG il log non cresce" "1" "$(wc -l < "$BUF/log" | tr -d ' ')"
 
 echo "Protezione dall'OOM killer"
 OOM=$WORK/oom
@@ -473,8 +497,9 @@ acc() { # impostazioni
 	cat "$WEB/run/httpd.conf"
 }
 expect "pagine aperte senza password" "" "$(acc '')"
-expect "impronta salvata usata cosi' com'e'" '/:admin:$1$abcd$efgh' "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | tail -n 1)"
-case "$(acc 'PASSWORD_WEB=segreta' | tail -n 1)" in '/:admin:$1$'*) ok "password in chiaro trasformata in impronta" ;; *) ko "password in chiaro" '/:admin:$1$...' "$(cat "$WEB/run/httpd.conf")" ;; esac
+# Con la password l'httpd non fa piu' autenticazione Basic: restano la regola
+# di vivo e l'accesso con sessione (tests/accesso.sh).
+expect "con la password nessuna regola Basic generale e nessuna impronta nel file" "0" "$(acc 'PASSWORD_WEB=$1$abcd$efgh' | grep -c '^/:\|abcd')"
 expect "file dell'accesso leggibile solo da root" "600" "$(stat -c %a "$WEB/run/httpd.conf")"
 # La pagina vivo resta raggiungibile dall'aggiornamento: utente sweetspot
 # con la chiave casuale dell'avvio, regola prima di quella generale.
@@ -482,8 +507,7 @@ vivo_key=$(cat "$WEB/run/vivo.chiave")
 expect "chiave della pagina vivo: 32 cifre esadecimali, solo root" "32|600" "${#vivo_key}|$(stat -c %a "$WEB/run/vivo.chiave")"
 case "$vivo_key" in *[!0-9a-f]*) ko "chiave della pagina vivo" "esadecimale" "$vivo_key" ;; *) ok "chiave della pagina vivo esadecimale" ;; esac
 expect "regola della pagina vivo con la chiave, prima di quella generale" "/cgi-bin/vivo:sweetspot:$vivo_key" "$(head -n 1 "$WEB/run/httpd.conf")"
-# stato.json non ha eccezioni: ricade nella regola generale "/" con password.
-expect "stato.json protetto dalla regola generale (nessuna eccezione)" "0|/:admin" "$(grep -c 'stato' "$WEB/run/httpd.conf")|$(tail -n 1 "$WEB/run/httpd.conf" | cut -d: -f1-2)"
+expect "httpd.conf con la sola regola di vivo" "1" "$(grep -c . "$WEB/run/httpd.conf")"
 expect "a ogni applicazione una chiave nuova" "diversa" "$(acc 'PASSWORD_WEB=segreta' > /dev/null; [ "$(cat "$WEB/run/vivo.chiave")" != "$vivo_key" ] && echo diversa)"
 acc '' > /dev/null
 expect "senza password niente chiave della pagina vivo" "no" "$([ -f "$WEB/run/vivo.chiave" ] && echo si || echo no)"
@@ -1557,26 +1581,26 @@ prefn() {
 U=file://$PRE/musica/Album%20%C3%A8
 expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
 expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
-# I buffer di Squeezelite (8 GB: 1 GB + 2 GB, player_buffers) si riempiono
+# I buffer di Squeezelite (8 GB: 180 MB + 360 MB circa, player_buffers) si riempiono
 # a poco a poco: senza il player in esecuzione contano per intero.
-expect "buffer del player da riempire: contano per intero senza il player" "3048576" "$(prefn player_reserve_kb)"
-expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "572864" "$(prefn preload_budget_kb)"
+expect "buffer del player da riempire: contano per intero senza il player" "540000" "$(prefn player_reserve_kb)"
+expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "1827152" "$(prefn preload_budget_kb)"
 mkdir -p "$PRE/proc/4321"
 printf 'VmRSS:\t 1048576 kB\n' > "$PRE/proc/4321/status"
 echo 4321 > "$PRE/run/squeezelite.pid"
-expect "buffer del player in parte gia' occupati: conta solo il resto" "2000000|1097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
+expect "buffer del player in parte gia' occupati: conta solo il resto" "0|2097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
 rm -f "$PRE/run/squeezelite.pid"
 echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
 expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
 echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
-expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "883584" "$(prefn preload_budget_kb)"
+expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "3392160" "$(prefn preload_budget_kb)"
 printf 'PRECARICO_FILE_MAX_MB=1 2\n' > "$PRE/run/sweetspot.conf"
 expect "limite dei file non numerico: predefinito, senza errori" "1048576" "$(prefn file_max_kb 2>&1)"
 rm -f "$PRE/run/sweetspot.conf"
 sleep 30 &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
-expect "budget stabile: la memoria gia' bloccata conta come libera" "573364" "$(prefn preload_budget_kb)"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "1827652" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
 printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
@@ -1867,6 +1891,32 @@ expect "clipping: nuovo processo, si somma da zero" "5000 3 28" "$(DSP_PID=5000 
 expect "clipping: contatore ripartito nello stesso processo" "5000 1 29" "$(DSP_PID=5000 clip 1)"
 : > "$DSP/run/camilla.valore"
 expect "clipping: CamillaDSP che non risponde non cambia il totale" "5000 1 29" "$(DSP_PID=5000 clip '')"
+# Stato del percorso trasformativo (dsp.stato) e politica se manca la correzione.
+mkdir -p "$DSP/bin2"
+cat > "$DSP/bin2/sweetspot-camilla" <<'EOS'
+#!/bin/sh
+case "$2" in
+GetState) echo '{"GetState":{"result":"Ok","value":"Running"}}' ;;
+GetCaptureSignalPeak) echo "{\"GetCaptureSignalPeak\":{\"result\":\"Ok\",\"value\":[$(cat "$SWEETSPOT_RUN/picco.in")]}}" ;;
+GetPlaybackSignalPeak) echo "{\"GetPlaybackSignalPeak\":{\"result\":\"Ok\",\"value\":[$(cat "$SWEETSPOT_RUN/picco.out")]}}" ;;
+esac
+EOS
+chmod +x "$DSP/bin2/sweetspot-camilla"
+stato() { dspfn 1 "PATH=$DSP/bin2:\$PATH; dsp_stato_poll"; sed -n "s/^$1=//p" "$DSP/run/dsp.stato"; }
+echo "-20.5,-18.0" > "$DSP/run/picco.in"; echo "-6.0,-9.5" > "$DSP/run/picco.out"
+echo "5000 0 29" > "$DSP/run/dsp.clip"
+rm -f "$DSP/run/dsp.stato"
+expect "stato DSP: processo CamillaDSP in esecuzione" "camilladsp Running" "$(stato percorso) $(stato stato)"
+expect "stato DSP: picchi per canale" "-20.5,-18.0 -6.0,-9.5" "$(stato picco_ingresso) $(stato picco_uscita)"
+echo "-30.0,-3.0" > "$DSP/run/picco.in"
+expect "stato DSP: picco massimo della sessione per canale" "-20.5,-3.0" "$(stato picco_ingresso)"
+expect "stato DSP: campioni tagliati" "29" "$(stato campioni_tagliati)"
+rm -f "$DSP/run/correzione.attiva"; echo "configurazione dei filtri non valida" > "$DSP/run/correzione.errore"
+expect "politica: predefinita blocca, stato bloccato" "blocca bloccato" "$(dspfn 1 dsp_politica) $(stato percorso)"
+echo "CORREZIONE_SE_ASSENTE=diretto" > "$DSP/run/sweetspot.conf"
+expect "politica diretto: stato visibile come senza correzione" "diretto diretto-senza-correzione assente" "$(dspfn 1 dsp_politica) $(stato percorso) $(stato stato)"
+rm -f "$DSP/run/correzione.errore" "$DSP/run/sweetspot.conf" "$DSP/run/dsp.stato"
+touch "$DSP/run/correzione.attiva"
 livecheck() { # voce
 	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$DSP/squeezelite.log \
@@ -2178,7 +2228,7 @@ mkdir -p "$ASC/run/sospendibili" "$ASC/cg"
 # pgrep restituiscono processi finti (job con gruppo 700 = PID 701 e 702,
 # scanner = PID 800).
 ascrun() {
-	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_CGROUP=$1 $TEST_SH -c "
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$ASC/run SWEETSPOT_LOG=$ASC/log SWEETSPOT_PROCFS=$ASC/proc SWEETSPOT_CGROUP=$1 $TEST_SH -c "
 		. $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-ascolto
 		kill() { echo \"kill \$*\" >> $ASC/calls; }
 		ionice() { echo \"ionice \$*\" >> $ASC/calls; }
@@ -2193,6 +2243,22 @@ rm -f "$ASC/calls"
 ascrun "$ASC/nessuno" "start_clean"
 expect "ascolto: all'avvio i sospesi ricevono SIGCONT" "kill -CONT -- -700|kill -CONT -- 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
 expect "ascolto: all'avvio l'elenco dei sospesi e' vuoto" "0" "$(grep -c . "$ASC/run/ascolto.fermi")"
+# a2) identita' dei processi: PID + starttime (campo 22 di /proc/PID/stat, con
+# il nome fra parentesi che puo' avere spazi). Un PID riusato da un altro
+# processo non riceve segnali; il gruppo il cui capogruppo e' sparito si'.
+mkdir -p "$ASC/proc/850" "$ASC/proc/860" "$ASC/proc/800"
+procstat() { echo "$1 ($2) S 1 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 $3 0 0" > "$ASC/proc/$1/stat"; }
+procstat 850 "sh (x) y" 5000
+procstat 860 "altro" 7000
+printf -- '850 5000\n860 6000\n-870 4000\n' > "$ASC/run/ascolto.fermi"
+rm -f "$ASC/calls"
+ascrun "$ASC/nessuno" "start_clean"
+expect "ascolto: PID riusato niente SIGCONT, gruppo senza capogruppo si'" "kill -CONT -- 850|kill -CONT -- -870" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
+procstat 800 "scanner.pl" 4242
+rm -f "$ASC/calls" "$ASC/run/ascolto.fermi"
+ascrun "$ASC/nessuno" "throttle 800 scanner 800"
+expect "ascolto: SIGSTOP annota PID e starttime" "800 4242" "$(cat "$ASC/run/ascolto.fermi")"
+rm -f "$ASC/proc/800/stat" "$ASC/run/ascolto.fermi"
 # b) senza cgroup v2 si ripiega su SIGSTOP (comportamento di prima).
 echo 700 > "$ASC/run/sospendibili/copia"
 rm -f "$ASC/calls"
@@ -2432,6 +2498,15 @@ hs_run
 expect "hotspot: rete scelta che risponde, hotspot spento e sorveglianza finita" "1|1|0" \
 	"$(grep -c 'collegato alla rete Wi-Fi' "$HS/log")|$(hs_calls hostapd)|$([ -e "$HS/run/hotspot.attivo" ] && echo 1 || echo 0)"
 
+# 9. Richiesta dalla pagina (via sweetspot-priv): solo con l'hotspot acceso.
+hs_env ap
+rm -f "$HS/run/hotspot.attivo" "$HS/run/hotspot.richiesta"
+if hs_run 0 richiesta; then rc=0; else rc=1; fi
+expect "hotspot: richiesta rifiutata con l'hotspot spento" "1|0" "$rc|$([ -e "$HS/run/hotspot.richiesta" ] && echo 1 || echo 0)"
+echo wlan0 > "$HS/run/hotspot.attivo"
+if hs_run 0 richiesta; then rc=0; else rc=1; fi
+expect "hotspot: richiesta registrata con l'hotspot acceso" "0|1" "$rc|$([ -e "$HS/run/hotspot.richiesta" ] && echo 1 || echo 0)"
+
 # S40: la scheda Wi-Fi configurata si collega con il nuovo comando 'wifi'.
 expect "S40sweetspot-net: comando wifi e avvio della sorveglianza" "1|1" \
 	"$(grep -c 'wifi) *$' "$OVERLAY/etc/init.d/S40sweetspot-net")|$(grep -c 'sweetspot-hotspot sorveglia' "$OVERLAY/etc/init.d/S40sweetspot-net")"
@@ -2440,6 +2515,45 @@ for cfg in sweetspot_x86_64 sweetspot_rpi; do
 	expect "$cfg: hostapd e iw nel defconfig" "2" "$(grep -c '^BR2_PACKAGE_\(HOSTAPD\|IW\)=y$' "$ROOT/configs/${cfg}_defconfig")"
 done
 expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
+
+echo "Condivisioni di rete: ritentativi"
+RT=$WORK/rete
+mkdir -p "$RT/bin" "$RT/busy" "$RT/run" "$RT/proc" "$RT/media" "$RT/musica"
+: > "$RT/proc/mounts"
+printf 'CONDIVISIONE_1=//192.168.1.10/Musica\nCONDIVISIONE_2=//192.168.1.10/Altra\n' > "$RT/run/sweetspot.conf"
+# NAS finto: la condivisione 1 risponde dal settimo tentativo di mount in poi
+# (due giri da tre versioni di protocollo), la 2 ha sempre la password sbagliata.
+cat > "$RT/bin/mount.cifs" <<MOUNT
+#!/bin/sh
+n=\$(cat "$RT/n" 2>/dev/null || echo 0)
+case "\$2" in *rete-2) echo "mount error(13): Permission denied" >&2; exit 32 ;; esac
+echo \$((n + 1)) > "$RT/n"
+[ "\$n" -lt 6 ] && { echo "mount error(112): Host is down" >&2; exit 32; }
+exit 0
+MOUNT
+printf '#!/bin/sh\ntouch "%s/rescan"\n' "$RT" > "$RT/bin/lms"
+printf '#!/bin/sh\nexit 0\n' > "$RT/bin/modprobe"
+printf '#!/bin/sh\nexit 0\n' > "$RT/bin/flock"
+printf '#!/bin/sh\nexit 1\n' > "$RT/busy/flock"
+chmod +x "$RT"/bin/* "$RT"/busy/*
+rete_env() { # cartella-comandi comando...
+	local d=$1
+	shift
+	env SWEETSPOT_RUN=$RT/run SWEETSPOT_PROCFS=$RT/proc SWEETSPOT_LOG=$RT/log SWEETSPOT_PATH="$d:$RT/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_MEDIA=$RT/media SWEETSPOT_MUSICA=$RT/musica SWEETSPOT_LMS=$RT/bin/lms \
+		SWEETSPOT_RETE_MIN=0 SWEETSPOT_RETE_MAX=0 "$@"
+}
+printf '1|//192.168.1.10/Musica|ERRORE|server non raggiungibile\n2|//192.168.1.10/Altra|ERRORE|accesso negato: controlla utente e password\n' > "$RT/run/rete.list"
+rete_env "$RT/busy" $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" ritenta > /dev/null 2>&1
+expect "ritenta: con un ciclo gia' attivo non parte un doppione" "no" "$([ -f "$RT/n" ] && echo si || echo no)"
+rete_env "$RT/bin" $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" ritenta > /dev/null 2>&1
+expect "ritenta: la condivisione che torna viene montata" "1|//192.168.1.10/Musica|OK|montata" "$(grep '^1|' "$RT/run/rete.list")"
+expect "ritenta: l'errore dell'altra resta visibile" "2|//192.168.1.10/Altra|ERRORE|accesso negato: controlla utente e password" "$(grep '^2|' "$RT/run/rete.list")"
+expect "ritenta: dopo il successo chiede la scansione a Lyrion" "si" "$([ -f "$RT/rescan" ] && echo si || echo no)"
+RD=". $OVERLAY/usr/bin/sweetspot-rete; RETRY_MIN=30; RETRY_MAX=600"
+expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
+	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
+expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"
 
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
@@ -2459,8 +2573,11 @@ echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 sh "$ROOT/tests/audio-quality.sh" || exit 1
+sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
+sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
+sh "$ROOT/tests/energia.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1

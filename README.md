@@ -32,7 +32,9 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      caricamento e la decodifica dell'intero brano prima di suonare; i servizi
      streaming e le radio possono continuare a usare la rete;
    - thread di riproduzione real-time (priorità 80) sul suo core isolato,
-     interruzioni del controller USB del DAC (priorità 90) sull'altro.
+     interruzioni del controller USB del DAC (priorità 90) sull'altro: servono
+     alla stabilità temporale dell'alimentazione dei buffer, non a ridurre il
+     jitter del clock di conversione del DAC.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
    lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
    normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
@@ -424,7 +426,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `SCHERMO_MINUTI` | spegnimento dello schermo, 0 = mai | 2 |
 | `PERIFERICHE_INUTILIZZATE` | `spente`: su qualunque computer, per classe di dispositivo e mai per modello. USB con sole interfacce smart card, video, Bluetooth/wireless (webcam, adattatori BT) scollegate dai driver (`authorized=0`), anche se collegate dopo l'avvio (regola udev). PCI inutilizzati a riposo quando inattivi (`power/control=auto`, e il ponte PCI sopra se porta solo a loro): scheda video che non mostra la console, audio integrato se `USCITA_INTEGRATA=no`, multimedia, modem, FireWire, lettore di schede, Wi-Fi senza `WIFI_NOME`, Bluetooth, schede di rete attive ma senza cavo né indirizzo (decise a rete su, da `S40sweetspot-net`, dopo qualche secondo per il collegamento: una scheda non ancora attivata non si tocca). Mai DAC, dischi, tastiere, hub o la rete in uso; `accese` lascia tutto com'è | spente |
 | `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
-| `PASSWORD_WEB` | password delle pagine di Sweetspot (utente `admin`, autenticazione Basic dell'httpd di BusyBox, impronta MD5-crypt): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Anche senza password le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
+| `PASSWORD_WEB` | password delle pagine di Sweetspot (impronta MD5-crypt con sale; accesso da `/cgi-bin/accesso` con sessione: cookie HttpOnly e SameSite=Strict, 8 ore, ID casuale; dopo 5 errori di fila si aspetta 30 secondi per ogni errore in più, fino a 15 minuti; ogni azione richiede sessione e gettone anti-CSRF; il pulsante *Esci* chiude la sessione): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Anche senza password le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |
@@ -522,7 +524,11 @@ Con USB asincrona il clock della conversione è quello del DAC. Il programma
 alimenta i buffer tramite il driver ALSA; non può sostituire l'oscillatore del
 DAC con il clock del PC né realizzare un filtro elettrico sulle linee USB.
 La latenza misurata da `sweetspot-latenza` riguarda lo scheduler, non il jitter
-del clock audio. Per riferimenti: [Daphile](https://www.daphile.com/index.html),
+del clock audio. `sweetspot-alsa-misura [-c scheda] [-d dispositivo] [-t secondi]`
+campiona `/proc/asound/cardX/pcmYp/sub0/status` e `hw_params` e riassume delay
+massimo, avail minimo e XRUN: misura il margine del buffer, non il clock. Il
+buffer ALSA parte conservativo (`BUFFER_ALSA_MS=400`, `PERIODI_ALSA=4`) ed è
+modificabile in `sweetspot.txt`. Per riferimenti: [Daphile](https://www.daphile.com/index.html),
 [clock USB XMOS](https://www.xmos.com/documentation/XM-012296-UG/html/doc/rst/sw_ep0.html).
 
 Il riconoscimento del DAC considera le uscite playback e il loro numero di

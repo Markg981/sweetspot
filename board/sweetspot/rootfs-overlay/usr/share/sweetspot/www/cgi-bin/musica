@@ -81,6 +81,13 @@ for i in 1 2 3 4 5 6 7 8 9; do
 	detail=$(printf '%s' "$line" | cut -d'|' -f4-)
 	user=$(conf "CONDIVISIONE_${i}_UTENTE")
 	if [ "$state" = OK ]; then cls=OK; else cls=ATTENZIONE; fi
+	# Non montata ma con ritentativi in corso (sweetspot-rete ritenta)
+	next=$(grep "^$i|" "$RUN/rete.attesa" 2>/dev/null | head -n 1 | cut -d'|' -f3)
+	if [ "$state" != OK ] && [ -n "$next" ]; then
+		left=$(( next - $(date +%s) ))
+		[ $left -lt 0 ] && left=0
+		detail="$detail. In attesa: nuovo tentativo tra circa $(( (left + 59) / 60 )) min"
+	fi
 	printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k">%s</div>' "$cls" "$(esc "$path")"
 	printf '<div class="v">%s%s</div></div>' "$(esc "${detail:-in collegamento}")" "$(esc "${user:+, utente $user}")"
 	button rimuovi_condivisione "Rimuovi" n "$i" danger

@@ -235,6 +235,26 @@ echo truncated > "$D/stick/sweetspot-dati/lyrion.tar"
 if SAVE_FAILURE=rename dati; then rc=0; else rc=1; fi
 expect 'rinomina fallita: errore propagato' 1 "$rc"
 expect 'generazione corrente corrotta: vecchia valida conservata' current "$(tar -xOf "$D/stick/sweetspot-dati/lyrion.tar" prefs/server.prefs 2>/dev/null)"
+echo 'Blocco del salvataggio'
+lock_probe() { # comandi dopo il caricamento di sweetspot-dati
+	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPOT_LMS_DATA=$D/lms \
+		SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log SWEETSPOT_DATI_ATTESA=1 \
+		$TEST_SH -c '. "$1"; '"$1" sh "$OVERLAY/usr/bin/sweetspot-dati" 2>/dev/null
+}
+held='if flock -n "$RUN/dati.lock" true; then echo sciolto; else echo tenuto; fi'
+expect 'salvataggio riuscito: blocco sciolto al ritorno, processo ancora vivo' 0-sciolto \
+	"$(lock_probe 'do_save >/dev/null 2>&1; printf "%s-" $?; '"$held")"
+expect 'salvataggio fallito: blocco sciolto al ritorno' 1-sciolto \
+	"$(lock_probe 'save_generation() { return 1; }; do_save >/dev/null 2>&1; printf "%s-" $?; '"$held")"
+: > "$D/log"
+expect 'blocco tenuto da altri: attesa limitata, salvataggio rimandato' 1 \
+	"$(lock_probe 'exec 7> "$RUN/dati.lock"; flock 7; (do_save >/dev/null 2>&1); echo $?')"
+expect 'blocco tenuto da altri: attesa registrata nel log' si "$(grep -q 'non termina da 1s' "$D/log" && echo si || echo no)"
+expect 'modifica durante la copia: impronta precedente, nuovo salvataggio richiesto' diversa \
+	"$(lock_probe 'tar() { command tar "$@"; r=$?; [ "$1" = -cf ] && echo later >> "$LMS_DATA/prefs/server.prefs"; return $r; }
+		do_save >/dev/null 2>&1; [ "$(cat "$STAMP")" = "$(fingerprint)" ] && echo uguale || echo diversa')"
+expect 'nessuna modifica durante la copia: impronta allineata' uguale \
+	"$(lock_probe 'do_save >/dev/null 2>&1; [ "$(cat "$STAMP")" = "$(fingerprint)" ] && echo uguale || echo diversa')"
 
 K=$WORK/dischi
 mkdir -p "$K/sys/class/block/sda1" "$K/sys/class/block/sdb1" "$K/run" "$K/proc" "$K/media" "$K/musica"

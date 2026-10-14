@@ -1,0 +1,79 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - campiona il buffer ALSA di un'uscita di riproduzione.
+#   sweetspot-alsa-misura [-c SCHEDA] [-d DISPOSITIVO] [-t SECONDI] [-i INTERVALLO]
+# Legge /proc/asound/cardX/pcmYp/sub0/status e hw_params a intervalli e
+# riporta: campioni, campioni in RUNNING, ritardo (delay) massimo, avail
+# minimo, XRUN. Misura la stabilita' temporale dell'alimentazione del buffer
+# (quanto margine resta prima di un underrun); non misura il jitter del clock
+# di conversione del DAC. Il campionamento e' periodico: un XRUN seguito da
+# un ripristino entro un intervallo e' visto solo dal contatore xrun_counter,
+# se il kernel lo espone.
+# Valori predefiniti: scheda 0, dispositivo 0, 30 s, intervallo 0.1 s.
+# Esito: 0 nessun XRUN, 3 almeno un XRUN, 1 uscita assente, 2 uso errato.
+
+PROC=${SWEETSPOT_PROCFS:-/proc}
+card=0 dev=0 secs=30 step=0.1
+while getopts c:d:t:i: o; do
+	case $o in
+	c) card=$OPTARG ;;
+	d) dev=$OPTARG ;;
+	t) secs=$OPTARG ;;
+	i) step=$OPTARG ;;
+	*) echo "uso: sweetspot-alsa-misura [-c scheda] [-d dispositivo] [-t secondi] [-i intervallo]" >&2; exit 2 ;;
+	esac
+done
+case $card$dev$secs in *[!0-9]*) echo "scheda, dispositivo e secondi devono essere interi" >&2; exit 2 ;; esac
+case $step in ''|*[!0-9.]*) echo "intervallo non valido" >&2; exit 2 ;; esac
+
+sub=$PROC/asound/card$card/pcm${dev}p/sub0
+[ -r "$sub/status" ] || { echo "uscita non trovata: $sub/status" >&2; exit 1; }
+
+# Campioni da prendere (almeno 1). SWEETSPOT_CAMPIONI fissa il numero esatto,
+# utile ai test.
+n=${SWEETSPOT_CAMPIONI:-$(awk -v s="$secs" -v i="$step" 'BEGIN { n = int(s / i); print (n < 1 ? 1 : n) }')}
+
+buffer=$(awk '/^buffer_size:/ { print $2 }' "$sub/hw_params" 2>/dev/null)
+period=$(awk '/^period_size:/ { print $2 }' "$sub/hw_params" 2>/dev/null)
+rate=$(awk '/^rate:/ { print $2 }' "$sub/hw_params" 2>/dev/null)
+
+i=0
+while [ "$i" -lt "$n" ]; do
+	cat "$sub/status" 2>/dev/null
+	echo "xrun_counter: $(cat "$sub/xrun_counter" 2>/dev/null)"
+	echo "@@"
+	i=$((i + 1))
+	[ "$i" -lt "$n" ] && sleep "$step"
+done | awk -v buffer="${buffer:-0}" -v period="${period:-0}" -v rate="${rate:-0}" '
+function num(s) { sub(/^[^:]*:[ \t]*/, "", s); return s + 0 }
+/^state:/ { state = $2 }
+/^delay[ \t]*:/ { delay = num($0); have_d = 1 }
+/^avail[ \t]*:/ { avail = num($0); have_a = 1 }
+/^xrun_counter:/ { xc = ($2 == "" ? -1 : $2 + 0) }
+/^@@$/ {
+	n++
+	if (state == "RUNNING") {
+		r++
+		if (have_d && delay > dmax) dmax = delay
+		if (have_a && (amin == "" || avail < amin)) amin = avail
+	}
+	if (state == "XRUN" && prev != "XRUN") xr++
+	prev = state
+	if (xc >= 0) { if (xc0 == "") xc0 = xc; xc1 = xc }
+	state = ""; have_d = have_a = 0; xc = -1
+}
+END {
+	if (xc0 != "" && xc1 - xc0 > xr) xr = xc1 - xc0
+	printf "campioni: %d\n", n
+	printf "in riproduzione: %d\n", r
+	printf "buffer: %d frame, periodo: %d frame, frequenza: %d Hz\n", buffer, period, rate
+	printf "delay massimo: %d frame", dmax
+	if (rate > 0) printf " (%.1f ms)", dmax * 1000 / rate
+	printf "\n"
+	printf "avail minimo: %s frame", (amin == "" ? "-" : amin)
+	if (buffer > 0 && amin != "") printf " (occupazione massima %.0f%%)", (buffer - amin) * 100 / buffer
+	printf "\n"
+	printf "XRUN: %d\n", xr
+	exit (xr > 0 ? 3 : 0)
+}'
