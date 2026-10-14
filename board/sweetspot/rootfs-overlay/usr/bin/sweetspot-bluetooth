@@ -368,7 +368,7 @@ handoff_start() {
 		return 1
 	fi
 	dev=$(dac_playback_dev "$card") || dev=0
-	echo "$card" > "$BT_DAC"
+	echo "$$" > "$BT_DAC"
 	stop_player
 	echo "$card" > "$BT_ATTIVO"
 	# Prima l'uscita diretta (hw:); se il DAC non accetta il formato A2DP
