@@ -7,8 +7,12 @@
 #
 #   sweetspot-dati ripristina [cartella]   all'avvio: chiavetta -> RAM
 #   sweetspot-dati salva                   RAM -> chiavetta (subito)
+#   sweetspot-dati checkpoint              solo i database, a bassa priorita',
+#                                          anche durante ascolto e scansione
 #   sweetspot-dati sorveglia               salva da solo quando qualcosa
-#                                          cambia, ma mai durante l'ascolto
+#                                          cambia: tutto a sistema fermo,
+#                                          un checkpoint dei database durante
+#                                          l'ascolto o la lettura della libreria
 #
 # Il sistema gira in RAM: senza questo salvataggio libreria, plugin e
 # impostazioni andrebbero rifatti a ogni accensione.
@@ -18,7 +22,12 @@
 #   library.db     libreria
 #   persist.db     valutazioni e statistiche di ascolto
 # I database si copiano con il backup di SQLite, sicuro anche mentre
-# Lyrion li usa. Le copertine ridimensionate non si salvano: Lyrion le
+# Lyrion li usa. Il checkpoint sostituisce solo i database della generazione
+# gia' salvata, uno alla volta (file nuovo, controllo, rinomina), scrivendo
+# direttamente sulla chiavetta: niente copia in RAM, I/O idle, core di sistema.
+# Prima di scrivere si controlla lo spazio: chiavetta piena = nessun
+# tentativo ogni minuto, un avviso in Stato e un nuovo tentativo piu' tardi.
+# Le copertine ridimensionate non si salvano: Lyrion le
 # rifa' quando servono.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
@@ -28,6 +37,13 @@ KEEP="prefs playlists cache/InstalledPlugins"
 DBS="library.db persist.db"
 STAMP=$RUN/dati.impronta
 LOCK_WAIT=${SWEETSPOT_DATI_ATTESA:-300}
+# Secondi tra due checkpoint durante ascolto o scansione, e tra due tentativi
+# dopo "chiavetta piena"; margine di spazio libero richiesto in KB.
+CHECKPOINT_MIN=${SWEETSPOT_DATI_CHECKPOINT:-900}
+SPACE_RETRY=${SWEETSPOT_DATI_RITENTA:-1800}
+SPACE_MARGIN_KB=${SWEETSPOT_DATI_MARGINE_KB:-8192}
+CHECKPOINT_STAMP=$RUN/dati.checkpoint
+SPACE_FLAG=$RUN/dati.spazio
 
 fingerprint() {
 	{
@@ -134,6 +150,9 @@ do_save() {
 
 save_generation() {
 	local dst tmp d f list="" found=0
+	# Spazio sulla chiavetta prima di copiare nulla: i database vivi, il tar
+	# (stimato 2 MB) e la generazione nuova accanto alla vecchia.
+	space_ok $(( $(live_db_kb) + 2048 )) || return 1
 	# Copia in RAM prima: la chiavetta resta montata il meno possibile.
 	tmp=$RUN/dati.salva
 	rm -rf "$tmp"
@@ -189,16 +208,118 @@ save_generation() {
 	log "dati: salvati sulla chiavetta"
 }
 
+# KB occupati dai database vivi (file principale e WAL).
+live_db_kb() {
+	local f t=0 b
+	for f in $DBS; do
+		b=$(stat -c %s "$CACHE/$f" 2>/dev/null || echo 0)
+		t=$((t + b / 1024))
+		b=$(stat -c %s "$CACHE/$f-wal" 2>/dev/null || echo 0)
+		t=$((t + b / 1024))
+	done
+	echo "$t"
+}
+
+# KB liberi sulla chiavetta (da montare).
+stick_free_kb() {
+	df -P -k "$STICK_MNT" 2>/dev/null | awk 'NR == 2 { print $4 }'
+}
+
+# C'e' spazio per scrivere $1 KB (piu' il margine)? Se manca lo scrive nel
+# segnale letto da Stato e nel registro (una volta sola per episodio).
+# Monta la chiavetta in sola lettura quando serve e la lascia come l'ha
+# trovata.
+space_ok() {
+	local need=$(($1 + SPACE_MARGIN_KB)) free
+	if ! stick_mount ro; then return 0; fi
+	free=$(stick_free_kb)
+	stick_umount
+	case "$free" in ''|*[!0-9]*) return 0 ;; esac
+	if [ "$free" -ge "$need" ]; then
+		rm -f "$SPACE_FLAG"
+		return 0
+	fi
+	if [ ! -f "$SPACE_FLAG" ]; then
+		log "dati: chiavetta piena, servono $((need / 1024)) MB e ne restano $((free / 1024)): libreria non salvata"
+	fi
+	echo "$((free / 1024)) $((need / 1024)) $(date +%s)" > "$SPACE_FLAG"
+	return 1
+}
+
+# Dopo "chiavetta piena" si riprova solo dopo SPACE_RETRY secondi.
+space_wait() {
+	local t
+	[ -f "$SPACE_FLAG" ] || return 1
+	t=$(awk '{ print $3 }' "$SPACE_FLAG" 2>/dev/null)
+	case "$t" in ''|*[!0-9]*) return 1 ;; esac
+	[ $(( $(date +%s) - t )) -lt "$SPACE_RETRY" ]
+}
+
+# Checkpoint dei database durante ascolto o scansione: nessun blocco sul
+# salvataggio completo che in quel momento non puo' partire, nessuna copia
+# in RAM. Il lavoro gira in una subshell a bassa priorita'.
+do_checkpoint() {
+	local rc=0
+	[ -d "$LMS_DATA" ] || return 0
+	exec 8> "$RUN/dati.lock" || return 1
+	if ! flock -n 8; then exec 8>&-; return 1; fi
+	( bg_self sweetspot-dati; checkpoint_dbs ) || rc=1
+	flock -u 8
+	exec 8>&-
+	[ "$rc" -eq 0 ] && date +%s > "$CHECKPOINT_STAMP"
+	return "$rc"
+}
+
+checkpoint_dbs() {
+	local dst f n="" done_any=0
+	command -v sqlite3 > /dev/null || return 1
+	for f in $DBS; do [ -f "$CACHE/$f" ] && n="$n $f"; done
+	[ -n "$n" ] || return 0
+	space_ok "$(live_db_kb)" || return 1
+	stick_mount rw || { log "dati: chiavetta non trovata, checkpoint rimandato"; return 1; }
+	dst="$STICK_MNT/$DATA_DIR_NAME"
+	# Una generazione interrotta (solo .vecchio) la sistema il salvataggio
+	# completo: qui creare "dst" nasconderebbe la copia buona.
+	if [ ! -d "$dst" ] && [ -d "$dst.vecchio" ]; then stick_umount; return 1; fi
+	mkdir -p "$dst" || { stick_umount; return 1; }
+	for f in $n; do
+		rm -f "$dst/$f.nuovo"
+		if sqlite3 "$CACHE/$f" ".timeout 10000" ".backup '$dst/$f.nuovo'" 2> /dev/null &&
+			snapshot_valid "$dst/$f.nuovo" && sync && mv -f "$dst/$f.nuovo" "$dst/$f"; then
+			done_any=1
+		else
+			rm -f "$dst/$f.nuovo"
+			stick_umount
+			log "dati: checkpoint di $f non riuscito, la copia precedente e' conservata"
+			return 1
+		fi
+	done
+	sync
+	stick_umount
+	[ "$done_any" = 1 ] && log "dati: checkpoint della libreria sulla chiavetta"
+	return 0
+}
+
+checkpoint_due() {
+	local t
+	t=$(cat "$CHECKPOINT_STAMP" 2>/dev/null)
+	case "$t" in ''|*[!0-9]*) return 0 ;; esac
+	[ $(( $(date +%s) - t )) -ge "$CHECKPOINT_MIN" ]
+}
+
 do_watch() {
 	[ -f "$STAMP" ] || fingerprint > "$STAMP"
 	while true; do
 		sleep 60
 		[ -n "$(stick_device)" ] || continue
-		dac_playing && continue
 		[ "$(fingerprint)" = "$(cat "$STAMP" 2>/dev/null)" ] && continue
-		# Durante la lettura della libreria il database cambia di continuo:
-		# si salva a lettura finita.
-		lms_scanning && continue
+		space_wait && continue
+		# Ascolto o lettura della libreria in corso: il salvataggio completo
+		# aspetta, ma i database non restano senza copia fino a fine ascolto.
+		if dac_playing || lms_scanning; then
+			checkpoint_due && do_checkpoint
+			continue
+		fi
 		do_save
 	done
 }

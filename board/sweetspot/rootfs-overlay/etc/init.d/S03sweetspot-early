@@ -55,6 +55,14 @@ case "$1" in
 		if [ -d /sys/fs/cgroup ] && ! grep -q ' /sys/fs/cgroup cgroup2 ' /proc/mounts 2>/dev/null; then
 			mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || true
 		fi
+		# Dati di Lyrion (database della libreria, preferenze, cache) in un
+		# tmpfs con tetto: senza, la RAM e' l'unico limite e una cache che
+		# cresce porta all'OOM. Prima del ripristino dalla chiavetta.
+		if ! grep -q " $LMS_DATA tmpfs " /proc/mounts 2>/dev/null; then
+			mkdir -p "$LMS_DATA"
+			mount -t tmpfs -o "size=${SWEETSPOT_LMS_DATA_RAM:-45%},mode=0755,nosuid,nodev" tmpfs "$LMS_DATA" 2>/dev/null ||
+				log "dati di Lyrion: tmpfs con tetto non montato, si usa la radice"
+		fi
 		printf 'Sweetspot: lettura impostazioni... '
 		# La chiavetta puo' impiegare qualche secondo a comparire.
 		i=0
