@@ -49,6 +49,16 @@ CASES += [{"id": "pcm-rate-%s-%s-24-24" % (first, second),
            "source_bits": [24, 24]}
           for first, second in ((44100, 48000), (48000, 44100), (44100, 96000),
                                 (96000, 44100), (48000, 96000), (96000, 48000))]
+# DSD convertito in PCM da Squeezelite verso un DAC che non regge DSD/8:
+# snd-aloop accetta al massimo 192 kHz e il test dichiara 176,4 kHz soltanto,
+# quindi DSD64 (352,8 kHz) passa da una decimazione per 2 e DSD128 (705,6 kHz)
+# da due. Il margine e' -6 dB e non il predefinito (-3) per provare che la
+# chiave DSD_PCM_MARGINE_DB arrivi a Squeezelite.
+DSD_PCM_MARGIN_DB = -6
+DSD_PCM_CASES = [{"id": "dsf-2822400-pcm", "kind": "dsd_to_pcm", "rate": 176400, "dsd_rate": 2822400,
+                  "decimations": 1, "source_bits": [1, 1], "source_format": "dsf", "scope": "alsa_loopback"},
+                 {"id": "dff-5644800-pcm", "kind": "dsd_to_pcm", "rate": 176400, "dsd_rate": 5644800,
+                  "decimations": 2, "source_bits": [1, 1], "source_format": "dff", "scope": "alsa_loopback"}]
 PCM_PACING_RATE = 44100
 # Cambi di frequenza provati su ALSA: il primo brano e' lungo (la testa puo'
 # perdersi mentre il capture si aggancia) e se ne verifica la coda intera.
@@ -1013,6 +1023,132 @@ def mixed_case_passes(case, rates):
             and comparison.get("observed_rate_sequence") == rates)
 
 
+def dsd_pcm_log_evidence(log, destination, case, margin_db):
+    """Require the DSD decode, the decimation chosen for the device and the margin in the engine log."""
+    data = log.read_bytes() if log.exists() else b""
+    text = data.decode("utf-8", errors="replace")
+    expected = ("DSD to PCM output, %s Hz decimated %s time(s) by 2 for the device, margin %.1f dB"
+                % (case["dsd_rate"] // 8, case["decimations"], margin_db))
+    evidence = {"path": str(destination), "sha256": hashlib.sha256(data).hexdigest() if data else None,
+                "dsd_codec_opens": text.count("codec open: 'd'"), "expected_line": expected,
+                "conversions": text.count(expected), "dop_outputs": text.count("format: DOP"),
+                "native_outputs": len(re.findall(r"DSD\d+ stream, format: (?!DOP)", text)),
+                "track_start_rates": [int(rate) for rate in re.findall(r"track start sample rate: (\d+)", text)]}
+    evidence["status"] = ("pass" if evidence["dsd_codec_opens"] >= 1 and evidence["conversions"] >= 1
+                          and evidence["dop_outputs"] == 0 and evidence["native_outputs"] == 0
+                          and evidence["track_start_rates"] and set(evidence["track_start_rates"]) == {case["rate"]}
+                          else "fail")
+    return evidence
+
+
+def run_dsd_pcm_case(client, output, case, *, process_factory=subprocess.Popen, target):
+    """DSD file -> PCM at 176.4 kHz on hw:Loopback: tone, level with the margin, no folded tone."""
+    from tools.audio_verification import analyze_dsd_pcm_capture, generate_dsd_tone_fixtures
+    rate = case["rate"]
+    directory = output / case["id"]
+    directory.mkdir(parents=True, exist_ok=True)
+    report = {"id": case["id"], "kind": "dsd_to_pcm", "rate": rate, "dsd_rate": case["dsd_rate"],
+              "source_bits": [1, 1], "source_format": case["source_format"], "decimations": case["decimations"],
+              "margin_db": DSD_PCM_MARGIN_DB, "status": "fail", "scope": "alsa_loopback",
+              "limits": {"capture_format": None, "channels": 2, "capture_seconds": CAPTURE_SECONDS,
+                         "wall_seconds": WALL_SECONDS}}
+    mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
+    report["player_mac"] = mac
+    process = None
+    capture = None
+    log_owned = False
+    engine_log = "/tmp/audio-verification.log"
+    local_log = directory / "squeezelite.log"
+    started = time.monotonic()
+    journal_start = len(client.journal)
+    try:
+        local_log.unlink(missing_ok=True)
+        sources, spec = generate_dsd_tone_fixtures(directory / "references", case["dsd_rate"],
+                                                    container=case["source_format"], pcm_rate=rate)
+        report["spec"] = spec
+        report["sources"] = [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                              "format": case["source_format"], "bits": 1, "rate": case["dsd_rate"], "channels": 2}
+                             for source in sources]
+        with target.fixtures(sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
+            target.remove(engine_log)
+            log_owned = True
+            # Without -D the DSD cannot go to the device: Squeezelite converts it
+            # and decimates to the only rate this fake DAC declares.
+            engine = ["/usr/bin/env", "SWEETSPOT_DSD_MARGINE_DB=%s" % DSD_PCM_MARGIN_DB,
+                      "/usr/bin/squeezelite", "-o", ALSA_PLAYBACK, "-a", ALSA_BUFFER, "-r", "%s-%s" % (rate, rate),
+                      "-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log,
+                      "-d", "decode=info", "-d", "stream=info", "-d", "output=info"]
+            command = target.command(engine)
+            report["command"] = command
+            try:
+                for stream in ("p", "c"):
+                    if loopback_state(target, stream) is not None:
+                        raise AudioError("Loopback %s substream is already open by another process" % stream)
+                process = process_factory(command, stdout=subprocess.DEVNULL, stderr=stderr,
+                                          start_new_session=os.name == "posix")
+                wait_connected(client, mac, process)
+                playback = wait_loopback_playback(target, rate, process)
+                report["alsa"] = {"playback": playback}
+                capture_stderr = (directory / "capture-stderr.log").open("wb")
+                try:
+                    capture = LoopbackCapture(target, directory / "capture.raw", params=playback,
+                                              seconds=CAPTURE_SECONDS, wall_seconds=WALL_SECONDS,
+                                              process_factory=process_factory, stderr=capture_stderr)
+                    report["capture_command"] = capture.command
+                    report["limits"].update(capture_format=capture.format, max_bytes=capture.max_bytes)
+                    capture.start()
+                finally:
+                    capture_stderr.close()
+                report["alsa"]["capture"] = wait_loopback_capture(capture, rate)
+                report["settings"] = configure_player(client, mac, deadline=capture.deadline)
+                client.request(mac, ["playlist", "play", fixtures.player_path], deadline=capture.deadline)
+                report["playlist"] = wait_playlist(client, mac, fixtures.urls)
+                while not capture.finished.wait(.05):
+                    if time.monotonic() >= capture.deadline:
+                        raise AudioError("capture exceeded wall time limit")
+                    if process.poll() is not None:
+                        raise AudioError("Squeezelite exited with status %s during capture" % process.returncode)
+                if capture.error or capture.reason != "byte_limit":
+                    raise AudioError("capture ended early: %s (%s bytes; %s)" % (capture.reason, capture.bytes_written, capture.error))
+            finally:
+                if capture is not None:
+                    capture.stop()
+                if process is not None:
+                    stop_process(process, owned_group=os.name == "posix")
+                if capture is not None:
+                    capture.join()
+                target.stop_engine()
+            target.fetch(engine_log, local_log)
+            report["alsa"]["output"] = alsa_output_evidence(local_log, local_log, directory / "capture-stderr.log")
+            if report["alsa"]["output"]["status"] != "pass":
+                raise AudioError("ALSA evidence did not verify a hw:Loopback open without XRUN")
+            report["decoder"] = dsd_pcm_log_evidence(local_log, local_log, case, DSD_PCM_MARGIN_DB)
+            if report["decoder"]["status"] != "pass":
+                raise AudioError("engine log did not show the DSD to PCM conversion with the expected decimation and margin")
+            report["comparison"] = analyze_dsd_pcm_capture(directory / "capture.raw", capture_format=capture.format,
+                                                           rate=rate, spec=spec, margin_db=DSD_PCM_MARGIN_DB)
+            report["status"] = report["comparison"]["status"]
+            if report["status"] != "pass":
+                reasons = report["comparison"].get("problems") or [report["comparison"].get("reason", "?")]
+                raise AudioError("DSD to PCM content check failed: %s" % "; ".join(reasons))
+    except Exception as error:
+        report["status"] = "fail"
+        report["error"] = str(error)
+    finally:
+        report["rpc"] = client.journal[journal_start:]
+        report["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        if capture is not None:
+            report["capture"] = {"path": str(capture.path), "bytes": capture.bytes_written,
+                                 "reason": capture.reason, "error": capture.error}
+        if log_owned and not local_log.exists():
+            try:
+                target.fetch(engine_log, local_log)
+            except OSError as error:
+                report["log_error"] = str(error)
+        write_json(directory / "report.json", report)
+    return report
+
+
 def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rate=None, dop=False,
              source_format=None, case_id=None, process_factory=subprocess.Popen,
              backend="software_stdout", asound=Path("/proc/asound"), target=None):
@@ -1385,6 +1521,9 @@ def main(argv=None):
     cases = [case for case in CASES
              if args.backend == "software_stdout" or case["kind"] != "pcm_rate_transition"
              or (case["rate"], case["second_rate"]) in ALSA_TRANSITIONS]
+    if args.backend == "alsa_loopback":
+        # DSD to PCM needs the real ALSA device: the 192 kHz limit is the kernel's.
+        cases += DSD_PCM_CASES
     report = {"scope": args.backend, "version": args.version, "rootfs": target.description,
               "server": args.server, "status": "fail", "cases": []}
     try:
@@ -1392,10 +1531,13 @@ def main(argv=None):
         client = LmsClient(args.server)
         for case in cases:
             first, second = case["source_bits"]
-            result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
-                              second_rate=case.get("second_rate"),
-                              dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
-                              case_id=case["id"], backend=args.backend, target=target)
+            if case["kind"] == "dsd_to_pcm":
+                result = run_dsd_pcm_case(client, output, case, target=target)
+            else:
+                result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
+                                  second_rate=case.get("second_rate"),
+                                  dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
+                                  case_id=case["id"], backend=args.backend, target=target)
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)

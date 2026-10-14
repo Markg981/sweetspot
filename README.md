@@ -90,7 +90,7 @@ Daphile:
 | **Archivio** | il disco dove Sweetspot scrive: copia di cartelle da altri dischi e dal NAS, cartella di rete **Musica** per copiare dal PC o dal Mac, **copia dei CD** |
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
-| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
+| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, renderer UPnP/DLNA, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
 | **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto. Non rifà i controlli a ogni visita: legge la cache del demone `sweetspot-stato` (ogni 10 secondi, ogni 45 durante l'ascolto; core di sistema, `nice 19`) e avvisa se è assente o vecchia. Lo stesso stato in JSON, in sola lettura: `/cgi-bin/stato.json` (stessa password del pannello) e, da Lyrion o Material via JSON-RPC, `["sweetspot","stato"]` |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
@@ -246,6 +246,32 @@ spazio temporaneo anche per il tar completo, oltre ai file estratti.
 - **completa** (predefinita): tutto su Sweetspot, come Daphile.
 - **player**: solo Squeezelite, per un Lyrion Music Server su un altro
   computer (per chi vuole server e player separati).
+
+### Renderer UPnP/DLNA in entrata
+
+Con `RENDERER_UPNP=si` (pagina Sistema, spento di serie) Sweetspot compare come
+diffusore UPnP/DLNA (MediaRenderer:1) in BubbleUPnP, JPlay, mconnect e nelle
+altre app. L'audio non ha un percorso proprio: `SetAVTransportURI` e `Play`
+diventano un `playlist play` verso Lyrion, che apre l'indirizzo e lo manda al
+player Squeezelite. Il percorso e' quello della libreria (bit-perfect, DSD,
+correzione ambientale), e il DAC lo apre solo il player: nessun programma in
+concorrenza. Il demone (`/usr/lib/sweetspot/renderer.pl`, Perl come Lyrion,
+avviato da `S70sweetspot-renderer`) e' solo il telecomando UPnP: SSDP, descrittore,
+AVTransport, RenderingControl e ConnectionManager con eventi, stato in Stato
+("Renderer UPnP/DLNA").
+
+Perche' cosi' e non altrimenti: non esiste un plugin di Lyrion mantenuto che
+esponga i player come MediaRenderer (UPnPBridge fa l'inverso: usa i diffusori
+UPnP come player); upmpdcli richiede un MPD completo e un ponte verso Lyrion;
+gmrender-resurrect suona con GStreamer e aprirebbe il DAC in concorrenza con
+Squeezelite, oltre a portare con se' GStreamer.
+
+Limiti: servono Lyrion su questo Sweetspot (`MODALITA=completa`) e indirizzi
+HTTP leggibili da Lyrion (FLAC, WAV, AIFF, MP3, AAC, Ogg); il volume della app
+agisce sul volume di Lyrion e quindi conta solo con `VOLUME` software o del DAC;
+niente OpenHome (le app lo usano solo se c'e', altrimenti ripiegano su
+AVTransport); un'app alla volta controlla il renderer, e la musica avviata da
+Lyrion non viene fermata da un `Stop` UPnP.
 
 ## Cosa serve
 
@@ -461,6 +487,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
 | `VOLUME` | `fisso`, `dac`, `software` (Squeezelite arrotonda con dither TPDF, patch 0006, senza troncare: non bit-perfect, peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no`. Con il volume software (`VOLUME=software`, o il ripiego software di `dac`/`dsp`) il DSD si converte sempre in PCM, anche con `nativo` o `dop`: Squeezelite non applica il volume al DSD nativo e dopo un brano PCM attenuato un DSF suonerebbe al 100% (circa 30 dB più forte), un rischio per orecchie e diffusori. Vale anche per le zone (`ALTRI_DAC`), il cui volume è software | auto |
+| `DSD_PCM_MARGINE_DB` | margine in dB della conversione DSD → PCM, da -24 a 0 (mai sopra 0). I DSD "over" superano 0 dBFS fino a +3 dB (il 50% di modulazione oltre lo standard) e senza margine la conversione a 32 bit li taglierebbe; con -3 dB tutto il DSD convertito suona 3 dB più piano (il volume lo compensa). 0 = nessun margine. Non vale per il DSD nativo né per il DoP. Pagine Audio e Stato | -3 |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo`. Il ricampionatore abbassa il segnale di 1 dB (dichiarato in Stato e Audio, anche per il ricampionamento di ripiego `FREQUENZA_NON_SUPPORTATA=ricampiona`, anche sulle zone). Stato dichiara anche l'uscita a 16 bit, dove i brani a 24 bit si riducono con dither TPDF (patch 0006 di Squeezelite, anche con il volume software; i blocchi di silenzio digitale restano silenzio e le sorgenti a 16 bit a volume pieno restano bit-perfect) e il ricampionamento di Lyrion con sox quando il brano in riproduzione supera la frequenza massima dichiarata dal player (probe del DAC o `FREQUENZA_MAX`) | no, lineare |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio; la pausa al cambio di frequenza non scende mai sotto il buffer ALSA | 500, 0 |
@@ -477,6 +504,8 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
 | `PASSWORD_WEB` | password delle pagine di Sweetspot (impronta MD5-crypt con sale; accesso da `/cgi-bin/accesso` con sessione: cookie HttpOnly e SameSite=Strict, 8 ore, ID casuale; dopo 5 errori di fila **dallo stesso indirizzo** si aspetta 30 secondi per ogni errore in più, fino a 15 minuti, e chi sbaglia non blocca gli altri; c'è anche un tetto globale, sei volte più alto, contro chi cambia indirizzo; ogni risposta porta `Content-Security-Policy: frame-ancestors`, `X-Frame-Options`, `X-Content-Type-Options` e `Referrer-Policy` (solo Audio, Stato e Accesso possono stare nel riquadro di Material, dalla porta 9000); senza sessione la copertina del CD risponde con un segnaposto e non con un errore; ogni azione richiede sessione e gettone anti-CSRF; il pulsante *Esci* chiude la sessione): vuota = pagine aperte nella rete di casa; si imposta e si toglie dalla pagina Sistema e vale subito; dimenticata: togliere la riga da `sweetspot.txt`. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Anche senza password le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) ha la sua protezione: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | utente e password di Lyrion quando lo si protegge dalle sue impostazioni (Avanzate > Sicurezza): Sweetspot li usa nelle richieste JSON (Basic) e nella CLI (`login`) per volume a 64 bit, precarico, pagine, prova DoP e impostazioni del player. Senza, con Lyrion protetto, tutto questo si ferma | vuoti |
+| `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
+| `RENDERER_UPNP` | `si`: Sweetspot compare come diffusore UPnP/DLNA (MediaRenderer) per BubbleUPnP, JPlay, mconnect e simili; l'audio passa da Lyrion e dal player, vedi [Renderer UPnP/DLNA](#renderer-upnpdlna-in-entrata). Solo con `MODALITA=completa` | no |
 | `SSH`, `SSH_PASSWORD`, `SSH_UTENTE` | accesso remoto per l'assistenza. `SSH_UTENTE` è `root` (predefinito) oppure `assistenza`, un utente senza privilegi (con `assistenza` il login di root è disattivato). Dalla pagina Sistema queste tre chiavi aprono il sistema come amministratore e si cambiano solo con la **conferma forte**: serve avere `PASSWORD_WEB`, riscriverla nel campo di conferma e un gettone monouso (valido 10 minuti) emesso da root; la verifica la fa l'helper privilegiato, non la pagina, e un tentativo sbagliato conta come un errore di accesso. Senza `PASSWORD_WEB` da web non si cambiano: si scrivono in `sweetspot.txt` con il computer | no |
 | `HTTPS`, `HTTPS_REINDIRIZZA` | connessione protetta delle pagine (porta 443) con `stunnel` davanti all'httpd di BusyBox; certificato autofirmato creato al primo avvio con `HTTPS=si` e salvato sulla chiavetta (`sweetspot-https.pem`), impronta SHA-256 nella pagina Sistema. Con HTTPS il cookie di accesso è `Secure`. `HTTPS_REINDIRIZZA=si` fa rimandare a https le pagine richieste in chiaro (non `/cgi-bin/vivo` né le richieste dal computer stesso). Lyrion (porta 9000) resta in chiaro | no |
 | `DIARIO`, `DIARIO_ORE`, `DIARIO_KB` | diario di bordo sulla chiavetta (cartella `diagnostica`): `si`/`no`; ogni quante ore (1-24, 2 predefinite) si salvano registro e timeline; dimensione massima in KB di ogni file prima della rotazione (256 predefiniti, tre generazioni). Vedi [Diagnostica](#diagnostica-registro-persistente-timeline-e-crash-dump) | si, 2, 256 |
@@ -659,6 +688,7 @@ tests/cd-simulato.sh                  copia completa di un CD con un lettore fin
 tests/diario.sh                       diario di bordo: timeline, registro persistente, pstore, bundle
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)
 tests/prova-lyrion.sh                 Lyrion avviato nel sistema compilato (CI, anche su ARM)
+tests/renderer-upnp.py                renderer UPnP/DLNA: SSDP, descrittore, SOAP, eventi e riproduzione
 tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per ARM
 tools/genera-test-dop.py              file di prova bit-perfect
 ```

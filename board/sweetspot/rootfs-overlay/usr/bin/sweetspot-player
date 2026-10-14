@@ -352,7 +352,7 @@ zone_start() { # scheda
 	mkdir -p "$ZONE_DIR"
 	# Il volume della zona lo fa Lyrion (software): il mixer del DAC a 0 dB.
 	dac_unity_gain "$card"
-	taskset -c "$HK" squeezelite "$@" &
+	SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset -c "$HK" squeezelite "$@" &
 	echo "$! $id" > "$ZONE_DIR/$card"
 	log "player: zona \"$name\" sul DAC $id"
 }

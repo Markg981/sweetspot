@@ -203,6 +203,7 @@ check_dac() {
 		dop) emit INFO "DSD" "tramite DoP" ;;
 		*) emit INFO "DSD" "convertito in PCM da Squeezelite" ;;
 	esac
+	emit INFO "Margine DSD → PCM" "$(dsd_margine_db) dB (DSD_PCM_MARGINE_DB): spazio per i DSD che superano 0 dBFS fino a +3 dB; vale solo quando il DSD è convertito in PCM"
 	if [ -f "$RUN/dac.controller" ]; then
 		bdf=$(cut -d' ' -f1 "$RUN/dac.controller")
 		irqs=$(cut -d' ' -f2- "$RUN/dac.controller")
@@ -730,6 +731,33 @@ check_preload() {
 	esac
 }
 
+# Renderer UPnP/DLNA in entrata (usr/lib/sweetspot/renderer.pl), dal riepilogo
+# che scrive. Acceso dalla pagina Sistema; l'audio passa da Lyrion.
+check_renderer() {
+	local s stato name port detail n
+	if ! is_yes "$(conf RENDERER_UPNP no)"; then
+		emit INFO "Renderer UPnP/DLNA" "spento (RENDERER_UPNP=no): acceso dalla pagina Sistema compare in BubbleUPnP, JPlay, mconnect"
+		return
+	fi
+	if [ "$(mode)" = player ]; then
+		emit ATTENZIONE "Renderer UPnP/DLNA" "serve Lyrion su questo Sweetspot: non funziona in modalità solo player"
+		return
+	fi
+	s=$(cat "$RUN/renderer.json" 2>/dev/null)
+	stato=$(printf '%s' "$s" | jq -r '.stato // empty' 2>/dev/null)
+	name=$(printf '%s' "$s" | jq -r '.nome // empty' 2>/dev/null)
+	port=$(printf '%s' "$s" | jq -r '.porta // empty' 2>/dev/null)
+	detail=$(printf '%s' "$s" | jq -r '.dettaglio // empty' 2>/dev/null)
+	n=$(printf '%s' "$s" | jq -r '.abbonati // 0' 2>/dev/null)
+	case "$stato" in
+		attivo) emit OK "Renderer UPnP/DLNA" "acceso come \"$name\" (porta $port, ${n:-0} app collegate): l'audio passa da Lyrion e dal player" ;;
+		attesa) emit ATTENZIONE "Renderer UPnP/DLNA" "acceso ma non utilizzabile: ${detail:-in attesa di Lyrion}" ;;
+		errore) emit ATTENZIONE "Renderer UPnP/DLNA" "non parte: ${detail:-errore}" ;;
+		spento) emit ATTENZIONE "Renderer UPnP/DLNA" "acceso nelle impostazioni, il demone si avvia entro pochi secondi" ;;
+		*) emit ATTENZIONE "Renderer UPnP/DLNA" "stato non disponibile: il demone non risponde" ;;
+	esac
+}
+
 check_system() {
 	local srv ip disks b t st wd
 	emit INFO "Classe del computer" "$(machine_class) - $(cpu_model) - $(( $(mem_total_kb) / 1024 )) MB di RAM"
@@ -787,6 +815,7 @@ check_player
 [ "$(mode)" = completa ] && check_library
 check_listening
 [ "$(mode)" = completa ] && check_preload
+check_renderer
 check_system
 
 if [ "$1" = "--dati" ]; then
