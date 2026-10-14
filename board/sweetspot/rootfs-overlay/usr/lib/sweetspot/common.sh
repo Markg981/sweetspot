@@ -87,6 +87,16 @@ conf() {
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
 }
 
+# Profilo energetico: "fisso" (predefinito: SMT spento, stati C limitati,
+# frequenza fissa) o "conservativo" (SMT attivo, stati C liberi, governor
+# schedutil/ondemand). Vedi docs/profilo-energetico.md.
+energia() {
+	case "$(lower "$(conf ENERGIA fisso)")" in
+		conservativo) echo conservativo ;;
+		*) echo fisso ;;
+	esac
+}
+
 lower() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
 
 # Modalita' di funzionamento:

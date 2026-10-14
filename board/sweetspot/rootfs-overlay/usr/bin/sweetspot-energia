@@ -1,0 +1,148 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - costo energetico delle ottimizzazioni.
+#
+#   sweetspot-energia misura [campioni] [secondi] [file]
+#       campiona il profilo energetico attivo (fisso o conservativo) e
+#       stampa un riepilogo chiave=valore (anche su file, se indicato)
+#   sweetspot-energia confronta a.txt b.txt
+#       affianca due riepiloghi (uno per profilo) in una tabella
+#
+# Misura: XRUN e ritardo del DAC, CPU, memoria dei processi principali,
+# PSI, temperatura e throttling, potenza (RAPL) e tempo di risposta
+# dell'interfaccia. Vedi docs/profilo-energetico.md.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+URL=${SWEETSPOT_URL:-http://127.0.0.1/cgi-bin/sistema}
+PROCESSI=${SWEETSPOT_PROCESSI:-squeezelite slimserver lyrion lighttpd httpd}
+
+# Tempi della CPU: "occupato totale" da /proc/stat.
+cpu_tempi() {
+	awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t-$5-$6, t; exit}' "$PROC/stat" 2>/dev/null
+}
+
+# Stato della prima uscita in riproduzione: "stato ritardo".
+alsa_stato() {
+	local f
+	for f in "$PROC"/asound/card*/pcm*p/sub*/status; do
+		[ -f "$f" ] || continue
+		awk '/^state:/{s=$2} /^delay/{d=$3} END{print (s==""?"-":s), (d==""?0:d)}' "$f"
+		return
+	done
+	echo "- 0"
+}
+
+psi() { # risorsa
+	awk '/^some /{for(i=2;i<=NF;i++) if($i ~ /^avg10=/){sub("avg10=","",$i); print $i; exit}}' \
+		"$PROC/pressure/$1" 2>/dev/null
+}
+
+temp_max() { # millesimi di grado
+	cat "$SYS"/class/thermal/thermal_zone*/temp 2>/dev/null | sort -n | tail -n 1
+}
+
+freq_media() { # kHz
+	cat "$SYS"/devices/system/cpu/cpufreq/policy*/scaling_cur_freq 2>/dev/null |
+		awk '{s+=$1;n++} END{if(n) printf "%d", s/n}'
+}
+
+throttle_totale() {
+	cat "$SYS"/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count 2>/dev/null |
+		awk '{s+=$1} END{print s+0}'
+}
+
+energia_uj() {
+	cat "$SYS"/class/powercap/intel-rapl:0/energy_uj 2>/dev/null
+}
+
+rss_kb() { # nome processo
+	local d
+	for d in "$PROC"/[0-9]*; do
+		[ "$(cat "$d/comm" 2>/dev/null)" = "$1" ] || continue
+		awk '/^VmRSS:/{print $2}' "$d/status" 2>/dev/null
+	done | awk '{s+=$1} END{print s+0}'
+}
+
+ui_ms() {
+	command -v curl >/dev/null 2>&1 || return 0
+	curl -s -o /dev/null -m 5 -w '%{time_total}' "$URL" 2>/dev/null |
+		awk '{printf "%d", $1*1000}'
+}
+
+misura() {
+	local n=${1:-10} sec=${2:-5} out=${3:-} i st dl c0 c1 b0 t0 b1 t1
+	local xr=0 dmax=0 ui uimax=0 uisum=0 uin=0 tmax=0 t fsum=0 fn=0 f
+	local e0 e1 w="" cpus=0 tp0 tp1 ps
+	c0=$(cpu_tempi); b0=${c0% *}; t0=${c0#* }
+	e0=$(energia_uj); tp0=$(throttle_totale)
+	i=0
+	while [ "$i" -lt "$n" ]; do
+		[ "$sec" -gt 0 ] && sleep "$sec"
+		st=$(alsa_stato)
+		dl=${st#* }; st=${st%% *}
+		[ "$st" = XRUN ] && xr=$((xr + 1))
+		[ "$dl" -gt "$dmax" ] && dmax=$dl
+		t=$(temp_max)
+		[ -n "$t" ] && [ "$t" -gt "$tmax" ] && tmax=$t
+		f=$(freq_media)
+		[ -n "$f" ] && { fsum=$((fsum + f)); fn=$((fn + 1)); }
+		ui=$(ui_ms)
+		if [ -n "$ui" ]; then
+			uisum=$((uisum + ui)); uin=$((uin + 1))
+			[ "$ui" -gt "$uimax" ] && uimax=$ui
+		fi
+		i=$((i + 1))
+	done
+	c1=$(cpu_tempi); b1=${c1% *}; t1=${c1#* }
+	e1=$(energia_uj); tp1=$(throttle_totale)
+	if [ -n "$e0" ] && [ -n "$e1" ] && [ $((n * sec)) -gt 0 ]; then
+		w=$(( (e1 - e0) / (n * sec) / 1000 ))
+	fi
+	cpus=$(grep -c '^cpu[0-9]' "$PROC/stat" 2>/dev/null)
+	{
+		echo "profilo=$(energia)"
+		echo "smt=$(cpu_smt_state)"
+		echo "cpu_logiche=${cpus:-0}"
+		echo "campioni=$n"
+		echo "xrun_campioni=$xr"
+		echo "ritardo_max=$dmax"
+		[ "${t1:-0}" -gt "${t0:-0}" ] && echo "cpu_pct=$(( (b1 - b0) * 100 / (t1 - t0) ))"
+		for ps in $PROCESSI; do echo "rss_kb_$ps=$(rss_kb "$ps")"; done
+		echo "psi_cpu=$(psi cpu)"
+		echo "psi_memoria=$(psi memory)"
+		echo "psi_io=$(psi io)"
+		echo "temp_max_mC=$tmax"
+		echo "freq_media_kHz=$([ "$fn" -gt 0 ] && echo $((fsum / fn)))"
+		echo "throttling=$((tp1 - tp0))"
+		echo "potenza_mW=$w"
+		if [ "$uin" -gt 0 ]; then
+			echo "ui_ms_medio=$((uisum / uin))"
+			echo "ui_ms_max=$uimax"
+		fi
+	} > "${out:-/dev/stdout}"
+	[ -n "$out" ] && cat "$out"
+	return 0
+}
+
+confronta() {
+	if [ ! -f "${1:-}" ] || [ ! -f "${2:-}" ]; then
+		echo "uso: sweetspot-energia confronta a.txt b.txt" >&2
+		exit 2
+	fi
+	awk -F= '
+		FNR == NR { a[$1] = $2; if (!($1 in v)) { v[$1] = 1; k[++n] = $1 } next }
+		{ b[$1] = $2; if (!($1 in v)) { v[$1] = 1; k[++n] = $1 } }
+		END {
+			printf "%-22s %-16s %-16s\n", "metrica", "A", "B"
+			for (i = 1; i <= n; i++)
+				printf "%-22s %-16s %-16s\n", k[i], (k[i] in a ? a[k[i]] : "-"), (k[i] in b ? b[k[i]] : "-")
+		}' "$1" "$2"
+}
+
+case "${1:-misura}" in
+	misura) shift 2>/dev/null; misura "$@" ;;
+	confronta) shift; confronta "$@" ;;
+	*) echo "uso: sweetspot-energia misura [campioni] [secondi] [file] | confronta a.txt b.txt" >&2; exit 2 ;;
+esac
