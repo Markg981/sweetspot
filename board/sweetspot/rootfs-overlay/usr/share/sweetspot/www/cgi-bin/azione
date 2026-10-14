@@ -23,7 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_web_password="" F_web_libero=""
+F_web_password="" F_web_libero="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
 
@@ -39,6 +39,24 @@ fi
 # Cartella delle pagine (bozze dei filtri, stato della prova DoP): di solito la
 # crea root all'avvio con il proprietario "web"; qui solo se manca.
 mkdir -p "$WEBDIR/correzione" 2>/dev/null
+
+# Conferma forte (SSH, pacchetti da disco): serve la password di queste pagine,
+# quindi serve averla impostata; i tentativi sbagliati contano come quelli
+# dell'accesso (stesso limite per indirizzo).
+confirm_or_stop() { # pagina cosa
+	local w
+	auth_enabled || done_to "$1" "Per cambiare $2 imposta prima una password per queste pagine (Sistema, Opzioni per esperti), oppure scrivi l'impostazione in sweetspot.txt con il computer."
+	w=$(login_wait ip "$LOGIN_FREE")
+	[ "$w" -gt 0 ] && done_to "$1" "Troppi tentativi: riprova tra $w secondi."
+	[ -n "$F_ct" ] && [ -n "$F_conferma_password" ] && valid_value "$F_conferma_password" ||
+		done_to "$1" "Per cambiare $2 riscrivi la password di queste pagine nel campo di conferma."
+}
+
+confirm_refused() { # pagina
+	login_fail ip
+	log "conferma forte rifiutata da $(client_ip)"
+	done_to "$1" "Password non corretta o modulo scaduto: ricarica la pagina e riprova. Niente e' stato cambiato."
+}
 
 # numero VALORE MIN MAX
 in_range() {
@@ -425,11 +443,34 @@ case "$F_a" in
 		case "$F_ottimizzazioni" in si|no) ;; *) F_ottimizzazioni=si ;; esac
 		case "$F_server" in *[!A-Za-z0-9.:_-]*) done_to sistema "Indirizzo del server non valido." ;; esac
 		valid_value "$F_ssh_password" || done_to sistema "Password non valida."
+		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=$(lower "$(conf SSH_UTENTE root)") ;; esac
+		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=root ;; esac
+		case "$F_https" in si|no) ;; *) F_https=no ;; esac
+		case "$F_https_reindirizza" in si|no) ;; *) F_https_reindirizza=no ;; esac
+		# SSH e la sua password aprono root: si cambiano solo con la conferma
+		# forte (password di queste pagine, riscritta, e gettone monouso), non
+		# con la sola sessione. Lo verifica l'helper, che gira come root.
+		cur_ssh=no
+		is_yes "$(conf SSH no)" && cur_ssh=si
+		ssh_change=""
+		[ "$F_ssh" != "$cur_ssh" ] && ssh_change=1
+		[ -n "$F_ssh_password" ] && ssh_change=1
+		[ "$F_ssh_utente" != "$(lower "$(conf SSH_UTENTE root)")" ] && ssh_change=1
+		if [ -n "$ssh_change" ]; then
+			confirm_or_stop sistema "l'accesso SSH"
+			set -- SSH "$F_ssh" SSH_UTENTE "$F_ssh_utente"
+			[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
+			priv_confirm "$F_ct" "$F_conferma_password" sweetspot-config imposta "$@"
+			rc=$?
+			if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then
+				confirm_refused sistema
+			fi
+			log "sistema: accesso SSH cambiato con conferma forte da $(client_ip)"
+		fi
 		old_mode=$(mode)
 		old_name=$(conf NOME_PLAYER Sweetspot)
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
-			PRECARICO "$precarico" SSH "$F_ssh" OTTIMIZZAZIONI "$F_ottimizzazioni"
-		[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
+			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
 		# Password delle pagine: si salva solo l'impronta MD5-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
 		if [ -n "$F_web_password" ]; then
@@ -443,6 +484,7 @@ case "$F_a" in
 		rc=$?
 		[ $rc -eq 1 ] && done_to sistema "$(saved_msg 1)"
 		priv sweetspot-accesso applica
+		priv sweetspot-https applica > /dev/null 2>&1
 		# Password nuova o tolta: le sessioni aperte non valgono piu'. Chi l'ha
 		# cambiata resta dentro con una sessione nuova.
 		if [ -n "$F_web_password" ]; then

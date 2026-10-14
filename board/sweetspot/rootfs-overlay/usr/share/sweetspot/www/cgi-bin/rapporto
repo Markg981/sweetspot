@@ -6,8 +6,12 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 if out=$(priv sweetspot-rapporto); then
-	printf 'Content-Type: application/json\r\nContent-Disposition: attachment; filename="sweetspot-rapporto.json"\r\nCache-Control: no-store\r\n\r\n'
+	printf 'Content-Type: application/json\r\nContent-Disposition: attachment; filename="sweetspot-rapporto.json"\r\nCache-Control: no-store\r\n'
+	sec_headers
+	printf '\r\n'
 	printf '%s\n' "$out"
 else
-	printf 'Status: 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nRapporto non disponibile.\n'
+	printf 'Status: 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\n'
+	sec_headers
+	printf '\r\nRapporto non disponibile.\n'
 fi

@@ -60,10 +60,10 @@ EOF
 # req SCRIPT METODO COOKIE CORPO -> risposta del CGI
 req() {
 	local script=$1 method=$2 cookie=$3 body=$4
-	printf '%s' "$body" | env SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="$RUNDIR" SWEETSPOT_LOG="$A/log" \
+	printf '%s' "$body" | env SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="${RUN_T:-$RUNDIR}" SWEETSPOT_LOG="$A/log" \
 		SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" GATEWAY_INTERFACE=CGI/1.1 \
-		HTTP_HOST=127.0.0.1 REMOTE_ADDR=127.0.0.1 REQUEST_METHOD="$method" CONTENT_LENGTH=${#body} \
-		HTTP_COOKIE="$cookie" SCRIPT_NAME="${SCRIPT_NAME_T:-/cgi-bin/prova}" QUERY_STRING="${QUERY_T:-}" \
+		HTTP_HOST="${HOST_T:-127.0.0.1}" REMOTE_ADDR="${REMOTE_T:-127.0.0.1}" REQUEST_METHOD="$method" CONTENT_LENGTH=${#body} \
+		HTTP_COOKIE="$cookie" REQUEST_URI="${URI_T:-/cgi-bin/audio}" SCRIPT_NAME="${SCRIPT_NAME_T:-/cgi-bin/prova}" QUERY_STRING="${QUERY_T:-}" \
 		sh "$script" 2>&1 | tr -d '\r'
 }
 status() { printf '%s\n' "$1" | sed -n 's/^Status: \([0-9]*\).*/\1/p' | head -n 1; }
@@ -126,7 +126,14 @@ printf '{"ts":1}\n' > "$RUNDIR/stato.json"
 mkdir -p "$RUNDIR/cd"; printf 'JPEGFINTO' > "$RUNDIR/cd/copertina.jpg"
 for c in stato.json copertina; do
 	out=$(SCRIPT_NAME_T=/cgi-bin/$c req "$CGI/$c" GET "" "")
-	expect "$c reale senza sessione: 401" "401" "$(status "$out")"
+	if [ "$c" = copertina ]; then
+		# Un'immagine non puo' mostrare un errore: senza sessione risponde con
+		# il segnaposto (200, SVG), cosi' la pagina non mostra un'immagine rotta.
+		expect "$c reale senza sessione: segnaposto SVG, non errore" "|image/svg+xml" "$(status "$out")|$(header "$out" Content-Type)"
+		expect "$c reale senza sessione: contiene un SVG" "1" "$(printf '%s' "$out" | grep -c '<svg')"
+	else
+		expect "$c reale senza sessione: 401" "401" "$(status "$out")"
+	fi
 	expect "$c reale senza sessione: nessun dato" "0" "$(printf '%s' "$out" | grep -c -e '"ts"' -e JPEGFINTO)"
 	out=$(SCRIPT_NAME_T=/cgi-bin/$c req "$CGI/$c" GET "sweetspot_sid=$sid" "")
 	expect "$c reale con sessione: 200 con i dati" "1" "$(printf '%s' "$out" | grep -c -e '"ts"' -e JPEGFINTO)"
@@ -156,6 +163,98 @@ out=$(req "$CGI/accesso" POST "" "password=segreta")
 expect "limite globale oltre il limite per indirizzo" "429" "$(status "$out")"
 rm -rf "$RUNDIR/web/tentativi"
 
+echo "Limite per indirizzo: chi sbaglia non blocca gli altri"
+for i in 1 2 3 4 5 6; do REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "password=no$i" > /dev/null; done
+out=$(REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "password=segreta")
+expect "l'indirizzo che ha sbagliato 6 volte aspetta (429)" "429" "$(status "$out")"
+case "$out" in *"riprova tra "[1-9]*" secondi"*) ok "il messaggio dice quanto aspettare (backoff: 60 s al sesto errore)" ;; *) expect "attesa" "riprova tra N secondi" "$out" ;; esac
+out=$(REMOTE_T=10.0.0.10 req "$CGI/accesso" POST "" "password=segreta")
+expect "un altro indirizzo entra lo stesso" "303" "$(status "$out")"
+out=$(REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "password=segreta")
+expect "l'indirizzo bloccato resta bloccato" "429" "$(status "$out")"
+# Il tetto globale c'e' ancora ma molto piu' in alto (6 volte la soglia per indirizzo).
+rm -rf "$RUNDIR/web/tentativi"; mkdir -p "$RUNDIR/web/tentativi"
+printf '29 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
+out=$(REMOTE_T=10.0.0.11 req "$CGI/accesso" POST "" "password=segreta")
+expect "sotto il tetto globale (29 errori) si entra" "303" "$(status "$out")"
+printf '30 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
+out=$(REMOTE_T=10.0.0.11 req "$CGI/accesso" POST "" "password=segreta")
+expect "al tetto globale (30 errori) si aspetta" "429" "$(status "$out")"
+rm -rf "$RUNDIR/web/tentativi"
+
+echo "Intestazioni di sicurezza"
+out=$(REMOTE_T=10.0.0.12 req "$CGI/accesso" POST "" "password=segreta")
+sid=$(cookie_id "$out")
+sec() { # SCRIPT_NAME -> risposta con sessione
+	SCRIPT_NAME_T=$1 req "$A/pagina2" GET "sweetspot_sid=$sid" ""
+}
+cat > "$A/pagina2" <<EOF
+#!/bin/sh
+. "$SWEETSPOT_LIB/web.sh"
+page_start "Prova" sistema
+page_end
+EOF
+out=$(sec /cgi-bin/sistema)
+expect "pagina normale: frame-ancestors 'none'" "1" "$(printf '%s' "$out" | grep -c "^Content-Security-Policy: frame-ancestors 'none'")"
+expect "pagina normale: X-Frame-Options DENY" "DENY" "$(header "$out" X-Frame-Options)"
+expect "pagina normale: X-Content-Type-Options nosniff" "nosniff" "$(header "$out" X-Content-Type-Options)"
+expect "pagina normale: Referrer-Policy" "same-origin" "$(header "$out" Referrer-Policy)"
+expect "pagina normale: form-action e base-uri limitati" "2" "$(printf '%s' "$out" | grep "^Content-Security-Policy" | grep -c -e "form-action 'self'" -e "base-uri 'self'")"
+for pg in audio stato accesso; do
+	out=$(sec /cgi-bin/$pg)
+	expect "$pg: incorporabile da Material (porta 9000) e da se stessa" "1" "$(printf '%s' "$out" | grep -c "^Content-Security-Policy: frame-ancestors 'self' http://\*:9000 https://\*:9000")"
+	expect "$pg: senza X-Frame-Options (non sa dire la porta)" "" "$(header "$out" X-Frame-Options)"
+	expect "$pg: nosniff" "nosniff" "$(header "$out" X-Content-Type-Options)"
+done
+out=$(SCRIPT_NAME_T=/cgi-bin/sistema req "$A/pagina" GET "" "")
+expect "reindirizzamento all'accesso con le intestazioni" "DENY|nosniff" "$(header "$out" X-Frame-Options)|$(header "$out" X-Content-Type-Options)"
+out=$(SCRIPT_NAME_T=/cgi-bin/stato.json req "$A/pagina" GET "" "")
+expect "401 dei dati con le intestazioni" "401|DENY" "$(status "$out")|$(header "$out" X-Frame-Options)"
+out=$(SCRIPT_NAME_T=/cgi-bin/copertina req "$CGI/copertina" GET "" "")
+expect "segnaposto della copertina con le intestazioni" "DENY|nosniff" "$(header "$out" X-Frame-Options)|$(header "$out" X-Content-Type-Options)"
+out=$(HOST_T=evil.example req "$A/pagina" GET "" "")
+expect "403 dell'Host non valido con le intestazioni" "403|DENY|nosniff" "$(status "$out")|$(header "$out" X-Frame-Options)|$(header "$out" X-Content-Type-Options)"
+out=$(SCRIPT_NAME_T=/cgi-bin/vivo req "$CGI/vivo" GET "" "")
+expect "vivo con le intestazioni" "nosniff" "$(header "$out" X-Content-Type-Options)"
+out=$(SCRIPT_NAME_T=/cgi-bin/accesso req "$CGI/accesso" POST "sweetspot_sid=$sid" "a=esci&t=tokenfinto")
+expect "uscita con le intestazioni" "nosniff" "$(header "$out" X-Content-Type-Options)"
+out=$(SCRIPT_NAME_T=/cgi-bin/accesso req "$CGI/accesso" POST "" "password=segreta")
+expect "accesso riuscito con le intestazioni" "nosniff" "$(header "$out" X-Content-Type-Options)"
+
+echo "Nome in rete scelto dall'utente (host_guard legge la configurazione leggibile)"
+# Le pagine girano come "web" e non leggono sweetspot.conf (solo di root):
+# host_guard gira appena si carica common.sh, prima che web.sh scelga la copia
+# senza password. Qui sweetspot.conf manca (come illeggibile), c'e' solo la copia.
+R2=$A/run2
+mkdir -p "$R2/web"
+printf 'NOME_RETE=salotto\n' > "$R2/sweetspot.web"
+out=$(RUN_T=$R2 HOST_T=salotto.local req "$A/pagina" GET "" "")
+expect "salotto.local con NOME_RETE=salotto: nessun 403" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+out=$(RUN_T=$R2 HOST_T=salotto req "$A/pagina" GET "" "")
+expect "salotto (senza .local) accettato" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+out=$(RUN_T=$R2 HOST_T=sweetspot.local req "$A/pagina" GET "" "")
+expect "il nome predefinito non vale piu'" "403" "$(status "$out")"
+expect "il messaggio del 403 dice il nome giusto" "1" "$(printf '%s' "$out" | grep -c 'http://salotto.local/')"
+out=$(RUN_T=$R2 HOST_T=evil.example req "$A/pagina" GET "" "")
+expect "un Host estraneo resta 403" "403" "$(status "$out")"
+
+echo "Cookie Secure con HTTPS"
+out=$(HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: req "$CGI/accesso" POST "" "password=segreta")
+case "$(header "$out" Set-Cookie)" in
+	*"; Secure") ok "con HTTPS il cookie e' Secure" ;;
+	*) expect "con HTTPS il cookie e' Secure" "...; Secure" "$(header "$out" Set-Cookie)" ;;
+esac
+out=$(req "$CGI/accesso" POST "" "password=segreta")
+case "$(header "$out" Set-Cookie)" in
+	*Secure*) expect "in chiaro il cookie non e' Secure" "senza Secure" "$(header "$out" Set-Cookie)" ;;
+	*) ok "in chiaro il cookie non e' Secure" ;;
+esac
+# Con HTTPS i tentativi si contano per l'indirizzo vero del client (REMOTE_HOST di stunnel).
+rm -rf "$RUNDIR/web/tentativi"
+(HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: req "$CGI/accesso" POST "" "password=no" > /dev/null)
+expect "con HTTPS il limite e' per l'IP del client, non per quello del terminatore" "1" "$(ls "$RUNDIR/web/tentativi" | grep -c '^ip-192.168.1.77$')"
+rm -rf "$RUNDIR/web/tentativi"
+
 echo "Uscita"
 out=$(req "$CGI/accesso" POST "" "password=segreta")
 sid=$(cookie_id "$out")
@@ -183,6 +282,22 @@ out=$(req "$A/pagina" GET "" "")
 expect "senza PASSWORD_WEB nessun accesso richiesto" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
 out=$(req "$CGI/accesso" GET "" "")
 expect "senza PASSWORD_WEB l'accesso rimanda alle pagine" "303|/cgi-bin/audio" "$(status "$out")|$(header "$out" Location)"
+
+echo "HTTPS: rimando delle pagine in chiaro (flag di sweetspot-https)"
+out=$(REMOTE_T=192.168.1.5 req "$A/pagina" GET "" "")
+expect "senza HTTPS acceso nessun rimando" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+: > "$RUNDIR/https.reindirizza"
+out=$(REMOTE_T=192.168.1.5 HOST_T=localhost URI_T="/cgi-bin/sistema?msg=ok" req "$A/pagina" GET "" "")
+expect "con il rimando acceso: 301 verso https, stesso indirizzo" "301|https://localhost/cgi-bin/sistema?msg=ok" "$(status "$out")|$(header "$out" Location)"
+expect "il rimando non esegue la pagina" "0" "$(printf '%s' "$out" | grep -c PAGINA)"
+expect "il rimando ha le intestazioni di sicurezza" "nosniff" "$(header "$out" X-Content-Type-Options)"
+out=$(REMOTE_T=127.0.0.1 req "$A/pagina" GET "" "")
+expect "le richieste dal computer stesso non rimandano" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+out=$(HTTPS=on REMOTE_HOST=192.168.1.5 REMOTE_T=local: req "$A/pagina" GET "" "")
+expect "gia' in https: nessun rimando" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+out=$(REMOTE_T=192.168.1.5 SCRIPT_NAME_T=/cgi-bin/vivo req "$CGI/vivo" GET "" "")
+expect "vivo (verifica degli aggiornamenti) non rimanda mai" "ok" "$(printf '%s' "$out" | sed -n 's/^\(ok\) .*/\1/p')"
+rm -f "$RUNDIR/https.reindirizza"
 printf 'PASSWORD_WEB=*\nNOME_PLAYER=Prova\n' > "$RUNDIR/sweetspot.web"
 
 echo "Verifica della password (sweetspot-accesso verifica)"
