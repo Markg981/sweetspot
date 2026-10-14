@@ -10,6 +10,14 @@ TARGET_DIR=$1
 BOARD=${2:-x86_64}
 BOARD_DIR=$(dirname "$0")
 
+# Chiave pubblica degli aggiornamenti: senza, l'immagine non accetta nessun
+# aggiornamento (vedi docs/aggiornamenti.md). SWEETSPOT_RICHIEDI_CHIAVE=1
+# (release) trasforma l'avviso in errore.
+if [ ! -s "$TARGET_DIR/etc/sweetspot/aggiornamenti.pub" ]; then
+	echo "post-build: ATTENZIONE: manca etc/sweetspot/aggiornamenti.pub, questa immagine avra' gli aggiornamenti DISABILITATI (docs/aggiornamenti.md)" >&2
+	[ "${SWEETSPOT_RICHIEDI_CHIAVE:-}" = 1 ] && exit 1
+fi
+
 # Il menu di GRUB vive sulla chiavetta, non nel sistema in RAM.
 rm -rf "${TARGET_DIR:?}/boot"
 
