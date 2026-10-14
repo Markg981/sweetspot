@@ -939,6 +939,8 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
 REFUSED_DEVICE = "dacfinto96"
 REFUSED_ACCEPTED_RATE = 96000
 REFUSED_SOURCE_RATE = 88200
+# Il plugin route non offre l'accesso mmap: niente mmap (quarto campo a 0).
+REFUSED_BUFFER = "400:4::0"
 REFUSED_ASOUNDRC = """pcm.%s {
     type route
     slave { pcm "hw:CARD=Loopback,DEV=0"; rate %d; channels 2 }
@@ -979,9 +981,17 @@ def run_refused_rate_case(client, output, target, *, process_factory=subprocess.
         references = generate_fixtures(directory / "references", REFUSED_SOURCE_RATE, 24)
         target.run("cat > /root/.asoundrc", REFUSED_ASOUNDRC.encode("ascii"))
         rc_written = True
+        # Premessa del caso: il DAC finto accetta solo 96 kHz (e non 88,2 kHz).
+        try:
+            hw = target.run("aplay -D %s --dump-hw-params -d 1 /dev/zero 2>&1; true" % REFUSED_DEVICE).decode(errors="replace")
+        except OSError as error:
+            raise AudioError("the refusing DAC cannot be opened with aplay: %s" % error) from error
+        report["fake_dac_hw_params"] = hw.splitlines()[:30]
+        if not re.search(r"^RATE:\s*96000\s*$", hw, re.M):
+            raise AudioError("the refusing DAC does not offer only %d Hz: %s" % (REFUSED_ACCEPTED_RATE, hw.strip()[:300]))
         with target.fixtures(references) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             target.remove(engine_log)
-            engine = ["/usr/bin/squeezelite", "-o", REFUSED_DEVICE, "-a", ALSA_BUFFER, "-R", "vLE",
+            engine = ["/usr/bin/squeezelite", "-o", REFUSED_DEVICE, "-a", REFUSED_BUFFER, "-R", "vLE",
                       "-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log,
                       "-d", "decode=info", "-d", "output=info"]
             command = target.command(engine)
@@ -1036,7 +1046,12 @@ def run_refused_rate_case(client, output, target, *, process_factory=subprocess.
                 if capture is not None:
                     capture.join()
                 target.stop_engine()
-            target.fetch(engine_log, local_log)
+                # diagnosi: il registro del motore anche quando il caso fallisce
+                try:
+                    if target.fetch(engine_log, local_log):
+                        report["engine_log_tail"] = local_log.read_text(errors="replace").splitlines()[-25:]
+                except OSError as error:
+                    report["log_error"] = str(error)
         text = local_log.read_text(errors="replace") if local_log.exists() else ""
         report["evidence"] = refused_rate_evidence(text)
         report["status"] = report["evidence"]["status"]
