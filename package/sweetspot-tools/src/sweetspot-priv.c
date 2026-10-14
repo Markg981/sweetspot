@@ -11,11 +11,19 @@
 //
 //   sweetspot-priv sweetspot-config imposta CHIAVE VALORE ...
 //   sweetspot-priv @riavvia | @spegni | @player | @autotune | @log TESTO
+//   sweetspot-priv @conferma-nuova           stampa un gettone monouso
+//   sweetspot-priv @conferma GETTONE SCRIPT ARGOMENTI...   (password del
+//                                            pannello sull'ingresso standard)
+//
+// Le operazioni che aprono root (SSH, il suo utente e la sua password)
+// non passano dall'elenco normale: servono @conferma,
+// con un gettone monouso e la password del pannello verificata da root.
 //
 // Esce con 126 se la richiesta non e' nell'elenco (nulla viene eseguito).
 
 #define _GNU_SOURCE
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -25,6 +33,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -33,9 +42,11 @@
 #ifdef SWEETSPOT_PRIV_PROVA
 #define BIN_DIR PROVA_BIN
 #define BASE_WEB PROVA_WEB
+#define BASE_CONFERMA PROVA_WEB "conferma/"
 #else
 #define BIN_DIR "/usr/bin/"
 #define BASE_WEB "/run/sweetspot/web/"
+#define BASE_CONFERMA "/run/sweetspot/conferma/" // solo di root: le pagine non vi scrivono
 #endif
 
 #define UTENTE_WEB "web"
@@ -44,6 +55,8 @@
 #define MAX_ARG 1024
 #define MAX_FILE (1024 * 1024)
 #define NO_ELENCO 126
+#define CONFERMA_VALIDITA 600 // secondi
+#define CONFERMA_MAX 16
 
 // Tipi di argomento:
 //  s  testo libero senza caratteri di controllo
@@ -57,76 +70,106 @@ struct regola {
 	const char *sub;    // primo argomento
 	const char *fissi;  // tipi degli argomenti dopo il sottocomando
 	const char *ripeti; // tipi di un gruppo ripetuto (almeno una volta), o ""
+	int protetta;       // 1 = solo con @conferma (apre root)
 };
 
 static const struct regola REGOLE[] = {
-	{"sweetspot-accesso", "applica", "", ""},
-	{"sweetspot-accesso", "hash", "s", ""},
-	{"sweetspot-accesso", "verifica", "", ""}, // password dall'ingresso standard
-	{"sweetspot-aggiorna", "altra", "", ""},
-	{"sweetspot-aggiorna", "annulla", "", ""},
-	{"sweetspot-aggiorna", "cerca", "", ""},
-	{"sweetspot-aggiorna", "file", "s", ""},
-	{"sweetspot-aggiorna", "pacchetti", "", ""},
-	{"sweetspot-aggiorna", "predefinita", "", ""},
-	{"sweetspot-aggiorna", "scarica", "", ""},
-	{"sweetspot-aggiorna", "stato", "", ""},
-	{"sweetspot-cd", "annulla", "", ""},
-	{"sweetspot-cd", "copia", "sss", ""},
-	{"sweetspot-cd", "espelli", "", ""},
-	{"sweetspot-cd", "leggi", "", ""},
-	{"sweetspot-cd", "lettore", "", ""},
-	{"sweetspot-cd", "stato", "", ""},
-	{"sweetspot-check", "--dati", "", ""},
-	{"sweetspot-config", "imposta", "", "ks"},
-	{"sweetspot-config", "rimuovi", "", "k"},
-	{"sweetspot-config", "ripristina", "", ""},
-	{"sweetspot-copia", "annulla", "", ""},
-	{"sweetspot-copia", "avvia", "s", ""},
-	{"sweetspot-copia", "elimina", "s", ""},
-	{"sweetspot-copia", "sorgente", "s", ""},
-	{"sweetspot-copia", "stato", "", ""},
-	{"sweetspot-diario", "bundle", "", ""}, // tar.gz diagnostico sull'uscita standard
-	{"sweetspot-dischi", "archivio", "", ""},
-	{"sweetspot-dischi", "monta", "", ""},
-	{"sweetspot-dischi", "smonta", "s", ""},
-	{"sweetspot-dsp", "fir", "", ""},
-	{"sweetspot-dsp", "guadagno", "", ""},
-	{"sweetspot-dsp", "leggi", "p", ""},
-	{"sweetspot-dsp", "risposta", "", ""},
-	{"sweetspot-dsp", "salva", "pp", ""},
-	{"sweetspot-hotspot", "richiesta", "", ""},
-	{"sweetspot-hotspot", "scansiona", "", ""},
-	{"sweetspot-installa", "avvia", "ss", ""},
-	{"sweetspot-installa", "dischi", "", ""},
-	{"sweetspot-installa", "stato", "", ""},
-	{"sweetspot-lms", "aggiorna", "", ""},
-	{"sweetspot-lms", "json", "", ""}, // controllato a parte (lms_json_ok)
-	{"sweetspot-lms", "plugin", "", ""}, // controllato a parte
-	{"sweetspot-lms", "ricostruisci", "", ""},
-	{"sweetspot-lms", "riavvia", "", ""},
-	{"sweetspot-nas", "ferma", "", ""},
-	{"sweetspot-nas", "riavvia", "", ""},
-	{"sweetspot-rapporto", NULL, "", ""},
-	{"sweetspot-rete", "prova", "n", ""},
-	{"sweetspot-rete", "smonta-una", "n", ""},
-	{"sweetspot-spazio", "crea", "", ""},
-	{"sweetspot-spazio", "lavoro", "", ""},
-	{"sweetspot-spazio", "stato", "", ""},
+	{"sweetspot-accesso", "applica", "", "", 0},
+	{"sweetspot-accesso", "hash", "s", "", 0},
+	{"sweetspot-accesso", "verifica", "", "", 0}, // password dall'ingresso standard
+	{"sweetspot-aggiorna", "altra", "", "", 0},
+	{"sweetspot-aggiorna", "annulla", "", "", 0},
+	{"sweetspot-aggiorna", "cerca", "", "", 0},
+	{"sweetspot-aggiorna", "file", "s", "", 0},
+	{"sweetspot-aggiorna", "pacchetti", "", "", 0},
+	{"sweetspot-aggiorna", "predefinita", "", "", 0},
+	{"sweetspot-aggiorna", "scarica", "", "", 0},
+	{"sweetspot-aggiorna", "stato", "", "", 0},
+	{"sweetspot-cd", "annulla", "", "", 0},
+	{"sweetspot-cd", "copia", "sss", "", 0},
+	{"sweetspot-cd", "espelli", "", "", 0},
+	{"sweetspot-cd", "leggi", "", "", 0},
+	{"sweetspot-cd", "lettore", "", "", 0},
+	{"sweetspot-cd", "stato", "", "", 0},
+	{"sweetspot-check", "--dati", "", "", 0},
+	{"sweetspot-config", "imposta", "", "ks", 0},
+	{"sweetspot-config", "rimuovi", "", "k", 0},
+	{"sweetspot-config", "ripristina", "", "", 0},
+	{"sweetspot-copia", "annulla", "", "", 0},
+	{"sweetspot-copia", "avvia", "s", "", 0},
+	{"sweetspot-copia", "elimina", "s", "", 0},
+	{"sweetspot-copia", "sorgente", "s", "", 0},
+	{"sweetspot-copia", "stato", "", "", 0},
+	{"sweetspot-diario", "bundle", "", "", 0}, // tar.gz diagnostico sull'uscita standard
+	{"sweetspot-dischi", "archivio", "", "", 0},
+	{"sweetspot-dischi", "monta", "", "", 0},
+	{"sweetspot-dischi", "smonta", "s", "", 0},
+	{"sweetspot-dsp", "fir", "", "", 0},
+	{"sweetspot-dsp", "guadagno", "", "", 0},
+	{"sweetspot-dsp", "leggi", "p", "", 0},
+	{"sweetspot-dsp", "risposta", "", "", 0},
+	{"sweetspot-dsp", "salva", "pp", "", 0},
+	{"sweetspot-hotspot", "richiesta", "", "", 0},
+	{"sweetspot-https", "applica", "", "", 0},
+	{"sweetspot-hotspot", "scansiona", "", "", 0},
+	{"sweetspot-installa", "avvia", "ss", "", 0},
+	{"sweetspot-installa", "dischi", "", "", 0},
+	{"sweetspot-installa", "stato", "", "", 0},
+	{"sweetspot-lms", "aggiorna", "", "", 0},
+	{"sweetspot-lms", "json", "", "", 0}, // controllato a parte (lms_json_ok)
+	{"sweetspot-lms", "plugin", "", "", 0}, // controllato a parte
+	{"sweetspot-lms", "ricostruisci", "", "", 0},
+	{"sweetspot-lms", "riavvia", "", "", 0},
+	{"sweetspot-nas", "ferma", "", "", 0},
+	{"sweetspot-nas", "riavvia", "", "", 0},
+	{"sweetspot-rapporto", NULL, "", "", 0},
+	{"sweetspot-rete", "prova", "n", "", 0},
+	{"sweetspot-rete", "smonta-una", "n", "", 0},
+	{"sweetspot-spazio", "crea", "", "", 0},
+	{"sweetspot-spazio", "lavoro", "", "", 0},
+	{"sweetspot-spazio", "stato", "", "", 0},
 };
 
-// Chiavi di sweetspot.txt che le pagine possono cambiare. Le altre
-// (comandi, percorsi, opzioni di basso livello) si toccano solo dalla
-// chiavetta, con il computer.
-static const char *const CHIAVI[] = {
-	"VOLUME", "DSD", "RICAMPIONAMENTO", "FILTRO", "FREQUENZA_MAX", "BUFFER_ALSA_MS",
-	"PERIODI_ALSA", "PAUSA_FREQUENZA_MS", "PAUSA_DSD_MS", "ALTRI_DAC", "DAC",
-	"ESCLUDI_DISCHI", "ARCHIVIO", "ARCHIVIO_CONDIVISO", "ARCHIVIO_PASSWORD",
-	"WIFI_NOME", "WIFI_PASSWORD", "NOME_RETE", "RISPARMIO_RETE", "IP_FISSO",
-	"GATEWAY", "DNS", "SCHEDA_I2S", "NOME_PLAYER", "MODALITA", "PROFILO",
-	"MODALITA_ASCOLTO", "PRECARICO", "SSH", "SSH_PASSWORD", "OTTIMIZZAZIONI", "RENDERER_UPNP",
-	"PASSWORD_WEB", "SERVER", "CORREZIONE", NULL,
+// Chiavi di sweetspot.txt che le pagine possono cambiare, con il tipo del
+// valore (a ogni chiave il suo: un valore finito in una riga di comando, in
+// un file di configurazione o nei parametri del kernel non deve poter
+// portare altro). Le altre chiavi (comandi, percorsi, opzioni di basso
+// livello) si toccano solo dalla chiavetta, con il computer.
+//  s  testo libero senza caratteri di controllo
+//  w  parola (lettere, cifre, _ . : -)
+//  d  solo cifre (al massimo 9)
+//  i  lettere minuscole, cifre e trattini (overlay, nome in rete)
+//  a  indirizzo IPv4, con maschera /N se serve
+//  h  nome o indirizzo di un server
+//  q  identita' di un disco (UUID=..., PARTUUID=...)
+//  l  elenco di nomi di dischi separati da virgole
+//  b  si oppure no
+struct chiave {
+	const char *nome;
+	char valore;
+	int protetta; // 1 = solo con @conferma
 };
+
+static const struct chiave CHIAVI[] = {
+	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
+	{"FREQUENZA_MAX", 'd', 0}, {"BUFFER_ALSA_MS", 'd', 0}, {"PERIODI_ALSA", 'd', 0},
+	{"PAUSA_FREQUENZA_MS", 'd', 0}, {"PAUSA_DSD_MS", 'd', 0}, {"ALTRI_DAC", 'w', 0},
+	{"DAC", 'w', 0}, {"ESCLUDI_DISCHI", 'l', 0}, {"ARCHIVIO", 'q', 0},
+	{"ARCHIVIO_CONDIVISO", 'w', 0}, {"ARCHIVIO_PASSWORD", 's', 0},
+	{"WIFI_NOME", 's', 0}, {"WIFI_PASSWORD", 's', 0}, {"NOME_RETE", 'i', 0},
+	{"RISPARMIO_RETE", 'w', 0}, {"IP_FISSO", 'a', 0}, {"GATEWAY", 'a', 0}, {"DNS", 'a', 0},
+	{"SCHEDA_I2S", 'i', 0}, // finisce nella riga di comando del kernel
+	{"NOME_PLAYER", 's', 0}, {"MODALITA", 'w', 0}, {"PROFILO", 'w', 0},
+	{"MODALITA_ASCOLTO", 'w', 0}, {"PRECARICO", 'w', 0}, {"OTTIMIZZAZIONI", 'w', 0},
+	{"RENDERER_UPNP", 'b', 0},
+	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
+	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
+	// Aprono root (login SSH come root o come utente di assistenza): solo con @conferma.
+	{"SSH", 'w', 1}, {"SSH_PASSWORD", 's', 1}, {"SSH_UTENTE", 'w', 1},
+	{NULL, 0, 0},
+};
+
+static int consenti_protette; // vero solo dopo @conferma riuscito
 
 static uid_t uid_web(void)
 {
@@ -156,17 +199,67 @@ static int parola_ok(const char *s)
 	return 1;
 }
 
-static int chiave_ok(const char *s)
+static const struct chiave CHIAVE_CONDIVISIONE = {"CONDIVISIONE", 's', 0};
+static const struct chiave CHIAVE_SMB1 = {"CONDIVISIONE_SMB1", 'b', 0};
+
+static const struct chiave *chiave_cerca(const char *s)
 {
 	int i;
 	// CONDIVISIONE_1..9 con _UTENTE, _PASSWORD e _SMB1
 	if (!strncmp(s, "CONDIVISIONE_", 13) && s[13] >= '1' && s[13] <= '9') {
 		const char *r = s + 14;
-		return !*r || !strcmp(r, "_UTENTE") || !strcmp(r, "_PASSWORD") || !strcmp(r, "_SMB1");
+		if (!strcmp(r, "_SMB1"))
+			return &CHIAVE_SMB1; // booleano si/no
+		return (!*r || !strcmp(r, "_UTENTE") || !strcmp(r, "_PASSWORD")) ? &CHIAVE_CONDIVISIONE : NULL;
 	}
-	for (i = 0; CHIAVI[i]; i++)
-		if (!strcmp(s, CHIAVI[i]))
-			return 1;
+	for (i = 0; CHIAVI[i].nome; i++)
+		if (!strcmp(s, CHIAVI[i].nome))
+			return &CHIAVI[i];
+	return NULL;
+}
+
+static int chiave_ok(const char *s)
+{
+	const struct chiave *c = chiave_cerca(s);
+	return c && (!c->protetta || consenti_protette);
+}
+
+static int solo(const char *s, size_t max, int (*ok)(unsigned char))
+{
+	size_t n = strlen(s);
+	if (n > max)
+		return 0;
+	for (; *s; s++)
+		if (!ok((unsigned char)*s))
+			return 0;
+	return 1;
+}
+static int c_cifra(unsigned char c) { return isdigit(c); }
+static int c_minuscola(unsigned char c) { return islower(c) || isdigit(c) || c == '-'; }
+static int c_indirizzo(unsigned char c) { return isdigit(c) || c == '.' || c == '/'; }
+static int c_host(unsigned char c) { return isalnum(c) || strchr(".:_-", c) != NULL; }
+static int c_disco(unsigned char c) { return isalnum(c) || strchr("=_.:-", c) != NULL; }
+static int c_elenco(unsigned char c) { return isalnum(c) || strchr(" ._,-", c) != NULL; }
+
+// Il valore va bene per la chiave? (vuoto: sempre, e' "nessun valore")
+static int valore_ok(const char *chiave, const char *v)
+{
+	const struct chiave *c = chiave_cerca(chiave);
+	if (!c || !testo_ok(v))
+		return 0;
+	if (!*v)
+		return 1;
+	switch (c->valore) {
+	case 's': return 1;
+	case 'w': return parola_ok(v);
+	case 'd': return solo(v, 9, c_cifra);
+	case 'i': return solo(v, 60, c_minuscola) && v[0] != '-';
+	case 'a': return solo(v, 18, c_indirizzo);
+	case 'h': return solo(v, 253, c_host);
+	case 'q': return solo(v, 100, c_disco);
+	case 'l': return solo(v, 400, c_elenco);
+	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
+	}
 	return 0;
 }
 
@@ -286,6 +379,122 @@ static void esegui(char *const argv[])
 	_exit(127);
 }
 
+// --- Conferma forte --------------------------------------------------------
+// Gettone monouso (file di root, 32 cifre esadecimali) + password del
+// pannello. Il gettone si consuma prima di guardare la password: un tentativo
+// sbagliato ne costa uno e la pagina va ricaricata.
+
+static int hex32(const char *t)
+{
+	size_t i;
+	if (strlen(t) != 32)
+		return 0;
+	for (i = 0; i < 32; i++)
+		if (!isxdigit((unsigned char)t[i]) || isupper((unsigned char)t[i]))
+			return 0;
+	return 1;
+}
+
+static int conferma_nuova(void)
+{
+	DIR *d;
+	struct dirent *e;
+	unsigned char r[16];
+	char tok[33], path[512], vecchio[512] = "";
+	int fd, n = 0, i;
+	time_t ora = time(NULL), vecchio_t = 0;
+
+	mkdir(BASE_CONFERMA, 0700);
+	d = opendir(BASE_CONFERMA);
+	if (!d)
+		return 1;
+	while ((e = readdir(d))) {
+		struct stat st;
+		if (!hex32(e->d_name))
+			continue;
+		snprintf(path, sizeof path, "%s%s", BASE_CONFERMA, e->d_name);
+		if (lstat(path, &st))
+			continue;
+		if (ora - st.st_mtime > CONFERMA_VALIDITA) {
+			unlink(path);
+		} else {
+			n++;
+			if (!vecchio[0] || st.st_mtime < vecchio_t) {
+				snprintf(vecchio, sizeof vecchio, "%s", path);
+				vecchio_t = st.st_mtime;
+			}
+		}
+	}
+	closedir(d);
+	// Troppi gettoni in giro (pagine ricaricate di continuo): cede il piu' vecchio.
+	if (n >= CONFERMA_MAX && vecchio[0])
+		unlink(vecchio);
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0 || read(fd, r, sizeof r) != (ssize_t)sizeof r)
+		return 1;
+	close(fd);
+	for (i = 0; i < 16; i++)
+		snprintf(tok + 2 * i, 3, "%02x", r[i]);
+	snprintf(path, sizeof path, "%s%s", BASE_CONFERMA, tok);
+	fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+	if (fd < 0)
+		return 1;
+	close(fd);
+	printf("%s\n", tok);
+	return 0;
+}
+
+// Consuma il gettone: vero solo se esisteva ed e' recente.
+static int conferma_usa(const char *tok)
+{
+	struct stat st;
+	char path[512];
+	if (!hex32(tok))
+		return 0;
+	snprintf(path, sizeof path, "%s%s", BASE_CONFERMA, tok);
+	if (lstat(path, &st) || !S_ISREG(st.st_mode))
+		return 0;
+	if (unlink(path))
+		return 0;
+	return time(NULL) - st.st_mtime <= CONFERMA_VALIDITA;
+}
+
+// Password del pannello dall'ingresso standard, verificata da sweetspot-accesso
+// (che la confronta con PASSWORD_WEB: senza password del pannello rifiuta sempre).
+static int password_ok(void)
+{
+	char pw[300];
+	int p[2], st;
+	pid_t pid;
+	size_t n;
+
+	if (!fgets(pw, sizeof pw, stdin))
+		return 0;
+	n = strcspn(pw, "\r\n");
+	pw[n] = 0;
+	if (!n || !testo_ok(pw) || pipe(p))
+		return 0;
+	pid = fork();
+	if (pid < 0)
+		return 0;
+	if (pid == 0) {
+		char sub[] = "verifica";
+		char *a[] = {BIN_DIR "sweetspot-accesso", sub, NULL};
+		dup2(p[0], 0);
+		close(p[0]);
+		close(p[1]);
+		esegui(a);
+	}
+	close(p[0]);
+	if (write(p[1], pw, n) < 0 || write(p[1], "\n", 1) < 0) {
+		/* lo script legge una riga vuota e rifiuta */
+	}
+	close(p[1]);
+	if (waitpid(pid, &st, 0) < 0)
+		return 0;
+	return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+}
+
 // Lancia il comando in sottofondo (come "( sleep N; setsid cmd ) &"):
 // la pagina risponde subito, il comando parte dopo il ritardo.
 static void differito(unsigned ritardo, char *const argv[])
@@ -368,6 +577,22 @@ int main(int argc, char **argv)
 	argv += 2;
 	// argv[-1] e' il nome del comando
 
+	if (!strcmp(argv[-1], "@conferma-nuova") && argc == 0)
+		return conferma_nuova();
+	if (!strcmp(argv[-1], "@conferma")) {
+		// argv: GETTONE SCRIPT ARGOMENTI... (password sull'ingresso standard)
+		if (argc < 2 || !conferma_usa(argv[0]) || !password_ok()) {
+#ifndef SWEETSPOT_PRIV_PROVA
+			sleep(2); // frena i tentativi a raffica
+#endif
+			return NO_ELENCO;
+		}
+		consenti_protette = 1;
+		argv += 2;
+		argc -= 2;
+		// ora argv[-1] e' lo script
+	}
+
 	if (argv[-1][0] == '@') {
 		for (i = 0; i < (size_t)argc; i++)
 			if (!testo_ok(argv[i]))
@@ -378,6 +603,8 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < sizeof REGOLE / sizeof *REGOLE; i++) {
 		if (strcmp(REGOLE[i].script, argv[-1]))
+			continue;
+		if (REGOLE[i].protetta && !consenti_protette)
 			continue;
 		if (REGOLE[i].sub == NULL) { // script senza sottocomando
 			if (argc == 0) { r = &REGOLE[i]; break; }
@@ -434,6 +661,10 @@ int main(int argc, char **argv)
 		char tipo = i < nfissi ? r->fissi[i] : r->ripeti[(i - nfissi) % nrip];
 		char *sost;
 		if (!arg_ok(tipo, argv[i], &sost, web))
+			return NO_ELENCO;
+		// Valore di una chiave: deve andare bene per quella chiave.
+		if (!strcmp(r->script, "sweetspot-config") && !strcmp(r->sub, "imposta") &&
+		    tipo == 's' && i > 0 && !valore_ok(argv[i - 1], argv[i]))
 			return NO_ELENCO;
 		av[2 + i] = sost ? sost : argv[i];
 	}

@@ -588,6 +588,10 @@ expect "renderer UPnP: di serie spento" "no" "$(grep '^RENDERER_UPNP=' "$OVERLAY
 expect "renderer UPnP: spento anche nel modello di sweetspot.txt" "RENDERER_UPNP=no" "$(grep '^RENDERER_UPNP=' "$ROOT/board/sweetspot/stick/sweetspot.txt")"
 expect "renderer UPnP: chiave ammessa all'helper privilegiato" "1" "$(grep -c '"RENDERER_UPNP"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
 case "$(page sistema)" in *'name="renderer_upnp"'*'<option value="no" selected'*) ok "sistema: renderer UPnP spento di serie" ;; *) ko "sistema renderer" "no selezionato" "-" ;; esac
+# La pagina Sistema (con il selettore del renderer) esce con le intestazioni di sicurezza di web.sh.
+sistema_out=$(page sistema)
+expect "sistema: intestazioni di sicurezza anche con il selettore del renderer" "DENY|nosniff" \
+	"$(printf '%s' "$sistema_out" | sed -n 's/^X-Frame-Options: *//p' | tr -d '\r')|$(printf '%s' "$sistema_out" | sed -n 's/^X-Content-Type-Options: *//p' | tr -d '\r')"
 case "$(page sistema RENDERER_UPNP=si)" in *'name="renderer_upnp"'*'<option value="si" selected'*) ok "sistema: renderer UPnP acceso" ;; *) ko "sistema renderer acceso" "si selezionato" "-" ;; esac
 
 

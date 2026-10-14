@@ -9,10 +9,14 @@
 
 tmp=$(mktemp "$WEBDIR/diagnostica.XXXXXX" 2>/dev/null || mktemp)
 if priv sweetspot-diario bundle > "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
-	printf 'Content-Type: application/gzip\r\nContent-Disposition: attachment; filename="sweetspot-diagnostica-%s.tar.gz"\r\nContent-Length: %s\r\nCache-Control: no-store\r\n\r\n' \
+	printf 'Content-Type: application/gzip\r\nContent-Disposition: attachment; filename="sweetspot-diagnostica-%s.tar.gz"\r\nContent-Length: %s\r\nCache-Control: no-store\r\n' \
 		"$(date '+%Y%m%d-%H%M%S')" "$(wc -c < "$tmp" | tr -d ' ')"
+	sec_headers
+	printf '\r\n'
 	cat "$tmp"
 else
-	printf 'Status: 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBundle diagnostico non disponibile.\n'
+	printf 'Status: 500 Internal Server Error\r\nContent-Type: text/plain; charset=utf-8\r\n'
+	sec_headers
+	printf '\r\nBundle diagnostico non disponibile.\n'
 fi
 rm -f "$tmp"

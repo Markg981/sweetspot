@@ -13,7 +13,22 @@ case "$1" in
 			log "ssh: attivato senza password, non avviato"
 			exit 0
 		fi
-		printf 'root:%s\n' "$pass" | chpasswd >/dev/null 2>&1
+		# Utente dell'accesso: "root" (predefinito, come prima) oppure
+		# "assistenza", senza privilegi. Qualunque altro valore vale root solo
+		# se e' proprio "root": un nome inventato non deve dare un login.
+		user=$(lower "$(conf SSH_UTENTE root)")
+		case "$user" in
+			root|assistenza) ;;
+			*) log "ssh: utente $user non ammesso, non avviato"; exit 0 ;;
+		esac
+		# La password arriva a chpasswd dall'ingresso standard, mai nella riga di comando.
+		printf '%s:%s\n' "$user" "$pass" | chpasswd >/dev/null 2>&1
+		if [ "$user" = root ]; then
+			opts="-R"
+		else
+			# Con l'utente di assistenza il login di root e' disattivato (-w).
+			opts="-R -w"
+		fi
 		# In Buildroot /etc/dropbear e' un collegamento a /var/run/dropbear,
 		# che dopo l'avvio non esiste: le chiavi vanno nella cartella puntata.
 		if [ -L /etc/dropbear ]; then
@@ -21,8 +36,9 @@ case "$1" in
 		else
 			mkdir -p /etc/dropbear
 		fi
-		dropbear -R -p 22
-		log "ssh: attivo"
+		# shellcheck disable=SC2086
+		dropbear $opts -p 22
+		log "ssh: attivo (utente $user)"
 		;;
 	stop) killall dropbear 2>/dev/null ;;
 	*) echo "uso: $0 start|stop" ;;
