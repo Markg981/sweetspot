@@ -463,7 +463,7 @@ check_frequenza_log() { # registro voce
 volume_dac_ripiego() {
 	[ "$(volume_effettivo)" = hardware ] || return 1
 	[ -r "$SQLOG" ] || return 1
-	tail -n 60 "$SQLOG" 2>/dev/null | grep -qi "mixer.*\(unable\|fail\|cannot\|error\)\|\(unable\|fail\|cannot\|error\).*mixer"
+	tail -n 60 "$SQLOG" 2>/dev/null | grep -q "Initialization of mixer failed, reverting to software volume"
 }
 
 # Il DAC riceve solo 16 bit: i brani a 24 bit sono troncati.
@@ -478,15 +478,18 @@ dac_solo_16() {
 
 # Lyrion ricampiona lato server (sox) i brani sopra MaxSampleRate del player.
 check_lyrion_sox() {
-	local mac maxp top conv n=""
+	local mac rate top conv n=""
 	[ "$(mode)" = completa ] || return 0
 	mac=$(cat "$RUN/player.mac" 2>/dev/null)
 	[ -n "$mac" ] || return 0
+	# La massima del player (HELO MaxSampleRate) e' quella del probe del DAC
+	# o di FREQUENZA_MAX, annotata dal player; Lyrion ricampiona con sox (regola
+	# con capacita' D, TranscodingHelper) i brani che la superano. Si confronta
+	# il brano in riproduzione.
 	top=$(cat "$RUN/frequenza.max" 2>/dev/null)
-	maxp=$(LMS_TIMEOUT=5 lms_get '._p2' "$mac" playerpref maxSampleRate '?')
-	case "$maxp" in ''|*[!0-9]*) maxp="" ;; esac
-	if [ -n "$maxp" ] && [ "$maxp" -gt 0 ] && { [ -z "$top" ] || [ "$maxp" -lt "$top" ]; }; then
-		emit ATTENZIONE "Lyrion ricampiona" "i brani sopra MaxSampleRate ($maxp Hz) li ricampiona il server con sox${top:+, anche se il DAC arriva a $top Hz}: Sweetspot lo allinea al DAC all'avvio del player"
+	rate=$(LMS_TIMEOUT=5 lms_get 'if .mode == "play" then .playlist_loop[0].samplerate else empty end' "$mac" status - 1 tags:T | tr -dc '0-9')
+	if [ -n "$rate" ] && [ -n "$top" ] && [ "$rate" -gt "$top" ]; then
+		emit ATTENZIONE "Lyrion ricampiona" "il brano in riproduzione ($rate Hz) supera la massima dichiarata dal player ($top Hz): Lyrion lo ricampiona lato server con sox prima di Squeezelite; alza FREQUENZA_MAX se il DAC lo permette"
 	fi
 	for conv in ${SWEETSPOT_LMS_CONVERT:-/opt/lms/convert.conf /var/lib/lms/custom-convert.conf}; do
 		[ -r "$conv" ] || continue
@@ -500,7 +503,7 @@ check_lyrion_sox() {
 # ricampionamento: ogni troncamento o conversione va dichiarato.
 check_alterazioni() {
 	if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" != dsp ] && { [ "$(conf FORMATO_USCITA auto)" = 16 ] || dac_solo_16; }; then
-		emit ATTENZIONE "Troncamento a 16 bit" "l'uscita e' a 16 bit: i brani a 24 bit sono troncati senza dither (Squeezelite non ne ha; il dither TPDF c'e' solo con VOLUME=dsp)"
+		emit INFO "Uscita a 16 bit" "i brani a 24 bit si riducono a 16 bit con dither TPDF (rumore di +-1 LSB, patch 0006 di Squeezelite) invece di troncarli: il percorso non e' bit-perfect"
 	fi
 	check_lyrion_sox
 }
@@ -547,16 +550,16 @@ check_player() {
 	elif [ "$vol" = fisso ]; then
 		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
 	elif [ "$vol" = software ]; then
-		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC"
+		emit ATTENZIONE "Volume" "dal software: sotto il 100% non e' bit-perfect; Squeezelite arrotonda con dither TPDF a 16 e 24 bit senza troncare, ma il volume fisso o del DAC resta preferibile"
 		emit INFO "DSD e volume" "con il volume software i file DSD si convertono in PCM: il volume non agisce sul DSD nativo e un DSF suonerebbe al 100% dopo un brano attenuato"
 	elif [ "$vol" = dac ] && [ "$(volume_effettivo)" = fisso ]; then
 		emit ATTENZIONE "Volume" "richiesto del DAC, ma il DAC non ha un controllo del volume: in uso il volume fisso al 100%, regola dall'amplificatore"
 	elif [ "$vol" = dac ] && volume_dac_ripiego; then
-		emit ATTENZIONE "Volume" "richiesto del DAC, ma il controllo hardware non risponde: Squeezelite ripiega sul volume software (tronca i bit bassi senza dither, il DSD si converte in PCM)"
+		emit ATTENZIONE "Volume" "richiesto del DAC, ma il controllo hardware non risponde: Squeezelite ripiega sul volume software (con dither TPDF, il DSD si converte in PCM)"
 	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
 		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati$(volume_dsp_now); non e' bit-perfect, ma senza troncamenti"
 	elif [ "$vol" = dsp ] && [ -f "$RUN/volume.modo" ]; then
-		emit ATTENZIONE "Volume" "a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither"
+		emit ATTENZIONE "Volume" "a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, con dither TPDF di Squeezelite"
 	else
 		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
 	fi

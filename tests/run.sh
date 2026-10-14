@@ -487,8 +487,8 @@ printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nr
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 out=$(page audio 'VOLUME=software')
-case "$out" in *"Non bit-perfect"*"abbassato dal software, che tronca i bit bassi senza dither"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, senza dither" "-" ;; esac
-case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota senza dither" "-" ;; esac
+case "$out" in *"Non bit-perfect"*"abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, dither TPDF" "-" ;; esac
+case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
 case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
 volcheck() { # impostazioni
 	printf '%s\n' "$1" > "$WEB/s.txt"
@@ -497,7 +497,7 @@ volcheck() { # impostazioni
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Volume|'
 }
 expect "stato: volume software e' un avviso" \
-	"ATTENZIONE|Volume|dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC" \
+	"ATTENZIONE|Volume|dal software: sotto il 100% non e' bit-perfect; Squeezelite arrotonda con dither TPDF a 16 e 24 bit senza troncare, ma il volume fisso o del DAC resta preferibile" \
 	"$(volcheck VOLUME=software)"
 expect "stato: volume del DAC resta informativo" \
 	"INFO|Volume|regolabile (dac): sotto il 100% il segnale non e' piu' bit-perfect" "$(volcheck VOLUME=dac)"
@@ -799,10 +799,10 @@ printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezeli
 diag=$(diag_freq)
 case "$diag" in *"ATTENZIONE|Frequenza (zona Zona)|ricampionata (88200 -> 96000 Hz)"*) ok "stato: ricampionamento di una zona dal suo registro" ;; *) ko "stato: registro della zona" "Frequenza (zona Zona)" "$diag" ;; esac
 rm -f "$WEB/squeezelite-Zona.log"
-# Uscita forzata a 16 bit: troncamento senza dither dichiarato.
+# Uscita forzata a 16 bit: riduzione con dither TPDF dichiarata.
 printf 'FORMATO_USCITA=16\n' > "$WEB/run/sweetspot.conf"
 diag=$(diag_freq)
-case "$diag" in *"ATTENZIONE|Troncamento a 16 bit|"*"senza dither"*) ok "stato: troncamento a 16 bit senza dither dichiarato" ;; *) ko "stato: troncamento a 16 bit" "voce Troncamento" "$diag" ;; esac
+case "$diag" in *"INFO|Uscita a 16 bit|"*"dither TPDF"*) ok "stato: uscita a 16 bit con dither TPDF dichiarata" ;; *) ko "stato: uscita a 16 bit" "voce Uscita a 16 bit" "$diag" ;; esac
 rm -f "$WEB/run/sweetspot.conf"
 # Volume del DAC senza controllo, e ripiego sul volume software.
 printf 'VOLUME=dac\n' > "$WEB/run/sweetspot.conf"
@@ -810,16 +810,17 @@ printf 'fisso\n' > "$WEB/run/volume.effettivo"
 diag=$(diag_freq)
 case "$diag" in *"ATTENZIONE|Volume|richiesto del DAC, ma il DAC non ha un controllo del volume"*) ok "stato: VOLUME=dac senza controllo riportato come fisso" ;; *) ko "stato: dac senza controllo" "volume fisso" "$diag" ;; esac
 printf 'hardware\n' > "$WEB/run/volume.effettivo"
-printf '[12:00:00] output:1 unable to open mixer PCM\n' > "$WEB/squeezelite.log"
+printf '[12:00:00] output:1 Initialization of mixer failed, reverting to software volume\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
 case "$diag" in *"ATTENZIONE|Volume|richiesto del DAC, ma il controllo hardware non risponde"*) ok "stato: ripiego sul volume software non piu' detto hardware" ;; *) ko "stato: ripiego del volume" "volume software" "$diag" ;; esac
 rm -f "$WEB/run/sweetspot.conf" "$WEB/run/volume.effettivo" "$WEB/squeezelite.log"
-# Lyrion ricampiona con sox sopra MaxSampleRate: dichiarato dalle preferenze.
+# Lyrion ricampiona con sox i brani sopra la massima del player (HELO MaxSampleRate).
 echo '# [sox] -r commento' > "$WEB/convert.conf"
 printf 'flc pcm * *\n\t[flac] -dcs -- $FILE$ | [sox] -q -t wav - -t raw -r $RATE$ -\n' >> "$WEB/convert.conf"
 diag=$(SWEETSPOT_LMS_CONVERT=$WEB/convert.conf diag_freq)
 case "$diag" in *"INFO|Lyrion e sox|"*) ok "stato: regole sox di convert.conf dichiarate" ;; *) ko "stato: convert.conf" "voce Lyrion e sox" "$diag" ;; esac
-grep -q 'playerpref maxSampleRate' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: MaxSampleRate di Lyrion allineato al DAC" || ko "player: MaxSampleRate" "presente" "assente"
+! grep -q 'playerpref maxSampleRate' "$OVERLAY/usr/bin/sweetspot-player" && grep -q 'frequenza.max' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: niente maxSampleRate (non e' una preferenza di Lyrion), massima annotata per Stato" || ko "player: frequenza massima" "frequenza.max senza playerpref" "-"
+grep -q 'tags:T' "$OVERLAY/usr/bin/sweetspot-check" && ok "stato: Lyrion ricampiona se il brano supera la massima del player" || ko "stato: brano oltre la massima" "confronto con la frequenza del brano" "assente"
 grep -q 'echo pcm > "\$RUN/dsd.volume"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: con il volume software il DSD si converte in PCM" || ko "player: DSD con volume software" "presente" "assente"
 
 # Stato e parametri devono provenire dal medesimo PCM selezionato.
@@ -2310,7 +2311,7 @@ expect "stato: volume a 64 bit in uso" \
 	"$(qcheck Volume)"
 echo riserva > "$Q/run/volume.modo"
 expect "stato: volume a 64 bit non disponibile, riserva software" \
-	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither" \
+	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, con dither TPDF di Squeezelite" \
 	"$(qcheck Volume)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp"
 mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
@@ -2708,6 +2709,7 @@ python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
+python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

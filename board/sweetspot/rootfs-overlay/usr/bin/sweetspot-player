@@ -530,9 +530,10 @@ run_player() {
 	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
 	[ -z "$rs" ] && [ -z "$dsp" ] && set -- "$@" -H
 
-	# Frequenza piu' alta utile (DAC e FREQUENZA_MAX): Lyrion la usa come
-	# MaxSampleRate del player, cosi' non ricampiona lato server (sox) senza
-	# necessita' (vedi apply_player_prefs).
+	# Frequenza massima che il player dichiara a Lyrion (HELO MaxSampleRate,
+	# dal -r di Squeezelite o dal probe del DAC): sopra, Lyrion ricampiona lato
+	# server con sox. Annotata per la pagina Stato (check_lyrion_sox);
+	# MaxSampleRate non e' una preferenza di Lyrion, non si imposta da qui.
 	top=$(dac_rates "$card" 2>/dev/null | tr ' ' '\n' | grep . | sort -n | tail -n 1)
 	if [ "$maxrate" -gt 0 ] && { [ -z "$top" ] || [ "$maxrate" -lt "$top" ]; }; then top=$maxrate; fi
 	rm -f "$RUN/frequenza.max"
@@ -670,12 +671,6 @@ apply_player_prefs() {
 	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref maxBitrate 0 > /dev/null || return 1
-	# MaxSampleRate allineato alle frequenze del DAC: sopra, Lyrion ricampiona
-	# lato server con sox. Senza frequenze note si lascia com'e' (non
-	# imponibile: se la preferenza manca nella versione di Lyrion non e' un errore).
-	sig=$(cat "$RUN/frequenza.max" 2>/dev/null)
-	[ -n "$sig" ] && lms_json "$PLAYER_MAC" playerpref maxSampleRate "$sig" > /dev/null
-	sig="$digital$vol_dsp$LMS_HOST"
 	if [ "$digital" = 0 ] && [ "$vol_dsp" = 0 ]; then
 		lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null || return 1
 	fi
