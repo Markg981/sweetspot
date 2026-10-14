@@ -161,6 +161,7 @@ static const struct chiave CHIAVI[] = {
 	{"SCHEDA_I2S", 'i', 0}, // finisce nella riga di comando del kernel
 	{"NOME_PLAYER", 's', 0}, {"MODALITA", 'w', 0}, {"PROFILO", 'w', 0},
 	{"MODALITA_ASCOLTO", 'w', 0}, {"PRECARICO", 'w', 0}, {"OTTIMIZZAZIONI", 'w', 0},
+	{"RENDERER_UPNP", 'b', 0},
 	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
 	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
 	// Aprono root (login SSH come root o come utente di assistenza): solo con @conferma.

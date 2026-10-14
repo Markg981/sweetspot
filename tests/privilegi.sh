@@ -215,6 +215,11 @@ nameserver 6.6.6.6')"
 		expect "ESCLUDI_DISCHI: caratteri di shell rifiutati" "NIENTE(126)" "$(priv sweetspot-config imposta ESCLUDI_DISCHI 'sda;id')"
 		expect "CONDIVISIONE_n_SMB1: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 'si;id')|$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 forse)"
 		expect "HTTPS: ammesso dalle pagine" "sweetspot-config|imposta|HTTPS|si|HTTPS_REINDIRIZZA|no" "$(priv sweetspot-config imposta HTTPS si HTTPS_REINDIRIZZA no)"
+		expect "RENDERER_UPNP: ammesso dalle pagine (si/no)" "sweetspot-config|imposta|RENDERER_UPNP|si|sweetspot-config|imposta|RENDERER_UPNP|no" \
+			"$(priv sweetspot-config imposta RENDERER_UPNP si)|$(priv sweetspot-config imposta RENDERER_UPNP no)"
+		expect "RENDERER_UPNP: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta RENDERER_UPNP 'si;id')|$(priv sweetspot-config imposta RENDERER_UPNP forse)"
+		expect "RENDERER_UPNP: non e' una chiave protetta (si cambia senza conferma forte)" "sweetspot-config|imposta|RENDERER_UPNP|si|OTTIMIZZAZIONI|si" \
+			"$(priv sweetspot-config imposta RENDERER_UPNP si OTTIMIZZAZIONI si)"
 		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
 		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"
 	fi

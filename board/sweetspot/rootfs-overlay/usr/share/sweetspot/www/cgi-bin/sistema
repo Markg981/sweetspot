@@ -47,6 +47,13 @@ $(option si "Lavori di fondo sospesi mentre la musica suona, brani letti dal dis
 $(option no "Spenta: i lavori di fondo continuano anche durante la musica" "$(listening_choice)")
 </select>
 
+<label for="upnp">Renderer UPnP/DLNA <span>(vale subito)</span></label>
+<select id="upnp" name="renderer_upnp">
+$(option no "Spento" "$(conf RENDERER_UPNP no)")
+$(option si "Acceso: BubbleUPnP, JPlay, mconnect e le altre app UPnP/DLNA vedono Sweetspot come diffusore" "$(conf RENDERER_UPNP no)")
+</select>
+<p class="sub">L'audio passa da Lyrion e dal player, come la musica della libreria: nessun altro programma apre il DAC. Solo con la modalità completa.</p>
+
 <details>
 <summary>Opzioni per esperti</summary>
 <label for="ssh">Accesso SSH</label>

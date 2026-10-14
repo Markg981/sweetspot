@@ -568,6 +568,32 @@ case "$(page sistema)" in *'<option value="puro" selected'*) ok "sistema: ascolt
 case "$(page sistema 'PRECARICO=no')" in *'<option value="si" selected'*) ok "sistema: senza precarico solo lavori sospesi" ;; *) ko "sistema ascolto si" "si selezionato" "-" ;; esac
 case "$(page sistema "$(printf 'MODALITA_ASCOLTO=no\nPRECARICO=si')")" in *'<option value="no" selected'*) ok "sistema: ascolto spento" ;; *) ko "sistema ascolto no" "no selezionato" "-" ;; esac
 
+# Renderer UPnP/DLNA in entrata: spento di serie, acceso dal pannello.
+upnp_action() { # valore-del-campo [impostazione-precedente]
+	local body
+	printf '%s\n' "${2:-}" > "$WEB/run/sweetspot.conf"
+	body="t=$(cat "$WEB/run/web.token")&a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si${1:+&renderer_upnp=$1}"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione" > /dev/null
+	grep -o 'RENDERER_UPNP [a-z]*' "$WEB/run/config.call"
+	rm -f "$WEB/run/sweetspot.conf"
+}
+expect "renderer UPnP: acceso dal pannello" "RENDERER_UPNP si" "$(upnp_action si)"
+expect "renderer UPnP: spento dal pannello" "RENDERER_UPNP no" "$(upnp_action no RENDERER_UPNP=si)"
+expect "renderer UPnP: valore sconosciuto = resta com'e'" "RENDERER_UPNP si" "$(upnp_action xyz RENDERER_UPNP=si)"
+expect "renderer UPnP: campo assente = resta com'e'" "RENDERER_UPNP si" "$(upnp_action '' RENDERER_UPNP=si)"
+expect "renderer UPnP: di serie spento" "no" "$(grep '^RENDERER_UPNP=' "$OVERLAY/etc/sweetspot/defaults.conf" | cut -d= -f2)"
+expect "renderer UPnP: spento anche nel modello di sweetspot.txt" "RENDERER_UPNP=no" "$(grep '^RENDERER_UPNP=' "$ROOT/board/sweetspot/stick/sweetspot.txt")"
+expect "renderer UPnP: chiave ammessa all'helper privilegiato" "1" "$(grep -c '"RENDERER_UPNP"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
+case "$(page sistema)" in *'name="renderer_upnp"'*'<option value="no" selected'*) ok "sistema: renderer UPnP spento di serie" ;; *) ko "sistema renderer" "no selezionato" "-" ;; esac
+# La pagina Sistema (con il selettore del renderer) esce con le intestazioni di sicurezza di web.sh.
+sistema_out=$(page sistema)
+expect "sistema: intestazioni di sicurezza anche con il selettore del renderer" "DENY|nosniff" \
+	"$(printf '%s' "$sistema_out" | sed -n 's/^X-Frame-Options: *//p' | tr -d '\r')|$(printf '%s' "$sistema_out" | sed -n 's/^X-Content-Type-Options: *//p' | tr -d '\r')"
+case "$(page sistema RENDERER_UPNP=si)" in *'name="renderer_upnp"'*'<option value="si" selected'*) ok "sistema: renderer UPnP acceso" ;; *) ko "sistema renderer acceso" "si selezionato" "-" ;; esac
+
 
 echo "Password delle pagine e impostazioni iniziali"
 acc() { # impostazioni
@@ -2153,6 +2179,19 @@ printf '[12:05:00] _output_frames:123 XRUN\n[12:05:01] output_thread:123 XRUN re
 expect "stato: XRUN della sessione" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 1)" "$(livecheck 'XRUN nella sessione')"
 printf 'XRUN\n' > "$DSP/squeezelite.log"
 expect "stato: registro ricominciato, conta tutto" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 0)" "$(livecheck 'XRUN nella sessione')"
+printf 'MODALITA=completa\n' > "$DSP/run/sweetspot.conf"
+expect "stato: renderer UPnP spento di serie" "INFO|Renderer UPnP/DLNA|spento (RENDERER_UPNP=no): acceso dalla pagina Sistema compare in BubbleUPnP, JPlay, mconnect" "$(livecheck 'Renderer UPnP/DLNA')"
+printf 'RENDERER_UPNP=si\n' > "$DSP/run/sweetspot.conf"
+expect "stato: renderer UPnP acceso ma il demone non risponde" "ATTENZIONE|Renderer UPnP/DLNA|stato non disponibile: il demone non risponde" "$(livecheck 'Renderer UPnP/DLNA')"
+printf '{"stato":"attivo","nome":"Salotto","porta":49494,"abbonati":2,"dettaglio":""}\n' > "$DSP/run/renderer.json"
+expect "stato: renderer UPnP attivo" "OK|Renderer UPnP/DLNA|acceso come \"Salotto\" (porta 49494, 2 app collegate): l'audio passa da Lyrion e dal player" "$(livecheck 'Renderer UPnP/DLNA')"
+printf '{"stato":"attesa","nome":"Salotto","porta":49494,"abbonati":0,"dettaglio":"Lyrion non risponde"}\n' > "$DSP/run/renderer.json"
+expect "stato: renderer UPnP in attesa di Lyrion" "ATTENZIONE|Renderer UPnP/DLNA|acceso ma non utilizzabile: Lyrion non risponde" "$(livecheck 'Renderer UPnP/DLNA')"
+printf '{"stato":"errore","nome":"Salotto","porta":49494,"dettaglio":"porta 49494 occupata"}\n' > "$DSP/run/renderer.json"
+expect "stato: renderer UPnP con la porta occupata" "ATTENZIONE|Renderer UPnP/DLNA|non parte: porta 49494 occupata" "$(livecheck 'Renderer UPnP/DLNA')"
+printf 'RENDERER_UPNP=si\nMODALITA=player\n' > "$DSP/run/sweetspot.conf"
+expect "stato: renderer UPnP in modalita' solo player" "ATTENZIONE|Renderer UPnP/DLNA|serve Lyrion su questo Sweetspot: non funziona in modalità solo player" "$(livecheck 'Renderer UPnP/DLNA')"
+rm -f "$DSP/run/sweetspot.conf" "$DSP/run/renderer.json"
 expect "stato: nessuna interruzione di dispositivi" "OK|Interruzioni sul core audio|nessuna da dispositivi in 2 minuti sul core 3" \
 	"$(livecheck 'Interruzioni sul core audio')"
 irqs 2 7600 12700 > "$DSP/proc/interrupts"
@@ -2824,6 +2863,26 @@ expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
 	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
 expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"
 
+echo "Renderer UPnP/DLNA"
+RPL=$OVERLAY/usr/lib/sweetspot/renderer.pl
+INIT=$OVERLAY/etc/init.d/S70sweetspot-renderer
+expect "renderer: l'audio passa da Lyrion (playlist play), non apre il DAC" "1|0" \
+	"$(grep -c "'playlist', 'play'" "$RPL")|$(grep -c 'hw:\|/dev/snd\|aplay' "$RPL")"
+expect "renderer: avviato dall'init, in coda a Lyrion e al supervisore" "si|si" \
+	"$([ -x "$INIT" ] && echo si || echo no)|$(grep -q 'renderer.pl' "$INIT" && echo si || echo no)"
+expect "renderer: l'init gira sui core di sistema con nice" "1" "$(grep -c 'taskset.*nice -n' "$INIT")"
+if command -v perl >/dev/null; then
+	if out=$(perl -c "$RPL" 2>&1); then ok "renderer: perl -c"; else ko "renderer perl -c" "Syntax OK" "$out"; fi
+	if command -v python3 >/dev/null; then
+		if out=$(python3 "$ROOT/tests/renderer-upnp.py" 2>&1); then
+			ok "renderer: SSDP, descrittore, SOAP, eventi, comandi a Lyrion"
+		else
+			ko "renderer UPnP" "tutte le prove superate" "$(printf '%s' "$out" | grep -v '^  ok' | tail -n 15)"
+		fi
+	fi
+else
+	echo "  (perl non installato, saltato)"
+fi
 echo "Cartelle di rete: SMB 2.1 o piu', hard, NFS"
 RV=$WORK/retever
 mkdir -p "$RV/bin" "$RV/run" "$RV/proc" "$RV/media" "$RV/musica"

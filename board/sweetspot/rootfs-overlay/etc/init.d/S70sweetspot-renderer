@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - renderer UPnP/DLNA in entrata (BubbleUPnP, JPlay, mconnect).
+# Il demone parte sempre e resta in attesa: si accende e si spegne da solo
+# quando RENDERER_UPNP cambia (pagina Sistema). L'audio passa da Lyrion.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+PIDFILE=$RUN/renderer.pid
+
+case "$1" in
+	start)
+		mkdir -p "$RUN"
+		cpu_layout
+		hk=$(join_list "$LAYOUT_HK")
+		[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
+		# Core di sistema e priorita' minima: mai sui core dell'audio.
+		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/taskset -- -c "$hk" nice -n 10 /usr/bin/perl /usr/lib/sweetspot/renderer.pl
+		;;
+	stop)
+		# TERM: il demone annuncia l'uscita (ssdp:byebye) e si ferma.
+		start-stop-daemon -K -s TERM -p "$PIDFILE" 2>/dev/null
+		rm -f "$PIDFILE"
+		;;
+	restart) "$0" stop; sleep 1; "$0" start ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac

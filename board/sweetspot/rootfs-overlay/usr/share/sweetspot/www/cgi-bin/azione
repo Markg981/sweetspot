@@ -445,6 +445,8 @@ case "$F_a" in
 		esac
 		case "$F_ssh" in si|no) ;; *) F_ssh=no ;; esac
 		case "$F_ottimizzazioni" in si|no) ;; *) F_ottimizzazioni=si ;; esac
+		# Renderer UPnP/DLNA: il demone legge l'impostazione e si accende o si spegne da solo.
+		case "$F_renderer_upnp" in si|no) ;; *) F_renderer_upnp=$(conf RENDERER_UPNP no) ;; esac
 		case "$F_server" in *[!A-Za-z0-9.:_-]*) done_to sistema "Indirizzo del server non valido." ;; esac
 		valid_value "$F_ssh_password" || done_to sistema "Password non valida."
 		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=$(lower "$(conf SSH_UTENTE root)") ;; esac
@@ -474,7 +476,7 @@ case "$F_a" in
 		old_mode=$(mode)
 		old_name=$(conf NOME_PLAYER Sweetspot)
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
-			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
+			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" RENDERER_UPNP "$F_renderer_upnp" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
 		# Password delle pagine: si salva solo l'impronta MD5-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
 		if [ -n "$F_web_password" ]; then
