@@ -90,6 +90,17 @@ printf 'Device AA:BB:CC:DD:EE:01 Telefono di Anna\nDevice AA:BB:CC:DD:EE:02 Pixe
 printf 'Device AA:BB:CC:DD:EE:02 Pixel\n' > "$BTDIR/connected"
 : > "$BTDIR/adattatore"
 
+# Con BusyBox le applet (taskset, killall, modprobe, start-stop-daemon, pidof)
+# passano davanti al PATH: funzioni che richiamano i programmi finti.
+# (Senza BusyBox la shell di sistema non accetta il trattino nei nomi di
+# funzione, ma li' le applet non ci sono e basta il PATH.)
+: > "$T/shim.sh"
+if [ -n "$BB" ]; then
+	for p in taskset start-stop-daemon killall modprobe pidof bluetoothctl dbus-send dbus-uuidgen dbus-daemon bluealsa-aplay; do
+		printf '%s() { "%s/bin/%s" "$@"; }\n' "$p" "$T" "$p"
+	done > "$T/shim.sh"
+fi
+
 # Configurazione della prova: predefiniti + righe date (l'ultima vince, come
 # config_build, senza lanciare un processo per ogni riga).
 mkconf() { # righe
@@ -104,7 +115,7 @@ bt() {
 	SWEETSPOT_TEST=1 SWEETSPOT_SYSFS=$T/sys SWEETSPOT_PROCFS=$T/proc SWEETSPOT_RUN=$T/run \
 		SWEETSPOT_LOG=$T/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		SWEETSPOT_PATH="$T/bin" SWEETSPOT_BT_LIB=$T/lib SWEETSPOT_BT_SONDA=0 \
-		$SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $BT_SCRIPT; $*"
+		$SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $BT_SCRIPT; . $T/shim.sh; $*"
 }
 
 echo "Bluetooth: bluetoothd e nome"
