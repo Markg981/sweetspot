@@ -427,7 +427,7 @@ expect "volume dac senza mixer: modalita' effettiva fissa, senza -V" 'fisso|0' \
 	"$(cat "$E/run/volume.effettivo")|$(grep -c -- ' -V ' "$E/run/player.args")"
 player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
 expect "volume dac senza mixer: Lyrion a volume fisso" 'playerpref digitalVolumeControl 0|1' \
-	"$(grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+	"$(grep "digitalVolumeControl [01]$" "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 expect "volume dac senza mixer: il web legge la modalita' effettiva" fisso "$(common 'volume_effettivo')"
 echo hardware > "$E/run/volume.effettivo"
 expect "modalita' effettiva hardware letta dal file di stato" hardware "$(common 'volume_effettivo')"
