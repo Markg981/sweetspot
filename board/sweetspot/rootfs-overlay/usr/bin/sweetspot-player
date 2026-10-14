@@ -500,9 +500,11 @@ run_player() {
 	else
 		set -- -o "hw:CARD=$id,DEV=$dev" -a "$alsa:$periods:$outfmt:1"
 	fi
+	# decode=info: resample.c scrive "resampling from X -> Y" con il livello di
+	# decode, che la pagina Stato usa per segnalare il ricampionamento.
 	set -- "$@" -n "$name" -M Sweetspot -m "$PLAYER_MAC" \
 		-b "$(PLAYER_BUFFERS_LOG=1 player_buffers)" -C 30 -p "$prio" \
-		-d output=info -f "$SQLOG"
+		-d output=info -d decode=info -f "$SQLOG"
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	if [ "$maxrate" -gt 0 ]; then
 		set -- "$@" -r "$maxrate:$rate_ms"
@@ -511,6 +513,17 @@ run_player() {
 	fi
 	rs=$(resample_args)
 	[ -n "$rs" ] && set -- "$@" -R "$rs"
+	# Ricampiona solo se il DAC non puo' (flag E di Squeezelite): le frequenze
+	# supportate restano bit-perfect, le altre vanno a una che il DAC accetta
+	# invece di bloccarsi con -H. FREQUENZA_NON_SUPPORTATA=blocca mantiene il
+	# rifiuto stretto (la pagina Stato mostra lo stallo).
+	if [ -z "$rs" ] && [ -z "$dsp" ]; then
+		if [ "$(lower "$(conf FREQUENZA_NON_SUPPORTATA ricampiona)")" = blocca ]; then
+			log "player: frequenza non supportata dal DAC: rifiuto stretto (FREQUENZA_NON_SUPPORTATA=blocca)"
+		else
+			set -- "$@" -R "vLE"
+		fi
+	fi
 	# Originale (niente ricampionamento, uscita diretta hw:): Squeezelite non
 	# deve ripiegare su plughw: se il DAC rifiuta la frequenza, altrimenti ALSA
 	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
