@@ -203,6 +203,7 @@ check_dac() {
 		dop) emit INFO "DSD" "tramite DoP" ;;
 		*) emit INFO "DSD" "convertito in PCM da Squeezelite" ;;
 	esac
+	emit INFO "Margine DSD → PCM" "$(dsd_margine_db) dB (DSD_PCM_MARGINE_DB): spazio per i DSD che superano 0 dBFS fino a +3 dB; vale solo quando il DSD è convertito in PCM"
 	if [ -f "$RUN/dac.controller" ]; then
 		bdf=$(cut -d' ' -f1 "$RUN/dac.controller")
 		irqs=$(cut -d' ' -f2- "$RUN/dac.controller")

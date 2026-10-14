@@ -681,6 +681,21 @@ rm -f "$WEB/run/config.call"
 out=$(web_action "a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=R26;reboot&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500")
 case "$out" in *"Location: /cgi-bin/audio?msg=%44%41%43%20%70%72%69%6e%63%69%70%61%6c%65%20%6e%6f%6e%20%76%61%6c%69%64%6f"*) ok "audio: DAC principale non valido rifiutato" ;; *) ko "audio DAC non valido" "rifiutato (DAC principale non valido)" "$out" ;; esac
 expect "audio: DAC non valido, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
+# Margine DSD -> PCM: salvato (anche con la virgola), mancante = quello in uso, non valido rifiutato.
+AUDIO_BASE="a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=auto&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500"
+rm -f "$WEB/run/config.call"
+web_action "$AUDIO_BASE&dsd_margine=-1,5" > /dev/null
+case "$(cat "$WEB/run/config.call")" in *"DSD_PCM_MARGINE_DB -1.5 "*) ok "audio: margine DSD salvato (virgola accettata)" ;; *) ko "audio margine DSD salvato" "DSD_PCM_MARGINE_DB -1.5" "$(cat "$WEB/run/config.call")" ;; esac
+rm -f "$WEB/run/config.call"
+web_action "$AUDIO_BASE" > /dev/null
+case "$(cat "$WEB/run/config.call")" in *"DSD_PCM_MARGINE_DB -3 "*) ok "audio: margine DSD mancante, resta quello in uso" ;; *) ko "audio margine DSD mancante" "DSD_PCM_MARGINE_DB -3" "$(cat "$WEB/run/config.call")" ;; esac
+for v in 2 1 -25 -3.55 abc; do
+	rm -f "$WEB/run/config.call"
+	out=$(web_action "$AUDIO_BASE&dsd_margine=$v")
+	case "$out" in *"Location: /cgi-bin/audio?msg="*) ;; *) ko "audio margine DSD $v" "torna a audio" "$out" ;; esac
+	expect "audio: margine DSD $v rifiutato, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
+done
+rm -f "$WEB/run/config.call"
 rm -f "$WEB/run/config.call"
 web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
 expect "sistema: si salva l'impronta, non la password" '1|0' \
@@ -746,6 +761,20 @@ case "$out" in *"<h2>Prova DoP</h2>"*"Avvia la prova (6 secondi)"*) ok "audio: p
 case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la prova" "nessun esito" "esito presente" ;; *) ok "audio: esito chiesto solo dopo la prova" ;; esac
 case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
 case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP scelto segnalato" ;; *) ko "audio DoP scelto" "Tramite DoP" "-" ;; esac
+# Margine del DSD convertito in PCM (DSD_PCM_MARGINE_DB): -3 di serie, da -24 a 0.
+case "$out" in *"-3 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-3"'*) ok "audio: margine DSD -3 dB di serie, in campo e in riga" ;; *) ko "audio margine DSD" "-3 dB di serie" "-" ;; esac
+case "$(page audio 'DSD_PCM_MARGINE_DB=-6')" in *"-6 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-6"'*) ok "audio: margine DSD scelto mostrato" ;; *) ko "audio margine DSD scelto" "-6 dB" "-" ;; esac
+case "$(page audio 'DSD_PCM_MARGINE_DB=5')" in *"-3 dB nella conversione del DSD in PCM"*'value="-3"'*) ok "audio: margine DSD positivo ignorato" ;; *) ko "audio margine DSD positivo" "-3 dB" "-" ;; esac
+for v in 0 0.0 -0.5 -3 -12 -23.9 -24; do
+	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
+	expect "margine DSD $v valido" "$v" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
+done
+for v in 1 3 -24.1 -25 -3.55 abc -3x -; do
+	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
+	expect "margine DSD $v non valido: predefinito" "-3" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
+done
+printf '' > "$WEB/s.txt"
+grep -q 'SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: il margine DSD arriva a Squeezelite" || ko "player margine DSD" "variabile d'ambiente" "assente"
 cat > "$WEB/actionbin/sweetspot-prova-dop" <<'FINTO'
 #!/bin/sh
 printf '%s\n' "$*" > "$SWEETSPOT_RUN/prova-dop.call"
@@ -839,6 +868,7 @@ audio_params "$PCM/sub0" 48000
 printf 'state: RUNNING\n' > "$PCM/sub0/status"
 audio_params "$WEB/proc/asound/card1/pcm0p/sub0" 192000
 out=$(page audio); diag=$(check_page_diag)
+case "$diag" in *"INFO|Margine DSD → PCM|-3 dB (DSD_PCM_MARGINE_DB)"*) ok "stato: margine DSD → PCM mostrato" ;; *) ko "stato margine DSD" "Margine DSD → PCM|-3 dB" "$(printf '%s' "$diag" | head -n 8)" ;; esac
 case "$out" in *'Buffer ALSA'*'DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "audio: buffer del PCM selezionato" ;; *) ko "audio buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
 case "$diag" in *'Buffer ALSA|DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "diagnostica: buffer del PCM selezionato" ;; *) ko "diagnostica buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
 case "$out" in *'Uscita in corso'*'DEV=1/sub0'*'S32_LE, 48000 Hz, 2 canali'*) ok "audio: PCM selezionato, decoy ignorato" ;; *) ko "audio PCM selezionato" "DEV=1/sub0 48000" "-" ;; esac

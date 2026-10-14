@@ -652,6 +652,262 @@ def compare_dop_capture(references: list[Path], capture: Path, *, capture_format
             "capture": _public_info(captured)}
 
 
+DSD_TONE_LEVEL = 0.35          # ampiezza del tono principale, frazione del fondo scala DSD
+DSD_ALIAS_LEVEL = 0.10         # ampiezza del tono ultrasonico che non deve ripiegare
+DSD_ALIAS_HZ = 117600          # DSD64 / 24 e DSD128 / 48 campioni: periodo intero
+DSD_TONE_PERIODS = (2800, 1400)  # campioni per periodo del tono di sinistra e di destra
+DSD_TONE_SECONDS = 0.75
+
+
+def dsd_tone_spec(dsd_rate, pcm_rate):
+    """Tono (e tono ultrasonico) dei due canali del DSD di prova, e dove ripiegherebbe."""
+    _integer(dsd_rate, "dsd_rate", 1)
+    _integer(pcm_rate, "pcm_rate", 1)
+    if dsd_rate % DSD_ALIAS_HZ or any(dsd_rate % period for period in DSD_TONE_PERIODS):
+        raise ValueError("DSD rate has no whole period for the test tones")
+    alias = abs(DSD_ALIAS_HZ - round(DSD_ALIAS_HZ / pcm_rate) * pcm_rate)
+    return {"dsd_rate": dsd_rate, "pcm_rate": pcm_rate, "level": DSD_TONE_LEVEL,
+            "tone_hz": [dsd_rate // period for period in DSD_TONE_PERIODS],
+            "ultrasonic_hz": DSD_ALIAS_HZ, "ultrasonic_level": DSD_ALIAS_LEVEL,
+            "alias_hz": alias}
+
+
+def _dsd_modulate(dsd_rate, period, count):
+    """Modulatore delta-sigma del secondo ordine: tono + tono ultrasonico -> 1 bit per campione."""
+    from math import gcd, pi, sin
+    ultra = dsd_rate // DSD_ALIAS_HZ
+    length = period * ultra // gcd(period, ultra)
+    table = [DSD_TONE_LEVEL * sin(2 * pi * index / period)
+             + DSD_ALIAS_LEVEL * sin(2 * pi * index / ultra) for index in range(length)]
+    bits = bytearray(count)
+    v1 = v2 = 0.0
+    y = 1.0
+    position = 0
+    for index in range(count):
+        v1 += table[position] - y
+        v2 += v1 - y
+        position += 1
+        if position == length:
+            position = 0
+        if v2 >= 0.0:
+            y = 1.0
+            bits[index] = 1
+        else:
+            y = -1.0
+    return bits
+
+
+def _dsd_pack(bits, lsb_first):
+    groups = [bits[offset::8] for offset in range(8)]
+    if lsb_first:
+        groups.reverse()
+    return bytes(a << 7 | b << 6 | c << 5 | d << 4 | e << 3 | f << 2 | g << 1 | h
+                 for a, b, c, d, e, f, g, h in zip(*groups))
+
+
+def generate_dsd_tone_fixtures(directory: Path, dsd_rate: int, *, container: str,
+                               pcm_rate: int, seconds: float = DSD_TONE_SECONDS):
+    """Two identical stereo DSF or DFF tracks with real tones, for the DSD to PCM check.
+
+    Left and right carry different tones, each with a strong ultrasonic tone
+    which the PCM conversion must remove instead of folding it into the band.
+    Returns (sources, spec); spec comes from dsd_tone_spec.
+    """
+    if container not in ("dsf", "dff"):
+        raise ValueError("DSD container must be dsf or dff")
+    spec = dsd_tone_spec(dsd_rate, pcm_rate)
+    count = int(dsd_rate * seconds) // 8 * 8
+    channels = [_dsd_modulate(dsd_rate, period, count) for period in DSD_TONE_PERIODS]
+    nbytes = count // 8
+    if container == "dsf":
+        # LSB first, one 4096 byte block per channel in turn.
+        data = [_dsd_pack(bits, True) for bits in channels]
+        blocks = (nbytes + 4095) // 4096
+        payload = bytearray()
+        for block in range(blocks):
+            for channel in data:
+                piece = channel[block * 4096:(block + 1) * 4096]
+                payload += piece + b"\x69" * (4096 - len(piece))
+        payload_size = blocks * 8192
+        header = (struct.pack("<4sQQQ", b"DSD ", 28, 92 + payload_size, 0)
+                  + struct.pack("<4sQIIIIIIQII", b"fmt ", 52, 1, 0, 2, 2,
+                                dsd_rate, 1, count, 4096, 0)
+                  + struct.pack("<4sQ", b"data", 12 + payload_size))
+    else:
+        # MSB first, one byte per channel in turn.
+        data = [_dsd_pack(bits, False) for bits in channels]
+        payload = bytearray(2 * nbytes)
+        payload[0::2] = data[0]
+        payload[1::2] = data[1]
+
+        def chunk(name, body):
+            return struct.pack(">4sQ", name, len(body)) + body + b"\0" * (len(body) & 1)
+
+        properties = (b"SND " + chunk(b"FS  ", struct.pack(">I", dsd_rate))
+                      + chunk(b"CHNL", b"\0\x02SLFTSRGT")
+                      + chunk(b"CMPR", b"DSD \x0enot compressed"))
+        prefix = b"DSD " + chunk(b"FVER", b"\x01\x05\0\0") + chunk(b"PROP", properties)
+        header = (struct.pack(">4sQ", b"FRM8", len(prefix) + 12 + len(payload))
+                  + prefix + struct.pack(">4sQ", b"DSD ", len(payload)))
+    directory = Path(directory)
+    sources = []
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        for track in (1, 2):
+            path = directory / f"dsdtone-{dsd_rate}-track-{track}.{container}"
+            path.write_bytes(header + bytes(payload))
+            sources.append(path)
+    except OSError as error:
+        raise ValueError(f"Cannot generate DSD tone fixtures: {error}") from error
+    return sources, spec
+
+
+def _fft(real, imag):
+    """In-place iterative radix-2 FFT of two equal-length lists (length a power of two)."""
+    from math import cos, pi, sin
+    size = len(real)
+    j = 0
+    for i in range(1, size):
+        bit = size >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j |= bit
+        if i < j:
+            real[i], real[j] = real[j], real[i]
+            imag[i], imag[j] = imag[j], imag[i]
+    length = 2
+    while length <= size:
+        half = length >> 1
+        wr = [cos(-2 * pi * k / length) for k in range(half)]
+        wi = [sin(-2 * pi * k / length) for k in range(half)]
+        for start in range(0, size, length):
+            for k in range(half):
+                a = start + k
+                b = a + half
+                tr = real[b] * wr[k] - imag[b] * wi[k]
+                ti = real[b] * wi[k] + imag[b] * wr[k]
+                real[b] = real[a] - tr
+                imag[b] = imag[a] - ti
+                real[a] += tr
+                imag[a] += ti
+        length <<= 1
+
+
+def dsd_pcm_spectra(left, right):
+    """Hann windowed power spectra (bins 0..N/2) of two channels with one complex FFT."""
+    from math import cos, pi
+    size = len(left)
+    window = [0.5 - 0.5 * cos(2 * pi * index / size) for index in range(size)]
+    real = [value * w for value, w in zip(left, window)]
+    imag = [value * w for value, w in zip(right, window)]
+    _fft(real, imag)
+    power = [[], []]
+    for k in range(size // 2 + 1):
+        m = (size - k) % size
+        l_re, l_im = (real[k] + real[m]) / 2, (imag[k] - imag[m]) / 2
+        r_re, r_im = (imag[k] + imag[m]) / 2, (real[m] - real[k]) / 2
+        power[0].append(l_re * l_re + l_im * l_im)
+        power[1].append(r_re * r_re + r_im * r_im)
+    return power, sum(w * w for w in window)
+
+
+def _median(values):
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+def analyze_dsd_pcm_channel(power, window_energy, size, rate, tone_hz, other_hz, spec, margin_db):
+    """Measure one channel: tone level, SNR in the band, ultrasonic tone folded or not, other channel."""
+    from math import log10, sqrt
+    bin_hz = rate / size
+
+    def amplitude(center_hz, half=3):
+        k = round(center_hz / bin_hz)
+        total = sum(power[max(1, k - half):k + half + 1])
+        return sqrt(4 * total / (size * window_energy))
+
+    tone = amplitude(tone_hz)
+    expected = spec["level"] * 10 ** (margin_db / 20) * 2147483648.0
+    k_tone = round(tone_hz / bin_hz)
+    band = sum(power[bin_] for bin_ in range(max(1, round(40 / bin_hz)), round(20000 / bin_hz))
+               if abs(bin_ - k_tone) > 12)
+    noise = 2 * band / (size * window_energy)
+    k_alias = round(spec["alias_hz"] / bin_hz)
+    neighbours = [power[bin_] for bin_ in range(k_alias - 200, k_alias + 201) if abs(bin_ - k_alias) > 8]
+    floor = _median(neighbours) / 0.693
+    peak = sum(power[k_alias - 3:k_alias + 4])
+    alias = amplitude(spec["alias_hz"])
+    return {"tone_hz": tone_hz, "amplitude": tone, "expected_amplitude": expected,
+            "level_db": 20 * log10(tone / expected) if tone > 0 else None,
+            "snr_db": 10 * log10((tone * tone / 2) / noise) if noise > 0 and tone > 0 else None,
+            "alias_hz": spec["alias_hz"], "alias_db": 20 * log10(alias / tone) if alias > 0 and tone > 0 else None,
+            "alias_over_floor_db": 10 * log10(peak / (7 * floor)) if peak > 0 and floor > 0 else None,
+            "other_channel_db": 20 * log10(max(amplitude(other_hz), 1e-30) / tone) if tone > 0 else None}
+
+
+def analyze_dsd_pcm_capture(capture: Path, *, capture_format: str, rate: int, spec: dict,
+                            margin_db: float, size: int = 65536, skip_seconds: float = 0.1,
+                            lead_threshold: float = 1e-3) -> dict:
+    """Check a DSD to PCM capture: tone level with the margin, no folded tone, low noise.
+
+    Looks for the first sample above the threshold, skips the filter's start,
+    and analyses `size` frames. Reports every measure; "status" is "pass" when
+    the tone is within 0.5 dB of the expected level, the ultrasonic tone has
+    not folded (60 dB under the tone and no peak over the noise floor), the
+    in band signal to noise ratio is at least 60 dB, the other channel's tone
+    is 60 dB down, and no frame clips.
+    """
+    info = _raw_info(capture, capture_format, rate)
+    result = {"status": "fail", "rate": rate, "size": size, "margin_db": margin_db, "spec": spec,
+              "frames": info["frames"]}
+    full_scale = 2147483648.0
+    skip = int(rate * skip_seconds)
+    left, right = [], []
+    first = None
+    peak = 0
+    for index, (a, b) in enumerate(_frames(info)):
+        if first is None:
+            if abs(a) < lead_threshold * full_scale and abs(b) < lead_threshold * full_scale:
+                continue
+            first = index
+        peak = max(peak, abs(a), abs(b))
+        if index - first >= skip:
+            left.append(float(a))
+            right.append(float(b))
+            if len(left) == size:
+                break
+    result["first_frame"] = first
+    if first is None or len(left) < size:
+        result["reason"] = "capture does not hold %d frames of signal" % size
+        return result
+    result["peak"] = peak / full_scale
+    power, window_energy = dsd_pcm_spectra(left, right)
+    channels = []
+    for own, other in ((0, 1), (1, 0)):
+        channels.append(analyze_dsd_pcm_channel(power[own], window_energy, size, rate, spec["tone_hz"][own],
+                                                spec["tone_hz"][other], spec, margin_db))
+    result["channels"] = channels
+    problems = []
+    if result["peak"] >= 0.999:
+        problems.append("clipping")
+    for name, channel in zip(("left", "right"), channels):
+        if channel["level_db"] is None or abs(channel["level_db"]) > 0.5:
+            problems.append("%s tone level %s dB from expected" % (name, channel["level_db"]))
+        if channel["snr_db"] is None or channel["snr_db"] < 60:
+            problems.append("%s in-band SNR %s dB" % (name, channel["snr_db"]))
+        if channel["alias_db"] is None or channel["alias_db"] > -60:
+            problems.append("%s folded ultrasonic tone at %s dB" % (name, channel["alias_db"]))
+        if channel["alias_over_floor_db"] is None or channel["alias_over_floor_db"] > 12:
+            problems.append("%s peak at %s Hz %s dB over the noise" % (name, channel["alias_hz"],
+                                                                         channel["alias_over_floor_db"]))
+        if channel["other_channel_db"] is None or channel["other_channel_db"] > -60:
+            problems.append("%s carries the other channel's tone at %s dB" % (name, channel["other_channel_db"]))
+    result["problems"] = problems
+    result["status"] = "pass" if not problems else "fail"
+    return result
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError(message)

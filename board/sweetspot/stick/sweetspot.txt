@@ -88,6 +88,12 @@ VOLUME=fisso
 #            un forte fruscio!
 #   no     = il DSD viene sempre convertito in PCM
 DSD=auto
+# Margine (dB) quando Squeezelite converte il DSD in PCM: da -24 a 0, di serie -3.
+# I DSD "over" superano 0 dBFS fino a +3 dB (il 50% di modulazione oltre lo
+# standard): senza margine la conversione li taglierebbe. Il prezzo e' che tutto
+# il DSD convertito suona 3 dB piu' piano (il volume del DAC lo compensa).
+# 0 = nessun margine, solo se i tuoi file non superano 0 dBFS.
+DSD_PCM_MARGINE_DB=-3
 
 # Ricampionamento (cambia il segnale, quindi di serie e' spento):
 #   no        = ogni brano alla sua frequenza originale (bit-perfect)

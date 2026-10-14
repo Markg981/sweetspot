@@ -73,6 +73,12 @@ else
 			if [ -f "$WORK/chiamata" ]; then cat "$WORK/chiamata"; else echo "NIENTE($rc)"; fi
 		}
 		expect "config imposta ammesso" "sweetspot-config|imposta|VOLUME|fisso|DSD|dop" "$(priv sweetspot-config imposta VOLUME fisso DSD dop)"
+		for m in 0 0.0 -0 -3 -1.5 -12 -23.9 -24 -24.0; do
+			expect "config margine DSD $m ammesso" "sweetspot-config|imposta|DSD_PCM_MARGINE_DB|$m" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
+		done
+		for m in 1 +1 3 -24.1 -25 -100 -3.55 -3. .5 -.5 -3x 1e1 "-3 " "- 3" abc "-3;reboot" '$(id)' --3 0x1; do
+			expect "config margine DSD '$m' rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
+		done
 		expect "config chiave minuscola non ammessa" "NIENTE(126)" "$(priv sweetspot-config imposta volume fisso)"
 		expect "config valore vuoto ammesso" "sweetspot-config|imposta|DNS|" "$(priv sweetspot-config imposta DNS '')"
 		expect "config condivisione 3 con utente e password" "sweetspot-config|imposta|CONDIVISIONE_3_UTENTE|u|CONDIVISIONE_3_PASSWORD|p" \
