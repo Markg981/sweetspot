@@ -17,6 +17,10 @@ dtoverlay=disable-bt
 dtoverlay=disable-bt-pi5
 [all]
 
+# Regione di memoria riservata per ramoops/pstore: il log del panic e la
+# console sopravvivono al riavvio (sweetspot-diario li copia sulla chiavetta).
+dtoverlay=ramoops
+
 # Uscita audio integrata (jack e HDMI) spenta: il suono va solo al DAC.
 dtparam=audio=off
 # Nessuna ricerca di fotocamere e schermi DSI, nessuna schermata iniziale.

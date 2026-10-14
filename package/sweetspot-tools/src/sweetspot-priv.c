@@ -86,6 +86,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-copia", "elimina", "s", ""},
 	{"sweetspot-copia", "sorgente", "s", ""},
 	{"sweetspot-copia", "stato", "", ""},
+	{"sweetspot-diario", "bundle", "", ""}, // tar.gz diagnostico sull'uscita standard
 	{"sweetspot-dischi", "archivio", "", ""},
 	{"sweetspot-dischi", "monta", "", ""},
 	{"sweetspot-dischi", "smonta", "s", ""},
