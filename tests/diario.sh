@@ -206,8 +206,9 @@ expect "con la password e senza sessione: rimanda all'accesso, nessun bundle" "S
 cgi "" > "$WORK/cgi.out"
 expect "senza password: scarica un tar.gz con il nome e il tipo giusti" "1|1" \
 	"$(head -c 400 "$WORK/cgi.out" | tr -d '\r' | grep -c '^Content-Disposition: attachment; filename="sweetspot-diagnostica-.*\.tar\.gz"')|$(head -c 400 "$WORK/cgi.out" | tr -d '\r' | grep -c '^Content-Type: application/gzip')"
-hdr=$(LC_ALL=C grep -abo 'Cache-Control: no-store' "$WORK/cgi.out" | head -n 1 | cut -d: -f1)
-tail -c +$((hdr + 23 + 4 + 1)) "$WORK/cgi.out" > "$WORK/cgi.body"
+# Il corpo comincia dopo la prima riga vuota (\r\n\r\n o \n\n), qualunque
+# siano le intestazioni che la precedono.
+python3 -I -c 'import sys; d = open(sys.argv[1], "rb").read(); i = [(d.find(s), len(s)) for s in (b"\r\n\r\n", b"\n\n") if d.find(s) >= 0]; p, n = min(i); open(sys.argv[2], "wb").write(d[p + n:])' "$WORK/cgi.out" "$WORK/cgi.body"
 expect "il corpo della risposta e' il bundle" "0" "$(tar -tzf "$WORK/cgi.body" > /dev/null 2>&1; echo $?)"
 
 echo

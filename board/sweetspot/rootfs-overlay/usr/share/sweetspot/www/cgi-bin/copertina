@@ -1,13 +1,17 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Sweetspot - copertina del CD nel lettore.
+# Sweetspot - copertina del CD nel lettore. Senza sessione (web.sh) o senza
+# copertina risponde con un segnaposto: e' un'immagine, un errore HTTP la
+# farebbe vedere rotta.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 f=$RUN/cd/copertina.jpg
 if [ -f "$f" ]; then
-	printf 'Content-Type: image/jpeg\r\nCache-Control: no-store\r\n\r\n'
+	printf 'Content-Type: image/jpeg\r\nCache-Control: no-store\r\n'
+	sec_headers
+	printf '\r\n'
 	cat "$f"
 else
-	printf 'Status: 404 Not Found\r\nContent-Type: text/plain\r\n\r\nnessuna copertina\n'
+	cover_placeholder
 fi
