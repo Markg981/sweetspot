@@ -144,7 +144,7 @@ static const struct regola REGOLE[] = {
 //  q  identita' di un disco (UUID=..., PARTUUID=...)
 //  l  elenco di nomi di dischi separati da virgole
 //  b  si oppure no
-//  m  margine in dB: da -24 a 0, al massimo un decimale (0, -3, -1.5)
+//  g  guadagno in dB (margine): da -24 a 0, al massimo un decimale (0, -3, -1.5)
 struct chiave {
 	const char *nome;
 	char valore;
@@ -152,7 +152,7 @@ struct chiave {
 };
 
 static const struct chiave CHIAVI[] = {
-	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"DSD_PCM_MARGINE_DB", 'm', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
+	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"DSD_PCM_MARGINE_DB", 'g', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
 	{"FREQUENZA_MAX", 'd', 0}, {"BUFFER_ALSA_MS", 'd', 0}, {"PERIODI_ALSA", 'd', 0},
 	{"PAUSA_FREQUENZA_MS", 'd', 0}, {"PAUSA_DSD_MS", 'd', 0}, {"ALTRI_DAC", 'w', 0},
 	{"DAC", 'w', 0}, {"ESCLUDI_DISCHI", 'l', 0}, {"ARCHIVIO", 'q', 0},
@@ -285,7 +285,7 @@ static int valore_ok(const char *chiave, const char *v)
 	case 'q': return solo(v, 100, c_disco);
 	case 'l': return solo(v, 400, c_elenco);
 	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
-	case 'm': return margine_ok(v);
+	case 'g': return margine_ok(v);
 	}
 	return 0;
 }
