@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - HTTPS delle pagine, solo se acceso (HTTPS=si in sweetspot.txt o
+# dalla pagina Sistema). Vedi sweetspot-https.
+
+case "$1" in
+	start|restart) sweetspot-https applica ;;
+	stop) kill "$(cat /run/sweetspot/stunnel.pid 2> /dev/null)" 2> /dev/null; rm -f /run/sweetspot/https.attivo /run/sweetspot/https.reindirizza ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac
+exit 0

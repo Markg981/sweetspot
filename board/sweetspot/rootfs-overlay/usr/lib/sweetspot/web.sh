@@ -21,6 +21,29 @@ priv() {
 	fi
 }
 
+# Conferma forte per le operazioni che aprono root (SSH, pacchetti di
+# aggiornamento da disco): gettone monouso emesso da root + password del
+# pannello, riverificata da root. Senza PASSWORD_WEB la conferma non e'
+# possibile (nessuna password da richiedere): si imposta prima quella.
+confirm_token() {
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		"$SWEETSPOT_PRIV" @conferma-nuova 2>/dev/null
+	else
+		printf 'prova'
+	fi
+}
+
+# priv_confirm GETTONE PASSWORD COMANDO ARGOMENTI...
+priv_confirm() {
+	local tok=$1 pw=$2
+	shift 2
+	if [ -x "$SWEETSPOT_PRIV" ]; then
+		printf '%s\n' "$pw" | "$SWEETSPOT_PRIV" @conferma "$tok" "$@"
+	else
+		printf '%s\n' "$pw" | sweetspot-accesso verifica && "$@"
+	fi
+}
+
 # Con l'helper le pagine leggono la configurazione senza password.
 # shellcheck disable=SC2034
 [ -x "$SWEETSPOT_PRIV" ] && CONF=$CONF_WEB
@@ -131,10 +154,12 @@ session_end() {
 
 # Intestazione per impostare (ID) o cancellare (vuoto) il cookie.
 session_cookie() {
+	local sec=""
+	is_https && sec="; Secure"
 	if [ -n "$1" ]; then
-		printf 'Set-Cookie: %s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%s\r\n' "$SESSION_COOKIE" "$1" "$SESSION_TTL"
+		printf 'Set-Cookie: %s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%s%s\r\n' "$SESSION_COOKIE" "$1" "$SESSION_TTL" "$sec"
 	else
-		printf 'Set-Cookie: %s=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0\r\n' "$SESSION_COOKIE"
+		printf 'Set-Cookie: %s=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0%s\r\n' "$SESSION_COOKIE" "$sec"
 	fi
 }
 
@@ -145,7 +170,30 @@ session_cookie() {
 login_key() {
 	case "$1" in
 		globale) printf globale ;;
-		*) printf 'ip-%s' "${REMOTE_ADDR:-locale}" | tr -c 'a-zA-Z0-9.:-' '_' ;;
+		*) printf 'ip-%s' "$(client_ip)" | tr -c 'a-zA-Z0-9.:-' '_' ;;
+	esac
+}
+
+# Indirizzo di chi fa la richiesta. Con HTTPS il terminatore TLS (stunnel)
+# lancia l'httpd in modalita' inetd e gli indirizzi li da' lui: l'IP vero del
+# client sta in REMOTE_HOST (variabile d'ambiente di stunnel, non un'intestazione
+# della richiesta: chi scrive la richiesta non puo' falsificarla).
+client_ip() {
+	case "${REMOTE_HOST:-}" in
+		''|*[!0-9a-fA-F.:]*) ;;
+		*) is_https && { printf '%s' "$REMOTE_HOST"; return 0; } ;;
+	esac
+	printf '%s' "${REMOTE_ADDR:-locale}"
+}
+
+# La richiesta e' arrivata per HTTPS? (lo dice il lancio dell'httpd da stunnel)
+is_https() {
+	[ "${HTTPS:-}" = on ] && return 0
+	# Se l'httpd non passa l'ambiente alle pagine: dalla porta 80 l'indirizzo
+	# di chi chiede e' sempre un IP, dal terminatore TLS (ingresso non TCP) no.
+	case "${REMOTE_ADDR-x}" in
+		''|local*) [ -f "$RUN/https.attivo" ] ;;
+		*) return 1 ;;
 	esac
 }
 
@@ -185,11 +233,51 @@ auth_gate() {
 	auth_enabled || return 0
 	session_valid && return 0
 	case "${SCRIPT_NAME:-}" in
-		*.json|*/copertina) printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\naccesso richiesto\n' ;;
-		*) printf 'Status: 303 See Other\r\nLocation: /cgi-bin/accesso\r\nCache-Control: no-store\r\n\r\n' ;;
+		# Un'immagine non puo' mostrare un errore: senza sessione risponde con
+		# il segnaposto (altrimenti il browser disegna un'immagine rotta).
+		*/copertina) cover_placeholder ;;
+		*.json)
+			printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
+			sec_headers
+			printf '\r\naccesso richiesto\n' ;;
+		*)
+			printf 'Status: 303 See Other\r\nLocation: /cgi-bin/accesso\r\nCache-Control: no-store\r\n'
+			sec_headers
+			printf '\r\n' ;;
 	esac
 	exit 0
 }
+
+# Segnaposto della copertina (immagine SVG, risposta 200): nota musicale su
+# fondo neutro. Lo usano la pagina senza sessione e l'assenza della copertina.
+cover_placeholder() {
+	printf 'Content-Type: image/svg+xml\r\nCache-Control: no-store\r\n'
+	sec_headers
+	printf '\r\n'
+	printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Copertina non disponibile">' \
+		'<rect width="200" height="200" rx="12" fill="#e5e7eb"/>' \
+		'<path d="M120 50v70a22 18 0 1 1-10-15V68l-30 8v54a22 18 0 1 1-10-15V62z" fill="#9ca3af"/></svg>'
+}
+
+# Con HTTPS_REINDIRIZZA=si le pagine richieste in chiaro rimandano a https
+# (tranne /cgi-bin/vivo, per la verifica degli aggiornamenti, e le richieste dal
+# computer stesso). Il flag lo scrive root (sweetspot-https applica).
+https_redirect() {
+	local h u
+	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
+	[ "${WEB_NO_REDIRECT:-}" = 1 ] && return 0
+	is_https && return 0
+	[ -f "$RUN/https.reindirizza" ] || return 0
+	case "${REMOTE_ADDR:-}" in 127.*|::1) return 0 ;; esac
+	h=$(host_bare "${HTTP_HOST:-}")
+	case "$h" in *:*) h="[$h]" ;; esac
+	case "${REQUEST_URI:-/}" in /*) u=$REQUEST_URI ;; *) u=/ ;; esac
+	printf 'Status: 301 Moved Permanently\r\nLocation: https://%s%s\r\nCache-Control: no-store\r\n' "$h" "$u"
+	sec_headers
+	printf '\r\n'
+	exit 0
+}
+https_redirect
 auth_gate
 
 # Legge i campi di un modulo inviato (POST) in variabili F_nome.
@@ -222,6 +310,7 @@ query_param() {
 # Risposta di reindirizzamento dopo un'azione (POST -> GET).
 redirect() {
 	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n' "$1"
+	sec_headers
 	# Sessione nuova da consegnare con la risposta (REDIRECT_COOKIE = ID).
 	[ -n "${REDIRECT_COOKIE:-}" ] && session_cookie "$REDIRECT_COOKIE"
 	printf '\r\n'
@@ -250,7 +339,9 @@ web_sections() {
 
 page_start() {
 	local title=$1 active=$2 refresh=$3 p msg
-	printf 'Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+	printf 'Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n'
+	sec_headers
+	printf '\r\n'
 	cat <<HTML
 <!doctype html>
 <html lang="it">

@@ -1,0 +1,92 @@
+Subject: [PATCH] alsa: drain the PCM before closing it for a rate or format change
+
+When the sample rate or format changes, the output thread closes the PCM
+with snd_pcm_close() without draining it: the last part of the previous
+track still queued in the ALSA ring (400 ms with the default buffer) is
+discarded, so the tail of a 44.1 kHz track disappears when the next one is
+96 kHz.
+
+Before reopening for a new format or rate, wait for the ring to empty (snd_pcm_avail) to
+finish, so the tail is played. The wait is bounded by the real buffer
+duration plus 100 ms (at most 1 s) and never blocks the output lock. If the
+player is stopped or switched off while waiting, or the drain does not
+complete in time, fall back to the immediate snd_pcm_drop(). User stop and
+pause paths are unchanged. Nothing changes when the format is the same.
+
+The tail is padded with one period of silence before draining: some drivers
+(snd-aloop) move the pointer by whole periods and would never play the last
+partial period.
+
+Source: local change
+Upstream: Not submitted (local option)
+
+--- a/output_alsa.c
++++ b/output_alsa.c
+@@ -265,6 +265,58 @@
+ 	return NULL;
+ }
+ 
++// Chiusura per cambio di formato o frequenza: prima di chiudere si lascia
++// uscire dal buffer ALSA la coda del brano appena finito, altrimenti
++// snd_pcm_close la scarta (con 400 ms di buffer sparivano le ultime centinaia
++// di ms). L'attesa e' limitata alla durata del buffer piu' 300 ms; se
++// l'utente ferma il player (stop) o l'uscita si spegne, o il drain non
++// finisce in tempo, si ripiega sul drop immediato.
++static void alsa_drain_before_close(void) {
++	unsigned limit_ms, waited_ms = 0;
++	snd_pcm_uframes_t pad_left = alsa.period_size;
++	size_t frame_bytes;
++	u8_t *silence = NULL;
++	if (!pcmp || !alsa.rate) return;
++	limit_ms = (unsigned)((unsigned long long)alsa.buffer_size * 1000 / alsa.rate) + 300;
++	if (limit_ms > 1000) limit_ms = 1000;
++	// Il puntatore di molti driver (snd-aloop compreso) avanza a periodi interi:
++	// l'ultimo periodo parziale della coda non esce mai e il drain non finisce.
++	// Si completa con un periodo di silenzio, cosi' la coda esce per intero.
++	frame_bytes = snd_pcm_frames_to_bytes(pcmp, 1);
++	if (alsa.period_size && frame_bytes) silence = malloc(alsa.period_size * frame_bytes);
++	if (silence) snd_pcm_format_set_silence(alsa.format, silence, alsa.period_size * 2);
++	else pad_left = 0;
++	snd_pcm_nonblock(pcmp, 1);
++	while (running) {
++		bool stopped;
++		LOCK;
++		stopped = (output.state == OUTPUT_OFF || output.state == OUTPUT_STOPPED);
++		UNLOCK;
++		if (stopped) break;
++		if (pad_left) {
++			snd_pcm_sframes_t w = snd_pcm_writei(pcmp, silence + (alsa.period_size - pad_left) * frame_bytes, pad_left);
++			if (w > 0) pad_left -= w;
++			else if (w != -EAGAIN) pad_left = 0;
++		}
++		if (!pad_left) {
++			// ring vuoto = tutto riprodotto, compreso il silenzio di chiusura
++			snd_pcm_sframes_t avail = snd_pcm_avail_update(pcmp);
++			snd_pcm_state_t st = snd_pcm_state(pcmp);
++			if (avail < 0 || avail >= (snd_pcm_sframes_t)alsa.buffer_size || st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP) {
++				LOG_INFO("drained %u ms before closing (silence written: %lu of %lu frames)", waited_ms, (unsigned long)(alsa.period_size - pad_left), (unsigned long)alsa.period_size);
++				free(silence);
++				return;
++			}
++		}
++		if (waited_ms >= limit_ms) break;
++		usleep(5000);
++		waited_ms += 5;
++	}
++	LOG_INFO("drain skipped or timed out after %u ms (state %d, avail %ld, pad left %lu): dropping", waited_ms, (int)snd_pcm_state(pcmp), (long)snd_pcm_avail_update(pcmp), (unsigned long)pad_left);
++	free(silence);
++	snd_pcm_drop(pcmp);
++}
++
+ static void alsa_close(void) {
+ 	int err;
+ 	if ((err = snd_pcm_close(pcmp)) < 0) {
+@@ -689,6 +741,8 @@
+ 				relay_script(1);
+ 			}
+ #endif
++			// cambio di formato o frequenza: la coda del brano precedente esce prima della chiusura
++			if (pcmp) alsa_drain_before_close();
+ 			LOG_INFO("open output device: %s", output.device);
+ 			LOCK;
+ 
