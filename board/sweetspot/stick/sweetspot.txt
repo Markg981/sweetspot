@@ -50,6 +50,8 @@ ESCLUDI_DISCHI=
 #   CONDIVISIONE_1=//192.168.1.10/Musica
 #   CONDIVISIONE_1_UTENTE=marco
 #   CONDIVISIONE_1_PASSWORD=la-password
+#   CONDIVISIONE_1_SMB1=si          (solo per NAS molto vecchi: SMB1 e' insicuro)
+#   CONDIVISIONE_2=nfs://192.168.1.10/export/musica   (cartella NFS)
 # Senza utente si accede come ospite.
 
 # --- Audio ----------------------------------------------------------------

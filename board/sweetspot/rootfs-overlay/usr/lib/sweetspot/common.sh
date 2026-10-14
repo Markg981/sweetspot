@@ -137,6 +137,24 @@ normalize_unc() {
 	esac
 }
 
+# La voce e' una cartella NFS (nfs://server/cartella)?
+is_nfs() {
+	case "$1" in nfs:*|NFS:*) return 0 ;; esac
+	return 1
+}
+
+# Da nfs://server/export/sotto a "server:/export/sotto" (come vuole mount.nfs).
+normalize_nfs() {
+	local p srv dir
+	p=$(printf '%s' "$1" | tr '\\' '/' | sed 's#^[nN][fF][sS]:##; s#^/*##; s#/*$##; s#//*#/#g')
+	srv=${p%%[/:]*}
+	dir=${p#"$srv"}
+	dir=$(printf '%s' "$dir" | sed 's#^:##; s#^/*#/#')
+	case "$srv" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+	[ "$dir" != / ] || return 1
+	printf '%s:%s' "$srv" "$dir"
+}
+
 # Il valore e' accettabile in sweetspot.txt? (niente a capo e niente
 # caratteri di controllo)
 valid_value() {

@@ -2649,6 +2649,54 @@ expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
 	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
 expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"
 
+echo "Cartelle di rete: SMB 2.1 o piu', hard, NFS"
+RV=$WORK/retever
+mkdir -p "$RV/bin" "$RV/run" "$RV/proc" "$RV/media" "$RV/musica"
+: > "$RV/proc/mounts"
+printf 'CONDIVISIONE_1=//192.168.1.10/Musica\nCONDIVISIONE_2=//192.168.1.11/Vecchio\nCONDIVISIONE_2_SMB1=si\nCONDIVISIONE_3=nfs://192.168.1.12/export/musica\n' > "$RV/run/sweetspot.conf"
+# NAS finto che rifiuta tutto e registra le opzioni di ogni tentativo.
+printf '#!/bin/sh\necho "$@" >> "%s/cifs.log"\necho "mount error(112): Host is down" >&2\nexit 32\n' "$RV" > "$RV/bin/mount.cifs"
+printf '#!/bin/sh\necho "$@" >> "%s/nfs.log"\ncase "$*" in *vers=4*) echo "mount.nfs: Connection refused" >&2; exit 32 ;; esac\nexit 0\n' "$RV" > "$RV/bin/mount.nfs"
+printf '#!/bin/sh\nexit 0\n' > "$RV/bin/modprobe"
+chmod +x "$RV"/bin/*
+rv_env() {
+	env SWEETSPOT_RUN=$RV/run SWEETSPOT_PROCFS=$RV/proc SWEETSPOT_LOG=$RV/log SWEETSPOT_PATH="$RV/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_MEDIA=$RV/media SWEETSPOT_MUSICA=$RV/musica "$@"
+}
+rv_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" prova 1 > /dev/null 2>&1
+expect "SMB: tre tentativi (default, 3.0, 2.1) senza SMB1" "3|0" "$(grep -c . "$RV/cifs.log")|$(grep -c 'vers=1' "$RV/cifs.log")"
+expect "SMB: mai un tentativo sotto la 2.1" "0" "$(grep -c 'vers=2.0' "$RV/cifs.log")"
+expect "SMB: montaggio hard, mai soft" "3|0" "$(grep -c 'hard' "$RV/cifs.log")|$(grep -c 'soft' "$RV/cifs.log")"
+rm -f "$RV/cifs.log"
+rv_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" prova 2 > /dev/null 2>&1
+expect "SMB1 solo se richiesto per quella cartella" "4|1" "$(grep -c . "$RV/cifs.log")|$(grep -c 'vers=1.0' "$RV/cifs.log")"
+res=$(rv_env $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" prova 3)
+expect "NFS: montata con il client del kernel" "OK" "$res"
+expect "NFS: prima la v4, poi la v3 senza lock" "2|1" "$(grep -c . "$RV/nfs.log")|$(grep -c 'vers=3,nolock' "$RV/nfs.log")"
+expect "NFS: hard con timeo e retrans, in sola lettura" "2" "$(grep -c '192.168.1.12:/export/musica .*ro,hard,timeo=[0-9]*,retrans=[0-9]*' "$RV/nfs.log")"
+expect "NFS: collegamento nella libreria" "si" "$([ -L "$RV/musica/Rete - musica" ] && echo si || echo no)"
+nf() { SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RV/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; $1"; }
+expect "NFS: nfs://server/export" "nas.local:/export/musica" "$(nf "normalize_nfs 'nfs://nas.local/export/musica/'")"
+expect "NFS: forma server:/export" "10.0.0.1:/m" "$(nf "normalize_nfs 'nfs:10.0.0.1:/m'")"
+expect "NFS: senza cartella non valido" "no" "$(nf "normalize_nfs 'nfs://nas' > /dev/null && echo si || echo no")"
+expect "NFS: server con caratteri strani non valido" "no" "$(nf "normalize_nfs 'nfs://a b/x' > /dev/null && echo si || echo no")"
+expect "NFS: una voce SMB non e' NFS" "no" "$(nf "is_nfs //nas/Musica && echo si || echo no")"
+for cfg in sweetspot_x86_64 sweetspot_rpi; do
+	expect "$cfg: nfs-utils nel defconfig" "1" "$(grep -c '^BR2_PACKAGE_NFS_UTILS=y$' "$ROOT/configs/${cfg}_defconfig")"
+done
+expect "kernel: client NFS v3 e v4" "3" "$(grep -c '^CONFIG_NFS_\(FS\|V3\|V4\)=m$' "$ROOT/board/sweetspot/common/linux.fragment")"
+expect "pannello Musica: avviso su SMB1 e scelta NFS" "si|si" "$(grep -q 'INSICURO' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/musica" && echo si || echo no)|$(grep -q 'value="nfs"' "$OVERLAY/usr/share/sweetspot/www/cgi-bin/musica" && echo si || echo no)"
+
+echo "Cartella Musica in rete: utente senza privilegi e file interni"
+c=$(arun "ksmbd_conf /media/Musica")
+case "$c" in *"read only = yes"*"guest ok = yes"*) ok "senza password: ospite in sola lettura" ;; *) ko "senza password: ospite in sola lettura" "read only = yes" "$c" ;; esac
+c=$(arun "ksmbd_conf /media/Musica" "ARCHIVIO_PASSWORD=segreta")
+case "$c" in *"read only = no"*"guest ok = no"*) ok "con la password: scrittura autenticata" ;; *) ko "con la password: scrittura autenticata" "read only = no" "$c" ;; esac
+case "$c" in *"force user = nas"*"force group = nas"*) ok "utente non root" ;; *) ko "utente non root" "force user = nas" "$c" ;; esac
+case "$c" in *root*) ko "nessun root nella condivisione" "assente" "presente" ;; *) ok "nessun root nella condivisione" ;; esac
+case "$c" in *"veto files"*artwork.db*imgproxy.db*) ok "file interni (artwork.db) nascosti" ;; *) ko "file interni (artwork.db) nascosti" "veto files" "$c" ;; esac
+expect "utente nas nella tabella degli utenti" "1" "$(grep -c '^nas -1 nas -1 ' "$ROOT/board/sweetspot/users.txt")"
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
