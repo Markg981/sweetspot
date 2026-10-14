@@ -792,6 +792,35 @@ case "$diag" in *"|Frequenza|"*) ko "stato: un solo rifiuto non e' uno stallo" "
 printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
 case "$diag" in *"ATTENZIONE|Frequenza|ricampionata (88200 -> 96000 Hz)"*) ok "stato: avviso di ricampionamento" ;; *) ko "stato: avviso di ricampionamento" "ricampionata (88200 -> 96000 Hz)" "-" ;; esac
+case "$diag" in *"abbassa il segnale di 1 dB"*) ok "stato: il ricampionamento dichiara i -1 dB" ;; *) ko "stato: -1 dB" "1 dB" "-" ;; esac
+# Il registro di una zona (squeezelite-<id>.log) si legge come quello principale.
+rm -f "$WEB/squeezelite.log"
+printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite-Zona.log"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Frequenza (zona Zona)|ricampionata (88200 -> 96000 Hz)"*) ok "stato: ricampionamento di una zona dal suo registro" ;; *) ko "stato: registro della zona" "Frequenza (zona Zona)" "$diag" ;; esac
+rm -f "$WEB/squeezelite-Zona.log"
+# Uscita forzata a 16 bit: troncamento senza dither dichiarato.
+printf 'FORMATO_USCITA=16\n' > "$WEB/run/sweetspot.conf"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Troncamento a 16 bit|"*"senza dither"*) ok "stato: troncamento a 16 bit senza dither dichiarato" ;; *) ko "stato: troncamento a 16 bit" "voce Troncamento" "$diag" ;; esac
+rm -f "$WEB/run/sweetspot.conf"
+# Volume del DAC senza controllo, e ripiego sul volume software.
+printf 'VOLUME=dac\n' > "$WEB/run/sweetspot.conf"
+printf 'fisso\n' > "$WEB/run/volume.effettivo"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Volume|richiesto del DAC, ma il DAC non ha un controllo del volume"*) ok "stato: VOLUME=dac senza controllo riportato come fisso" ;; *) ko "stato: dac senza controllo" "volume fisso" "$diag" ;; esac
+printf 'hardware\n' > "$WEB/run/volume.effettivo"
+printf '[12:00:00] output:1 unable to open mixer PCM\n' > "$WEB/squeezelite.log"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Volume|richiesto del DAC, ma il controllo hardware non risponde"*) ok "stato: ripiego sul volume software non piu' detto hardware" ;; *) ko "stato: ripiego del volume" "volume software" "$diag" ;; esac
+rm -f "$WEB/run/sweetspot.conf" "$WEB/run/volume.effettivo" "$WEB/squeezelite.log"
+# Lyrion ricampiona con sox sopra MaxSampleRate: dichiarato dalle preferenze.
+echo '# [sox] -r commento' > "$WEB/convert.conf"
+printf 'flc pcm * *\n\t[flac] -dcs -- $FILE$ | [sox] -q -t wav - -t raw -r $RATE$ -\n' >> "$WEB/convert.conf"
+diag=$(SWEETSPOT_LMS_CONVERT=$WEB/convert.conf diag_freq)
+case "$diag" in *"INFO|Lyrion e sox|"*) ok "stato: regole sox di convert.conf dichiarate" ;; *) ko "stato: convert.conf" "voce Lyrion e sox" "$diag" ;; esac
+grep -q 'playerpref maxSampleRate' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: MaxSampleRate di Lyrion allineato al DAC" || ko "player: MaxSampleRate" "presente" "assente"
+grep -q 'echo pcm > "\$RUN/dsd.volume"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: con il volume software il DSD si converte in PCM" || ko "player: DSD con volume software" "presente" "assente"
 
 # Stato e parametri devono provenire dal medesimo PCM selezionato.
 check_page_diag() {
@@ -1862,6 +1891,8 @@ dspfn 1 "HK=0; zones_sync 1"
 zcall=$(calls taskset)
 case "$zcall" in "-c 0 squeezelite -o hw:CARD=Zona,DEV=0 "*"-n Sweetspot - Zona DAC -M Sweetspot -m 02:"*"-p 75 "*"-s 127.0.0.1"*) ok "zona: Squeezelite sul secondo DAC, sui core di sistema" ;; *) ko "zona avviata" "squeezelite su Zona" "$zcall" ;; esac
 case "$zcall" in *" -H"*) ok "zona: niente ripiego su plughw: (-H)" ;; *) ko "zona: -H" "presente" "$zcall" ;; esac
+case "$zcall" in *"-d decode=info"*) ok "zona: -d decode=info (avviso di ricampionamento nel suo registro)" ;; *) ko "zona: decode=info" "presente" "$zcall" ;; esac
+case "$zcall" in *" -D "*) ko "zona: niente DSD nativo (volume software di Lyrion)" "nessun -D" "$zcall" ;; *) ok "zona: niente DSD nativo (volume software di Lyrion)" ;; esac
 case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "solo Zona" "$zcall" ;; *) ok "zona: niente microfono ne' DAC principale" ;; esac
 expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
 expect "zona: MAC stabile e locale" "1|02" \

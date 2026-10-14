@@ -1132,5 +1132,31 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(result["comparison"]["status"], "pass")
             self.assertEqual(result["status"], "fail")
 
+class RefusedRateEvidence(unittest.TestCase):
+    """DAC finto che rifiuta 88,2 k: la prova richiede ricampionamento, non stallo."""
+
+    def test_resampled_without_stall_passes(self):
+        log = "[12:00:00] process:1 resampling from 88200 -> 96000\n"
+        self.assertEqual(DRIVER.refused_rate_evidence(log)["status"], "pass")
+
+    def test_stall_or_missing_resampling_fails(self):
+        stalled = ("[12:00:00] output:1 device dacfinto96 refuses 88200 Hz and strict hw mode (-H) "
+                   "forbids the plughw: fallback: not resampling, output stopped\n")
+        for log in (stalled, "", "resampling from 88200 -> 48000\n",
+                    "resampling from 88200 -> 96000\n" + stalled):
+            with self.subTest(log=log):
+                self.assertEqual(DRIVER.refused_rate_evidence(log)["status"], "fail")
+
+    def test_device_accepts_only_96k_and_is_not_hw(self):
+        self.assertIn("rate 96000", DRIVER.REFUSED_ASOUNDRC)
+        self.assertFalse(DRIVER.REFUSED_DEVICE.startswith("hw:"))
+
+    def test_case_needs_a_booted_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = DRIVER.run_refused_rate_case(None, Path(temp), DRIVER.ChrootTarget(Path(temp)))
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("booted target", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

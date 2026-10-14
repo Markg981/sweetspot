@@ -933,6 +933,128 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
     return report
 
 
+# DAC finto che accetta solo 96 kHz (come un DAC che rifiuta 88,2 k): un
+# plugin route sopra snd-aloop con la frequenza dello slave fissa. Il nome non
+# inizia con "hw:", quindi la politica -H non c'entra: conta solo -R vLE.
+REFUSED_DEVICE = "dacfinto96"
+REFUSED_ACCEPTED_RATE = 96000
+REFUSED_SOURCE_RATE = 88200
+REFUSED_ASOUNDRC = """pcm.%s {
+    type route
+    slave { pcm "hw:CARD=Loopback,DEV=0"; rate %d; channels 2 }
+    ttable.0.0 1
+    ttable.1.1 1
+}
+""" % (REFUSED_DEVICE, REFUSED_ACCEPTED_RATE)
+
+
+def refused_rate_evidence(log_text, source_rate=REFUSED_SOURCE_RATE, accepted_rate=REFUSED_ACCEPTED_RATE):
+    """Il registro di Squeezelite prova ricampionamento e assenza di blocco."""
+    resampled = re.search(r"resampl\w* from %d *(?:->|to) *%d" % (source_rate, accepted_rate), log_text) is not None
+    stalled = re.search(r"refuses %d Hz" % source_rate, log_text) is not None
+    return {"resampled": resampled, "stalled": stalled,
+            "status": "pass" if resampled and not stalled else "fail"}
+
+
+def run_refused_rate_case(client, output, target, *, process_factory=subprocess.Popen):
+    """Brano a 88,2 k su un DAC che accetta solo 96 k con -R vLE (PR #77).
+
+    Squeezelite deve ricampionare a 96 kHz e suonare (frame catturati sul
+    loopback, nessun blocco), non fermarsi con "refuses 88200 Hz".
+    """
+    directory = output / "rate-refused-88200"
+    directory.mkdir(parents=True, exist_ok=True)
+    report = {"id": "rate-refused-88200", "kind": "pcm_rate_refused", "rate": REFUSED_SOURCE_RATE,
+              "accepted_rate": REFUSED_ACCEPTED_RATE, "scope": "alsa_loopback", "status": "fail"}
+    mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
+    engine_log = "/tmp/audio-refused.log"
+    local_log = directory / "squeezelite.log"
+    process = None
+    capture = None
+    rc_written = False
+    try:
+        if not hasattr(target, "run"):
+            raise AudioError("the refused-rate case needs a booted target (ssh)")
+        from tools.audio_verification import generate_fixtures
+        references = generate_fixtures(directory / "references", REFUSED_SOURCE_RATE, 24)
+        target.run("cat > /root/.asoundrc", REFUSED_ASOUNDRC.encode("ascii"))
+        rc_written = True
+        with target.fixtures(references) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
+            target.remove(engine_log)
+            engine = ["/usr/bin/squeezelite", "-o", REFUSED_DEVICE, "-a", ALSA_BUFFER, "-R", "vLE",
+                      "-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log,
+                      "-d", "decode=info", "-d", "output=info"]
+            command = target.command(engine)
+            report["command"] = command
+            try:
+                for stream in ("p", "c"):
+                    if loopback_state(target, stream) is not None:
+                        raise AudioError("Loopback %s substream is already open by another process" % stream)
+                process = process_factory(command, stdout=subprocess.DEVNULL, stderr=stderr,
+                                          start_new_session=os.name == "posix")
+                wait_connected(client, mac, process)
+                deadline = time.monotonic() + WALL_SECONDS
+                report["settings"] = configure_player(client, mac, deadline=deadline)
+                client.request(mac, ["playlist", "play", fixtures.player_path], deadline=deadline)
+                params = None
+                until = time.monotonic() + 10
+                while time.monotonic() < until:
+                    if process.poll() is not None:
+                        raise AudioError("Squeezelite exited with status %s" % process.returncode)
+                    params = loopback_state(target, "p")
+                    if params is not None:
+                        break
+                    time.sleep(.05)
+                if params is None:
+                    raise AudioError("Squeezelite did not open the refusing DAC: it stalled instead of resampling")
+                if params["rate"] != REFUSED_ACCEPTED_RATE or params["format"] not in ALSA_FORMATS:
+                    raise AudioError("Loopback playback is %s Hz %s, wanted %d Hz" % (
+                        params["rate"], params["format"], REFUSED_ACCEPTED_RATE))
+                report["alsa"] = {"playback": params}
+                capture_stderr = (directory / "capture-stderr.log").open("wb")
+                try:
+                    capture = LoopbackCapture(target, directory / "capture.raw", params=params, seconds=3,
+                                              wall_seconds=WALL_SECONDS, process_factory=process_factory,
+                                              stderr=capture_stderr)
+                    capture.start()
+                finally:
+                    capture_stderr.close()
+                while not capture.finished.wait(.05):
+                    if time.monotonic() >= capture.deadline:
+                        raise AudioError("capture exceeded wall time limit")
+                    if process.poll() is not None:
+                        raise AudioError("Squeezelite exited with status %s during capture" % process.returncode)
+                if capture.error or capture.reason != "byte_limit":
+                    raise AudioError("capture ended early: %s (%s)" % (capture.reason, capture.error))
+                if not any((directory / "capture.raw").read_bytes()):
+                    raise AudioError("the resampled output is silent")
+            finally:
+                if capture is not None:
+                    capture.stop()
+                if process is not None:
+                    stop_process(process, owned_group=os.name == "posix")
+                if capture is not None:
+                    capture.join()
+                target.stop_engine()
+            target.fetch(engine_log, local_log)
+        text = local_log.read_text(errors="replace") if local_log.exists() else ""
+        report["evidence"] = refused_rate_evidence(text)
+        report["status"] = report["evidence"]["status"]
+        if report["status"] != "pass":
+            raise AudioError("log does not show resampling to %d Hz without a stall" % REFUSED_ACCEPTED_RATE)
+    except Exception as error:
+        report["status"] = "fail"
+        report["error"] = str(error)
+    finally:
+        if rc_written:
+            try:
+                target.remove("/root/.asoundrc")
+            except OSError as error:
+                report["cleanup_error"] = str(error)
+        write_json(directory / "report.json", report)
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     where = parser.add_mutually_exclusive_group(required=True)
@@ -975,6 +1097,12 @@ def main(argv=None):
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)
+        # Solo sul sistema avviato (QEMU): serve scrivere ~/.asoundrc del DAC finto.
+        if args.backend == "alsa_loopback" and hasattr(target, "run"):
+            refused = run_refused_rate_case(client, output, target)
+            report["rate_refused"] = refused
+            write_json(output / "report.json", report)
+            print("%s: %s" % (refused["id"], refused["status"]), flush=True)
     except Exception as error:
         report["error"] = str(error)
     finally:
@@ -989,7 +1117,9 @@ def main(argv=None):
         expected = {case["id"] for case in cases}
         mixed_rates = {case["id"]: [case["rate"], case["second_rate"]]
                        for case in cases if case["kind"] == "pcm_rate_transition"}
-        if ("error" not in report and len(report["cases"]) == len(expected) and completed == expected
+        refused_ok = (args.backend != "alsa_loopback" or not hasattr(target, "run")
+                      or report.get("rate_refused", {}).get("status") == "pass")
+        if ("error" not in report and refused_ok and len(report["cases"]) == len(expected) and completed == expected
                 and all(case.get("status") == "pass" and "error" not in case
                         and (case["id"] not in mixed_rates or mixed_case_passes(case, mixed_rates[case["id"]]))
                         for case in report["cases"])):
