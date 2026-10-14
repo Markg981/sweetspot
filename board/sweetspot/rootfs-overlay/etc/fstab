@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - il sistema gira in RAM: ogni tmpfs ha un tetto (size=), cosi'
+# nessuna cache puo' consumare la memoria del player. Le percentuali sono
+# della memoria totale. I dati di Lyrion e le copertine hanno un tmpfs
+# proprio, montato da S03sweetspot-early e da sweetspot-lms.
+# <file system>	<mount pt>	<type>	<options>	<dump>	<pass>
+proc		/proc		proc	defaults	0	0
+devpts		/dev/pts	devpts	defaults,gid=5,mode=620,ptmxmode=0666	0	0
+tmpfs		/dev/shm	tmpfs	mode=1777,nosuid,nodev,size=5%	0	0
+tmpfs		/tmp		tmpfs	mode=1777,nosuid,nodev,size=10%	0	0
+tmpfs		/run		tmpfs	mode=0755,nosuid,nodev,size=25%	0	0
+sysfs		/sys		sysfs	defaults	0	0

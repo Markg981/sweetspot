@@ -75,13 +75,18 @@ preload_budget_kb() {
 }
 
 # Percorso locale di un URL file:// di Lyrion (%XX decodificati); fallisce
-# per gli altri URL (streaming, servizi in rete).
+# per gli altri URL (streaming, servizi in rete). Un brano di un file CUE ha
+# l'URL del file seguito da #inizio-fine: il file da leggere e' sempre
+# l'intero file, il frammento si scarta (un # nel nome e' scritto %23).
 url_path() {
+	local u
 	case "$1" in
 		file://*) ;;
 		*) return 1 ;;
 	esac
-	printf '%s' "${1#file://}" | LC_ALL=C awk '
+	u=${1#file://}
+	u=${u%%#*}
+	printf '%s' "$u" | LC_ALL=C awk '
 		function hex(h,  i, n) { n = 0; h = toupper(h)
 			for (i = 1; i <= 2; i++) n = n * 16 + index("0123456789ABCDEF", substr(h, i, 1)) - 1
 			return n }
@@ -93,15 +98,28 @@ url_path() {
 }
 
 # URL della coda dal brano in corso alla fine, uno per riga (vuoto se il
-# player e' fermo o non c'e').
+# player e' fermo o non c'e'). La coda si legge a pagine: una sola richiesta
+# da 1000 brani tagliava le code piu' lunghe.
+QUEUE_PAGE=500
+QUEUE_MAX=${SWEETSPOT_PRECARICO_CODA_MAX:-100000}
+
 queue_urls() {
-	local mac
+	local mac head cur total start page
 	mac=$(cat "$RUN/player.mac" 2>/dev/null) || return 1
 	[ -n "$mac" ] || return 1
-	lms_json "$mac" status 0 1000 tags:u | jq -r '.result
+	head=$(lms_json "$mac" status 0 1 2>/dev/null | jq -r '.result
 		| select(.mode == "play" or .mode == "pause")
-		| ((.playlist_cur_index // "0") | tonumber) as $i
-		| .playlist_loop[]? | select((."playlist index" | tonumber) >= $i) | .url // empty' 2>/dev/null
+		| "\((.playlist_cur_index // "0") | tonumber) \((.playlist_tracks // 0) | tonumber)"' 2>/dev/null) || return 1
+	[ -n "$head" ] || return 1
+	cur=${head% *} total=${head#* }
+	[ "$total" -le "$QUEUE_MAX" ] || total=$QUEUE_MAX
+	start=$cur
+	while [ "$start" -lt "$total" ]; do
+		page=$(lms_json "$mac" status "$start" "$QUEUE_PAGE" tags:u 2>/dev/null | jq -r '.result.playlist_loop[]? | .url // empty' 2>/dev/null) || return 1
+		[ -n "$page" ] || break
+		printf '%s\n' "$page"
+		start=$((start + QUEUE_PAGE))
+	done
 }
 
 # Piano del precarico dagli URL su stdin, in ordine di coda:
@@ -111,7 +129,8 @@ queue_urls() {
 # comunque quello, e il budget resta per i brani piu' vicini.
 preload_plan() { # budget_kb file_max_kb
 	local budget=$1 max=$2 used=0 url path kb full=0
-	while IFS= read -r url; do
+	# Piu' brani dello stesso file (CUE, brano ripetuto): un solo carico.
+	sed '/^file:\/\//s/#.*//' | awk '!visto[$0]++' | while IFS= read -r url; do
 		[ -n "$url" ] || continue
 		if ! path=$(url_path "$url"); then
 			echo "STREAM $url"

@@ -229,6 +229,13 @@ button riavvia "Riavvia"
 button spegni "Spegni" "" "" danger
 echo '</div>'
 
+echo '<h2>Diagnostica</h2><div class="card formcard">'
+cat <<'HTML'
+<p class="sub">Registro e timeline degli eventi (avvii, riavvii del player e di Lyrion, XRUN, cambi di frequenza, aggiornamenti, rollback, montaggi) restano sulla chiavetta anche dopo il riavvio, insieme ai crash dump del kernel. Il pacchetto da allegare a una segnalazione contiene anche versioni, <code>aplay -l</code>, <code>/proc/asound</code> e lo stato; password, chiavi e token sono oscurati.</p>
+<a class="btn" href="/cgi-bin/diagnostica">Scarica il pacchetto diagnostico (tar.gz)</a>
+</div>
+HTML
+
 echo '<h2>Impostazioni iniziali</h2><div class="card formcard">'
 form_start ripristina
 cat <<'HTML'
