@@ -375,12 +375,21 @@ point, Sweetspot accende la rete **`Sweetspot-XXXX`** (XXXX = ultime cifre del
 MAC), WPA2, canale 6 (2,4 GHz), con DHCP e DNS minimi (`udhcpd`, `dnsd` di
 BusyBox):
 
-1. Il nome e la **password** compaiono sullo schermo (console). La password è
-   casuale a ogni accensione e non finisce nel registro; per un player senza
-   schermo scrivine una tua (8-63 caratteri) in `HOTSPOT_PASSWORD`.
+1. Il nome e la **password** compaiono sullo schermo (console), con il **codice
+   QR** `WIFI:T:WPA;S:...;P:...;;` da inquadrare. Senza schermo: la password è
+   casuale la prima volta, poi resta la stessa e viene scritta, insieme al
+   nome, in `sweetspot-hotspot.txt` sulla partizione di avvio (la chiavetta
+   `SWEETSPOT`, FAT, leggibile da un PC) con il QR in `sweetspot-hotspot.svg`
+   (da aprire col browser del PC). Non finisce nel registro. Per sceglierla tu
+   scrivi `HOTSPOT_PASSWORD` (8-63 caratteri) in `sweetspot.txt`.
 2. Collega il telefono a quella rete e apri `http://192.168.4.1/` (anche
-   `http://sweetspot.local/`, se il telefono usa il DNS dell'hotspot): si apre
-   la pagina **Rete**.
+   `http://sweetspot.local/`, via mDNS con Avahi, se il telefono lo supporta): si
+   apre la pagina **Rete**. Il DNS dell'hotspot risolve i controlli di
+   connettività dei telefoni (Apple, Windows, Firefox, Android...) verso
+   Sweetspot; iPhone, Mac e Firefox aprono la pagina da soli (`hotspot-detect.html`,
+   `canonical.html`), su Android compare "Accedi alla rete" (non c'è una
+   risposta 204 statica: la pagina si apre comunque dall'avviso o digitando
+   l'indirizzo).
 3. In *Collega Sweetspot al Wi-Fi di casa* scegli la rete dall'elenco (o scrivi
    il nome) e la password, poi **Collega**. Il nome e la password sono salvati
    con `sweetspot-config` (chiavetta), l'hotspot si spegne e Sweetspot si
@@ -388,6 +397,10 @@ BusyBox):
 4. **Recupero**: se entro `HOTSPOT_PROVA` secondi (40) la rete scelta non dà un
    indirizzo (password sbagliata, router spento) l'hotspot riparte e puoi
    riprovare. La stessa cosa succede a un avvio con `WIFI_NOME` sbagliato.
+
+**Primo avvio senza schermo**: oppure preconfigura il Wi-Fi di casa prima
+dell'accensione scrivendo `WIFI_NOME` e `WIFI_PASSWORD` in `sweetspot.txt`
+sulla partizione di avvio (da un PC): l'hotspot non serve.
 
 L'hotspot non si accende mai con la rete funzionante e si spegne da solo se
 arriva un cavo. Con `HOTSPOT=no` non si accende mai; le radio Wi-Fi restano

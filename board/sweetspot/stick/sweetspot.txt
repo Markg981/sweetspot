@@ -130,8 +130,10 @@ WIFI_PASSWORD=
 # nessuna connessione (niente cavo, Wi-Fi non configurato o non collegato)
 # e c'e' un adattatore Wi-Fi che lo permette, il player accende la rete
 # "Sweetspot-XXXX" per scegliere il Wi-Fi di casa dal telefono. La password
-# compare sullo schermo; per uno Sweetspot senza schermo scrivine una tua
-# (da 8 a 63 caratteri) in HOTSPOT_PASSWORD.
+# compare sullo schermo (con il codice QR) e viene scritta, insieme al
+# codice QR, nei file sweetspot-hotspot.txt e sweetspot-hotspot.svg di questa
+# chiavetta; per sceglierla tu scrivine una (da 8 a 63 caratteri) in
+# HOTSPOT_PASSWORD.
 # HOTSPOT_PROVA: secondi concessi alla rete scelta prima che l'hotspot riparta.
 HOTSPOT=si
 HOTSPOT_ATTESA=60
