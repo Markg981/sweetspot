@@ -1644,7 +1644,7 @@ echo vecchia > "$CC/lms/cache/artwork.db"
 printf '#!/bin/sh\n[ "$1" = archivio ] && echo "%s"\n' "$CC/archivio" > "$CC/bin/sweetspot-dischi"
 chmod +x "$CC/bin/sweetspot-dischi"
 lmsfn() {
-	SWEETSPOT_LMS_DATA=$CC/lms SWEETSPOT_RUN=$CC/run SWEETSPOT_LOG=$CC/log SWEETSPOT_PATH="$CC/bin:$SWEETSPOT_PATH" \
+	SWEETSPOT_MOUNT=${CC_MOUNT:-false} SWEETSPOT_LMS_DATA=$CC/lms SWEETSPOT_RUN=$CC/run SWEETSPOT_LOG=$CC/log SWEETSPOT_PATH="$CC/bin:$SWEETSPOT_PATH" \
 		SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-lms; $1"
 }
 lmsfn link_caches
@@ -1657,6 +1657,33 @@ printf '#!/bin/sh\nexit 0\n' > "$CC/bin/sweetspot-dischi"
 rm -f "$CC/lms/cache/artwork.db"
 lmsfn link_caches
 expect "senza archivio: cache in RAM come prima" "no" "$([ -e "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+# Tmpfs a parte con size= per le cache in RAM (mount finto che registra le opzioni).
+printf '#!/bin/sh\necho "$@" > "%s/mount.args"\n' "$CC" > "$CC/bin/finto-mount"
+chmod +x "$CC/bin/finto-mount"
+rm -f "$CC/lms/cache/artwork.db" "$CC/lms/cache/imgproxy.db"
+mkdir -p "$CC/proc"
+printf 'MemTotal:        8388608 kB\n' > "$CC/proc/meminfo"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "senza archivio: tmpfs delle copertine con size= (4% di 8 GB, tetto 256 MB)" "-t tmpfs -o size=256m,mode=0755,nosuid,nodev tmpfs $CC/lms/artwork-ram" "$(cat "$CC/mount.args")"
+expect "senza archivio: cache collegate al tmpfs a tetto" "$CC/lms/artwork-ram/artwork.db" "$(readlink "$CC/lms/cache/artwork.db")"
+printf 'MemTotal: 262144 kB\n' > "$CC/proc/meminfo"
+art_small=$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)
+printf 'MemTotal: 33554432 kB\n' > "$CC/proc/meminfo"
+expect "tetto dell'artwork: minimo 32 MB, mai oltre 256" "32|256" "$art_small|$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)"
+# Tetti di memoria cgroup di Lyrion e dello scanner (cgroup finto nei file).
+CGT=$CC/cgroup
+mkdir -p "$CGT"
+echo "cpu io memory" > "$CGT/cgroup.controllers"
+: > "$CGT/cgroup.subtree_control"
+printf 'MemTotal:        8388608 kB\n' > "$CC/proc/meminfo"
+SWEETSPOT_CGROUP=$CGT SWEETSPOT_PROCFS=$CC/proc lmsfn lms_cgroups
+expect "cgroup di Lyrion: memory.max 70% della RAM, high all'85%" "6012954150|5111010985" \
+	"$(cat "$CGT/sweetspot-lyrion/memory.max")|$(cat "$CGT/sweetspot-lyrion/memory.high")"
+expect "cgroup dello scanner: memory.max 40% della RAM" "3435973800" "$(cat "$CGT/sweetspot-scanner/memory.max")"
+echo "LYRION_MEM_MB=1000" > "$CC/run/sweetspot.conf"
+SWEETSPOT_CGROUP=$CGT SWEETSPOT_PROCFS=$CC/proc lmsfn lms_cgroups
+expect "LYRION_MEM_MB indicato in MB" "1048576000" "$(cat "$CGT/sweetspot-lyrion/memory.max")"
+rm -f "$CC/run/sweetspot.conf"
 
 echo "Precarico in RAM"
 PRE=$WORK/precarico
@@ -1696,6 +1723,28 @@ printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/ru
 expect "budget stabile: la memoria gia' bloccata conta come libera" "1827652" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+# Brani CUE (URL#inizio-fine): il file e' quello intero, caricato una volta sola.
+expect "URL di un brano CUE: il frammento si scarta" "$PRE/musica/Album è/a.flac" "$(prefn "url_path '$U/a.flac#12.5-100.25'")"
+expect "nome con # (%23): resta nel percorso" "$PRE/musica/Album è/x#y.flac" "$(prefn "url_path '$U/x%23y.flac#1-2'")"
+printf '%s\n' "$U/a.flac#0-60" "$U/a.flac#60-120" "$U/d.flac" "$U/a.flac#120-180" > "$PRE/coda-cue"
+expect "piano: i brani dello stesso file CUE contano una volta" \
+	"SI 3 $PRE/musica/Album è/a.flac|SI 1 $PRE/musica/Album è/d.flac" \
+	"$(prefn "preload_plan 100 100 < '$PRE/coda-cue'" | tr '\n' '|' | sed 's/|$//')"
+# Coda oltre 1000 brani: letta a pagine da 500, dal brano in corso alla fine.
+echo AA:BB > "$PRE/run/player.mac"
+cat > "$PRE/fake-lms.sh" <<'FAKE'
+lms_json() {
+	awk -v start="$3" -v count="$4" -v tot=1200 'BEGIN {
+		if (count == 1) { printf "{\"result\":{\"mode\":\"play\",\"playlist_cur_index\":\"3\",\"playlist_tracks\":%d}}\n", tot; exit }
+		printf "{\"result\":{\"mode\":\"play\",\"playlist_loop\":["
+		for (i = start; i < start + count && i < tot; i++) printf "%s{\"url\":\"file:///m/t%d.flac\"}", (i > start ? "," : ""), i
+		print "]}}" }'
+}
+FAKE
+prefn ". '$PRE/fake-lms.sh'; queue_urls" > "$PRE/coda-lunga"
+expect "coda di 1200 brani: tutti dal brano in corso (3) alla fine" "1197|file:///m/t3.flac|file:///m/t1199.flac" \
+	"$(wc -l < "$PRE/coda-lunga" | tr -d ' ')|$(head -n 1 "$PRE/coda-lunga")|$(tail -n 1 "$PRE/coda-lunga")"
+rm -f "$PRE/run/player.mac"
 printf '%s\n' "$U/a.flac" "http://radio.example/stream" "$U/grande.dsf" "$U/b%20c.flac" "$U/manca.flac" "$U/d.flac" > "$PRE/coda"
 expect "piano: in coda fino al budget, poi si ferma" \
 	"SI 3 $PRE/musica/Album è/a.flac|STREAM http://radio.example/stream|GRANDE 5 $PRE/musica/Album è/grande.dsf|OLTRE 2 $PRE/musica/Album è/b c.flac|MANCA $PRE/musica/Album è/manca.flac|OLTRE 1 $PRE/musica/Album è/d.flac" \

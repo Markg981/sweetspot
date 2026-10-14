@@ -38,6 +38,14 @@ PRECARICO_MB=auto
 PRECARICO_FILE_MAX_MB=1024
 PRECARICO_STANDBY=si
 
+# Tetti di memoria (modalita' completa). LYRION_MEM_MB e SCANNER_MEM_MB:
+# limite cgroup di Lyrion e del suo scanner (auto = 70% e 40% della RAM);
+# ARTWORK_RAM_MB: cache delle copertine in RAM quando non c'e' l'archivio
+# musicale (auto = 4% della RAM, tra 32 e 256 MB).
+LYRION_MEM_MB=auto
+SCANNER_MEM_MB=auto
+ARTWORK_RAM_MB=auto
+
 # --- Musica ---------------------------------------------------------------
 # Dischi interni e USB vengono trovati da soli e letti in sola lettura.
 # DISCHI=no li ignora tutti; ESCLUDI_DISCHI ignora quelli indicati per nome,

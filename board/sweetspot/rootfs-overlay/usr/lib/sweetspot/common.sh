@@ -383,6 +383,75 @@ oom_adj_cmd() {
 	return 0
 }
 
+# --- cgroup v2 di servizio (memoria, I/O, CPU) --------------------------------
+# Lavori di fondo (checkpoint della libreria, Lyrion, scanner) in gruppi con
+# limiti propri: non tolgono memoria, I/O o CPU al player. Senza cgroup v2
+# (kernel senza, nessun permesso) restano nice/ionice/taskset.
+CGROOT=${SWEETSPOT_CGROUP:-/sys/fs/cgroup}
+
+# cg_make NOME [FILE=VALORE...]: crea il gruppo e scrive i limiti. Fallisce
+# se cgroup v2 non c'e'; un limite che il kernel rifiuta non e' un errore.
+cg_make() {
+	local d=$CGROOT/$1 c kv
+	shift
+	[ -f "$CGROOT/cgroup.controllers" ] || return 1
+	for c in cpu io memory; do
+		grep -qw "$c" "$CGROOT/cgroup.controllers" 2>/dev/null || continue
+		grep -qw "$c" "$CGROOT/cgroup.subtree_control" 2>/dev/null ||
+			echo "+$c" >> "$CGROOT/cgroup.subtree_control" 2>/dev/null
+	done
+	mkdir -p "$d" 2>/dev/null || return 1
+	for kv in "$@"; do
+		echo "${kv#*=}" > "$d/${kv%%=*}" 2>/dev/null
+	done
+	return 0
+}
+
+# cg_add NOME PID...: sposta i processi nel gruppo (figli futuri compresi).
+cg_add() {
+	local n=$1 p
+	shift
+	[ -d "$CGROOT/$n" ] || return 1
+	for p in "$@"; do echo "$p" >> "$CGROOT/$n/cgroup.procs" 2>/dev/null; done
+	return 0
+}
+
+# Memoria totale in KB.
+mem_total_kb() { sed -n 's/^MemTotal:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo" 2>/dev/null; }
+
+# mem_limit_bytes CHIAVE PERCENTUALE: limite in byte. CHIAVE (MB, solo cifre,
+# "auto" o vuoto) viene dalla configurazione; auto e' la PERCENTUALE della
+# memoria totale. 0 = nessun limite.
+mem_limit_bytes() {
+	local mb tot
+	mb=$(conf "$1" auto)
+	case "$mb" in
+		''|auto|*[!0-9]*)
+			tot=$(mem_total_kb); [ -n "$tot" ] || tot=0
+			echo $((tot * 1024 / 100 * $2)) ;;
+		*) echo $((mb * 1048576)) ;;
+	esac
+}
+
+# bg_self NOME: il processo corrente (una subshell: ( bg_self x; ... )) e i
+# suoi figli lavorano a bassa priorita': gruppo NOME con io.weight minimo,
+# classe I/O idle, nice 19, solo sui core di sistema (mai quello audio).
+bg_self() {
+	local hk me
+	# $$ e' la shell principale anche dentro una subshell: il PID della
+	# subshell si legge da /proc/self (letto dalla subshell stessa).
+	read -r me _ < /proc/self/stat 2> /dev/null
+	case "$me" in ''|*[!0-9]*) return 0 ;; esac
+	cg_make "$1" "io.weight=default 1" "cpu.weight=10" && cg_add "$1" "$me"
+	command -v ionice > /dev/null 2>&1 && ionice -c 3 -p "$me" 2> /dev/null
+	command -v renice > /dev/null 2>&1 && renice -n 19 -p "$me" > /dev/null 2>&1
+	cpu_layout
+	hk=$(join_list "$LAYOUT_HK")
+	[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
+	[ -n "$hk" ] && command -v taskset > /dev/null 2>&1 && taskset -p -c "$hk" "$me" > /dev/null 2>&1
+	return 0
+}
+
 # Buffer di squeezelite in KB: "stream:output".
 # Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
 # i campioni gia' decodificati: con un output grande la decodifica finisce

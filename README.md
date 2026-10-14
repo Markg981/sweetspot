@@ -37,8 +37,16 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
      jitter del clock di conversione del DAC.
 8. **Modalità ascolto**: mentre la musica suona, la lettura della libreria e i
    lavori di fondo (copie, ripping) vengono rallentati e riprendono a velocità
-   normale quando la musica si ferma; il salvataggio sulla chiavetta aspetta la
-   fine dell'ascolto. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
+   normale quando la musica si ferma; il salvataggio completo sulla chiavetta
+   aspetta la fine dell'ascolto, ma ogni 15 minuti (se la libreria è cambiata)
+   un *checkpoint* dei soli database, con il backup online di SQLite scritto
+   direttamente sulla chiavetta (niente copia in RAM) da un processo a bassa
+   priorità: cgroup con `io.weight` minimo, `ionice` idle, `nice` 19, solo sui
+   core di sistema. Così una lettura lunga durante un ascolto lungo non si perde
+   se manca la corrente. Il riavvio del solo player ("Salva e applica" nella
+   pagina Audio) non fa più alcuna copia del database. Prima di scrivere si
+   controlla lo spazio: a chiavetta piena non si riprova ogni minuto (ogni 30
+   minuti) e la pagina Stato avvisa. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
    `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner
    non resta congelato con una transazione del database aperta. Se il kernel
    non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
@@ -61,7 +69,9 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    un minuto. Con la coda invariata il piano non si ricalcola (niente `stat`
    sulle cartelle di rete a ogni giro). Lo streaming non si precarica, i file
    oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la pagina Stato mostra
-   brani caricati, memoria usata, esclusioni e dischi fermi.
+   brani caricati, memoria usata, esclusioni e dischi fermi. Le righe `#inizio-fine`
+   dei brani CUE contano come il loro file (letto una volta sola) e la coda si
+   legge a pagine da 500: anche le code oltre 1000 brani sono precaricate.
 
 ## Come si usa
 
@@ -437,6 +447,8 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `PRECARICO_MB` | `auto` (metà della memoria libera, tolti i buffer di Squeezelite ancora da riempire) o MB; mai oltre la memoria libera meno quei buffer e 256 MB | auto |
 | `PRECARICO_FILE_MAX_MB` | file più grandi letti dal disco | 1024 |
 | `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
+| `LYRION_MEM_MB`, `SCANNER_MEM_MB` | tetto di memoria (cgroup v2: `memory.max`, con `memory.high` all'85%) di Lyrion e del suo scanner: MB o `auto` (70% e 40% della RAM). Il tmpfs scritto da Lyrion (database della libreria) conta nel suo tetto | auto |
+| `ARTWORK_RAM_MB` | cache delle copertine in RAM, in un tmpfs a parte con `size=`, quando non c'è l'archivio musicale: MB o `auto` (4% della RAM, tra 32 e 256 MB). Piena, la pagina Stato avvisa e le nuove copertine non si salvano | auto |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD`, `_SMB1` | cartelle di rete (fino a 9): `//server/cartella` (SMB) o `nfs://server/cartella` (NFS); `_SMB1=si` ammette SMB1, insicuro | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
