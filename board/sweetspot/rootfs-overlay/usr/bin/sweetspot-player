@@ -566,15 +566,46 @@ run_player() {
 	PREFS_SET=0
 }
 
-# Impostazioni del player in Lyrion (modalita' completa), appena il player
-# e' collegato: volume fisso al 100% (bit-perfect) o regolabile, niente
-# ReplayGain, niente dissolvenze tra i brani, nessun limite di bitrate
-# (i file arrivano al player cosi' come sono).
+# Impostazioni del player in Lyrion, appena il player e' collegato e poi a
+# ogni cambio o riconnessione: volume fisso al 100% (bit-perfect) o
+# regolabile, niente ReplayGain, niente dissolvenze tra i brani, nessun
+# limite di bitrate (i file arrivano al player cosi' come sono).
+# Con Lyrion locale le impone; con un server esterno (SERVER) le chiede via
+# JSON-RPC se raggiungibile. Ogni PREFS_OGNI secondi rilegge i valori: se
+# divergono li reimposta e, se non ci riesce, lo scrive in
+# $RUN/fedelta.stato e nel log (una volta per cambio di stato).
+PREFS_OGNI=${SWEETSPOT_PREFS_OGNI:-15}
+
+prefs_stato() { # testo
+	[ "$(cat "$RUN/fedelta.stato" 2>/dev/null)" = "$1" ] && return 0
+	printf '%s\n' "$1" > "$RUN/fedelta.stato.nuovo" && mv "$RUN/fedelta.stato.nuovo" "$RUN/fedelta.stato"
+	log "player: preferenze di fedelta': $1"
+}
+
+# Stampa le preferenze la cui lettura non coincide con quella richiesta.
+prefs_divergenti() { # digitale
+	local nome valore got out=""
+	for nome in digitalVolumeControl:$1 replayGainMode:0 transitionType:0 maxBitrate:0; do
+		valore=${nome#*:}
+		nome=${nome%%:*}
+		got=$(LMS_TIMEOUT=5 lms_get '._p2' "$PLAYER_MAC" playerpref "$nome" '?')
+		[ "$got" = "$valore" ] || out="$out${out:+ }$nome=${got:-?}(richiesto $valore)"
+	done
+	printf '%s' "$out"
+}
+
 apply_player_prefs() {
-	local digital=0 vol_dsp=0
-	[ "$(mode)" = completa ] || return 0
-	[ "$PREFS_SET" = 1 ] && return 0
-	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$PLAYER_MAC" connected '?')" = 1 ] || return 1
+	local digital=0 vol_dsp=0 sig now div srv LMS_HOST=$LMS_HOST
+	if [ "$(mode)" != completa ]; then
+		# Server esterno: raggiungibile solo se indicato (SERVER); con la
+		# ricerca automatica non si sa dove sia.
+		srv=$(conf SERVER)
+		if [ -z "$srv" ]; then
+			prefs_stato "non verificabili (server esterno non indicato)"
+			return 0
+		fi
+		LMS_HOST=${srv%%:*}
+	fi
 	# Volume a 64 bit: il controllo digitale del volume resta acceso in
 	# Lyrion (senza, Material e le app mostrano il player a volume fisso e
 	# nascondono il cursore); Squeezelite lo ignora (-F) e il cursore lo
@@ -583,6 +614,24 @@ apply_player_prefs() {
 		hardware) digital=1 ;;
 		digitale) digital=1; [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && vol_dsp=1 ;;
 	esac
+	sig="$digital$vol_dsp$LMS_HOST"
+	now=$(date +%s)
+	if [ "$PREFS_SET" = 1 ] && [ "${PREFS_SIG:-}" = "$sig" ] && [ $(( now - ${PREFS_T:-0} )) -lt "$PREFS_OGNI" ]; then
+		return 0
+	fi
+	PREFS_T=$now
+	if [ "$(LMS_TIMEOUT=5 lms_get '._connected' "$PLAYER_MAC" connected '?')" != 1 ]; then
+		# Player non collegato o server irraggiungibile: alla
+		# riconnessione le preferenze si riapplicano.
+		PREFS_SET=0
+		[ "$(mode)" = completa ] || prefs_stato "non verificabili (server esterno non raggiungibile o player non collegato)"
+		return 1
+	fi
+	# Gia' applicate e invariate: basta rileggerle; se divergono, di nuovo.
+	if [ "$PREFS_SET" = 1 ] && [ "${PREFS_SIG:-}" = "$sig" ] && [ -z "$(prefs_divergenti "$digital")" ]; then
+		prefs_stato "applicate (volume $(volume_effettivo))"
+		return 0
+	fi
 	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null || return 1
@@ -591,7 +640,13 @@ apply_player_prefs() {
 		lms_json "$PLAYER_MAC" mixer volume 100 > /dev/null || return 1
 	fi
 	PREFS_SET=1
-	log "player: impostazioni in Lyrion applicate (volume $(volume_effettivo))"
+	PREFS_SIG=$sig
+	div=$(prefs_divergenti "$digital")
+	if [ -n "$div" ]; then
+		prefs_stato "divergenti, non imponibili: $div"
+	else
+		prefs_stato "applicate (volume $(volume_effettivo))"
+	fi
 }
 
 player_loop() {

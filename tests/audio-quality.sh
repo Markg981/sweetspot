@@ -336,6 +336,13 @@ command=$(printf '%s\n' "$data" | jq -r '.params[1] | join(" ")')
 echo "$command" >> "$state/rpc-log"
 if [ "$command" = 'connected ?' ]; then
 	printf '{"result":{"_connected":1}}\n'
+elif [ "${command% \?}" != "$command" ]; then
+	# Lettura di una preferenza: l'ultimo valore impostato, salvo quelle
+	# che il server "ignora" (elenco in rpc-ignora) o i valori esterni.
+	name=$(echo "$command" | awk '{ print $2 }')
+	if grep -qx "$name" "$state/rpc-ignora" 2>/dev/null; then v=9
+	else v=$(grep "^playerpref $name [^?]" "$state/rpc-log" | tail -n 1 | awk '{ print $3 }'); fi
+	printf '{"result":{"_p2":"%s"}}\n' "$v"
 elif [ "$command" = "$(cat "$state/rpc-fail" 2>/dev/null)" ] && [ ! -f "$state/rpc-failed" ]; then
 	: > "$state/rpc-failed"
 	printf '{"error":{"code":-32000,"message":"temporary failure"}}\n'
@@ -373,12 +380,42 @@ common "config_build '$E/settings'"
 echo dsp > "$E/run/volume.modo"
 rm -f "$E/rpc-log"
 expect "volume a 64 bit: cursore di Lyrion acceso e libero" 'playerpref digitalVolumeControl 1|0' \
-	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep "digitalVolumeControl [01]$" "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 echo riserva > "$E/run/volume.modo"
 rm -f "$E/rpc-log"
 expect "volume a 64 bit non disponibile: volume software di Lyrion" 'playerpref digitalVolumeControl 1|0' \
-	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+	"$(player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null; grep "digitalVolumeControl [01]$" "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 rm -f "$E/run/volume.modo"
+# Riconciliazione: le preferenze si riapplicano quando cambiano, dopo una
+# riconnessione e con server esterno; la divergenza non imponibile si vede.
+echo "Preferenze di fedelta' Lyrion: riconciliazione"
+rm -f "$E/rpc-fail" "$E/rpc-failed" "$E/rpc-ignora" "$E/run/fedelta.stato"
+printf 'MODALITA=completa\nVOLUME=fisso\n' > "$E/settings"
+common "config_build '$E/settings'"
+rm -f "$E/rpc-log"
+player 'PREFS_SET=0; PREFS_OGNI=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs; apply_player_prefs; apply_player_prefs' > /dev/null
+expect "preferenze invariate: nessuna nuova scrittura" 1 "$(grep -c 'playerpref replayGainMode 0' "$E/rpc-log")"
+expect "stato: applicate" 'applicate (volume fisso)' "$(cat "$E/run/fedelta.stato")"
+printf 'MODALITA=completa\nVOLUME=software\n' > "$E/settings"
+common "config_build '$E/settings'"
+rm -f "$E/rpc-log"
+player 'PREFS_SET=1; PREFS_SIG=00127.0.0.1; PREFS_OGNI=3600; PREFS_T=$(date +%s); PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
+expect "VOLUME cambiato: riapplica senza riavviare il player" 'playerpref digitalVolumeControl 1' "$(grep "digitalVolumeControl [01]$" "$E/rpc-log" | tail -n 1)"
+rm -f "$E/rpc-log"
+printf 'replayGainMode\n' > "$E/rpc-ignora"
+player 'PREFS_SET=0; PREFS_OGNI=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs; apply_player_prefs' > /dev/null
+expect "valore effettivo diverso e non imponibile: segnalato" 'divergenti, non imponibili: replayGainMode=9(richiesto 0)' "$(cat "$E/run/fedelta.stato")"
+rm -f "$E/rpc-ignora" "$E/run/fedelta.stato" "$E/rpc-log"
+printf 'MODALITA=player\nSERVER=192.168.1.50:3483\nVOLUME=fisso\n' > "$E/settings"
+common "config_build '$E/settings'"
+player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
+expect "server esterno: preferenze applicate via JSON-RPC" 'applicate (volume fisso)' "$(cat "$E/run/fedelta.stato")"
+expect "server esterno: scritture inviate" 1 "$(grep -c 'playerpref maxBitrate 0' "$E/rpc-log")"
+rm -f "$E/run/fedelta.stato"
+printf 'MODALITA=player\nVOLUME=fisso\n' > "$E/settings"
+common "config_build '$E/settings'"
+player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
+expect "server esterno non indicato: non verificabili" 'non verificabili (server esterno non indicato)' "$(cat "$E/run/fedelta.stato")"
 # Modalita' effettiva del volume: VOLUME=dac senza mixer nel DAC e' fisso
 # per Squeezelite (niente -V), per Lyrion (cursore spento, 100%) e per il web.
 printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
@@ -390,7 +427,7 @@ expect "volume dac senza mixer: modalita' effettiva fissa, senza -V" 'fisso|0' \
 	"$(cat "$E/run/volume.effettivo")|$(grep -c -- ' -V ' "$E/run/player.args")"
 player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
 expect "volume dac senza mixer: Lyrion a volume fisso" 'playerpref digitalVolumeControl 0|1' \
-	"$(grep digitalVolumeControl "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
+	"$(grep "digitalVolumeControl [01]$" "$E/rpc-log")|$(grep -c 'mixer volume 100' "$E/rpc-log")"
 expect "volume dac senza mixer: il web legge la modalita' effettiva" fisso "$(common 'volume_effettivo')"
 echo hardware > "$E/run/volume.effettivo"
 expect "modalita' effettiva hardware letta dal file di stato" hardware "$(common 'volume_effettivo')"
