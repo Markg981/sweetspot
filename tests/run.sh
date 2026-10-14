@@ -779,6 +779,19 @@ diag=$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/ru
 case "$diag" in *"XRUN ALSA registrati|0"*) ok "diagnostica: conta gli XRUN senza certificare la continuita'" ;; *) ko "diagnostica XRUN" "XRUN ALSA registrati|0" "-" ;; esac
 case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita' inventata" "nessuna certificazione" "certificazione presente" ;; *) ok "diagnostica: nessuna continuita' inventata" ;; esac
 
+# Stallo da frequenza (-H) e ricampionamento "solo se serve" (flag E).
+diag_freq() { SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati; }
+grep -q 'set -- "\$@" -R "vLE"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
+grep -q '^FREQUENZA_NON_SUPPORTATA=ricampiona' "$OVERLAY/etc/sweetspot/defaults.conf" && ok "default: FREQUENZA_NON_SUPPORTATA=ricampiona" || ko "default FREQUENZA_NON_SUPPORTATA" "ricampiona" "assente"
+printf '[12:00:00] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n[12:00:05] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n' > "$WEB/squeezelite.log"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Frequenza|bloccato: frequenza 88200 Hz non accettata dal DAC"*) ok "stato: stallo da frequenza rifiutata segnalato" ;; *) ko "stato: stallo da frequenza" "bloccato: frequenza 88200 Hz" "-" ;; esac
+printf '[12:00:00] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback\n' > "$WEB/squeezelite.log"
+diag=$(diag_freq)
+case "$diag" in *"|Frequenza|"*) ko "stato: un solo rifiuto non e' uno stallo" "nessuna voce" "voce presente" ;; *) ok "stato: un solo rifiuto non e' uno stallo" ;; esac
+printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite.log"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Frequenza|ricampionata (88200 -> 96000 Hz)"*) ok "stato: avviso di ricampionamento" ;; *) ko "stato: avviso di ricampionamento" "ricampionata (88200 -> 96000 Hz)" "-" ;; esac
 
 # Stato e parametri devono provenire dal medesimo PCM selezionato.
 check_page_diag() {
@@ -835,7 +848,7 @@ printf 'state: MYSTERY\n' > "$PCM/sub0/status"
 out=$(page audio)
 no_active "audio: stato sconosciuto non attivo" "$out"
 case "$out" in *'row ATTENZIONE'*'UNVERIFIED'*) ok "audio: stato sconosciuto richiede attenzione" ;; *) ko "audio stato sconosciuto" "ATTENZIONE UNVERIFIED" "-" ;; esac
-diag=$(check_page_diag)
+diag=$(diag_freq)
 no_active "diagnostica: stato sconosciuto non attivo" "$diag"
 case "$diag" in *'ATTENZIONE|Uscita audio|'*'UNVERIFIED'*) ok "diagnostica: stato sconosciuto richiede attenzione" ;; *) ko "diagnostica stato sconosciuto" "ATTENZIONE UNVERIFIED" "-" ;; esac
 printf 'state: RUNNING\n' > "$PCM/sub0/status"
@@ -854,17 +867,17 @@ printf 'state: RUNNING\n' > "$WEB/proc/asound/card1/pcm0p/sub0/status"
 printf '[12:00:00.123456] _output_frames:123 XRUN\n' > "$WEB/squeezelite.log"
 case "$(check_page_diag)" in *'ATTENZIONE|XRUN ALSA registrati|1 nel registro'*) ok "XRUN: un evento esatto" ;; *) ko "XRUN evento" "1" "-" ;; esac
 printf '[12:00:00] output_thread:123 XRUN recover failed: Broken pipe\n' >> "$WEB/squeezelite.log"
-diag=$(check_page_diag)
+diag=$(diag_freq)
 case "$diag" in *'XRUN ALSA registrati|1 nel registro'*) ok "XRUN: recupero fallito non raddoppia evento" ;; *) ko "XRUN doppio conto" "1" "-" ;; esac
 case "$diag" in *'ATTENZIONE|Recuperi XRUN falliti|1 nel registro'*) ok "XRUN: recupero fallito contato a parte" ;; *) ko "XRUN recupero" "1" "-" ;; esac
 printf '[12:00:00] output_thread:123 XRUN recover failed: Broken pipe\n' > "$WEB/squeezelite.log"
-diag=$(check_page_diag)
+diag=$(diag_freq)
 case "$diag" in *'XRUN ALSA registrati|0 nel registro'*) ok "XRUN: solo recupero non inventa evento" ;; *) ko "XRUN solo recupero evento" "0" "-" ;; esac
 case "$diag" in *'ATTENZIONE|Recuperi XRUN falliti|1 nel registro'*) ok "XRUN: solo recupero richiede attenzione" ;; *) ko "XRUN solo recupero attenzione" "ATTENZIONE 1" "-" ;; esac
 printf 'NOTXRUN\nDescrizione XRUN\nXRUN nei commenti\n[12:00:00] other:1 descriptive XRUN\n' > "$WEB/squeezelite.log"
 case "$(check_page_diag)" in *'XRUN ALSA registrati|0 nel registro'*) ok "XRUN: sottostringhe incidentali ignorate" ;; *) ko "XRUN incidentale" "0" "-" ;; esac
 rm -f "$WEB/squeezelite.log"
-diag=$(check_page_diag)
+diag=$(diag_freq)
 case "$diag" in *'XRUN ALSA registrati|registro non disponibile'*) ok "XRUN: registro assente dichiarato" ;; *) ko "XRUN registro assente" "non disponibile" "-" ;; esac
 case "$diag" in *'Recuperi XRUN falliti|registro non disponibile'*) ok "XRUN: recuperi non disponibili senza registro" ;; *) ko "XRUN recuperi assenti" "non disponibile" "-" ;; esac
 
