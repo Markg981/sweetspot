@@ -3,7 +3,8 @@
 #
 # Sweetspot - prove di robustezza sull'immagine x86 avviata in QEMU:
 #   1. watchdog attivo (i6300ESB, il watchdog hardware emulato da QEMU);
-#   2. DAC USB collegato a caldo: il player parte;
+#   2. DAC USB collegato a caldo: il player parte; a riposo il sistema fa
+#      meno di 100 fork al minuto (tests/forks-riposo.sh);
 #   3. DAC scollegato a caldo: il player si ferma e aspetta;
 #   4. DAC ricollegato: il player riparte con un nuovo processo;
 #   5. blocco simulato (servizio del watchdog fermato con SIGSTOP): il
@@ -162,6 +163,22 @@ else
 	esito NO "DAC collegato: player non attivo (stato: $STATO)"
 fi
 pid1=$(squeezelite_pid)
+
+echo "== 2b. Fork a riposo (demone a eventi, meno di 100 al minuto)"
+# DAC collegato, player attivo, nessun ascolto e nessuna pagina aperta: il
+# contatore "processes" di /proc/stat misura il lavoro dei servizi.
+if guest 'sh -s 60 100' < "$TEST_DIR/forks-riposo.sh" > "$OUT/forks-riposo.txt" 2>&1; then
+	esito OK "fork a riposo: $(head -n 1 "$OUT/forks-riposo.txt")"
+else
+	esito NO "fork a riposo: $(tr '\n' ' ' < "$OUT/forks-riposo.txt")"
+fi
+guest 'for f in stato.json stato.ts; do cat /run/sweetspot/$f; done; ls -l /run/sweetspot/stato.richiesta /run/sweetspot/dac.cache 2>&1' \
+	> "$OUT/stato-demone.txt" 2>&1 || true
+if grep -q '"voci":\[' "$OUT/stato-demone.txt"; then
+	esito OK "stato.json prodotto dal demone a eventi"
+else
+	esito NO "stato.json assente o vuoto: $(head -c 300 "$OUT/stato-demone.txt" | tr '\n' ' ')"
+fi
 
 echo "== 3. DAC scollegato a caldo"
 qmp '{"execute":"device_del","arguments":{"id":"dac"}}' >> "$OUT/qmp.txt"

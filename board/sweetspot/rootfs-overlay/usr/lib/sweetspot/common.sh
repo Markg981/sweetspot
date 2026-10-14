@@ -351,13 +351,21 @@ oom_adj() {
 	return 0
 }
 
-# oom_adj_cmd VALORE TESTO: come oom_adj, per i processi la cui riga di
-# comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+# oom_adj_cmd VALORE TESTO [PADRE]: come oom_adj, per i processi la cui riga
+# di comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+# Con PADRE si guardano solo i suoi figli: il padre di ogni processo si legge
+# da /proc/PID/stat con la shell, senza lanciare un comando per processo.
 oom_adj_cmd() {
-	local v=$1 pat=$2 d p
+	local v=$1 pat=$2 parent=${3:-} d p st
 	for d in "$PROC"/[0-9]*; do
-		[ -r "$d/cmdline" ] || continue
 		p=${d##*/}
+		if [ -n "$parent" ]; then
+			read -r st < "$d/stat" 2>/dev/null || continue
+			st=${st##*) }   # dopo "(nome) "
+			st=${st#* }     # dopo lo stato: resta "ppid ..."
+			[ "${st%% *}" = "$parent" ] || continue
+		fi
+		[ -r "$d/cmdline" ] || continue
 		case "$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null)" in
 			*"$pat"*) oom_adj "$v" "$p" ;;
 		esac
@@ -573,7 +581,37 @@ dac_playback_stream() { # scheda [canali]
 # Senza stream USB (es. I2S), ALSA dichiara i formati prima di configurare
 # il PCM. /dev/null non contiene campioni da riprodurre. L'apertura puo'
 # fallire se il dispositivo e' occupato: in quel caso non si inventano capacita'.
-dac_hw_params() {
+dac_hw_params() { dac_cached hw "$1" dac_hw_params_live "$1"; }
+
+# Le capacita' del DAC cambiano solo con l'hardware, ma ogni prova apre il PCM
+# (hw:): con un DAC I2S la serie costa una ventina di aperture a ogni giro.
+# Mentre il demone dello stato e' attivo (esiste dac.cache.attiva) gli esiti
+# riusciti restano in $RUN/dac.cache finche' udev non segnala un evento
+# "sound" (il demone svuota la cache). Senza demone niente cache.
+# La chiave contiene l'identita' della scheda (id e usbid da /proc/asound),
+# non solo il numero: un altro DAC nello stesso posto non riusa i dati.
+#   dac_cached TIPO SCHEDA COMANDO...
+dac_cached() {
+	local kind=$1 card=$2 f out id='' usb=''
+	shift 2
+	if [ ! -f "$RUN/dac.cache.attiva" ]; then "$@"; return; fi
+	read -r id < "$PROC/asound/card$card/id" 2>/dev/null
+	read -r usb < "$PROC/asound/card$card/usbid" 2>/dev/null
+	f=$RUN/dac.cache/$kind.$card.$id.$usb
+	if [ -s "$f" ]; then cat "$f"; return 0; fi
+	out=$("$@") || return 1
+	[ -n "$out" ] || return 0
+	# Un'apertura fallita (dispositivo occupato, o in uso: ascolto in corso)
+	# non si ricorda.
+	case "$kind" in hw) case "$out" in *FORMAT:*) ;; *) printf '%s\n' "$out"; return 0 ;; esac ;; esac
+	if dac_playing; then printf '%s\n' "$out"; return 0; fi
+	mkdir -p "$RUN/dac.cache" 2>/dev/null &&
+		printf '%s\n' "$out" > "$f.nuovo" 2>/dev/null && mv "$f.nuovo" "$f"
+	printf '%s\n' "$out"
+}
+dac_cache_purge() { rm -rf "$RUN/dac.cache"; }
+
+dac_hw_params_live() {
 	local dev id
 	dev=$(dac_playback_dev "$1") || return 1
 	id=$(dac_id "$1")
@@ -622,6 +660,11 @@ dac_rates() { # scheda [formato ALSA] [canali]
 			*) return 1 ;;
 		esac
 	fi
+	dac_cached "rates-$fmt" "$1" dac_rates_probe "$1" "$fmt"
+}
+
+dac_rates_probe() { # scheda formato
+	local id dev rate out actual fmt=$2
 	id=$(dac_id "$1")
 	dev=$(dac_playback_dev "$1") || return 1
 	# Un intervallo RATE non prova che ogni frequenza sia supportata. Prova
@@ -793,7 +836,46 @@ correction_running() {
 }
 
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
-dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
+# Solo comandi interni della shell (nessun fork): il demone dello stato lo
+# chiede ogni pochi secondi mentre Lyrion dice "play".
+dac_playing() {
+	local f l
+	for f in "$PROC"/asound/card*/pcm*p/sub*/status; do
+		[ -r "$f" ] || continue
+		while IFS= read -r l; do
+			case "$l" in "state: RUNNING"*) return 0 ;; esac
+		done < "$f"
+	done
+	return 1
+}
+
+# Lo stato si calcola quando succede qualcosa o quando qualcuno lo chiede:
+# chi lo legge (pagina Stato, stato.json) chiama stato_richiedi, che chiede al
+# demone un giro nuovo se la cache e' piu' vecchia di ETA secondi (10, o 40
+# durante l'ascolto: il controllo completo non e' leggero) e aspetta fino a 12
+# s il file aggiornato. La richiesta e' una riga nella FIFO stato.richiesta
+# (scrivibile da tutti: puo' solo chiedere un giro, che il demone limita);
+# senza demone, o con la FIFO senza lettore, si serve la cache com'e'.
+stato_richiedi() { # [eta]
+	local ts every t2 i max=${1:-10}
+	[ -p "$RUN/stato.richiesta" ] || return 0
+	dac_playing && [ "$max" -lt 40 ] && max=40
+	ts=0
+	read -r ts every < "$RUN/stato.ts" 2>/dev/null
+	case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+	[ $(( $(date +%s) - ts )) -gt "$max" ] || return 0
+	timeout 2 sh -c 'echo r > "$1"' sh "$RUN/stato.richiesta" 2>/dev/null || return 0
+	i=0
+	while [ $i -lt 24 ]; do
+		usleep 500000
+		t2=0
+		read -r t2 every < "$RUN/stato.ts" 2>/dev/null
+		case "$t2" in ''|*[!0-9]*) t2=0 ;; esac
+		[ "$t2" -gt "$ts" ] && return 0
+		i=$((i + 1))
+	done
+	return 0
+}
 
 # Osservazione /proc del solo PCM scelto dal player, non certificazione del DAC.
 # DEV|SUB|STATE|FORMAT|RATE|CHANNELS|BUFFER_SIZE|PERIOD_SIZE

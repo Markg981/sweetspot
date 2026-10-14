@@ -17,6 +17,7 @@ package Plugins::Sweetspot::Plugin;
 use strict;
 use base qw(Slim::Plugin::Base);
 
+use Fcntl qw(O_WRONLY O_NONBLOCK);
 use Slim::Control::Request;
 use Slim::Utils::ExtensionsManager;
 use Slim::Utils::Log;
@@ -49,6 +50,32 @@ sub initPlugin {
 	}
 }
 
+# Il demone sweetspot-stato calcola lo stato a eventi: se la cache ha piu' di
+# 10 secondi gli si chiede un giro nuovo (una riga nella FIFO stato.richiesta,
+# aperta senza bloccare: senza demone non c'e' lettore e si lascia stare) e si
+# aspetta al massimo 2 secondi il file aggiornato.
+sub _stato_ts {
+	my $dir = shift;
+	open(my $fh, '<', "$dir/stato.ts") or return 0;
+	my $line = <$fh>;
+	close $fh;
+	return ($line // '') =~ /^(\d+)/ ? $1 : 0;
+}
+
+sub _stato_richiedi {
+	my $dir = $ENV{SWEETSPOT_RUN} || '/run/sweetspot';
+	my $ts  = _stato_ts($dir);
+	return if time() - $ts <= 10;
+	return unless -p "$dir/stato.richiesta";
+	sysopen(my $fh, "$dir/stato.richiesta", O_WRONLY | O_NONBLOCK) or return;
+	syswrite($fh, "r\n");
+	close $fh;
+	for (1 .. 8) {
+		select(undef, undef, undef, 0.25);
+		last if _stato_ts($dir) > $ts;
+	}
+}
+
 sub _cli {
 	my $request = shift;
 
@@ -58,6 +85,7 @@ sub _cli {
 	if ($cmd eq 'stato') {
 		# Sola lettura della cache scritta da sweetspot-stato (root, 0644).
 		my $file = ($ENV{SWEETSPOT_RUN} || '/run/sweetspot') . '/stato.json';
+		_stato_richiedi();
 		my $data;
 		if (open(my $fh, '<', $file)) {
 			local $/;

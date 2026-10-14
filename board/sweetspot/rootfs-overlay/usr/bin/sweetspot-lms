@@ -133,16 +133,6 @@ do_prepare() {
 	chown -R "$LMS_USER:$LMS_USER" "$LMS_DATA" "$LMS_LOG" 2>/dev/null
 }
 
-# Finche' Lyrion vive, ogni 20 secondi porta lo scanner (figlio del server,
-# nasce con il valore di Lyrion) tra i primi candidati dell'OOM killer.
-# Un giro leggero sulle righe di comando; niente scanner, niente scritture.
-oom_watch() {
-	while kill -0 "$1" 2>/dev/null; do
-		oom_adj_cmd 500 scanner.pl
-		sleep 20
-	done
-}
-
 do_service() {
 	local restarts=0 started rc hk
 	rm -f "$STOPFLAG"
@@ -164,7 +154,9 @@ do_service() {
 		# OOM killer: Lyrion poco protetto, lo scanner (figlio, lo eredita)
 		# tra i primi a cadere; il player (-1000) mai.
 		oom_adj -100 "$lmspid"
-		oom_watch "$lmspid" &
+		# Lo scanner lo porta a +500 il demone dello stato quando Lyrion
+		# annuncia una scansione (evento rescan della CLI): nessun processo
+		# che a riposo si risveglia ogni 20 secondi.
 		wait "$lmspid"
 		rc=$?
 		[ -f "$STOPFLAG" ] && break
