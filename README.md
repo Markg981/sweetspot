@@ -415,7 +415,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
-| `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio | 500, 0 |
+| `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio; la pausa al cambio di frequenza non scende mai sotto il buffer ALSA | 500, 0 |
 | `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
 | `HOTSPOT`, `HOTSPOT_ATTESA`, `HOTSPOT_PROVA`, `HOTSPOT_PASSWORD` | hotspot di configurazione del primo avvio (vedi [sotto](#hotspot-di-configurazione-wi-fi)): `si`/`no`, secondi di attesa senza rete prima di accenderlo, secondi concessi alla rete scelta prima che riparta, password scelta da te (8-63 caratteri; vuoto = casuale a ogni accensione, mostrata sullo schermo) | si, 60, 40, vuoto |

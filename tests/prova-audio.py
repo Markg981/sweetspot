@@ -10,6 +10,7 @@ rootfs, on loopback.
 """
 import argparse
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -49,6 +50,11 @@ CASES += [{"id": "pcm-rate-%s-%s-24-24" % (first, second),
           for first, second in ((44100, 48000), (48000, 44100), (44100, 96000),
                                 (96000, 44100), (48000, 96000), (96000, 48000))]
 PCM_PACING_RATE = 44100
+# Cambi di frequenza provati su ALSA: il primo brano e' lungo (la testa puo'
+# perdersi mentre il capture si aggancia) e se ne verifica la coda intera.
+ALSA_TRANSITIONS = ((44100, 96000),)
+ALSA_TRANSITION_FIRST_SECONDS = 4
+ALSA_TRANSITION_TAIL_SECONDS = 1
 STARTUP_SECONDS = 10
 CAPTURE_SECONDS = STARTUP_SECONDS + 2 + 1
 WALL_SECONDS = CAPTURE_SECONDS + 3
@@ -614,6 +620,200 @@ def alsa_output_evidence(log, destination, capture_stderr):
     return evidence
 
 
+def wait_loopback_rate(target, rate, process, timeout=15, interval=.05):
+    """Wait for the player to run on hw:Loopback at this rate, ignoring other rates.
+
+    Squeezelite may first idle-open the device at another rate of its list; only
+    the open at the wanted rate is checked and returned.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AudioError("Squeezelite exited with status %s before opening ALSA" % process.returncode)
+        params = loopback_state(target, "p")
+        if params is not None and params["state"] == "RUNNING" and params["rate"] == rate:
+            expected = {"access": "MMAP_INTERLEAVED", "channels": 2}
+            for name, value in expected.items():
+                if params[name] != value:
+                    raise AudioError("Loopback playback %s is %r, wanted %r" % (name, params[name], value))
+            if params["format"] not in ALSA_FORMATS:
+                raise AudioError("Loopback playback format %s is not a verified container" % params["format"])
+            return params
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+    raise AudioError("Squeezelite did not open hw:Loopback at %s Hz before deadline" % rate)
+
+
+def wait_loopback_left_rate(target, rate, process, timeout=15, interval=.05):
+    """Wait until the playback substream closes or reopens at another rate."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AudioError("Squeezelite exited with status %s during the rate change" % process.returncode)
+        params = loopback_state(target, "p")
+        if params is None or params["rate"] != rate:
+            return params
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+    raise AudioError("hw:Loopback playback never left %s Hz before deadline" % rate)
+
+
+def write_wav_tail(source, destination, frames):
+    """Write the last frames of a WAV as its own file: the reference of a track tail."""
+    with wave.open(str(source), "rb") as stream:
+        params = stream.getparams()
+        if frames > params.nframes:
+            raise AudioError("tail longer than the track")
+        stream.setpos(params.nframes - frames)
+        data = stream.readframes(frames)
+    with wave.open(str(destination), "wb") as stream:
+        stream.setparams(params)
+        stream.writeframes(data)
+    return destination
+
+
+def locate_reference_start(reference, capture, capture_format, rate, probe_frames=64):
+    """First capture frame where the reference begins, or None.
+
+    Only the start is searched (a stereo noise run of probe_frames frames);
+    from there to the end the caller compares every sample and every trailing
+    frame, so a lost or altered tail never passes.
+    """
+    from tools.audio_verification import _frames, _raw_info, _wav_info
+    wanted = list(itertools.islice(_frames(_wav_info(reference)), probe_frames))
+    captured = list(_frames(_raw_info(capture, capture_format, rate)))
+    first = wanted[0]
+    for index in range(len(captured) - len(wanted) + 1):
+        if captured[index] == first and captured[index:index + len(wanted)] == wanted:
+            return index
+    return None
+
+
+def drain_evidence(log):
+    """Count the drain outcomes Squeezelite (patch 0004) logs at each reopen."""
+    text = log.read_text(errors="replace") if log.exists() else ""
+    return {"drained": len(re.findall(r"drained \d+ ms before closing", text)),
+            "dropped": len(re.findall(r"drain skipped or timed out", text)),
+            "drain_errors": text.count("snd_pcm_drain error"),
+            "opens": text.count("open output device: %s" % ALSA_PLAYBACK),
+            "xruns": len(re.findall(r"\bXRUN\b(?! recover failed)", text)),
+            "xrun_recover_failures": text.count("XRUN recover failed")}
+
+
+def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, process_factory, target):
+    """Play a long track at `rate` then one at `second_rate` on hw:Loopback.
+
+    Squeezelite reopens the device for the new rate with no pause between
+    tracks (rate delay 0), the case where closing without draining discarded
+    the ring: the capture of the first rate must hold the last second of the
+    first track, sample by sample, with only zeros after it.
+    """
+    from tools.audio_verification import compare_capture, generate_fixtures
+    identity = case_id or "pcm-rate-%s-%s-24-24" % (rate, second_rate)
+    directory = output / identity
+    directory.mkdir(parents=True, exist_ok=True)
+    report = {"id": identity, "kind": "pcm_rate_transition", "rate": rate, "bits": 24,
+              "source_bits": [24, 24], "source_rates": [rate, second_rate], "status": "fail",
+              "scope": "alsa_loopback", "tail_seconds": ALSA_TRANSITION_TAIL_SECONDS}
+    mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
+    report["player_mac"] = mac
+    process = capture = None
+    log_owned = False
+    engine_log = "/tmp/audio-verification.log"
+    local_log = directory / "squeezelite.log"
+    started = time.monotonic()
+    journal_start = len(client.journal)
+    try:
+        local_log.unlink(missing_ok=True)
+        first = generate_fixtures(directory / ("references-%s" % rate), rate, 24,
+                                  frames=rate * ALSA_TRANSITION_FIRST_SECONDS)[0]
+        second = generate_fixtures(directory / ("references-%s" % second_rate), second_rate, 24)[1]
+        tail = write_wav_tail(first, directory / ("tail-%s.wav" % rate), rate * ALSA_TRANSITION_TAIL_SECONDS)
+        report["limits"] = {"wall_seconds": 60, "rate_delay_ms": 0}
+        with target.fixtures([first, second]) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
+            target.remove(engine_log)
+            log_owned = True
+            engine = ["/usr/bin/squeezelite", "-o", ALSA_PLAYBACK, "-a", ALSA_BUFFER,
+                      "-r", "%s,%s:0" % (rate, second_rate),
+                      "-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log,
+                      "-d", "output=info"]
+            command = target.command(engine)
+            report["command"] = command
+            try:
+                for stream in ("p", "c"):
+                    if loopback_state(target, stream) is not None:
+                        raise AudioError("Loopback %s substream is already open by another process" % stream)
+                process = process_factory(command, stdout=subprocess.DEVNULL, stderr=stderr,
+                                          start_new_session=os.name == "posix")
+                wait_connected(client, mac, process)
+                deadline = time.monotonic() + 50
+                report["settings"] = configure_player(client, mac, deadline=deadline)
+                client.request(mac, ["playlist", "play", fixtures.player_path], deadline=deadline)
+                report["playlist"] = wait_playlist(client, mac, fixtures.urls)
+                playback = wait_loopback_rate(target, rate, process)
+                report["alsa"] = {"playback": playback}
+                capture_stderr = (directory / "capture-stderr.log").open("wb")
+                try:
+                    capture = LoopbackCapture(target, directory / "capture.raw", params=playback,
+                                              seconds=40, wall_seconds=55,
+                                              process_factory=process_factory, stderr=capture_stderr)
+                    report["capture_command"] = capture.command
+                    capture.start()
+                finally:
+                    capture_stderr.close()
+                report["alsa"]["capture"] = wait_loopback_capture(capture, rate)
+                # The capture keeps reading until the device leaves this rate; a short
+                # wait afterwards lets the drained tail cross the SSH pipe.
+                wait_loopback_left_rate(target, rate, process)
+                time.sleep(1.5)
+            finally:
+                if capture is not None:
+                    capture.stop()
+                if process is not None:
+                    stop_process(process, owned_group=os.name == "posix")
+                if capture is not None:
+                    capture.join()
+                target.stop_engine()
+            target.fetch(engine_log, local_log)
+        report["rate_evidence"] = output_rate_evidence(local_log, report["source_rates"])
+        start = locate_reference_start(tail, directory / "capture.raw", capture.format, rate)
+        report["tail_start_frame"] = start
+        if start is None:
+            raise AudioError("the last %s s of the first track are not in the capture" % ALSA_TRANSITION_TAIL_SECONDS)
+        raw = (directory / "capture.raw").read_bytes()
+        (directory / "capture-tail.raw").write_bytes(raw[start * capture.frame_bytes:])
+        comparison = compare_capture([tail], directory / "capture-tail.raw", capture_format=capture.format,
+                                     capture_rate=rate, max_lead_frames=0)
+        comparison.update(rate_sequence_match=True, expected_rate_sequence=list(report["source_rates"]),
+                          observed_rate_sequence=report["rate_evidence"]["observed_rate_sequence"])
+        report["comparison"] = comparison
+        report["alsa"]["output"] = evidence = drain_evidence(local_log)
+        evidence["status"] = ("pass" if evidence["opens"] >= 2 and evidence["xruns"] == 0
+                              and evidence["xrun_recover_failures"] == 0 and evidence["drain_errors"] == 0
+                              else "fail")
+        report["status"] = comparison["status"]
+        if evidence["status"] != "pass":
+            raise AudioError("ALSA evidence did not verify a reopen without XRUN or drain error")
+        if report["rate_evidence"]["status"] != "pass":
+            report["status"] = "fail"
+    except Exception as error:
+        report["status"] = "fail"
+        report["error"] = str(error)
+    finally:
+        report["rpc"] = client.journal[journal_start:]
+        report["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        if capture is not None:
+            report["capture"] = {"path": str(capture.path), "bytes": capture.bytes_written,
+                                 "reason": capture.reason, "error": capture.error}
+        if log_owned and not local_log.exists():
+            try:
+                target.fetch(engine_log, local_log)
+            except OSError as error:
+                report["log_error"] = str(error)
+        if "rate_evidence" not in report:
+            report["rate_evidence"] = output_rate_evidence(local_log, report["source_rates"])
+        write_json(directory / "report.json", report)
+    return report
+
+
 def stop_process(process, *, owned_group=False):
     """Signal only this process, or its private group when it owns that group."""
     group = process.pid if owned_group and os.name == "posix" else None
@@ -738,6 +938,9 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
     alsa = backend == "alsa_loopback"
     second_bits = bits if second_bits is None else second_bits
     mixed_rate = second_rate is not None
+    if alsa and mixed_rate and (rate, second_rate) in ALSA_TRANSITIONS:
+        return run_alsa_rate_transition(client, output, rate, second_rate, case_id=case_id,
+                                        process_factory=process_factory, target=target)
     identity = case_id or ("%s-%s-dop" % (source_format, rate * 16) if source_format else
                            "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits))
     if mixed_rate and case_id is None:
@@ -774,8 +977,6 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
         local_log.unlink(missing_ok=True)
         if mixed_rate:
             if alsa:
-                # Squeezelite reopens the device at each rate: the capture
-                # must follow per segment, which this backend does not do yet.
                 raise AudioError("PCM rate transitions are not verified on the ALSA backend")
             if dop or source_format or bits != 24 or second_bits != 24 or rate == second_rate:
                 raise AudioError("PCM rate transition requires different-rate WAV24 sources")
@@ -957,10 +1158,11 @@ def main(argv=None):
         target = ChrootTarget(rootfs)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    # The ALSA backend does not follow rate changes yet: its matrix is the
-    # 18 constant-rate cases, with the same IDs as the software matrix.
+    # On ALSA the rate changes are only those of ALSA_TRANSITIONS (tail of the
+    # first track after the reopen); the others stay on the software matrix.
     cases = [case for case in CASES
-             if args.backend == "software_stdout" or case["kind"] != "pcm_rate_transition"]
+             if args.backend == "software_stdout" or case["kind"] != "pcm_rate_transition"
+             or (case["rate"], case["second_rate"]) in ALSA_TRANSITIONS]
     report = {"scope": args.backend, "version": args.version, "rootfs": target.description,
               "server": args.server, "status": "fail", "cases": []}
     try:
