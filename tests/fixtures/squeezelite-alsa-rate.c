@@ -11,6 +11,9 @@ static struct {
 static snd_pcm_t *pcmp = NULL;
 
 extern u8_t *silencebuf;
+#if DSD
+extern u8_t *silencebuf_dsd;
+#endif
 
 static int open_rate(const char *device, unsigned sample_rate) {
 	int err;

@@ -15,21 +15,24 @@ Upstream: Not submitted (local option)
 
 --- a/main.c
 +++ b/main.c
-@@ -105,5 +105,6 @@
+@@ -107,6 +107,7 @@
+ 		   "  -F\t\t\tFixed gain: ignore the server volume (it is applied downstream, e.g. by a DSP)\n"
  #if ALSA
  		   "  -p <priority>\t\tSet real time priority of output thread (1-99)\n"
 +		   "  -H\t\t\tStrict hw: if the DAC refuses the sample rate, stop with an error instead of falling back to plughw: (no automatic resampling)\n"
  #endif
  #if LINUX || FREEBSD || SUN
  		   "  -P <filename>\t\tStore the process id (PID) in filename\n"
-@@ -373,5 +374,5 @@
+@@ -374,7 +375,7 @@
+ 			optind += 2;
+ 		} else if (strstr("ltz?WF"
  #if ALSA
 -						  "LX"
 +						  "LXH"
  #endif
  #if RESAMPLE
  						  "uR"
-@@ -597,6 +598,12 @@
+@@ -604,6 +605,12 @@
  		case 'X':
  			linear_volume = true;
  			break;
@@ -44,18 +47,19 @@ Upstream: Not submitted (local option)
  		case 'V':
 --- a/output_alsa.c
 +++ b/output_alsa.c
-@@ -69,5 +69,8 @@
- } alsa;
-
+@@ -70,6 +70,9 @@
+ 
  static snd_pcm_t *pcmp = NULL;
-+
+ 
 +// -H: never fall back to plughw: (no automatic resampling)
 +bool alsa_strict_hw = false;
-
++
  extern u8_t *silencebuf;
+ #if DSD
+ extern u8_t *silencebuf_dsd;
 @@ -378,6 +381,10 @@
  		}
-
+ 
  		if ((err = snd_pcm_hw_params_set_rate(pcmp, hw_params, sample_rate, 0)) < 0) {
 +			if (hw && alsa_strict_hw) {
 +				LOG_ERROR("device %s refuses %u Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: %s", device, sample_rate, snd_strerror(err));
