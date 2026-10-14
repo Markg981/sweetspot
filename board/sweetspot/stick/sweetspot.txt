@@ -169,6 +169,12 @@ PERIFERICHE_INUTILIZZATE=spente
 SSH=no
 SSH_PASSWORD=
 
+# Renderer UPnP/DLNA in entrata: Sweetspot compare come diffusore in
+# BubbleUPnP, JPlay, mconnect e nelle altre app UPnP/DLNA. L'audio passa da
+# Lyrion e dal player (come la libreria), il DAC lo apre solo il player.
+# Solo con MODALITA=completa. Si accende anche dalla pagina Sistema.
+RENDERER_UPNP=no
+
 # Password delle pagine di Sweetspot (utente admin). Vuota = pagine aperte
 # a chi e' nella rete di casa. Dalla pagina Sistema si salva come impronta
 # ($1$...); qui si puo' scrivere anche in chiaro. Dimenticata: togli la riga.
