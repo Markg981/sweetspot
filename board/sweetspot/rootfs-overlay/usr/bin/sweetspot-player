@@ -511,6 +511,17 @@ run_player() {
 	fi
 	rs=$(resample_args)
 	[ -n "$rs" ] && set -- "$@" -R "$rs"
+	# Ricampiona solo se il DAC non puo' (flag E di Squeezelite): le frequenze
+	# supportate restano bit-perfect, le altre vanno a una che il DAC accetta
+	# invece di bloccarsi con -H. FREQUENZA_NON_SUPPORTATA=blocca mantiene il
+	# rifiuto stretto (la pagina Stato mostra lo stallo).
+	if [ -z "$rs" ] && [ -z "$dsp" ]; then
+		if [ "$(lower "$(conf FREQUENZA_NON_SUPPORTATA ricampiona)")" = blocca ]; then
+			log "player: frequenza non supportata dal DAC: rifiuto stretto (FREQUENZA_NON_SUPPORTATA=blocca)"
+		else
+			set -- "$@" -R "vLE"
+		fi
+	fi
 	# Originale (niente ricampionamento, uscita diretta hw:): Squeezelite non
 	# deve ripiegare su plughw: se il DAC rifiuta la frequenza, altrimenti ALSA
 	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
