@@ -121,6 +121,17 @@ out=$(req "$A/pagina" GET "sweetspot_sid=$sid" "")
 expect "con la sessione la pagina risponde" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
 out=$(req "$A/pagina" GET "altro=1; sweetspot_sid=$sid; x=y" "")
 expect "cookie tra altri cookie" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+# CGI reali dei dati: stato.json e copertina non possono saltare l'accesso.
+printf '{"ts":1}\n' > "$RUNDIR/stato.json"
+mkdir -p "$RUNDIR/cd"; printf 'JPEGFINTO' > "$RUNDIR/cd/copertina.jpg"
+for c in stato.json copertina; do
+	out=$(SCRIPT_NAME_T=/cgi-bin/$c req "$CGI/$c" GET "" "")
+	expect "$c reale senza sessione: 401" "401" "$(status "$out")"
+	expect "$c reale senza sessione: nessun dato" "0" "$(printf '%s' "$out" | grep -c -e '"ts"' -e JPEGFINTO)"
+	out=$(SCRIPT_NAME_T=/cgi-bin/$c req "$CGI/$c" GET "sweetspot_sid=$sid" "")
+	expect "$c reale con sessione: 200 con i dati" "1" "$(printf '%s' "$out" | grep -c -e '"ts"' -e JPEGFINTO)"
+	expect "$c reale con sessione: nessun Status di errore" "" "$(status "$out")"
+done
 printf '%s\n' "$((now - 5))" > "$RUNDIR/web/sessioni/$sid"
 out=$(req "$A/pagina" GET "sweetspot_sid=$sid" "")
 expect "sessione scaduta: reindirizza" "303" "$(status "$out")"

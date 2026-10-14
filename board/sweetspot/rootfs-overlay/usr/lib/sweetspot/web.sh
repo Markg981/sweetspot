@@ -185,7 +185,7 @@ auth_gate() {
 	auth_enabled || return 0
 	session_valid && return 0
 	case "${SCRIPT_NAME:-}" in
-		*.json) printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\naccesso richiesto\n' ;;
+		*.json|*/copertina) printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n\r\naccesso richiesto\n' ;;
 		*) printf 'Status: 303 See Other\r\nLocation: /cgi-bin/accesso\r\nCache-Control: no-store\r\n\r\n' ;;
 	esac
 	exit 0

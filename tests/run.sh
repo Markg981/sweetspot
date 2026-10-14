@@ -404,6 +404,85 @@ printf '1000 10\n' > "$ST/run/stato.ts"
 case "$(stato_cgi stato)" in *"Dati non aggiornati"*) ok "stato: cache vecchia mostra l'avviso" ;; *) ko "stato cache vecchia" "avviso" "-" ;; esac
 out=$(stato_cgi stato.json)
 case "$out" in "Content-Type: application/json"*'{"ts":'*) ok "stato.json: restituisce la cache" ;; *) ko "stato.json con cache" "JSON" "$out" ;; esac
+
+# Liveness applicativa: Lyrion che non risponde e player che non suona.
+echo "Liveness applicativa (Lyrion e player)"
+LV=$WORK/liveness
+mkdir -p "$LV/bin" "$LV/run" "$LV/proc/net" "$LV/proc/asound/card1/pcm0p/sub0"
+cp "$ST/proc/net/dev" "$LV/proc/net/dev"
+printf '#!/bin/sh\nexit 0\n' > "$LV/bin/sweetspot-check"
+# wget finto che non risponde (JSON-RPC appeso) o risponde con il modo scelto;
+# jq finto (accetta la risposta e restituisce il contenuto di "modo").
+printf '#!/bin/sh\nexit 1\n' > "$LV/bin/wget-muto"
+printf '#!/bin/sh\necho "{\\"result\\":{\\"_mode\\":\\"$(cat "%s/modo")\\"}}"\n' "$LV" > "$LV/bin/wget-ok"
+printf '#!/bin/sh\nin=$(cat)\n[ -n "$in" ] || exit 1\ncase "$*" in *-e*) exit 0 ;; esac\ncat "%s/modo"\n' "$LV" > "$LV/bin/jq"
+chmod +x "$LV/bin"/*
+lv_env() { # wget
+	local w=$1
+	shift
+	env SWEETSPOT_RUN=$LV/run SWEETSPOT_PROCFS=$LV/proc SWEETSPOT_LOG=$LV/log SWEETSPOT_WGET=$LV/bin/$w \
+		SWEETSPOT_PATH="$LV/bin:$SWEETSPOT_PATH" SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf PATH="$LV/bin:$PATH" "$@"
+}
+lv_round() { lv_env "$1" $TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" aggiorna; }
+printf 'LIVENESS_LYRION_FALLIMENTI=3\nLIVENESS_BACKOFF_MIN=3600\nLIVENESS_LYRION_AVVIO=180\nLIVENESS_PLAYER_SECONDI=20\n' > "$LV/run/sweetspot.conf"
+# Lyrion vivo (processo) ma JSON-RPC muto, avviato da molto tempo.
+sleep 7200 &
+LV_LMS_PID=$!
+echo "$LV_LMS_PID" > "$LV/run/lms.pid"
+touch -d '2000-01-01' "$LV/run/lms.pid"
+lv_round wget-muto
+lv_round wget-muto
+expect "liveness: 2 fallimenti non riavviano Lyrion" "yes|2" "$(kill -0 $LV_LMS_PID 2>/dev/null && echo yes)|$(cut -d' ' -f1 "$LV/run/liveness.lyrion")"
+lv_round wget-muto
+sleep 1
+expect "liveness: al terzo fallimento Lyrion e' fermato" "no" "$(kill -0 $LV_LMS_PID 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/log")" in *"liveness: Lyrion in stallo dopo 3 fallimenti, riavvio"*) ok "liveness: riavvio di Lyrion registrato nel log" ;; *) ko "liveness log" "evento di riavvio" "$(cat "$LV/log" 2>&1)" ;; esac
+case "$(cat "$LV/run/stato.dati")" in *"ERRORE|Lyrion risponde|no: serverstatus senza risposta"*"riavviato"*) ok "liveness: la pagina Stato mostra il riavvio" ;; *) ko "liveness stato" "riga ERRORE" "$(cat "$LV/run/stato.dati")" ;; esac
+case "$(cat "$LV/run/stato.json")" in *'"liveness":{"attiva":true,"lyrion":{"stato":"riavviato","fallimenti":3,"riavvii":1}'*) ok "liveness: stato.json espone Lyrion riavviato" ;; *) ko "liveness json" "lyrion riavviato" "$(cat "$LV/run/stato.json")" ;; esac
+# Backoff: il nuovo Lyrion (appeso) non viene riavviato di nuovo subito.
+sleep 7200 &
+LV_LMS_PID=$!
+echo "$LV_LMS_PID" > "$LV/run/lms.pid"
+touch -d '2000-01-01' "$LV/run/lms.pid"
+lv_round wget-muto; lv_round wget-muto; lv_round wget-muto; lv_round wget-muto
+expect "liveness: il backoff impedisce un secondo riavvio ravvicinato" "yes" "$(kill -0 $LV_LMS_PID 2>/dev/null && echo yes || echo no)"
+# Lyrion appena avviato: i fallimenti non contano.
+rm -f "$LV/run/liveness.lyrion"
+touch "$LV/run/lms.pid"
+lv_round wget-muto; lv_round wget-muto; lv_round wget-muto
+expect "liveness: Lyrion in avvio non viene riavviato" "yes" "$(kill -0 $LV_LMS_PID 2>/dev/null && echo yes || echo no)"
+kill $LV_LMS_PID 2>/dev/null
+rm -f "$LV/run/lms.pid" "$LV/run/liveness.lyrion"
+# Player: Lyrion dice play ma il PCM e' fermo (file status finto).
+sleep 7200 &
+LV_SQ_PID=$!
+echo "$LV_SQ_PID" > "$LV/run/squeezelite.pid"
+echo 02:53:57:45:45:54 > "$LV/run/player.mac"
+echo play > "$LV/modo"
+printf 'state: SETUP\n' > "$LV/proc/asound/card1/pcm0p/sub0/status"
+lv_round wget-ok
+expect "liveness: play senza PCM RUNNING, sotto soglia, il player resta" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+echo "100000 0 0 0" > "$LV/run/liveness.player"
+lv_round wget-ok
+sleep 1
+expect "liveness: play senza PCM RUNNING oltre la soglia, squeezelite fermato" "no" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/stato.dati")" in *"ERRORE|Player|bloccato: Lyrion dice play"*) ok "liveness: stato player bloccato nella pagina" ;; *) ko "liveness player" "bloccato" "$(cat "$LV/run/stato.dati")" ;; esac
+case "$(cat "$LV/run/stato.json")" in *'"player":{"stato":"bloccato","riavvii":1}'*) ok "liveness: stato.json espone player bloccato" ;; *) ko "liveness json player" "bloccato" "$(cat "$LV/run/stato.json")" ;; esac
+case "$(cat "$LV/log")" in *"liveness: player bloccato"*"riavvio squeezelite"*) ok "liveness: riavvio del player registrato nel log" ;; *) ko "liveness log player" "evento" "$(cat "$LV/log")" ;; esac
+# PCM RUNNING: tutto bene; "pause" o "stop": nessun intervento.
+sleep 7200 &
+LV_SQ_PID=$!
+echo "$LV_SQ_PID" > "$LV/run/squeezelite.pid"
+printf 'state: RUNNING\n' > "$LV/proc/asound/card1/pcm0p/sub0/status"
+echo "100000 0 0 0" > "$LV/run/liveness.player"
+lv_round wget-ok
+expect "liveness: PCM RUNNING, nessun riavvio" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+printf 'state: SETUP\n' > "$LV/proc/asound/card1/pcm0p/sub0/status"
+echo pause > "$LV/modo"
+echo "100000 0 0 0" > "$LV/run/liveness.player"
+lv_round wget-ok
+expect "liveness: Lyrion in pausa e PCM fermo, nessun riavvio" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+kill $LV_SQ_PID 2>/dev/null
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
@@ -636,7 +715,7 @@ run "$WEB" "config_build $WEB/s.txt"
 echo "Prova DoP guidata"
 mkdac "$WEB" no
 out=$(page audio)
-case "$out" in *"Automatico: il DAC non dichiara il DSD nativo, quindi Lyrion converte i file DSD in PCM sul server, senza provare il DoP"*) ok "audio: DSD automatico senza nativo spiegato" ;; *) ko "audio DSD automatico" "conversione sul server, senza DoP" "-" ;; esac
+case "$out" in *"Automatico: il DAC non dichiara il DSD nativo, quindi Squeezelite converte i file DSD in PCM alla frequenza più alta che il DAC accetta, senza provare il DoP"*) ok "audio: DSD automatico senza nativo spiegato" ;; *) ko "audio DSD automatico" "conversione di Squeezelite, senza DoP" "-" ;; esac
 case "$out" in *"<h2>Prova DoP</h2>"*"Avvia la prova (6 secondi)"*) ok "audio: prova DoP proposta" ;; *) ko "audio prova DoP" "pulsante della prova" "-" ;; esac
 case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la prova" "nessun esito" "esito presente" ;; *) ok "audio: esito chiesto solo dopo la prova" ;; esac
 case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
@@ -2584,6 +2663,7 @@ python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
+python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

@@ -72,7 +72,7 @@ ALTRI_DAC=no
 VOLUME=fisso
 
 # DSD:
-#   auto   = DSD nativo se il DAC lo dichiara, altrimenti convertito in PCM
+#   auto   = DSD nativo se il DAC lo dichiara, altrimenti convertito in PCM da Squeezelite
 #   nativo = forza il DSD nativo (per DAC che lo supportano senza dichiararlo)
 #   dop    = DSD tramite DoP. Solo se il DAC lo supporta: altrimenti si sente
 #            un forte fruscio!

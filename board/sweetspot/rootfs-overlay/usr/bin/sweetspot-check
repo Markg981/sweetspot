@@ -199,9 +199,9 @@ check_dac() {
 	case "$(lower "$(conf DSD auto)")" in
 		auto|nativo)
 			if [ -n "$nat" ]; then emit OK "DSD" "nativo ($nat)"
-			else emit INFO "DSD" "il DAC non dichiara il DSD nativo: Lyrion converte i file DSD in PCM sul server, senza DoP (prova DoP nella pagina Audio)"; fi ;;
+			else emit INFO "DSD" "il DAC non dichiara il DSD nativo: Squeezelite converte i file DSD in PCM alla frequenza più alta che il DAC accetta, senza DoP (prova DoP nella pagina Audio)"; fi ;;
 		dop) emit INFO "DSD" "tramite DoP" ;;
-		*) emit INFO "DSD" "convertito dal server" ;;
+		*) emit INFO "DSD" "convertito in PCM da Squeezelite" ;;
 	esac
 	if [ -f "$RUN/dac.controller" ]; then
 		bdf=$(cut -d' ' -f1 "$RUN/dac.controller")
