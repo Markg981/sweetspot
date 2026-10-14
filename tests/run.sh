@@ -2710,6 +2710,7 @@ python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
+python3 "$ROOT/tests/squeezelite-mixer-dsd.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
