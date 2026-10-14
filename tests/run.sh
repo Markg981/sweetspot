@@ -1966,7 +1966,7 @@ echo FileCapture > "$DSP/proc/4242/task/4244/comm"
 echo AlsaPlayback > "$DSP/proc/4242/task/4245/comm"
 echo camilladsp > "$DSP/proc/4242/task/4246/comm"
 dspstat 4242 80 1 > "$DSP/proc/4242/task/4242/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4242/status"
-dspstat 4243 69 1 > "$DSP/proc/4242/task/4243/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4243/status"
+dspstat 4243 70 1 > "$DSP/proc/4242/task/4243/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4243/status"
 dspstat 4244 80 1 > "$DSP/proc/4242/task/4244/stat"; printf 'Cpus_allowed_list:\t3\n' > "$DSP/proc/4242/task/4244/status"
 dspstat 4245 80 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4245/status"
 dspstat 4246 0 0 > "$DSP/proc/4242/task/4246/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4246/status"
@@ -1974,7 +1974,7 @@ rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
 dspfn 1 "HK=0,1; pin_dsp"
 # Per ruolo: riproduzione 70 (PRIORITA_DSP), elaborazione 69, cattura 68.
 expect "thread audio: in real-time per ruolo sul core audio, solo chi non lo e' gia'" \
-	"-f -p 68 4244|-f -p 70 4245|-p -c 3 4245" \
+	"-f -p 69 4243|-f -p 68 4244|-f -p 70 4245|-p -c 3 4245" \
 	"$(grep -- '424[345]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[345]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
 expect "thread non audio: sui core di sistema con la priorita' normale, solo chi non lo e' gia'" \
 	"-o -p 0 4242|-p -c 0,1 4242" \
@@ -2022,15 +2022,15 @@ expect "verifica: CamillaDSP assente, lo riavvia il player" \
 	"INFO|CamillaDSP in real-time|non in esecuzione: il player la riavvia" "$(DSP_PID= dspcheck)"
 
 echo "CamillaDSP: una sola istanza per sessione"
-mkdir -p "$DSP/bin"
+mkdir -p "$DSP/bin-sessione"
 printf '#!/bin/sh\nexec sleep 30\n' > "$DSP/camilladsp-finto"
-printf '#!/bin/sh\necho "-l warn"\n' > "$DSP/bin/sweetspot-dsp"
-printf '#!/bin/sh\nexit 0\n' > "$DSP/bin/sweetspot-camilla"
-chmod +x "$DSP/camilladsp-finto" "$DSP/bin/sweetspot-dsp" "$DSP/bin/sweetspot-camilla"
+printf '#!/bin/sh\necho "-l warn"\n' > "$DSP/bin-sessione/sweetspot-dsp"
+printf '#!/bin/sh\nexit 0\n' > "$DSP/bin-sessione/sweetspot-camilla"
+chmod +x "$DSP/camilladsp-finto" "$DSP/bin-sessione/sweetspot-dsp" "$DSP/bin-sessione/sweetspot-camilla"
 cat > "$DSP/sessione.sh" <<'SESSIONE'
 # Funzioni al posto dei comandi (BusyBox preferisce le sue applet).
 taskset() { shift 2; "$@"; }
-PATH=$DSP_T/bin:$PATH
+PATH=$DSP_T/bin-sessione:$PATH
 DSP_FIFO=$DSP_T/run/dsp.fifo
 CAMILLADSP=$DSP_T/camilladsp-finto
 HK=0

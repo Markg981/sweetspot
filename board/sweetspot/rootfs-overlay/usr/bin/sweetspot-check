@@ -509,7 +509,7 @@ check_player() {
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = riserva ]; then
-		emit ATTENZIONE "Volume" "a 64 bit non disponibile: $(cat "$RUN/volume.motivo" 2>/dev/null); in uso il volume software, senza dither"
+		emit ATTENZIONE "Volume" "a 64 bit non disponibile ($(grep . "$RUN/volume.motivo" 2>/dev/null || echo "CamillaDSP non avviato o modalita' player")): in uso il volume software, senza dither"
 	elif [ "$(mode)" = player ] && [ "$vol" != dsp ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
 	elif [ "$vol" = fisso ]; then
