@@ -18,7 +18,7 @@ saved_msg() { # codice testo
 }
 
 # Campi dei moduli, riempiti da read_form.
-F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome=""
+F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome="" F_protocollo="" F_smb1=""
 F_modalita="" F_profilo="" F_dsd="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""

@@ -151,7 +151,7 @@ normalize_nfs() {
 	dir=${p#"$srv"}
 	dir=$(printf '%s' "$dir" | sed 's#^:##; s#^/*#/#')
 	case "$srv" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
-	[ "$dir" != / ] || return 1
+	case "$dir" in ""|/) return 1 ;; esac
 	printf '%s:%s' "$srv" "$dir"
 }
 
