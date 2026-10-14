@@ -401,6 +401,30 @@ check_dsp_clipping() {
 	fi
 }
 
+# Underrun di CamillaDSP nella sessione (li conta il player dal registro).
+check_dsp_underrun() {
+	local total
+	if [ -s "$RUN/dsp.underrun" ]; then
+		total=$(cut -d' ' -f2 "$RUN/dsp.underrun")
+		if [ "${total:-0}" = 0 ]; then
+			emit OK "Underrun di CamillaDSP" "nessuno nella sessione"
+		else
+			emit ATTENZIONE "Underrun di CamillaDSP" "$total nella sessione (camilladsp.log): il buffer di uscita si e' svuotato, prova ad alzare BUFFER_ALSA_MS o il profilo 'prestazioni'"
+		fi
+	else
+		emit INFO "Underrun di CamillaDSP" "non ancora letti: si contano durante la riproduzione"
+	fi
+}
+
+# Picco massimo della sessione per canale (dBFS), da CamillaDSP.
+check_dsp_peaks() {
+	local pin pout
+	pin=$(sed -n 's/^picco_ingresso=//p' "$RUN/dsp.stato" 2>/dev/null)
+	pout=$(sed -n 's/^picco_uscita=//p' "$RUN/dsp.stato" 2>/dev/null)
+	[ -n "$pin$pout" ] || return 0
+	emit INFO "Picco di CamillaDSP" "ingresso ${pin:--} dBFS, uscita ${pout:--} dBFS (massimo della sessione, sinistro e destro)"
+}
+
 # Volume attuale del volume a 64 bit, se sweetspot-volume l'ha gia' letto.
 volume_dsp_now() {
 	local v d m
@@ -507,11 +531,17 @@ check_player() {
 			emit INFO "Correzione ambientale" "attiva (CamillaDSP): il percorso non e' bit-perfect per scelta"
 		fi
 	elif [ -s "$RUN/correzione.errore" ]; then
-		emit ATTENZIONE "Correzione ambientale" "non applicata: $(cat "$RUN/correzione.errore")"
+		if grep -q '^percorso=bloccato' "$RUN/dsp.stato" 2>/dev/null; then
+			emit ATTENZIONE "Correzione ambientale" "non applicata, riproduzione BLOCCATA: $(cat "$RUN/correzione.errore") (CORREZIONE_SE_ASSENTE=diretto per suonare senza)"
+		else
+			emit ATTENZIONE "Correzione ambientale" "non applicata, il DAC riceve il segnale senza correzione: $(cat "$RUN/correzione.errore")"
+		fi
 	fi
 	if [ -f "$RUN/correzione.attiva" ]; then
 		check_dsp_threads
 		check_dsp_clipping
+		check_dsp_underrun
+		check_dsp_peaks
 	fi
 }
 
@@ -576,6 +606,19 @@ check_library() {
 	else
 		emit ATTENZIONE "Libreria" "vuota: collega un disco o aggiungi una cartella di rete in Musica"
 	fi
+	check_library_saving
+}
+
+# Salvataggio della libreria sulla chiavetta (sweetspot-dati) e cache delle
+# copertine in RAM (sweetspot-lms): avvisi scritti da chi li rileva.
+check_library_saving() {
+	local free need art
+	if [ -s "$RUN/dati.spazio" ]; then
+		read -r free need _ < "$RUN/dati.spazio"
+		emit ATTENZIONE "Salvataggio della libreria" "chiavetta piena: ${free:-?} MB liberi, ne servono ${need:-?}; libreria e impostazioni non vengono salvate (libera spazio sulla chiavetta)"
+	fi
+	art=$(cat "$RUN/lms.artwork.piena" 2>/dev/null)
+	[ -n "$art" ] && emit ATTENZIONE "Copertine in RAM" "cache al ${art}%: le nuove copertine non si salvano fino al prossimo avvio (collega l'archivio musicale per metterle su disco)"
 }
 
 # Precarico della coda in RAM (sweetspot-precarico), dal riepilogo che scrive.

@@ -114,7 +114,7 @@ denv() {
 	env SWEETSPOT_RUN="$E/run" SWEETSPOT_PROCFS="$E/proc" SWEETSPOT_LOG="$E/log" SWEETSPOT_WGET="$E/bin/wget-finto" \
 		SWEETSPOT_PATH="$E/bin:$(dirname "$BB")" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" \
 		SWEETSPOT_LIB="$OVERLAY/usr/lib/sweetspot" SWEETSPOT_PRECARICO="$E/precarico-finto" \
-		SWEETSPOT_STATO_MIN=1 SWEETSPOT_STATO_SCAN=0 PATH="$E/bin:$PATH" "$@"
+		SWEETSPOT_LMS= SWEETSPOT_STATO_MIN=1SWEETSPOT_STATO_SCAN=0 PATH="$E/bin:$PATH" "$@"
 }
 # Aspetta che una condizione (comando) diventi vera, al massimo $1 secondi.
 attendi() {

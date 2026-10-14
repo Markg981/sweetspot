@@ -34,6 +34,38 @@ alsa_stato() {
 	echo "- 0"
 }
 
+# Contatori cumulativi di XRUN. Il campionamento a intervalli vede solo uno
+# XRUN ancora in corso al momento della lettura: uno recuperato entro pochi
+# millisecondi sfugge. Le differenze fra inizio e fine di queste fonti no.
+# xrun_counter dei substream (kernel con CONFIG_SND_PCM_XRUN_DEBUG), vuoto
+# se il kernel non lo espone.
+xrun_kernel() {
+	local f n="" v
+	for f in "$PROC"/asound/card*/pcm*p/sub*/xrun_counter; do
+		[ -r "$f" ] || continue
+		v=$(cat "$f" 2>/dev/null)
+		case "$v" in ''|*[!0-9]*) continue ;; esac
+		n=$(( ${n:-0} + v ))
+	done
+	echo "$n"
+}
+
+# Eventi XRUN nel registro di Squeezelite (con i contatori della rotazione).
+xrun_registro() {
+	local c
+	c=$(xrun_total "${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}" 2>/dev/null) || return 0
+	echo "${c% *}"
+}
+
+# Il maggiore fra gli XRUN visti dai campioni e le differenze delle fonti
+# cumulative (contano gli stessi eventi: non si sommano).
+xrun_massimo() { # visti k0 k1 r0 r1
+	local m=$1
+	[ -n "$2" ] && [ -n "$3" ] && [ $(($3 - $2)) -gt "$m" ] && m=$(($3 - $2))
+	[ -n "$4" ] && [ -n "$5" ] && [ $(($5 - $4)) -gt "$m" ] && m=$(($5 - $4))
+	echo "$m"
+}
+
 psi() { # risorsa
 	awk '/^some /{for(i=2;i<=NF;i++) if($i ~ /^avg10=/){sub("avg10=","",$i); print $i; exit}}' \
 		"$PROC/pressure/$1" 2>/dev/null
@@ -74,7 +106,8 @@ ui_ms() {
 misura() {
 	local n=${1:-10} sec=${2:-5} out=${3:-} i st dl c0 c1 b0 t0 b1 t1
 	local xr=0 dmax=0 ui uimax=0 uisum=0 uin=0 tmax=0 t fsum=0 fn=0 f
-	local e0 e1 w="" cpus=0 tp0 tp1 ps
+	local e0 e1 w="" cpus=0 tp0 tp1 ps k0 k1 r0 r1
+	k0=$(xrun_kernel); r0=$(xrun_registro)
 	c0=$(cpu_tempi); b0=${c0% *}; t0=${c0#* }
 	e0=$(energia_uj); tp0=$(throttle_totale)
 	i=0
@@ -95,6 +128,8 @@ misura() {
 		fi
 		i=$((i + 1))
 	done
+	k1=$(xrun_kernel); r1=$(xrun_registro)
+	xr=$(xrun_massimo "$xr" "$k0" "$k1" "$r0" "$r1")
 	c1=$(cpu_tempi); b1=${c1% *}; t1=${c1#* }
 	e1=$(energia_uj); tp1=$(throttle_totale)
 	if [ -n "$e0" ] && [ -n "$e1" ] && [ $((n * sec)) -gt 0 ]; then

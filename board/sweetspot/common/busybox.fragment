@@ -46,3 +46,8 @@ CONFIG_INOTIFYD=y
 CONFIG_PKILL=y
 CONFIG_MKFIFO=y
 CONFIG_USLEEP=y
+
+
+# Bundle diagnostico (sweetspot-diario bundle): tar.gz e log del kernel.
+CONFIG_GZIP=y
+CONFIG_DMESG=y

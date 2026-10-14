@@ -16,8 +16,12 @@ case "$1" in
 		killall squeezelite 2>/dev/null
 		# Libreria, plugin e impostazioni sulla chiavetta prima di spegnere
 		# (Lyrion e' gia' fermo: si ferma prima del player).
-		[ "$(mode)" = completa ] && /usr/bin/sweetspot-dati salva
+		# Con "restart" (Salva e applica) Lyrion resta in funzione e il
+		# sorvegliante dei dati continua a salvare da solo: niente copia
+		# completa del database a ogni riavvio del solo player.
+		[ "${SWEETSPOT_SENZA_SALVATAGGIO:-}" = 1 ] && exit 0
+		[ "$(mode)" = completa ] && "${SWEETSPOT_DATI:-/usr/bin/sweetspot-dati}" salva
 		;;
-	restart) "$0" stop; sleep 1; "$0" start ;;
+	restart) SWEETSPOT_SENZA_SALVATAGGIO=1 "$0" stop; sleep 1; "$0" start ;;
 	*) echo "uso: $0 start|stop|restart" ;;
 esac

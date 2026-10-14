@@ -31,6 +31,10 @@ HOSTAPD=${SWEETSPOT_HOSTAPD:-hostapd}
 UDHCPD=${SWEETSPOT_UDHCPD:-udhcpd}
 DNSD=${SWEETSPOT_DNSD:-dnsd}
 SLEEP=${SWEETSPOT_SLEEP:-sleep}
+QRENCODE=${SWEETSPOT_QRENCODE:-qrencode}
+# Sulla partizione di avvio (FAT, leggibile da un PC): nome, password e codice QR.
+INFO_TXT=sweetspot-hotspot.txt
+INFO_SVG=sweetspot-hotspot.svg
 
 # Scheda Wi-Fi che sa fare da access point (prima trovata), altrimenti niente.
 ap_iface() {
@@ -117,22 +121,61 @@ scan() { # scheda
 	printf '%s\n' "$out" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
 }
 
-# Password: HOTSPOT_PASSWORD (8-63 caratteri) se scritta in sweetspot.txt,
-# altrimenti casuale a ogni accensione.
+# Password: HOTSPOT_PASSWORD (8-63 caratteri) se scritta in sweetspot.txt;
+# altrimenti quella gia' scritta in sweetspot-hotspot.txt sulla partizione di
+# avvio (stessa a ogni accensione, cosi' si legge da un PC senza schermo);
+# altrimenti una nuova casuale (che ap_start salva li').
+pass_ok() { [ "${#1}" -ge 8 ] && [ "${#1}" -le 63 ] && valid_value "$1"; }
 ap_pass() {
 	local p
 	p=$(conf HOTSPOT_PASSWORD)
-	if [ "${#p}" -ge 8 ] && [ "${#p}" -le 63 ] && valid_value "$p"; then
+	if pass_ok "$p"; then
 		printf '%s' "$p"
-	else
-		tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 10
+		return 0
 	fi
+	if stick_mount ro; then
+		p=$(sed -n 's/^Password: //p' "$STICK_MNT/$INFO_TXT" 2>/dev/null | head -n 1 | tr -d '\r')
+		stick_umount
+		pass_ok "$p" && { printf '%s' "$p"; return 0; }
+	fi
+	tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 10
 }
 
-# La password si legge sullo schermo del player (nel registro non compare).
+# Valore per il codice QR del Wi-Fi: \ ; , : " si proteggono con la barra.
+qr_esc() { printf '%s' "$1" | sed 's/[\\;,:"]/\\&/g'; }
+
+# Scrive sulla partizione di avvio nome, password e codice QR (SVG), cosi' si
+# collega il telefono anche senza schermo. Il QR si copia anche in $RUN.
+ap_info() { # nome password
+	local qr
+	qr="WIFI:T:WPA;S:$(qr_esc "$1");P:$(qr_esc "$2");;"
+	"$QRENCODE" -t SVG -m 2 -o "$RUN/hotspot-qr.svg" "$qr" 2>/dev/null || rm -f "$RUN/hotspot-qr.svg"
+	stick_mount rw || return 0
+	{
+		echo "SWEETSPOT - rete Wi-Fi di configurazione (hotspot)"
+		echo
+		echo "Rete Wi-Fi: $1"
+		echo "Password: $2"
+		echo "Poi apri http://$AP_IP/ (la pagina si apre da sola sulla maggior parte dei telefoni)."
+		echo
+		echo "Codice QR per collegare il telefono: $INFO_SVG (aprilo con il browser del PC)."
+		echo "Per cambiare la password scrivi HOTSPOT_PASSWORD in sweetspot.txt."
+	} > "$STICK_MNT/$INFO_TXT.tmp" && mv "$STICK_MNT/$INFO_TXT.tmp" "$STICK_MNT/$INFO_TXT"
+	if [ -s "$RUN/hotspot-qr.svg" ]; then
+		cp "$RUN/hotspot-qr.svg" "$STICK_MNT/$INFO_SVG.tmp" && mv "$STICK_MNT/$INFO_SVG.tmp" "$STICK_MNT/$INFO_SVG"
+	fi
+	sync
+	stick_umount
+	return 0
+}
+
+# La password si legge sullo schermo del player (nel registro non compare),
+# con il codice QR in caratteri se qrencode c'e'.
 announce() { # nome password
-	local msg t
+	local msg t qr
 	msg=$(printf '\n=== Sweetspot: configurazione Wi-Fi ===\nCollega il telefono alla rete Wi-Fi: %s\nPassword: %s\nPoi apri http://%s/\n' "$1" "$2" "$AP_IP")
+	qr=$("$QRENCODE" -t UTF8 -m 1 "WIFI:T:WPA;S:$(qr_esc "$1");P:$(qr_esc "$2");;" 2>/dev/null)
+	[ -n "$qr" ] && msg=$(printf '%s\nOppure inquadra il codice:\n%s\n' "$msg" "$qr")
 	for t in "${SWEETSPOT_CONSOLE:-/dev/console}" "${SWEETSPOT_TTY:-/dev/tty1}"; do
 		[ -w "$t" ] && printf '%s\n' "$msg" > "$t" 2>/dev/null
 	done
@@ -196,7 +239,8 @@ UDHCPD
 		echo "sweetspot $AP_IP"
 		echo "sweetspot.local $AP_IP"
 		echo "$(lower "$(conf NOME_RETE sweetspot)").local $AP_IP"
-		for h in connectivitycheck.gstatic.com clients3.google.com captive.apple.com www.msftconnecttest.com detectportal.firefox.com; do
+		for h in connectivitycheck.gstatic.com clients3.google.com www.google.com www.gstatic.com captive.apple.com www.apple.com \
+			www.msftconnecttest.com www.msftncsi.com detectportal.firefox.com connectivity-check.ubuntu.com nmcheck.gnome.org; do
 			echo "$h $AP_IP"
 		done
 	} > "$AP_PID.dns.conf"
@@ -206,6 +250,7 @@ UDHCPD
 	echo "$ssid" > "$RUN/hotspot.ssid"
 	log "hotspot: acceso su $i, rete $ssid"
 	announce "$ssid" "$pass"
+	ap_info "$ssid" "$pass"
 }
 
 ap_stop() {

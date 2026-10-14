@@ -38,6 +38,14 @@ PRECARICO_MB=auto
 PRECARICO_FILE_MAX_MB=1024
 PRECARICO_STANDBY=si
 
+# Tetti di memoria (modalita' completa). LYRION_MEM_MB e SCANNER_MEM_MB:
+# limite cgroup di Lyrion e del suo scanner (auto = 70% e 40% della RAM);
+# ARTWORK_RAM_MB: cache delle copertine in RAM quando non c'e' l'archivio
+# musicale (auto = 4% della RAM, tra 32 e 256 MB).
+LYRION_MEM_MB=auto
+SCANNER_MEM_MB=auto
+ARTWORK_RAM_MB=auto
+
 # --- Musica ---------------------------------------------------------------
 # Dischi interni e USB vengono trovati da soli e letti in sola lettura.
 # DISCHI=no li ignora tutti; ESCLUDI_DISCHI ignora quelli indicati per nome,
@@ -50,6 +58,8 @@ ESCLUDI_DISCHI=
 #   CONDIVISIONE_1=//192.168.1.10/Musica
 #   CONDIVISIONE_1_UTENTE=marco
 #   CONDIVISIONE_1_PASSWORD=la-password
+#   CONDIVISIONE_1_SMB1=si          (solo per NAS molto vecchi: SMB1 e' insicuro)
+#   CONDIVISIONE_2=nfs://192.168.1.10/export/musica   (cartella NFS)
 # Senza utente si accede come ospite.
 
 # --- Audio ----------------------------------------------------------------
@@ -130,8 +140,10 @@ WIFI_PASSWORD=
 # nessuna connessione (niente cavo, Wi-Fi non configurato o non collegato)
 # e c'e' un adattatore Wi-Fi che lo permette, il player accende la rete
 # "Sweetspot-XXXX" per scegliere il Wi-Fi di casa dal telefono. La password
-# compare sullo schermo; per uno Sweetspot senza schermo scrivine una tua
-# (da 8 a 63 caratteri) in HOTSPOT_PASSWORD.
+# compare sullo schermo (con il codice QR) e viene scritta, insieme al
+# codice QR, nei file sweetspot-hotspot.txt e sweetspot-hotspot.svg di questa
+# chiavetta; per sceglierla tu scrivine una (da 8 a 63 caratteri) in
+# HOTSPOT_PASSWORD.
 # HOTSPOT_PROVA: secondi concessi alla rete scelta prima che l'hotspot riparta.
 HOTSPOT=si
 HOTSPOT_ATTESA=60
@@ -168,6 +180,16 @@ PERIFERICHE_INUTILIZZATE=spente
 # Accesso remoto per l'assistenza tecnica (SSH).
 SSH=no
 SSH_PASSWORD=
+# Utente del login SSH: root (predefinito) oppure assistenza, senza privilegi.
+# Dalle pagine, SSH, utente e password si cambiano solo riscrivendo la
+# password delle pagine (PASSWORD_WEB): aprono il sistema come amministratore.
+SSH_UTENTE=root
+
+# Connessione protetta (HTTPS) delle pagine, con certificato autofirmato
+# creato al primo avvio e salvato su questa chiavetta (sweetspot-https.pem).
+# HTTPS_REINDIRIZZA=si fa rimandare a https chi apre le pagine in chiaro.
+HTTPS=no
+HTTPS_REINDIRIZZA=no
 
 # Password delle pagine di Sweetspot (utente admin). Vuota = pagine aperte
 # a chi e' nella rete di casa. Dalla pagina Sistema si salva come impronta

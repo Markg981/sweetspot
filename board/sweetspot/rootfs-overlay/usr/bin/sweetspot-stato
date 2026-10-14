@@ -317,6 +317,7 @@ want_round() {
 run_round() {
 	DIRTY=0; DL_ROUND=0
 	do_round "$EVERY"
+	lms_scanner_step
 	up_now
 	LAST_ROUND=$NOW
 	DL_BEAT=$((NOW + BATTITO))
@@ -344,6 +345,15 @@ pre_tick() {
 
 # Scanner di Lyrion: a +500 per l'OOM killer. Si controlla solo durante una
 # scansione (evento rescan) e nei due minuti dopo l'avvio di Lyrion.
+# Cgroup di memoria dello scanner e tmpfs delle copertine (sweetspot-lms
+# scanner, ex oom_watch): durante le scansioni e a ogni giro dello stato.
+# SWEETSPOT_LMS vuoto = non farlo (prove).
+lms_scanner_step() {
+	local cmd=${SWEETSPOT_LMS-${0%/*}/sweetspot-lms}
+	[ "$CFG_COMPLETA" = 1 ] && [ -n "$cmd" ] && [ -x "$cmd" ] && "$cmd" scanner
+	return 0
+}
+
 scan_window() {
 	[ "$SCAN_WIN" -gt 0 ] || return 0
 	SCAN_UNTIL=$((NOW + SCAN_WIN))
@@ -354,6 +364,7 @@ scan_tick() {
 	local lp=''
 	read -r lp < "$RUN/lms.pid" 2>/dev/null
 	[ -z "$lp" ] || oom_adj_cmd 500 scanner.pl "$lp"
+	lms_scanner_step
 	DL_SCAN=0
 	if [ "$SCANNING" = 1 ] || [ "$NOW" -lt "$SCAN_UNTIL" ]; then DL_SCAN=$((NOW + 20)); fi
 }

@@ -8,8 +8,13 @@
 #   sweetspot-nas ferma     la ferma
 #   sweetspot-nas conf      stampa la configurazione (per i test)
 #
-# Impostazioni: ARCHIVIO_CONDIVISO=si, ARCHIVIO_PASSWORD (vuota = accesso
-# libero dalla rete di casa; altrimenti utente "sweetspot").
+# Impostazioni: ARCHIVIO_CONDIVISO=si, ARCHIVIO_PASSWORD.
+#   - con la password: accesso autenticato (utente "sweetspot"), in lettura e
+#     scrittura, per copiare la musica;
+#   - senza password: ospite in SOLA LETTURA (si vede la musica, non si
+#     modifica nulla).
+# In entrambi i casi il server lavora come utente "nas" (non root) e non
+# mostra i file interni di Sweetspot (cache delle copertine, artwork.db).
 # Dal PC: \\sweetspot.local\Musica oppure \\indirizzo\Musica.
 # Dal Mac: Finder > Vai > Connessione al server > smb://sweetspot.local/Musica
 
@@ -17,6 +22,10 @@
 
 KSMBD_DIR=${SWEETSPOT_KSMBD_DIR:-/etc/ksmbd}
 SHARE_USER=sweetspot
+# Utente di sistema senza privilegi con cui il server legge e scrive i file.
+SYS_USER=${SWEETSPOT_NAS_UTENTE:-nas}
+# File interni che non vanno ne' visti ne' toccati dalla rete.
+VETO='/.sweetspot-cache/artwork.db/imgproxy.db/.sweetspot/lost+found/'
 
 # Nome NetBIOS: il nome in rete in maiuscolo, al massimo 15 caratteri.
 netbios_name() {
@@ -38,17 +47,19 @@ ksmbd_conf() { # percorso
 [Musica]
 	path = $1
 	comment = Archivio musicale di Sweetspot
-	read only = no
 	browseable = yes
-	force user = root
-	force group = root
+	force user = $SYS_USER
+	force group = $SYS_USER
+	hide dot files = yes
+	veto files = $VETO
+	delete veto files = no
 	create mask = 0664
 	directory mask = 0775
 EOF
 	if [ -n "$pass" ]; then
-		printf '\tguest ok = no\n\tvalid users = %s\n' "$SHARE_USER"
+		printf '\tread only = no\n\tguest ok = no\n\tvalid users = %s\n' "$SHARE_USER"
 	else
-		printf '\tguest ok = yes\n'
+		printf '\tread only = yes\n\tguest ok = yes\n'
 	fi
 }
 
@@ -61,6 +72,12 @@ start() {
 		return 0
 	fi
 	modprobe ksmbd 2>/dev/null
+	# Solo la cartella radice passa all'utente "nas" (con la password ci si
+	# scrive); i file gia' presenti restano come sono: non si percorre
+	# tutto l'archivio a ogni avvio.
+	if [ -n "$(conf ARCHIVIO_PASSWORD)" ] && id "$SYS_USER" > /dev/null 2>&1; then
+		chown "$SYS_USER:$SYS_USER" "$path" 2>/dev/null
+	fi
 	mkdir -p "$KSMBD_DIR"
 	ksmbd_conf "$path" > "$KSMBD_DIR/ksmbd.conf"
 	rm -f "$KSMBD_DIR/ksmbdpwd.db"

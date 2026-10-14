@@ -60,6 +60,10 @@ CONFIG_DEVTMPFS_MOUNT=y
 CONFIG_SOUND=y
 CONFIG_SND=y
 CONFIG_SND_VERBOSE_PROCFS=y
+# XRUN_DEBUG: contatore cumulativo di XRUN per substream (xrun_counter) e
+# xrun_debug in /proc/asound; li leggono sweetspot-energia e alsa-misura per
+# contare anche gli XRUN recuperati entro un intervallo di campionamento.
+CONFIG_SND_PCM_XRUN_DEBUG=y
 CONFIG_SND_USB=y
 CONFIG_SND_USB_AUDIO=y
 # CONFIG_SND_USB_UA101 is not set
@@ -87,7 +91,10 @@ CONFIG_HFSPLUS_FS=m
 CONFIG_CIFS=m
 # Archivio musicale condiviso in rete (server SMB del kernel, ksmbd)
 CONFIG_SMB_SERVER=m
+# Cartelle di rete NFS (client del kernel, NFSv3 e NFSv4)
 CONFIG_NFS_FS=m
+CONFIG_NFS_V3=m
+CONFIG_NFS_V4=m
 
 # --- Adattatori di rete USB ------------------------------------------------
 CONFIG_USB_USBNET=m
@@ -116,3 +123,13 @@ CONFIG_WATCHDOG_CORE=y
 CONFIG_WATCHDOG_SYSFS=y
 # CONFIG_WATCHDOG_NOWAYOUT is not set
 CONFIG_SOFT_WATCHDOG=m
+
+# --- Diagnostica: pstore / ramoops -------------------------------------------
+# Dopo un panic o un blocco il log del kernel e la console restano in una
+# memoria che sopravvive al riavvio; sweetspot-diario li copia sulla chiavetta
+# all'avvio. Su Raspberry Pi la regione e' riservata da dtoverlay=ramoops
+# (rpi/config.txt), su x86 si usa efi-pstore (x86/linux.fragment).
+CONFIG_PSTORE=y
+CONFIG_PSTORE_DEFLATE_COMPRESS=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_RAM=y
