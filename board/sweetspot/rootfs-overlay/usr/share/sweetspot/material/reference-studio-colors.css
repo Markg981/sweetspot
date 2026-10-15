@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+:root {
+	--highlight-rgb: var(--studio-accent-rgb);
+	--primary-color: var(--studio-primary);
+	--accent-color: var(--studio-accent);
+}

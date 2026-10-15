@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+:root {
+	--studio-bg: #10151d;
+	--studio-surface: #18212c;
+	--studio-raised: #202d3c;
+	--studio-input: #111b27;
+	--studio-ink: #e4ebf4;
+	--studio-muted: #a0b2c7;
+	--studio-line: #304156;
+	--studio-control-line: #607b99;
+	--studio-accent: #8abcff;
+	--studio-accent-rgb: 138, 188, 255;
+	--studio-accent-ink: #102842;
+	--studio-primary: #3379b9;
+	--studio-ok: #82dab5;
+	--studio-warn: #f4c179;
+	--studio-focus: #c2dcff;
+	--studio-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--studio-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}

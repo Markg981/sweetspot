@@ -206,6 +206,15 @@ for pg in audio stato accesso; do
 	expect "$pg: senza X-Frame-Options (non sa dire la porta)" "" "$(header "$out" X-Frame-Options)"
 	expect "$pg: nosniff" "nosniff" "$(header "$out" X-Content-Type-Options)"
 done
+out=$(sec /cgi-bin/audio)
+for pg in musica archivio plugin rete bluetooth sistema; do
+	expect "navigazione da Material a $pg: esce dal riquadro" "1" \
+		"$(printf '%s' "$out" | grep "href=\"/cgi-bin/$pg\"" | grep -c 'target="_top"')"
+done
+for pg in audio stato; do
+	expect "navigazione fra pagine incorporabili ($pg): resta nel riquadro" "0" \
+		"$(printf '%s' "$out" | grep "href=\"/cgi-bin/$pg\"" | grep -c 'target="_top"')"
+done
 out=$(SCRIPT_NAME_T=/cgi-bin/sistema req "$A/pagina" GET "" "")
 expect "reindirizzamento all'accesso con le intestazioni" "DENY|nosniff" "$(header "$out" X-Frame-Options)|$(header "$out" X-Content-Type-Options)"
 out=$(SCRIPT_NAME_T=/cgi-bin/stato.json req "$A/pagina" GET "" "")

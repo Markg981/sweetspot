@@ -23,6 +23,7 @@
 #                                   dispositivo ALSA "sweetspot_correzione"
 #   sweetspot-dsp salva SX DX       conserva i filtri (file di testo di REW)
 #                                   sulla chiavetta e in memoria
+#   sweetspot-dsp ripristina DIR    carica la generazione salvata, o la precedente
 #
 # Come funziona: squeezelite suona sul dispositivo ALSA sweetspot_correzione
 # (plugin cdsp). A ogni brano il plugin avvia CamillaDSP con la frequenza, il
@@ -636,32 +637,122 @@ do_prepare() { # scheda
 # impulsi FIR fir-sinistro.wav e fir-destro.wav (copiati dal computer).
 STICK_DSP_DIR=correzione-ambientale
 
-do_save() { # file_sinistro file_destro
-	local side src tmp
-	mkdir -p "$DSP_DIR"
-	tmp=$DSP_DIR/.salva
-	rm -rf "$tmp"
-	mkdir -p "$tmp"
+filters_source() {
+	if [ -d "$1" ]; then printf '%s\n' "$1"
+	elif [ -d "$1.vecchio" ]; then printf '%s\n' "$1.vecchio"
+	else return 1
+	fi
+}
+
+ram_filter_permissions() {
+	local f owner
+	owner="$(id -u):$(id -g)"
+	chown "$owner" "$1" && chmod 755 "$1" || return 1
+	for f in sinistro.txt destro.txt fir-sinistro.wav fir-destro.wav; do
+		[ -f "$1/$f" ] && [ ! -L "$1/$f" ] || continue
+		chown "$owner" "$1/$f" && chmod 644 "$1/$f" || return 1
+	done
+	return 0
+}
+
+# La vecchia generazione resta recuperabile anche fra le due rinomine.
+publish_filters() { # nuova destinazione
+	local new=$1 dst=$2
+	if [ ! -d "$dst" ] && [ -d "$dst.vecchio" ]; then
+		mv "$dst.vecchio" "$dst" || return 1
+	fi
+	rm -rf "$dst.vecchio" || return 1
+	if [ -d "$dst" ]; then
+		mv "$dst" "$dst.vecchio" || return 1
+	fi
+	if ! mv "$new" "$dst"; then
+		if [ -d "$dst.vecchio" ]; then
+			mv "$dst.vecchio" "$dst" ||
+				log "correzione: recupero non riuscito, filtri precedenti in $dst.vecchio"
+		fi
+		return 1
+	fi
+}
+
+do_restore() (
+	local src tmp f
+	src=$(filters_source "$1") || return 0
+	exec 8> "$RUN/correzione.lock" || return 1
+	flock -n 8 || { log "correzione: ripristino rimandato, salvataggio in corso"; return 1; }
+	tmp=$(mktemp -d "$RUN/correzione.ripristino.XXXXXX") || return 1
+	trap 'rm -rf "$tmp"' EXIT
+	for f in sinistro.txt destro.txt fir-sinistro.wav fir-destro.wav; do
+		[ -f "$src/$f" ] || continue
+		cp "$src/$f" "$tmp/$f" || { log "correzione: ripristino di $f non riuscito"; return 1; }
+	done
+	ram_filter_permissions "$tmp" && publish_filters "$tmp" "$DSP_DIR" ||
+		{ log "correzione: ripristino non riuscito"; return 1; }
+	rm -rf "$DSP_DIR.vecchio"
+	[ "$src" = "$1" ] || log "correzione: recuperata la generazione precedente"
+	return 0
+)
+
+do_save() ( # file_sinistro file_destro
+	local side src tmp current dst disk_tmp="" mounted=0
+	exec 8> "$RUN/correzione.lock" || return 1
+	flock -n 8 || { log "correzione: un altro salvataggio e' in corso"; return 1; }
+	tmp=$(mktemp -d "$RUN/correzione.salva.XXXXXX") || return 1
+	trap 'rm -rf "$tmp"; [ -z "$disk_tmp" ] || rm -rf "$disk_tmp"; [ "$mounted" = 0 ] || stick_umount' EXIT
+	mkdir "$tmp/ram" || return 1
+	current=$(filters_source "$DSP_DIR")
+	if [ -n "$current" ] && ! cp -a "$current/." "$tmp/ram/"; then
+		log "correzione: preparazione in memoria non riuscita, filtri precedenti conservati"
+		return 1
+	fi
+	rm -f "$tmp/ram/sinistro.txt" "$tmp/ram/destro.txt" || return 1
 	for side in sinistro destro; do
 		if [ "$side" = sinistro ]; then src=$1; else src=$2; fi
+		if [ -n "$src" ] && { [ ! -f "$src" ] || [ ! -r "$src" ]; }; then
+			log "correzione: file $side non leggibile, filtri precedenti conservati"
+			return 1
+		fi
 		if [ -n "$src" ] && [ -s "$src" ]; then
-			tr -d '\r' < "$src" | head -c "$MAX_TEXT" > "$tmp/$side.txt"
+			if ! tr -d '\r' < "$src" > "$tmp/testo" ||
+				! head -c "$MAX_TEXT" "$tmp/testo" > "$tmp/ram/$side.txt"; then
+				log "correzione: preparazione del $side non riuscita, filtri precedenti conservati"
+				return 1
+			fi
 		fi
 	done
-	rm -f "$DSP_DIR/sinistro.txt" "$DSP_DIR/destro.txt"
-	cp "$tmp"/*.txt "$DSP_DIR/" 2>/dev/null
-	rm -rf "$tmp"
-	if stick_mount rw; then
-		# Solo i filtri di REW: gli impulsi FIR (fir-*.wav) restano.
-		mkdir -p "$STICK_MNT/$STICK_DSP_DIR"
-		rm -f "$STICK_MNT/$STICK_DSP_DIR/sinistro.txt" "$STICK_MNT/$STICK_DSP_DIR/destro.txt"
-		cp "$DSP_DIR"/sinistro.txt "$DSP_DIR"/destro.txt "$STICK_MNT/$STICK_DSP_DIR/" 2>/dev/null
-		stick_umount
-		log "correzione: filtri salvati sulla chiavetta"
-		return 0
+	if ! ram_filter_permissions "$tmp/ram" || ! publish_filters "$tmp/ram" "$DSP_DIR"; then
+		log "correzione: salvataggio in memoria non riuscito, filtri precedenti conservati"
+		return 1
 	fi
-	return 2
-}
+	rm -rf "$DSP_DIR.vecchio"
+	if ! stick_mount rw; then
+		log "correzione: chiavetta non disponibile, filtri salvati solo in memoria"
+		return 2
+	fi
+	mounted=1
+	dst="$STICK_MNT/$STICK_DSP_DIR"
+	disk_tmp=$(mktemp -d "$STICK_MNT/.correzione.nuova.XXXXXX") ||
+		{ log "correzione: chiavetta non scrivibile, filtri salvati solo in memoria"; return 2; }
+	current=$(filters_source "$dst")
+	if [ -n "$current" ] && ! cp -a "$current/." "$disk_tmp/"; then
+		log "correzione: copia sulla chiavetta non riuscita, generazione precedente conservata"
+		return 2
+	fi
+	rm -f "$disk_tmp/sinistro.txt" "$disk_tmp/destro.txt" || return 2
+	for side in sinistro destro; do
+		[ -f "$DSP_DIR/$side.txt" ] || continue
+		if ! cp "$DSP_DIR/$side.txt" "$disk_tmp/$side.txt" ||
+			! cmp -s "$DSP_DIR/$side.txt" "$disk_tmp/$side.txt"; then
+			log "correzione: scrittura del $side non riuscita, generazione precedente conservata"
+			return 2
+		fi
+	done
+	if ! sync || ! publish_filters "$disk_tmp" "$dst" || ! sync; then
+		log "correzione: pubblicazione non riuscita, filtri precedenti conservati nella generazione di recupero"
+		return 2
+	fi
+	log "correzione: filtri salvati sulla chiavetta"
+	return 0
+)
 
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
@@ -683,5 +774,6 @@ case "$1" in
 	risposta) do_response ;;
 	prepara) do_prepare "$2" ;;
 	salva) do_save "$2" "$3" ;;
-	*) echo "uso: $0 leggi FILE|attiva|guadagno|risposta|prepara SCHEDA|salva SX DX" >&2; exit 1 ;;
+	ripristina) do_restore "$2" ;;
+	*) echo "uso: $0 leggi FILE|attiva|guadagno|risposta|prepara SCHEDA|salva SX DX|ripristina DIR" >&2; exit 1 ;;
 esac

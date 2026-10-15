@@ -30,6 +30,7 @@ INFO=$DIR/info.json
 PAUSABLE=$RUN/sospendibili
 UA="Sweetspot/0.2 ( https://github.com/Markg981/sweetspot )"
 ARCRC=${SWEETSPOT_ARCRC:-sweetspot-arcrc}
+PUBLISH=${SWEETSPOT_PUBBLICA:-sweetspot-pubblica}
 
 drive() {
 	local d
@@ -184,11 +185,13 @@ sect_time() { printf '%d:%02d.%02d' $(($1 / 4500)) $(($1 / 75 % 60)) $(($1 % 75)
 
 # --- Copia -------------------------------------------------------------------------
 
-rip() { # album artista anno
-	local dev arch album artist year disc discs n dest work t title tartist num ids off db v1v2 v1 v2 conf ok=0 bad=0
+rip() ( # album artista anno
+	local dev arch album artist year disc discs n dest work="" stage="" t title tartist num ids off db v1v2 v1 v2 conf
+	local file pending report=sweetspot-copia.txt report_error=0 ok=0 bad=0
+	trap '[ -z "$stage" ] || rm -rf "$stage"; [ -z "$work" ] || rm -rf "$work"' EXIT
+	trap 'exit 143' TERM
+	trap 'exit 130' INT
 	dev=$(drive) || { state errore 0 0 "nessun lettore CD"; return 1; }
-	# Lavoro sospendibile: per l'OOM killer flac e cdparanoia cadono prima del player.
-	oom_adj 500 $$
 	arch=$(sweetspot-dischi archivio)
 	[ -n "$arch" ] || { state errore 0 0 "nessun archivio musicale"; return 1; }
 	album=${1:-$(jq -r '.album' "$INFO")}
@@ -198,9 +201,30 @@ rip() { # album artista anno
 	n=$(wc -l < "$DIR/indice")
 	dest="$arch/$(file_name "$artist")/$(file_name "$album${year:+ ($year)}")"
 	[ "$discs" -gt 1 ] 2>/dev/null && dest="$dest/CD $disc"
-	work=$DIR/lavoro
-	rm -rf "$work"; mkdir -p "$work" "$dest"
-	[ -f "$DIR/copertina.jpg" ] && cp "$DIR/copertina.jpg" "$dest/cover.jpg"
+	# Rifiuta l'intera copia prima di leggere il CD o modificare l'album.
+	t=1
+	while [ "$t" -le "$n" ]; do
+		title=$(jq -r --argjson t "$t" '.tracks[] | select(.n == $t) | .title' "$INFO")
+		[ -n "$title" ] || title="Traccia $t"
+		file="$dest/$(printf '%02d' "$t") - $(file_name "$title").flac"
+		if [ -e "$file" ] || [ -L "$file" ]; then
+			state errore 0 "$n" "La traccia $(basename "$file") esiste già: nessun file sovrascritto. Scegli un nome album diverso."
+			log "cd: copia rifiutata, esiste gia' $file"
+			return 1
+		fi
+		t=$((t + 1))
+	done
+	mkdir -p "$dest" || { state errore 0 "$n" "archivio non scrivibile"; return 1; }
+	work=$(mktemp -d "$DIR/lavoro.XXXXXX") ||
+		{ state errore 0 "$n" "memoria di lavoro non disponibile"; return 1; }
+	stage=$(mktemp -d "$dest/.sweetspot-copia.XXXXXX") ||
+		{ state errore 0 "$n" "archivio non scrivibile o pieno"; return 1; }
+	if [ -f "$DIR/copertina.jpg" ] && [ ! -e "$dest/cover.jpg" ] && [ ! -L "$dest/cover.jpg" ]; then
+		if ! cp "$DIR/copertina.jpg" "$stage/cover.part" ||
+			! "$PUBLISH" "$stage/cover.part" "$dest/cover.jpg"; then
+			log "cd: copertina non salvata nell'album"
+		fi
+	fi
 
 	# Database AccurateRip e correzione del lettore.
 	ids=$(jq -r '.accuraterip' "$INFO")
@@ -247,23 +271,30 @@ rip() { # album artista anno
 		conf=$(awk -v t="$t" -v a="$v1" -v b="$v2" '$1 == t && ($3 == a || $3 == b) { c += $2 } END { print c + 0 }' "$db")
 		if [ "$conf" -gt 0 ]; then
 			echo "Traccia $num: copia perfetta, verificata con AccurateRip (affidabilità $conf) [$v1 $v2]" >> "$work/registro.txt"
-			ok=$((ok + 1))
 		elif [ -s "$db" ]; then
 			echo "Traccia $num: non confermata da AccurateRip [$v1 $v2]" >> "$work/registro.txt"
 		else
 			echo "Traccia $num: CD non presente nel database AccurateRip [$v1 $v2]" >> "$work/registro.txt"
 		fi
-		set -- -s -f --best -o "$dest/$num - $(file_name "$title").flac" \
+		file="$dest/$num - $(file_name "$title").flac"
+		pending="$stage/$num.part"
+		set -- -s -f --best --verify -o "$pending" \
 			-T "TITLE=$title" -T "ARTIST=$tartist" -T "ALBUM=$album" -T "ALBUMARTIST=$artist" \
 			-T "TRACKNUMBER=$t" -T "TRACKTOTAL=$n" -T "DISCNUMBER=$disc" -T "DISCTOTAL=$discs"
 		[ -n "$year" ] && set -- "$@" -T "DATE=$year"
 		[ -n "$(jq -r '.mbid' "$INFO")" ] && set -- "$@" -T "MUSICBRAINZ_ALBUMID=$(jq -r '.mbid' "$INFO")"
 		# Copertina dentro il file; se flac non riesce a leggerla (immagine
 		# rovinata o in un formato strano) la traccia si salva senza.
-		if ! { [ -f "$dest/cover.jpg" ] && flac "$@" "--picture=$dest/cover.jpg" "$work/$num.wav" > /dev/null 2>&1; } &&
-			! flac "$@" "$work/$num.wav" > /dev/null 2>&1; then
+		if { ! { [ -f "$dest/cover.jpg" ] && flac "$@" "--picture=$dest/cover.jpg" "$work/$num.wav" > /dev/null 2>&1; } &&
+			! flac "$@" "$work/$num.wav" > /dev/null 2>&1; } || [ ! -s "$pending" ]; then
 			echo "Traccia $num: errore nel salvataggio del file FLAC (disco pieno?)" >> "$work/registro.txt"
 			bad=$((bad + 1))
+		elif [ -e "$file" ] || [ -L "$file" ] ||
+			! "$PUBLISH" "$pending" "$file"; then
+			echo "Traccia $num: pubblicazione non riuscita o file gia' esistente; nessun file sovrascritto" >> "$work/registro.txt"
+			bad=$((bad + 1))
+		elif [ "$conf" -gt 0 ]; then
+			ok=$((ok + 1))
 		fi
 		rm -f "$work/$num.wav"
 		t=$((t + 1))
@@ -273,20 +304,29 @@ rip() { # album artista anno
 		if [ "$ok" = "$n" ]; then echo "Risultato: tutte le $n tracce sono copie perfette."
 		else echo "Risultato: $ok tracce su $n confermate da AccurateRip, $bad con errori."; fi
 	} >> "$work/registro.txt"
-	cp "$work/registro.txt" "$dest/sweetspot-copia.txt"
+	if [ -e "$dest/$report" ] || [ -L "$dest/$report" ]; then
+		report="sweetspot-copia-$(date +%s)-$$.txt"
+	fi
+	if ! cp "$work/registro.txt" "$stage/registro.part" ||
+		! "$PUBLISH" "$stage/registro.part" "$dest/$report"; then
+		report_error=1
+		log "cd: rapporto di copia non salvato in $dest"
+	fi
 	sync
-	rm -rf "$work"
 	eject "$dev" 2>/dev/null
-	if [ "$bad" -gt 0 ]; then
-		state errore "$n" "$n" "$bad tracce con errori: vedi sweetspot-copia.txt nella cartella dell'album"
+	if [ "$report_error" = 1 ]; then
+		state errore "$n" "$n" "Rapporto di copia non salvato: consulta il registro di sistema."
+	elif [ "$bad" -gt 0 ]; then
+		state errore "$n" "$n" "$bad tracce con errori: vedi $report nella cartella dell'album"
 	elif [ "$ok" = "$n" ]; then
 		state finita "$n" "$n" "tutte le tracce verificate con AccurateRip"
 	else
 		state finita "$n" "$n" "$ok tracce su $n verificate con AccurateRip"
 	fi
 	log "cd: copiato in $dest ($ok/$n verificate)"
-	sweetspot-lms aggiorna
-}
+	sweetspot-lms aggiorna || log "cd: libreria non aggiornata, ripeti la scansione quando Lyrion e' disponibile"
+	[ "$bad" = 0 ] && [ "$report_error" = 0 ]
+)
 
 do_copy() {
 	[ -s "$INFO" ] || { echo "leggi prima il CD"; return 1; }
@@ -305,7 +345,13 @@ case "$1" in
 	lettore) drive ;;
 	leggi) do_read ;;
 	copia) shift; do_copy "$@" ;;
-	_copia) shift; rip "$@"; rm -f "$DIR/pid" "$PAUSABLE/cd" ;;
+	_copia)
+		shift
+		# Prima del sottoprocesso di rip: anche encoder e lettore ereditano la priorita'.
+		oom_adj 500 $$
+		rip "$@"; rc=$?
+		rm -f "$DIR/pid" "$PAUSABLE/cd"
+		exit "$rc" ;;
 	stato) cat "$DIR/stato" 2>/dev/null ;;
 	annulla)
 		if [ -f "$DIR/pid" ]; then

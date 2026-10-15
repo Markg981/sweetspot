@@ -284,7 +284,7 @@ case "$(lower "$(conf CORREZIONE no)")" in
 	*) cst="spenta: uscita diretta senza correzione ambientale"; ccl="" ;;
 esac
 [ -s "$RUN/correzione/sinistro.txt" ] || cst="nessun filtro: si misura la stanza con REW e un microfono di misura"
-printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/correzione">Correggi i bassi della stanza</a></div><div class="v">%s</div></div></div>\n' "$ccl" "$(esc "$cst")"
+printf '<div class="row %s"><span class="dot"></span><div class="grow"><div class="k"><a href="/cgi-bin/correzione" target="_top">Correggi i bassi della stanza</a></div><div class="v">%s</div></div></div>\n' "$ccl" "$(esc "$cst")"
 echo '</div>'
 
 # --- Scheda DAC sul Raspberry Pi (I2S) -------------------------------------------------

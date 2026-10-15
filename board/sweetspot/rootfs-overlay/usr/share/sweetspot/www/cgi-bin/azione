@@ -561,6 +561,8 @@ case "$F_a" in
 		case "$F_modo" in si|confronto|no) ;; *) F_modo=no ;; esac
 		d=$WEBDIR/correzione
 		mkdir -p "$d"
+		exec 7> "$d/salva.lock"
+		flock -n 7 || done_to correzione "Salvataggio già in corso: attendi e riprova."
 		printf '%s\n' "$F_sinistro" > "$d/nuovo-sinistro.txt"
 		printf '%s\n' "$F_destro" > "$d/nuovo-destro.txt"
 		: > "$d/bozza.errori"
@@ -585,11 +587,16 @@ case "$F_a" in
 		priv sweetspot-dsp salva "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
 		rc=$?
 		rm -f "$d/nuovo-sinistro.txt" "$d/nuovo-destro.txt"
+		case "$rc" in
+			0|2) ;;
+			*) done_to correzione "Filtri non salvati: i filtri precedenti sono conservati. Consulta il registro." ;;
+		esac
 		[ ! -s "$RUN/correzione/sinistro.txt" ] && F_modo=no
 		priv sweetspot-config imposta CORREZIONE "$F_modo"
 		rc2=$?
 		[ $rc -eq 0 ] && rc=$rc2
 		restart_player
+		[ "$rc" -eq 2 ] && done_to correzione "Salvataggio sulla chiavetta non riuscito: le modifiche valgono solo fino al riavvio."
 		case "$F_modo" in
 			si) done_to correzione "$(saved_msg $rc "Filtri salvati e correzione accesa: il player si riavvia.")" ;;
 			confronto) done_to correzione "$(saved_msg $rc "Filtri salvati; correzione esclusa a pari volume.")" ;;

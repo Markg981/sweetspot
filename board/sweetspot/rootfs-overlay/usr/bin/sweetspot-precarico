@@ -265,7 +265,7 @@ planned_with() { # esito
 
 write_summary() { # stato
 	local kb=0 sleeping=""
-	[ -f "$PLAN" ] && kb=$(awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$PLAN")
+	kb=$(held_kb)
 	[ -f "$SLEPT" ] && sleeping=$(cat "$SLEPT")
 	jq -n --arg stato "$1" --argjson brani "$(count '' "$PLAN")" \
 		--argjson caricati "$(planned_with ok)" \
@@ -332,7 +332,8 @@ step() {
 	if grep -q '^stato	pronto' "$STATE" 2>/dev/null; then
 		# Standby solo se tutta la coda locale e' in RAM: un file escluso
 		# o non caricato farebbe ripartire il disco.
-		if ! grep -q -E '^(GRANDE|OLTRE|MANCA) ' "$PLAN" && [ "$(planned_with errore)" = 0 ]; then
+		if ! grep -q -E '^(GRANDE|OLTRE|MANCA) ' "$PLAN" &&
+			[ "$(planned_with ok)" -eq "$(count 'SI ' "$PLAN")" ]; then
 			standby_disks
 			write_summary pronto
 		else

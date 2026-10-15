@@ -354,7 +354,19 @@ web_sections() {
 }
 
 page_start() {
-	local title=$1 active=$2 refresh=$3 p msg
+	local title=$1 active=$2 refresh=$3 p msg target current description
+	case "$active" in
+		audio) description="Controlla il percorso audio, il volume e le impostazioni del tuo DAC." ;;
+		musica) description="Le tue sorgenti, la libreria e le operazioni di scansione." ;;
+		archivio) description="Dischi, spazio disponibile e copie dei tuoi CD." ;;
+		plugin) description="Servizi musicali e collegamenti, nel tuo impianto." ;;
+		rete) description="Connessione locale, Wi-Fi e cartelle condivise." ;;
+		bluetooth) description="Ascolta dal telefono e gestisci i dispositivi abbinati." ;;
+		sistema) description="Il tuo player: preferenze, manutenzione e aggiornamenti." ;;
+		stato) description="Diagnostica e misure del sistema, senza interrompere l'ascolto." ;;
+		accesso) description="Accedi alle impostazioni del tuo impianto." ;;
+		*) description="" ;;
+	esac
 	printf 'Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n'
 	sec_headers
 	printf '\r\n'
@@ -365,30 +377,47 @@ page_start() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${refresh:+<meta http-equiv="refresh" content="$refresh">}
-<title>$(esc "$title") - Sweetspot</title>
-<link rel="stylesheet" href="/style.css">
+<meta name="theme-color" content="#10151d">
+<title>$(esc "$title") - SweetSpot</title>
+<link rel="stylesheet" href="/reference-studio.css?v=1">
+<link rel="stylesheet" href="/style.css?v=reference-studio-1">
 </head>
-<body><main>
-<header>
-<h1>Sweetspot</h1>
-<nav>
+<body>
+<a class="skip" href="#contenuto">Vai al contenuto</a>
+<div class="app-shell">
+<header class="app-header">
+<a class="brand" href="/" target="_top">
+<svg class="brand-mark" viewBox="0 0 28 32" fill="currentColor" aria-hidden="true"><rect x="1" y="10" width="4" height="13" rx="2"/><rect x="8" y="4" width="4" height="25" rx="2"/><rect x="15" y="1" width="4" height="30" rx="2"/><rect x="22" y="7" width="4" height="19" rx="2"/></svg>
+<span><strong>SweetSpot</strong><small>Reference Studio</small></span>
+</a>
+<p class="nav-label">Il tuo impianto</p>
+<nav aria-label="Impostazioni SweetSpot">
 HTML
 	if [ "$(mode)" = completa ]; then
-		printf '<a class="play" href="%s" target="_top">Ascolta</a>\n' "$(player_url)"
+		printf '<a class="play" href="%s" target="_top"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#play"></use></svg>Ascolta</a>\n' "$(player_url)"
 	fi
 	for p in $(web_sections); do
-		if [ "${p%%:*}" = "$active" ]; then
-			printf '<a class="on" href="/cgi-bin/%s">%s</a>\n' "${p%%:*}" "${p#*:}"
-		else
-			printf '<a href="/cgi-bin/%s">%s</a>\n' "${p%%:*}" "${p#*:}"
-		fi
+		target=""
+		page_embeddable "/cgi-bin/${p%%:*}" || target=' target="_top"'
+		current=""
+		[ "${p%%:*}" = "$active" ] && current=' class="on" aria-current="page"'
+		printf '<a%s href="/cgi-bin/%s"%s><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#%s"></use></svg>%s</a>\n' \
+			"$current" "${p%%:*}" "$target" "${p%%:*}" "${p#*:}"
 	done
 	if auth_enabled && [ "$active" != accesso ]; then
 		printf '<form method="post" action="/cgi-bin/accesso" class="inline"><input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="esci"><button>Esci</button></form>\n' "$(token)"
 	fi
 	echo '</nav></header>'
+	cat <<HTML
+<main id="contenuto" tabindex="-1">
+<div class="page-heading">
+<p class="eyebrow">SweetSpot / Controllo dell'impianto</p>
+<h1>$(esc "$title")</h1>
+${description:+<p class="page-description">$(esc "$description")</p>}
+</div>
+HTML
 	msg=$(query_param msg)
-	[ -n "$msg" ] && printf '<p class="msg">%s</p>\n' "$(esc "$msg")"
+	[ -n "$msg" ] && printf '<p class="msg" role="status">%s</p>\n' "$(esc "$msg")"
 	return 0
 }
 
@@ -410,8 +439,11 @@ form_start() { # azione
 }
 
 page_end() {
-	printf '<p class="sub">Versione %s</p>\n' "$(esc "$(cat /etc/sweetspot-version 2>/dev/null)")"
-	echo '</main></body></html>'
+	local version
+	version=$(cat /etc/sweetspot-version 2>/dev/null)
+	if [ -n "$version" ]; then version="Versione $version"; else version="Versione non disponibile"; fi
+	printf '<footer class="page-footer"><span>SweetSpot / Reference Studio</span><span>%s</span></footer>\n' "$(esc "$version")"
+	echo '</main></div></body></html>'
 }
 
 # Pulsante che invia un'azione con il gettone.
