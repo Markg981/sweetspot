@@ -645,6 +645,8 @@ analogiche e ascolto alla cieca quando si valutano differenze percepite.
 Con USB asincrona il clock della conversione è quello del DAC. Il programma
 alimenta i buffer tramite il driver ALSA; non può sostituire l'oscillatore del
 DAC con il clock del PC né realizzare un filtro elettrico sulle linee USB.
+Profili CPU (compreso `dinamico`), `sweetspot-banco` e la distinzione fra
+scheduling e jitter: `docs/profili-cpu.md`.
 La latenza misurata da `sweetspot-latenza` riguarda lo scheduler, non il jitter
 del clock audio. `sweetspot-alsa-misura [-c scheda] [-d dispositivo] [-t secondi]`
 campiona `/proc/asound/cardX/pcmYp/sub0/status` e `hw_params` e riassume delay

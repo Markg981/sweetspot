@@ -3,12 +3,19 @@
 #
 # Sweetspot - frequenza fissa della CPU secondo il profilo.
 #
-#   bilanciato   a meta' strada tra minima e nominale (predefinito)
-#   silenzio     alla minima: meno corrente e meno calore
-#   prestazioni  alla nominale, e i core non entrano mai in pausa
+#   bilanciato   frequenza FISSA a meta' strada tra minima e nominale
+#                (predefinito; il nome indica il compromesso, non una
+#                gestione dinamica: per quella c'e' "dinamico")
+#   silenzio     frequenza fissa alla minima: meno corrente e meno calore
+#   prestazioni  frequenza fissa alla nominale, i core non entrano mai in pausa
+#   dinamico     governor schedutil/ondemand, minima libera, massima la
+#                nominale; stati C profondi consentiti, salvo sui core audio
+#                isolati (isolcpus), dove si evita la latenza di risveglio
 #
-# In tutti i profili il Turbo e' spento: frequenza e tensione restano
-# costanti e l'assorbimento non varia con il carico.
+# In tutti i profili il Turbo e' spento. Nei profili a frequenza fissa
+# frequenza e tensione restano costanti e l'assorbimento non varia con il
+# carico; in "dinamico" seguono il carico (meno consumo e calore a riposo).
+# Il confronto fra profili si fa con sweetspot-banco.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -79,6 +86,43 @@ conservativo_runtime() {
 	done
 }
 
+# Elenco di CPU "0-2,5" -> "0 1 2 5".
+espandi_cpu() {
+	printf '%s' "$1" | tr ',' '
+' | awk -F- 'NF==1 && $1!="" {print $1} NF==2 {for(i=$1;i<=$2;i++) print i}'
+}
+
+# Profilo dinamico: governor che segue il carico, intervallo libero fino alla
+# nominale (Turbo spento).
+set_policy_dinamico() {
+	local pol=$1 g=""
+	for g in schedutil ondemand; do
+		grep -qw "$g" "$pol/scaling_available_governors" 2>/dev/null && break
+		g=""
+	done
+	[ -n "$g" ] && put "$g" "$pol/scaling_governor"
+	put "$(cat "$pol/cpuinfo_min_freq")" "$pol/scaling_min_freq"
+	put "$(snap_freq "$pol" "$(base_freq "$pol")")" "$pol/scaling_max_freq"
+	echo "${g:-auto}"
+}
+
+# Stati C: tutti consentiti, tranne quelli con risveglio lento (> 50 us) sui
+# core isolati per l'audio, dove la latenza di uscita pesa sulla puntualita'.
+dinamico_cstate() {
+	local iso c d lat
+	for d in "$SYS"/devices/system/cpu/cpu*/cpuidle/state*/disable; do
+		[ -f "$d" ] && put 0 "$d"
+	done
+	iso=$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)
+	for c in $(espandi_cpu "$iso"); do
+		for d in "$SYS/devices/system/cpu/cpu$c"/cpuidle/state*; do
+			[ -f "$d/disable" ] || continue
+			lat=$(cat "$d/latency" 2>/dev/null)
+			[ "${lat:-0}" -gt 50 ] && put 1 "$d/disable"
+		done
+	done
+}
+
 set_policy() {
 	local pol=$1 min base target
 	min=$(cat "$pol/cpuinfo_min_freq")
@@ -132,8 +176,13 @@ fi
 turbo_off
 for pol in "$CPUFREQ"/policy*; do
 	[ -d "$pol" ] || continue
-	f=$(set_policy "$pol")
+	if [ "$PROFILE" = dinamico ]; then f=$(set_policy_dinamico "$pol"); else f=$(set_policy "$pol"); fi
 done
+[ "$PROFILE" = dinamico ] && dinamico_cstate
 pm_qos
 echo "$PROFILE ${f:-?}" > "$RUN/cpu.stato"
-log "cpu: profilo $PROFILE, frequenza ${f:-?} kHz"
+if [ "$PROFILE" = dinamico ]; then
+	log "cpu: profilo dinamico, governor ${f:-?}"
+else
+	log "cpu: profilo $PROFILE, frequenza ${f:-?} kHz"
+fi

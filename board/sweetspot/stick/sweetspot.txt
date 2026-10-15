@@ -167,7 +167,9 @@ RISPARMIO_RETE=no
 
 # --- Sistema --------------------------------------------------------------
 # Profilo di funzionamento del processore:
-#   bilanciato  = frequenza fissa intermedia (consigliato)
+#   bilanciato  = frequenza fissa intermedia, non dinamica (consigliato)
+#   dinamico    = frequenza che segue il carico, stati di riposo profondi
+#                 (esclusi i core audio isolati): meno consumo a riposo
 #   silenzio    = frequenza fissa al minimo: meno consumo e meno calore
 #   prestazioni = frequenza fissa alla nominale, processore sempre sveglio
 PROFILO=bilanciato

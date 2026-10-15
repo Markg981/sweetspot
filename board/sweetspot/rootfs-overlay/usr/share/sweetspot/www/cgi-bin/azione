@@ -439,7 +439,7 @@ case "$F_a" in
 		nome=$(safe_name "$F_nome")
 		[ -n "$nome" ] || nome=Sweetspot
 		case "$F_modalita" in completa|player) ;; *) F_modalita=completa ;; esac
-		case "$F_profilo" in bilanciato|silenzio|prestazioni) ;; *) F_profilo=bilanciato ;; esac
+		case "$F_profilo" in bilanciato|silenzio|prestazioni|dinamico) ;; *) F_profilo=bilanciato ;; esac
 		# Ascolto puro = lavori sospesi + precarico in RAM con dischi fermi.
 		case "$F_ascolto" in
 			puro) F_ascolto=si; precarico=si ;;
