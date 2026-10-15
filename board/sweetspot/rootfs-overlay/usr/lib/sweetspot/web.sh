@@ -347,9 +347,9 @@ player_url() { printf 'http://%s:9000/material/' "$(web_host)"; }
 # e plugin stanno sul server Lyrion dell'altro computer.
 web_sections() {
 	if [ "$(mode)" = completa ]; then
-		echo "audio:Audio musica:Musica archivio:Archivio plugin:Plugin rete:Rete sistema:Sistema stato:Stato"
+		echo "audio:Audio musica:Musica archivio:Archivio plugin:Plugin rete:Rete bluetooth:Bluetooth sistema:Sistema stato:Stato"
 	else
-		echo "audio:Audio rete:Rete sistema:Sistema stato:Stato"
+		echo "audio:Audio rete:Rete bluetooth:Bluetooth sistema:Sistema stato:Stato"
 	fi
 }
 

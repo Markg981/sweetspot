@@ -52,6 +52,19 @@ evento() { # sorgente evento [dettagli]
 	case "$2" in
 		spegnimento|riavvio*|aggiornamento*|rollback*|errore*|panic*) : > "$DIARIO_FLAG" 2>/dev/null ;;
 	esac
+	case "$2" in riavvio-*) restart_conta "$1" ;; esac
+	return 0
+}
+
+# Restart per componente: un contatore in RAM per sorgente (lyrion, player,
+# liveness...), che non si perde quando la timeline viene troncata dalla quota.
+restart_conta() { # sorgente
+	local f n
+	case "$1" in ''|*[!a-z0-9_-]*) return 0 ;; esac
+	f=$RUN/restart.$1
+	n=$(cat "$f" 2>/dev/null)
+	case "$n" in ''|*[!0-9]*) n=0 ;; esac
+	echo $((n + 1)) > "$f" 2>/dev/null
 	return 0
 }
 
@@ -507,53 +520,119 @@ bg_self() {
 	return 0
 }
 
-# Buffer di squeezelite in KB: "stream:output".
-# Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
-# i campioni gia' decodificati: con un output grande la decodifica finisce
-# molto prima dell'ascolto e durante la riproduzione la CPU resta ferma.
-# La misura e' l'autonomia in secondi del caso peggiore del formato
-# (384 kHz / 32 bit / 2 canali = 3000 KB/s; DSD512 in DoP ha lo stesso ordine
-# di grandezza): stream 60 s, output 120 s. Il tetto viene dalla memoria
-# DISPONIBILE (MemAvailable, non il totale), tolta una riserva che dipende
-# dalla modalita': 512 MB di base, +512 MB con Lyrion locale (libreria,
-# scansione, cache), +256 MB con la correzione DSP. I buffer non superano
-# meta' di quello che resta. Minimi e massimi fissi: squeezelite accetta al
-# massimo ~2 GB per buffer. Con PLAYER_BUFFERS_LOG=1 scrive nel log i valori
-# e il motivo (lo fa il player all'avvio, non chi li interroga soltanto).
-player_buffers() {
-	local total avail rate=3000 s o riserva budget motivo
-	local rsv_base=524288 rsv_lms=524288 rsv_dsp=262144
-	total=$(mem_total_kb)
+# Budget RAM unico (KB). Un solo posto decide come si divide la memoria fra
+# chi la usa, cosi' il player e il precarico leggono le stesse quote:
+#   sistema   256 MB sempre liberi per il resto del sistema (mai toccati);
+#   servizi   Lyrion/catalogo/immagini/snapshot e processi di contorno: 256 MB
+#             di base, +512 MB con Lyrion locale, +256 MB con la correzione DSP;
+#   alsa      buffer del driver ALSA e del DAC (16 MB);
+#   stream    buffer di rete di Squeezelite (il file compresso), 60 s del caso
+#             peggiore (384 kHz / 32 bit / 2 canali = 3000 KB/s) ma al massimo
+#             64 MB;
+#   output    campioni decodificati in anticipo, 120 s ma al massimo 128 MB;
+#   precarico quello che resta, per la coda in RAM (sweetspot-precarico).
+# Il capitale e' la memoria DISPONIBILE (MemAvailable, non il totale) piu' cio'
+# che il player (VmRSS di Squeezelite, fino ai suoi tetti) e il precarico
+# (file bloccati) occupano gia': cosi' le quote non si riducono perche' le
+# hanno riempite loro. Stream e output non superano meta' di quello che resta
+# dopo sistema, servizi e ALSA, in proporzione 1:2; minimi 32 MB e 64 MB
+# (squeezelite accetta al massimo ~2 GB per buffer).
+# ram_quote_calc imposta RAM_POOL, RAM_SISTEMA, RAM_SERVIZI, RAM_ALSA,
+# RAM_STREAM, RAM_OUTPUT, RAM_PRECARICO (KB), RAM_AVAIL, RAM_TOTAL, RAM_RISERVA
+# e RAM_MOTIVO. Senza stampare: le funzioni che la usano non aprono sottoshell.
+RAM_SISTEMA_KB=262144
+RAM_ALSA_KB=16384
+RAM_STREAM_MAX_KB=65536
+RAM_OUTPUT_MAX_KB=131072
+
+# KB dei file che il precarico tiene gia' bloccati in RAM (piano e demone).
+precarico_tenuto_kb() {
+	local pid
+	pid=$(cat "$RUN/precarico.tieni.pid" 2>/dev/null)
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -f "$RUN/precarico.piano" ] || { echo 0; return; }
+	awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$RUN/precarico.piano"
+}
+
+ram_quote_calc() {
+	local avail held rss=0 pid cap smax omax rest budget
+	RAM_TOTAL=$(mem_total_kb)
 	avail=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo")
 	# Senza MemAvailable (kernel vecchi): il totale meno 768 MB.
-	[ -n "$avail" ] || avail=$((total - 786432))
-	[ "$avail" -gt "$total" ] && avail=$total
-	riserva=$rsv_base
-	motivo="base"
+	[ -n "$avail" ] || avail=$((RAM_TOTAL - 786432))
+	[ "$avail" -gt "$RAM_TOTAL" ] && avail=$RAM_TOTAL
+	[ "$avail" -gt 0 ] || avail=0
+	RAM_AVAIL=$avail
+	held=$(precarico_tenuto_kb)
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	[ -n "$pid" ] && rss=$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/$pid/status" 2>/dev/null)
+	[ -n "$rss" ] || rss=0
+	cap=$((RAM_STREAM_MAX_KB + RAM_OUTPUT_MAX_KB))
+	[ "$rss" -gt "$cap" ] && rss=$cap
+	RAM_POOL=$((avail + held + rss))
+	RAM_SISTEMA=$RAM_SISTEMA_KB
+	RAM_ALSA=$RAM_ALSA_KB
+	RAM_SERVIZI=262144
+	RAM_MOTIVO="servizi base"
 	if [ "$(mode)" = completa ]; then
-		riserva=$((riserva + rsv_lms)); motivo="$motivo+Lyrion locale"
+		RAM_SERVIZI=$((RAM_SERVIZI + 524288)); RAM_MOTIVO="$RAM_MOTIVO+Lyrion locale"
 	fi
 	if [ "$(lower "$(conf CORREZIONE no)")" != no ]; then
-		riserva=$((riserva + rsv_dsp)); motivo="$motivo+DSP"
+		RAM_SERVIZI=$((RAM_SERVIZI + 262144)); RAM_MOTIVO="$RAM_MOTIVO+DSP"
 	fi
-	budget=$(((avail - riserva) / 2))
-	s=$((rate * 60))
-	o=$((rate * 120))
-	if [ "$budget" -lt $((s + o)) ]; then
+	# Cache delle copertine in RAM (tmpfs a tetto, lo scrive sweetspot-lms): il
+	# suo tetto e' RAM che non va al precarico.
+	local apos acap
+	apos=; acap=
+	[ -f "$RUN/lms.artwork.stato" ] && IFS='|' read -r apos _ acap _ < "$RUN/lms.artwork.stato"
+	case "$acap" in ''|*[!0-9]*) acap=0 ;; esac
+	if [ "$apos" = ram ] && [ "$acap" -gt 0 ]; then
+		RAM_SERVIZI=$((RAM_SERVIZI + acap * 1024)); RAM_MOTIVO="$RAM_MOTIVO+copertine in RAM ${acap} MB"
+	fi
+	RAM_RISERVA=$((RAM_SISTEMA + RAM_SERVIZI + RAM_ALSA))
+	rest=$((RAM_POOL - RAM_RISERVA))
+	[ "$rest" -gt 0 ] || rest=0
+	budget=$((rest / 2))
+	smax=$RAM_STREAM_MAX_KB
+	omax=$RAM_OUTPUT_MAX_KB
+	if [ "$budget" -lt $((smax + omax)) ]; then
 		# Stesse proporzioni (1:2) dentro il budget.
-		s=$((budget / 3))
-		o=$((budget * 2 / 3))
-		motivo="$motivo, limitati dalla memoria disponibile"
+		RAM_STREAM=$((budget / 3))
+		RAM_OUTPUT=$((budget * 2 / 3))
+		RAM_MOTIVO="$RAM_MOTIVO, limitati dalla memoria disponibile"
 	else
-		motivo="$motivo, autonomia piena (60 s stream, 120 s output)"
+		RAM_STREAM=$smax
+		RAM_OUTPUT=$omax
+		RAM_MOTIVO="$RAM_MOTIVO, tetti pieni (stream $((smax / 1024)) MB, output $((omax / 1024)) MB)"
 	fi
-	[ "$s" -lt 32768 ] && s=32768 && motivo="$motivo, stream al minimo"
-	[ "$o" -lt 65536 ] && o=65536 && motivo="$motivo, output al minimo"
-	[ "$s" -gt 1048576 ] && s=1048576
-	[ "$o" -gt 2000000 ] && o=2000000
-	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$o" -gt 524288 ] && o=524288 && motivo="$motivo, output limitato a 512 MB (32 bit)"
-	[ -n "${PLAYER_BUFFERS_LOG:-}" ] && log "player: buffer stream ${s} KB, output ${o} KB (memoria disponibile ${avail} KB di ${total} KB, riserva ${riserva} KB: $motivo)"
-	echo "$s:$o"
+	[ "$RAM_STREAM" -lt 32768 ] && RAM_STREAM=32768 && RAM_MOTIVO="$RAM_MOTIVO, stream al minimo"
+	[ "$RAM_OUTPUT" -lt 65536 ] && RAM_OUTPUT=65536 && RAM_MOTIVO="$RAM_MOTIVO, output al minimo"
+	RAM_PRECARICO=$((rest - RAM_STREAM - RAM_OUTPUT))
+	[ "$RAM_PRECARICO" -gt 0 ] || RAM_PRECARICO=0
+}
+
+# Le quote, una per riga "nome KB" (per la diagnostica e i test).
+ram_quote() {
+	ram_quote_calc
+	printf '%s %s\n' totale "$RAM_TOTAL" disponibile "$RAM_AVAIL" capitale "$RAM_POOL" \
+		sistema "$RAM_SISTEMA" servizi "$RAM_SERVIZI" alsa "$RAM_ALSA" \
+		stream "$RAM_STREAM" output "$RAM_OUTPUT" precarico "$RAM_PRECARICO"
+}
+
+# Le quote in MB come oggetto JSON (pagina Stato, diagnostica).
+ram_quote_json() {
+	ram_quote_calc
+	printf '{"totale":%d,"disponibile":%d,"sistema":%d,"servizi":%d,"alsa":%d,"stream":%d,"output":%d,"precarico":%d}\n' \
+		$((RAM_TOTAL / 1024)) $((RAM_AVAIL / 1024)) $((RAM_SISTEMA / 1024)) $((RAM_SERVIZI / 1024)) \
+		$((RAM_ALSA / 1024)) $((RAM_STREAM / 1024)) $((RAM_OUTPUT / 1024)) $((RAM_PRECARICO / 1024))
+}
+
+# Buffer di squeezelite in KB: "stream:output", dalle quote di ram_quote_calc.
+# Con PLAYER_BUFFERS_LOG=1 scrive nel log i valori e il motivo (lo fa il
+# player all'avvio, non chi li interroga soltanto).
+player_buffers() {
+	ram_quote_calc
+	[ -n "${PLAYER_BUFFERS_LOG:-}" ] && log "player: buffer stream ${RAM_STREAM} KB, output ${RAM_OUTPUT} KB (memoria disponibile ${RAM_AVAIL} KB di ${RAM_TOTAL} KB, riserva ${RAM_RISERVA} KB, precarico ${RAM_PRECARICO} KB: $RAM_MOTIVO)"
+	echo "$RAM_STREAM:$RAM_OUTPUT"
 }
 
 # --- DAC -------------------------------------------------------------------
@@ -1093,6 +1172,99 @@ volume_effettivo() {
 	esac
 }
 
+# Modalita' effettiva del volume, UNICA fonte per gli argomenti di Squeezelite,
+# le preferenze di Lyrion e la diagnostica (Stato, Audio, sweetspot-check).
+# Stampa "modo|motivo": modo fisso, dac, software o dsp; il motivo e' vuoto
+# se e' quella chiesta, altrimenti dice perche' si e' ripiegato.
+#   fisso    campioni invariati: Squeezelite con -F, mixer del DAC a 0 dB
+#   dac      mixer hardware del DAC (-V controllo)
+#   software volume di Squeezelite (dither TPDF)
+#   dsp      volume a 64 bit in CamillaDSP, Squeezelite con -F
+# $1: controllo di volume del DAC (vuoto se manca). volume.modo (dsp o
+# riserva) lo scrive il player prima, quando sa se CamillaDSP c'e'.
+volume_modo_calcola() { # controllo
+	case "$(lower "$(conf VOLUME fisso)")" in
+		dac)
+			if [ -n "$1" ]; then echo "dac|"
+			else echo "fisso|il DAC non ha un controllo del volume"; fi ;;
+		software) echo "software|" ;;
+		dsp)
+			if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then echo "dsp|"
+			else echo "software|volume a 64 bit non disponibile (CamillaDSP assente o non avviato)"; fi ;;
+		*) echo "fisso|" ;;
+	esac
+}
+
+# Argomenti di Squeezelite per la modalita' $1 (controllo del DAC in $2),
+# uno per riga.
+volume_args() { # modo controllo
+	case "$1" in
+		fisso|dsp) printf '%s\n' -F ;;
+		dac) printf '%s\n' -V "$2" ;;
+	esac
+}
+
+# Preferenze di Lyrion per la modalita' $1: valore di digitalVolumeControl e
+# volume da imporre ("-" se nessuno).
+volume_prefs() { # modo
+	case "$1" in
+		fisso) echo "0 100" ;;
+		*) echo "1 -" ;;
+	esac
+}
+
+# Scrive lo stato letto da Stato e Audio. volume.modalita e volume.motivo
+# sono la modalita' effettiva; volume.effettivo il vocabolario storico
+# (hardware, fisso, digitale). volume.locale dice se il guadagno locale e'
+# garantito da Squeezelite/DAC stessi, verificandolo sugli argomenti reali
+# ($RUN/player.args): "verificato" o "non verificato". Con Lyrion remoto le
+# trasformazioni lato server (sox, ReplayGain, volume digitale di Lyrion)
+# non sono verificabili da qui: lo dice volume.server.
+volume_stato_scrivi() { # modo motivo
+	local modo=$1 motivo=$2 args loc=verificato srv
+	args=" $(cat "$RUN/player.args" 2>/dev/null)"
+	case "$modo" in
+		fisso|dsp) case "$args" in *" -F "*) ;; *) loc="non verificato" ;; esac ;;
+		dac) case "$args" in *" -V "*) ;; *) loc="non verificato" ;; esac ;;
+		software) case "$args" in *" -F "*|*" -V "*) loc="non verificato" ;; esac ;;
+	esac
+	if [ "$(mode)" = completa ]; then srv="locale"; else srv="non verificabile"; fi
+	echo "$modo" > "$RUN/volume.modalita"
+	printf '%s\n' "$motivo" > "$RUN/volume.motivo"
+	echo "$loc" > "$RUN/volume.locale"
+	echo "$srv" > "$RUN/volume.server"
+	case "$modo" in
+		dac) echo hardware > "$RUN/volume.effettivo" ;;
+		fisso) echo fisso > "$RUN/volume.effettivo" ;;
+		*) echo digitale > "$RUN/volume.effettivo" ;;
+	esac
+}
+
+# Modalita' effettiva (fisso, dac, software, dsp) per la diagnostica.
+volume_modalita() {
+	local v
+	v=$(cat "$RUN/volume.modalita" 2>/dev/null)
+	case "$v" in fisso|dac|software|dsp) echo "$v"; return 0 ;; esac
+	case "$(volume_effettivo)" in
+		hardware) echo dac ;;
+		fisso) echo fisso ;;
+		*) if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then echo dsp; else echo software; fi ;;
+	esac
+}
+
+# Frase per Stato e Audio: modalita', motivo del ripiego, cosa e' verificato
+# (guadagno locale) e cosa no (lato server con Lyrion remoto).
+volume_descrizione() {
+	local m mot loc srv out
+	m=$(volume_modalita); mot=$(cat "$RUN/volume.motivo" 2>/dev/null)
+	loc=$(cat "$RUN/volume.locale" 2>/dev/null); srv=$(cat "$RUN/volume.server" 2>/dev/null)
+	out="$m"
+	[ -n "$mot" ] && out="$out (ripiego: $mot)"
+	[ -n "$loc" ] && out="$out; guadagno locale $loc"
+	[ "$srv" = "non verificabile" ] && out="$out; trasformazioni lato server non verificabili"
+	printf '%s' "$out"
+}
+
 # CamillaDSP e' nel percorso con i filtri della stanza, non solo per il
 # volume a 64 bit (lo decide il player, vedi sweetspot-player).
 correction_running() {
@@ -1101,6 +1273,19 @@ correction_running() {
 }
 
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
+# Il DAC e' del Bluetooth (sweetspot-bluetooth)? Il segnale $RUN/dac.bluetooth
+# contiene il PID di chi tiene il DAC: se non esiste piu' il segnale e' orfano,
+# si rimuove (con una riga nel registro) e il DAC torna al player.
+bt_dac_busy() {
+	local f=$RUN/dac.bluetooth pid
+	[ -e "$f" ] || return 1
+	pid=$(cat "$f" 2>/dev/null)
+	case "$pid" in ''|*[!0-9]*) ;; *) [ -d "$PROC/$pid" ] && return 0 ;; esac
+	rm -f "$f"
+	log "bluetooth: segnale dac.bluetooth orfano (processo $pid assente), il DAC torna al player"
+	return 1
+}
+
 dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
 # Osservazione /proc del solo PCM scelto dal player, non certificazione del DAC.
@@ -1186,6 +1371,28 @@ alsa_bits() {
 		DSD*) echo 1 ;;
 		*) echo 0 ;;
 	esac
+}
+
+# Verdetto della catena del segnale. Ogni stadio e' "inv" (invariato e
+# verificato), "mod" (modifica i campioni) o "nv" (non verificabile).
+# "bit-perfect" solo se tutti gli stadi sono inv; basta uno stadio che
+# modifica per dire "modificato"; altrimenti "non-verificabile".
+# Senza stadi il verdetto e' non-verificabile.
+chain_verdict() {
+	local s any_mod=0 any_nv=0 n=0
+	for s in "$@"; do
+		n=$((n + 1))
+		case "$s" in
+			inv) ;;
+			mod) any_mod=1 ;;
+			*) any_nv=1 ;;
+		esac
+	done
+	if [ "$n" = 0 ]; then echo non-verificabile
+	elif [ "$any_mod" = 1 ]; then echo modificato
+	elif [ "$any_nv" = 1 ]; then echo non-verificabile
+	else echo bit-perfect
+	fi
 }
 
 # Brano in riproduzione sul player indicato (MAC), in JSON: tipo, frequenza,
@@ -1545,6 +1752,75 @@ xrun_total() { # FILE
 	local cur
 	cur=$(xrun_counts "$1" 2>/dev/null) || return 1
 	xrun_sum "$(xrun_saved "$RUN/xrun.totale")" "$cur"
+}
+
+# --- Quota dei log in RAM -------------------------------------------------------
+# Tutti i log vivono in RAM (/var/log, /run, /tmp): nessuno deve crescere senza
+# limite. Ogni file ha un tetto (LOG_FILE_KB) e l'insieme una quota
+# (LOG_QUOTA_KB): superata, si tronca il file meno recente. Si tronca in place
+# (il processo che scrive tiene il file aperto) tenendo la coda.
+LOGDIR=${SWEETSPOT_LOGDIR:-/var/log}
+TMPDIR_LOG=${SWEETSPOT_TMPLOG:-/tmp}
+
+# Un file per riga: registro di sistema, timeline, log di Squeezelite (anche
+# delle zone), di CamillaDSP, di Lyrion (anche di avvio), file .log in RUN e /tmp.
+log_ram_files() {
+	local f
+	for f in "$LOGFILE" "$LOGFILE.1" "$TIMELINE" "$LOGDIR"/*.log "$LOGDIR"/lms/*.log \
+		"$RUN"/*.log "$TMPDIR_LOG"/sweetspot*.log; do
+		[ -f "$f" ] && echo "$f"
+	done | awk '!v[$0]++'
+}
+
+# Tiene gli ultimi KEEP byte di FILE, sullo stesso inode.
+log_tronca() { # file keep
+	local f=$1 tmp="$RUN/log.tronca.$$"
+	mkdir -p "$RUN" 2>/dev/null
+	if [ "$2" -le 0 ]; then : > "$f"; return 0; fi
+	tail -c "$2" "$f" > "$tmp" 2>/dev/null && cat "$tmp" > "$f"
+	rm -f "$tmp"
+}
+
+# Applica tetto per file e quota complessiva. Il registro principale di
+# Squeezelite passa da sqlog_rotate (conserva i contatori XRUN).
+log_quota() {
+	local fkb qkb f files total sq i oldest
+	fkb=$(conf LOG_FILE_KB 512); qkb=$(conf LOG_QUOTA_KB 4096)
+	case "$fkb" in ''|*[!0-9]*|0) fkb=512 ;; esac
+	case "$qkb" in ''|*[!0-9]*|0) qkb=4096 ;; esac
+	sq=${SQLOG:-$LOGDIR/squeezelite.log}
+	files=$(log_ram_files)
+	[ -n "$files" ] || return 0
+	# Una sola lettura delle dimensioni (wc -c) per volta: pochi processi.
+	for f in $(wc -c $files 2>/dev/null | awk -v max=$((fkb * 1024)) '$2 != "total" && $1 > max { print $2 }'); do
+		[ "$f" = "$sq" ] && continue
+		log_tronca "$f" $((fkb * 512))
+	done
+	i=0
+	while [ $i -lt 30 ]; do
+		i=$((i + 1))
+		total=$(wc -c $files 2>/dev/null | awk '$2 != "total" { t += $1 } END { print t + 0 }')
+		[ "$total" -gt $((qkb * 1024)) ] || return 0
+		oldest=""
+		# I percorsi sono nostri e senza spazi: ls -tr li ordina dal piu' vecchio.
+		# shellcheck disable=SC2045
+		for f in $(ls -tr $files 2>/dev/null); do
+			[ "$f" = "$sq" ] && continue
+			[ -s "$f" ] && { oldest=$f; break; }
+		done
+		[ -n "$oldest" ] || return 0
+		log_tronca "$oldest" $(( $(wc -c < "$oldest") / 2 ))
+	done
+}
+
+# Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (30).
+log_quota_tick() {
+	local now last
+	now=$(date +%s); last=$(cat "$RUN/log.quota.ts" 2>/dev/null)
+	case "$last" in ''|*[!0-9]*) last=0 ;; esac
+	[ $((now - last)) -ge "$(conf LOG_QUOTA_SECONDI 30)" ] || return 0
+	echo "$now" > "$RUN/log.quota.ts" 2>/dev/null
+	log_quota
 }
 
 # --- Controllo dell'header Host delle pagine web ------------------------------------

@@ -25,8 +25,14 @@ LIST=$RUN/rete.list
 ATTESA=$RUN/rete.attesa
 RETRY_LOCK=$RUN/rete.ritenta.lock
 RETRY_PID=$RUN/rete.ritenta.pid
-RETRY_MIN=${SWEETSPOT_RETE_MIN:-30}
-RETRY_MAX=${SWEETSPOT_RETE_MAX:-600}
+# Stato per sorgente, per Stato e per la pagina Musica:
+# "numero|montata/attesa/errore|ultimo errore|prossimo tentativo (epoch)|tentativi"
+STATO=$RUN/rete.stato
+RETRY_MIN=${SWEETSPOT_RETE_MIN:-10}
+RETRY_MAX=${SWEETSPOT_RETE_MAX:-300}
+# Tempo massimo per accorgersi che un montaggio "hard" non risponde piu' (stale).
+STALE_TIMEOUT=${SWEETSPOT_STALE_TIMEOUT:-5}
+SVEGLIA=0
 
 share_name() {
 	local p=$1 last
@@ -157,6 +163,98 @@ mount_share() {
 	echo OK
 }
 
+# scrivi_stato: ricalcola $STATO da $LIST (esito) e $ATTESA (ritentativi).
+scrivi_stato() {
+	local n unc st err next t a b c
+	mkdir -p "$RUN"
+	: > "$STATO.new"
+	while IFS='|' read -r n unc st err; do
+		[ -n "$n" ] || continue
+		if [ "$st" = OK ]; then
+			echo "$n|montata|||0" >> "$STATO.new"
+			continue
+		fi
+		# Un solo ciclo di lettura: nessun processo in piu' per riga.
+		next=""
+		t=0
+		while IFS='|' read -r a b c; do
+			[ "$a" = "$n" ] && { t=$b; next=$c; }
+		done 2> /dev/null < "$ATTESA"
+		if [ -n "$next" ]; then
+			echo "$n|attesa|$err|$next|$t" >> "$STATO.new"
+		else
+			echo "$n|errore|$err||0" >> "$STATO.new"
+		fi
+	done 2> /dev/null < "$LIST"
+	sort -t'|' -k1,1n "$STATO.new" > "$STATO.tmp"
+	mv "$STATO.tmp" "$STATO"
+	rm -f "$STATO.new"
+}
+
+# musica_link N -> cartella con cui Lyrion vede la sorgente N
+musica_link() {
+	local l
+	for l in "$MUSIC_DIR"/*; do
+		[ -L "$l" ] && [ "$(readlink "$l")" = "$MEDIA_DIR/rete-$1" ] && { echo "$l"; return 0; }
+	done
+	return 1
+}
+
+# rescan_sorgente N: scansione incrementale (rescan, mai wipe) della sola
+# cartella della sorgente N; se Lyrion non accetta il filtro, rescan generale.
+rescan_sorgente() {
+	local d lms=${SWEETSPOT_LMS:-/usr/bin/sweetspot-lms}
+	if d=$(musica_link "$1") && $lms aggiorna "$d" > /dev/null 2>&1; then
+		log "rete: richiesto a Lyrion il controllo della sola condivisione $1"
+	elif $lms aggiorna > /dev/null 2>&1; then
+		log "rete: richiesto a Lyrion il controllo della libreria"
+	fi
+}
+
+# stale_check N: vero se la condivisione montata N risponde. Con un NAS sparito
+# e montaggio "hard" lo stat resta appeso: il tempo massimo lo smaschera.
+stale_check() {
+	local mp="$MEDIA_DIR/rete-$1"
+	if command -v timeout > /dev/null 2>&1; then
+		timeout "$STALE_TIMEOUT" "${SWEETSPOT_STAT:-stat}" -t "$mp" > /dev/null 2>&1
+	else
+		"${SWEETSPOT_STAT:-stat}" -t "$mp" > /dev/null 2>&1
+	fi
+}
+
+# controlla: smonta (lazy) e segna in errore le condivisioni montate che non
+# rispondono, cosi' il ciclo di ritentativi le rimonta. Stampa quante erano stale.
+do_controlla() {
+	local n stato k=0
+	for n in 1 2 3 4 5 6 7 8 9; do
+		[ -n "$(conf "CONDIVISIONE_$n")" ] || continue
+		stato=$(grep "^$n|" "$LIST" 2>/dev/null | head -n 1 | cut -d'|' -f3)
+		[ "$stato" = OK ] || continue
+		stale_check "$n" && continue
+		"${SWEETSPOT_UMOUNT:-umount}" -l "$MEDIA_DIR/rete-$n" 2>/dev/null
+		set_stato "$n" ERRORE "errore: montaggio non risponde (stale), da rimontare"
+		log "rete: condivisione $n non risponde, la rimonto"
+		k=$((k + 1))
+	done
+	scrivi_stato
+	echo "$k"
+}
+
+# sveglia: dopo un evento di rete (link up, DHCP). Cerca i montaggi stale e
+# anticipa il prossimo tentativo; se nessun ciclo e' attivo e c'e' qualcosa
+# da rimontare ne avvia uno. Con tutto montato non fa nulla (nessun polling).
+do_sveglia() {
+	local pid
+	do_controlla > /dev/null
+	pid=$(cat "$RETRY_PID" 2>/dev/null)
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		kill -USR1 "$pid" 2>/dev/null
+	elif grep -q '|errore|\|attesa|' "$STATO" 2>/dev/null; then
+		# Staccato: da udev/udhcpc non deve restare appeso al ciclo.
+		"${SWEETSPOT_SELF:-$0}" ritenta > /dev/null 2>&1 &
+	fi
+}
+
 do_mount() {
 	local n res has=0
 	mkdir -p "$MEDIA_DIR" "$MUSIC_DIR" "$RUN"
@@ -179,6 +277,7 @@ do_mount() {
 			log "rete: condivisione $n non montata: $res"
 		fi
 	done
+	scrivi_stato
 }
 
 # retry_delay TENTATIVI -> secondi di attesa: raddoppia ogni volta, fino al tetto
@@ -212,11 +311,13 @@ retryable() {
 # Dopo l'avvio: riprova a montare le condivisioni che non c'erano (NAS acceso
 # dopo il player). Un solo ciclo alla volta (flock); l'avvio non lo aspetta.
 do_retry() {
-	local n t next now line res stato min nuovo="$ATTESA.new" riuscita=0
+	local n t next now line res stato min nuovo="$ATTESA.new" riuscite=""
 	mkdir -p "$RUN"
 	exec 7> "$RETRY_LOCK"
 	flock -n 7 || return 0
 	echo $$ > "$RETRY_PID"
+	# Evento di rete (sveglia): il prossimo giro non aspetta la scadenza.
+	trap 'SVEGLIA=1' USR1
 	: > "$ATTESA"
 	now=$(date +%s)
 	for n in 1 2 3 4 5 6 7 8 9; do
@@ -226,6 +327,7 @@ do_retry() {
 		retryable "$(printf '%s' "$line" | cut -d'|' -f4-)" || continue
 		echo "$n|1|$((now + $(retry_delay 1)))" >> "$ATTESA"
 	done
+	scrivi_stato
 	while [ -s "$ATTESA" ]; do
 		now=$(date +%s)
 		: > "$nuovo"
@@ -235,12 +337,13 @@ do_retry() {
 			[ -n "$(conf "CONDIVISIONE_$n")" ] || continue
 			stato=$(grep "^$n|" "$LIST" 2>/dev/null | head -n 1 | cut -d'|' -f3)
 			[ "$stato" = ERRORE ] || continue
+			[ $SVEGLIA = 1 ] && next=$now
 			if [ "$now" -ge "$next" ]; then
 				res=$(mount_share "$n")
 				if [ "$res" = OK ]; then
 					set_stato "$n" OK montata
 					log "rete: condivisione $n montata al tentativo $((t + 1))"
-					riuscita=1
+					riuscite="$riuscite $n"
 					continue
 				fi
 				set_stato "$n" ERRORE "$res"
@@ -252,24 +355,29 @@ do_retry() {
 			if [ -z "$min" ] || [ "$next" -lt "$min" ]; then min=$next; fi
 		done < "$ATTESA"
 		mv "$nuovo" "$ATTESA"
-		if [ $riuscita = 1 ]; then
-			riuscita=0
-			# Musica nuova sul NAS: Lyrion legge solo cio' che e' nuovo o cambiato.
-			if ${SWEETSPOT_LMS:-/usr/bin/sweetspot-lms} aggiorna > /dev/null 2>&1; then
-				log "rete: richiesto a Lyrion il controllo della libreria"
-			fi
-		fi
+		SVEGLIA=0
+		scrivi_stato
+		# Musica nuova sul NAS: Lyrion legge solo cio' che e' nuovo o cambiato,
+		# e solo nella cartella della sorgente appena tornata.
+		for n in $riuscite; do rescan_sorgente "$n"; done
+		riuscite=""
 		[ -s "$ATTESA" ] || break
 		now=$(date +%s)
-		[ "$min" -gt "$now" ] && sleep $((min - now))
+		if [ "$min" -gt "$now" ]; then
+			# sleep in secondo piano: USR1 interrompe 'wait' e anticipa il giro
+			sleep $((min - now)) &
+			wait $!
+			kill $! 2>/dev/null
+		fi
 	done
 	rm -f "$ATTESA" "$RETRY_PID"
+	scrivi_stato
 }
 
 do_umount() {
 	local mp l
 	[ -f "$RETRY_PID" ] && kill "$(cat "$RETRY_PID")" 2>/dev/null
-	rm -f "$RETRY_PID" "$ATTESA"
+	rm -f "$RETRY_PID" "$ATTESA" "$STATO"
 	for mp in "$MEDIA_DIR"/rete-*; do
 		[ -d "$mp" ] || continue
 		umount -l "$mp" 2>/dev/null
@@ -294,6 +402,7 @@ do_umount_one() {
 	if [ -f "$LIST" ]; then
 		grep -v "^$n|" "$LIST" > "$LIST.new"
 		mv "$LIST.new" "$LIST"
+		scrivi_stato
 	fi
 	return 0
 }
@@ -303,6 +412,9 @@ do_umount_one() {
 case "$1" in
 	monta) do_mount; touch "$RUN/rete.pronta"; do_retry ;;
 	ritenta) do_retry ;;
+	sveglia) do_sveglia ;;
+	controlla) do_controlla ;;
+	stato) cat "$STATO" 2>/dev/null ;;
 	smonta) do_umount ;;
 	smonta-una)
 		case "$2" in [1-9]) do_umount_one "$2" ;; *) exit 1 ;; esac ;;
@@ -313,7 +425,10 @@ case "$1" in
 		rc=$?
 		echo "$res"
 		# Montata: la pagina Musica la mostra subito, senza attendere il prossimo avvio.
-		[ "$res" = OK ] && echo "$2|$(conf "CONDIVISIONE_$2")|OK|montata" >> "$LIST"
+		if [ "$res" = OK ]; then
+			set_stato "$2" OK montata
+			scrivi_stato
+		fi
 		exit $rc ;;
-	*) echo "uso: $0 monta|smonta|smonta-una N|elenco|prova N|ritenta" >&2; exit 1 ;;
+	*) echo "uso: $0 monta|smonta|smonta-una N|elenco|stato|prova N|ritenta|sveglia|controlla" >&2; exit 1 ;;
 esac

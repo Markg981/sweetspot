@@ -26,6 +26,7 @@ F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizz
 F_web_password="" F_web_libero="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
+F_bt_attivo="" F_bt_nome="" F_bt_minuti="" F_bt_mac=""
 
 if [ "$REQUEST_METHOD" != POST ]; then
 	redirect /cgi-bin/audio
@@ -439,13 +440,41 @@ case "$F_a" in
 		[ $rc -eq 0 ] || done_to audio "$(saved_msg $rc)"
 		autotune_later
 		done_to stato "Scheda salvata: il Raspberry Pi si riavvia per caricarla (circa un minuto)." ;;
+	# --- Bluetooth: il telefono suona su Sweetspot ----------------------------
+	bluetooth_imposta)
+		case "$F_bt_attivo" in si|no) ;; *) F_bt_attivo=no ;; esac
+		nome=$(safe_name "$F_bt_nome")
+		priv sweetspot-config imposta BLUETOOTH "$F_bt_attivo"
+		rc=$?
+		[ $rc -eq 1 ] && done_to bluetooth "$(saved_msg 1)"
+		if [ -n "$nome" ]; then priv sweetspot-config imposta BLUETOOTH_NOME "$nome"; else priv sweetspot-config rimuovi BLUETOOTH_NOME; fi
+		priv sweetspot-bluetooth applica
+		if [ "$F_bt_attivo" = si ]; then
+			done_to bluetooth "$(saved_msg $rc "Bluetooth acceso: apri l'abbinamento per aggiungere il telefono.")"
+		else
+			done_to bluetooth "$(saved_msg $rc "Bluetooth spento.")"
+		fi ;;
+
+	bluetooth_abbina)
+		in_range "$F_bt_minuti" 1 9 || F_bt_minuti=2
+		priv sweetspot-bluetooth abbina "$F_bt_minuti" || done_to bluetooth "Non si puo': accendi prima il Bluetooth e attendi qualche secondo."
+		done_to bluetooth "Abbinamento aperto per $F_bt_minuti minuti: cerca Sweetspot nelle impostazioni Bluetooth del telefono." ;;
+
+	bluetooth_chiudi)
+		priv sweetspot-bluetooth chiudi
+		done_to bluetooth "Abbinamento chiuso." ;;
+
+	bluetooth_rimuovi)
+		priv sweetspot-bluetooth rimuovi "$F_bt_mac" || done_to bluetooth "Dispositivo non valido."
+		done_to bluetooth "Dispositivo rimosso." ;;
+
 
 	# --- Sistema -----------------------------------------------------------------
 	sistema)
 		nome=$(safe_name "$F_nome")
 		[ -n "$nome" ] || nome=Sweetspot
 		case "$F_modalita" in completa|player) ;; *) F_modalita=completa ;; esac
-		case "$F_profilo" in bilanciato|silenzio|prestazioni) ;; *) F_profilo=bilanciato ;; esac
+		case "$F_profilo" in bilanciato|silenzio|prestazioni|dinamico) ;; *) F_profilo=bilanciato ;; esac
 		# Ascolto puro = lavori sospesi + precarico in RAM con dischi fermi.
 		case "$F_ascolto" in
 			puro) F_ascolto=si; precarico=si ;;
@@ -456,6 +485,13 @@ case "$F_a" in
 		case "$F_ottimizzazioni" in si|no) ;; *) F_ottimizzazioni=si ;; esac
 		# Renderer UPnP/DLNA: il demone legge l'impostazione e si accende o si spegne da solo.
 		case "$F_renderer_upnp" in si|no) ;; *) F_renderer_upnp=$(conf RENDERER_UPNP no) ;; esac
+		# Cache delle copertine: dove stare e quanto occupare (vale dal prossimo avvio).
+		case "$F_cache_copertine" in auto|ram|archivio|disco) ;; *) F_cache_copertine=$(conf CACHE_COPERTINE auto) ;; esac
+		case "$F_cache_copertine_mb" in ''|auto) F_cache_copertine_mb=auto ;; *[!0-9]*) done_to sistema "Tetto delle copertine non valido." ;; esac
+		F_cache_copertine_disco=$(safe_name "$F_cache_copertine_disco")
+		if [ "$F_cache_copertine" = disco ] && [ -z "$F_cache_copertine_disco" ]; then
+			done_to sistema "Indica il disco per le copertine."
+		fi
 		case "$F_server" in *[!A-Za-z0-9.:_-]*) done_to sistema "Indirizzo del server non valido." ;; esac
 		valid_value "$F_ssh_password" || done_to sistema "Password non valida."
 		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=$(lower "$(conf SSH_UTENTE root)") ;; esac
@@ -485,7 +521,8 @@ case "$F_a" in
 		old_mode=$(mode)
 		old_name=$(conf NOME_PLAYER Sweetspot)
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
-			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" RENDERER_UPNP "$F_renderer_upnp" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
+			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" RENDERER_UPNP "$F_renderer_upnp" \
+				CACHE_COPERTINE "$F_cache_copertine" CACHE_COPERTINE_MB "$F_cache_copertine_mb" CACHE_COPERTINE_DISCO "$F_cache_copertine_disco" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
 		# Password delle pagine: si salva solo l'impronta MD5-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
 		if [ -n "$F_web_password" ]; then

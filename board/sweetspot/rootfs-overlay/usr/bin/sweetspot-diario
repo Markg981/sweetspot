@@ -265,6 +265,7 @@ do_sorveglia() {
 	while true; do
 		sleep "$TICK"
 		osserva
+		log_quota_tick
 		now=$(adesso)
 		if [ -f "$DIARIO_FLAG" ]; then
 			# Eventi critici: subito, ma non piu' di una volta al minuto.
@@ -367,6 +368,7 @@ do_bundle() {
 	copia_testo "$RUN/stato.json" "$w/sistema/stato.json"
 	copia_testo "$PROC/cmdline" "$w/sistema/cmdline.txt"
 	copia_testo "$PROC/meminfo" "$w/sistema/meminfo.txt"
+	sweetspot-metriche 2>&1 | redigi > "$w/sistema/metriche.txt"
 	{ df 2>&1; echo; mount 2>&1; } | redigi > "$w/sistema/dischi.txt"
 	ps 2>&1 | redigi > "$w/sistema/processi.txt"
 
