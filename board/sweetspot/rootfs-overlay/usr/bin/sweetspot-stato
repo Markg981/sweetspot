@@ -467,10 +467,20 @@ lv_func() { # momento
 	local now=$1 pid mac f card id p st
 	LV_FN_NEW=''
 	LV_FN_BAD=0
-	is_yes "$(conf LIVENESS si)" || { rm -f "$LV_FN"; return 0; }
-	if [ "$(mode)" = completa ]; then
-		pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
-		mac=$(cat "$RUN/player.mac" 2>/dev/null)
+	# Configurazione e PID con la sola shell: ogni "$(conf)" o "$(cat)" e' un fork.
+	confv LIVENESS si
+	is_yes "$CONFV" || { rm -f "$LV_FN"; return 0; }
+	confv MODALITA completa
+	# (stesse parole di mode(), che dice "player" per questi valori)
+	case "$CONFV" in *[A-Z]*) CONFV=$(lower "$CONFV") ;; esac
+	case "$CONFV" in
+		player|solo-player|soloplayer|squeezelite|lyrion|lms) f=player ;;
+		*) f=completa ;;
+	esac
+	if [ "$f" = completa ]; then
+		pid=''; mac=''
+		read -r pid < "$RUN/squeezelite.pid" 2>/dev/null
+		read -r mac < "$RUN/player.mac" 2>/dev/null
 		if [ -n "$pid" ] && [ -n "$mac" ] && kill -0 "$pid" 2>/dev/null; then
 			lv_fn_player principale "Player principale" "$now" "$pid" "$mac"
 		fi
