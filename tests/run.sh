@@ -162,7 +162,7 @@ echo "Memoria"
 expect "classe 16 GB" "completa" "$(run "$N550" machine_class)"
 expect "classe 2 GB" "essenziale" "$(run "$DUAL" machine_class)"
 expect "classe 1 GB" "leggera" "$(run "$ONE" machine_class)"
-expect "buffer 16 GB (senza MemAvailable: totale meno 768 MB)" "180000:360000" "$(run "$N550" player_buffers)"
+expect "buffer 16 GB (senza MemAvailable: totale meno 768 MB)" "65536:131072" "$(run "$N550" player_buffers)"
 expect "buffer 2 GB senza MemAvailable: minimi" "32768:65536" "$(run "$DUAL" player_buffers)"
 expect "buffer 1 GB: minimi" "32768:65536" "$(run "$ONE" player_buffers)"
 # Buffer dal carico reale: MemAvailable, autonomia in secondi, riserva per modalita'.
@@ -170,23 +170,50 @@ BUF=$WORK/buffer
 mkdir -p "$BUF/proc" "$BUF/run" "$BUF/sys"
 bufmem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' "$1" "$2" > "$BUF/proc/meminfo"; }
 bufmem 2097152 1572864
-expect "buffer 2 GiB, Lyrion locale: limitati dalla memoria" "87381:174762" "$(run "$BUF" player_buffers)"
+expect "buffer 2 GiB, Lyrion locale: tetti pieni (64 MB stream, 128 MB output)" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 4194304 3670016
-expect "buffer 4 GiB: autonomia piena (60 s stream, 120 s output a 3000 KB/s)" "180000:360000" "$(run "$BUF" player_buffers)"
+expect "buffer 4 GiB: tetti pieni" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 8388608 7864320
-expect "buffer 8 GiB: come 4 GiB, non cresce con la memoria" "180000:360000" "$(run "$BUF" player_buffers)"
+expect "buffer 8 GiB: come 4 GiB, non crescono con la memoria (non piu' 3 GiB)" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 8388608 600000
 expect "buffer 8 GiB ma disponibile bassa: minimi" "32768:65536" "$(run "$BUF" player_buffers)"
 bufmem 8388608 9999999
-expect "MemAvailable oltre il totale: si usa il totale" "180000:360000" "$(run "$BUF" player_buffers)"
+expect "MemAvailable oltre il totale: si usa il totale" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 2097152 1572864
 printf 'MODALITA=player\n' > "$BUF/run/sweetspot.conf"
-expect "buffer 2 GiB, solo player: riserva minore" "174762:349525" "$(run "$BUF" player_buffers)"
+expect "buffer 2 GiB, solo player: tetti pieni" "65536:131072" "$(run "$BUF" player_buffers)"
 printf 'MODALITA=completa\nCORREZIONE=si\n' > "$BUF/run/sweetspot.conf"
-expect "buffer 2 GiB con Lyrion e DSP: riserva maggiore" "43690:87381" "$(run "$BUF" player_buffers)"
+expect "buffer 2 GiB con Lyrion e DSP: riserva maggiore" "40960:81920" "$(run "$BUF" player_buffers)"
+# Budget RAM unico: le quote (sistema, servizi, ALSA, stream, output, precarico).
+quote() { run "$BUF" ram_quote | awk '{ printf "%s%s=%s", (NR > 1 ? " " : ""), $1, $2 }'; }
+rm -f "$BUF/run/sweetspot.conf"
+bufmem 2097152 1572864
+expect "quote 2 GiB con Lyrion locale: il precarico prende il resto" \
+	"totale=2097152 disponibile=1572864 capitale=1572864 sistema=262144 servizi=786432 alsa=16384 stream=65536 output=131072 precarico=311296" "$(quote)"
+printf 'MODALITA=completa\nCORREZIONE=si\n' > "$BUF/run/sweetspot.conf"
+expect "quote 2 GiB con Lyrion e DSP: buffer limitati, precarico del resto" \
+	"totale=2097152 disponibile=1572864 capitale=1572864 sistema=262144 servizi=1048576 alsa=16384 stream=40960 output=81920 precarico=122880" "$(quote)"
+rm -f "$BUF/run/sweetspot.conf"
+bufmem 8388608 7864320
+expect "quote 8 GiB: i buffer del player non salgono a 3 GiB, il resto va al precarico" \
+	"totale=8388608 disponibile=7864320 capitale=7864320 sistema=262144 servizi=786432 alsa=16384 stream=65536 output=131072 precarico=6602752" "$(quote)"
+# 300 MiB disponibili: meno della riserva, nessun precarico (prima ne bloccava 150).
+bufmem 2097152 307200
+expect "quote con 300 MiB disponibili: buffer al minimo, precarico zero" \
+	"totale=2097152 disponibile=307200 capitale=307200 sistema=262144 servizi=786432 alsa=16384 stream=32768 output=65536 precarico=0" "$(quote)"
+# Qualunque sia la memoria disponibile, con un precarico non vuoto resta
+# almeno la riserva (sistema+servizi+ALSA) fuori da buffer e precarico.
+ok=si
+for a in 1200000 1500000 2000000 3000000 5000000 8000000; do
+	bufmem 8388608 $a
+	q=$(run "$BUF" ram_quote | awk '{ v[$1] = $2 } END { print v["capitale"] - v["sistema"] - v["servizi"] - v["alsa"] - v["stream"] - v["output"] - v["precarico"] }')
+	[ "$q" -ge 0 ] || ok="no ($a: $q)"
+done
+expect "quote: mai oltre il capitale (sistema+servizi+ALSA restano liberi)" "si" "$ok"
 rm -f "$BUF/run/sweetspot.conf" "$BUF/log"
+bufmem 2097152 1572864
 run "$BUF" 'PLAYER_BUFFERS_LOG=1 player_buffers' > /dev/null
-expect "buffer registrati nel log con il motivo" "1" "$(grep -c 'player: buffer stream 87381 KB, output 174762 KB.*Lyrion locale.*limitati dalla memoria' "$BUF/log")"
+expect "buffer registrati nel log con il motivo" "1" "$(grep -c 'player: buffer stream 65536 KB, output 131072 KB.*precarico 311296 KB.*Lyrion locale.*tetti pieni' "$BUF/log")"
 run "$BUF" player_buffers > /dev/null
 expect "senza PLAYER_BUFFERS_LOG il log non cresce" "1" "$(wc -l < "$BUF/log" | tr -d ' ')"
 
@@ -1842,28 +1869,60 @@ prefn() {
 U=file://$PRE/musica/Album%20%C3%A8
 expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
 expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
-# I buffer di Squeezelite (8 GB: 180 MB + 360 MB circa, player_buffers) si riempiono
-# a poco a poco: senza il player in esecuzione contano per intero.
-expect "buffer del player da riempire: contano per intero senza il player" "540000" "$(prefn player_reserve_kb)"
-expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "1827152" "$(prefn preload_budget_kb)"
+# Budget unico (common.sh): sistema 256 MB, servizi 768 MB (Lyrion locale), ALSA
+# 16 MB, buffer del player 192 MB; il resto e' del precarico, sempre con la
+# riserva per il sistema anche in auto.
+expect "budget automatico: la quota di precarico, con la riserva del sistema" "2932736" "$(prefn preload_budget_kb)"
 mkdir -p "$PRE/proc/4321"
 printf 'VmRSS:\t 1048576 kB\n' > "$PRE/proc/4321/status"
 echo 4321 > "$PRE/run/squeezelite.pid"
-expect "buffer del player in parte gia' occupati: conta solo il resto" "0|2097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
+expect "buffer del player gia' occupati: contano nel capitale, non due volte" "3129344" "$(prefn preload_budget_kb)"
 rm -f "$PRE/run/squeezelite.pid"
 echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
 expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
 echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
-expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "3392160" "$(prefn preload_budget_kb)"
+expect "budget mai oltre la quota (riserva di sistema compresa)" "2932736" "$(prefn preload_budget_kb)"
 printf 'PRECARICO_FILE_MAX_MB=1 2\n' > "$PRE/run/sweetspot.conf"
 expect "limite dei file non numerico: predefinito, senza errori" "1048576" "$(prefn file_max_kb 2>&1)"
 rm -f "$PRE/run/sweetspot.conf"
+# 300 MiB disponibili: prima il ramo auto ne bloccava 150 senza riserva.
+printf 'MemTotal:        8388608 kB\nMemAvailable:     307200 kB\n' > "$PRE/proc/meminfo"
+expect "300 MiB disponibili: niente precarico, la riserva resta al sistema" "0" "$(prefn preload_budget_kb)"
+printf 'MODALITA=player\n' > "$PRE/run/sweetspot.conf"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    1048576 kB\n' > "$PRE/proc/meminfo"
+expect "1 GiB disponibili, solo player: dopo il precarico restano almeno 256 MB" "si" \
+	"$(prefn 'ram_quote_calc; [ $((RAM_AVAIL - RAM_PRECARICO - RAM_STREAM - RAM_OUTPUT)) -ge 262144 ] && echo si || echo no')"
+rm -f "$PRE/run/sweetspot.conf"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
 sleep 30 &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
-expect "budget stabile: la memoria gia' bloccata conta come libera" "1827652" "$(prefn preload_budget_kb)"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "2933736" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+# Pressione di memoria (PSI) e rilascio progressivo dei brani piu' lontani.
+mkdir -p "$PRE/proc/pressure"
+printf 'some avg10=25.00 avg60=3.00 avg300=1.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$PRE/proc/pressure/memory"
+expect "PSI 25%: pressione alta" "si" "$(prefn 'psi_alta && echo si || echo no')"
+printf 'some avg10=2.00 avg60=3.00 avg300=1.00 total=1\n' > "$PRE/proc/pressure/memory"
+expect "PSI 2%: pressione normale" "no" "$(prefn 'psi_alta && echo si || echo no')"
+rm -f "$PRE/proc/pressure/memory"
+expect "senza /proc/pressure/memory: nessuna pressione" "no" "$(prefn 'psi_alta && echo si || echo no')"
+sh -c 'trap : USR1; while :; do sleep 1; done' &
+echo $! > "$PRE/run/precarico.tieni.pid"
+printf 'SI 1000 %s\nSI 2000 %s\nSTREAM http://radio.example/stream\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+expect "memoria sufficiente: nessun rilascio" "1" "$(prefn 'shed_farthest; echo $?')"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    1100000 kB\n' > "$PRE/proc/meminfo"
+prefn shed_farthest
+expect "memoria sotto la riserva: via il brano piu' lontano, il piu' vicino resta" \
+	"SI 1000 $PRE/musica/Album è/a.flac|OLTRE 2000 $PRE/musica/Album è/b c.flac|STREAM http://radio.example/stream|$PRE/musica/Album è/a.flac" \
+	"$(tr '\n' '|' < "$PRE/run/precarico.piano")$(cat "$PRE/run/precarico.elenco")"
+prefn shed_farthest
+expect "ancora sotto la riserva: rilascia anche l'ultimo, poi non c'e' altro" "OLTRE 1000|1" \
+	"$(sed -n 1p "$PRE/run/precarico.piano" | cut -d' ' -f1,2)|$(prefn 'shed_farthest; echo $?')"
+kill "$(cat "$PRE/run/precarico.tieni.pid")" 2>/dev/null
+rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano" "$PRE/run/precarico.elenco"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
 # Brani CUE (URL#inizio-fine): il file e' quello intero, caricato una volta sola.
 expect "URL di un brano CUE: il frammento si scarta" "$PRE/musica/Album è/a.flac" "$(prefn "url_path '$U/a.flac#12.5-100.25'")"
 expect "nome con # (%23): resta nel percorso" "$PRE/musica/Album è/x#y.flac" "$(prefn "url_path '$U/x%23y.flac#1-2'")"
