@@ -383,7 +383,7 @@ op_tipo_ok() { # TIPO NOME
 # operazione avvia TIPO [NOME]: stampa l'identificativo. Una richiesta uguale
 # a una gia' in corso non ne avvia un'altra: restituisce quella.
 op_avvia() {
-	local tipo=$1 nome=${2:-} id f n
+	local tipo=$1 nome=${2:-} id f
 	op_tipo_ok "$tipo" "$nome" || { echo "operazione non valida" >&2; return 1; }
 	mkdir -p "$OPS"
 	chmod 755 "$OPS" 2>/dev/null
