@@ -983,6 +983,7 @@ EOF
 # divergono li reimposta e, se non ci riesce, lo scrive in
 # $RUN/fedelta.stato e nel log (una volta per cambio di stato).
 PREFS_OGNI=${SWEETSPOT_PREFS_OGNI:-15}
+PREFS_ATTIVO=$PREFS_OGNI
 
 prefs_stato() { # testo
 	[ "$(cat "$RUN/fedelta.stato" 2>/dev/null)" = "$1" ] && return 0
@@ -1074,6 +1075,7 @@ inst_fast() { # scheda
 	IFAST="$id $bus:$dev"
 }
 SORVEGLIA_LUNGO=${SWEETSPOT_SORVEGLIA_LUNGO:-60}
+SORVEGLIA_RIPOSO=${SWEETSPOT_SORVEGLIA_RIPOSO:-300}
 
 player_loop() {
 	BACKOFF=0
@@ -1151,12 +1153,21 @@ player_loop() {
 				for f in "$SYNC_DIR"/*.pendente; do [ -f "$f" ] && pend=1; done
 			fi
 			if [ "$adesso_s" -ge "$prossimo" ] || [ "$pend" = 1 ] || { [ "$ripr" = 1 ] && { [ -f "$RUN/correzione.attiva" ] || [ ! -f "$RUN/audio.tid" ]; }; }; then
-				prossimo=$((adesso_s + SORVEGLIA_LUNGO))
-				pin_output_thread "$PID"
+				if [ "$ripr" = 1 ]; then
+					prossimo=$((adesso_s + SORVEGLIA_LUNGO))
+					PREFS_OGNI=$PREFS_ATTIVO
+					pin_output_thread "$PID"
+					pin_dsp
+					dsp_clip_poll
+					dsp_underrun_poll
+				else
+					# A riposo (nessuna riproduzione) contano solo le cose che
+					# non dipendono dal flusso: il giro costa decine di
+					# processi (jq, wget, sottoshell) e si fa raramente.
+					prossimo=$((adesso_s + SORVEGLIA_RIPOSO))
+					PREFS_OGNI=$SORVEGLIA_RIPOSO
+				fi
 				dsp_session_check
-				pin_dsp
-				dsp_clip_poll
-				dsp_underrun_poll
 				dsp_stato_poll
 				sqlog_rotate "$SQLOG"
 				log_quota_tick

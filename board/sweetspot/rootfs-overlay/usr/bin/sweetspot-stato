@@ -583,7 +583,12 @@ do_round() {
 	kbs=$(traffic_kbs)
 	if [ "$kbs" -lt 2 ]; then esito=OK; else esito=INFO; fi
 	dac_playing && listening=true
-	rows=$(sweetspot-check --dati)
+	if [ "$2" = leggero ] && [ -n "$ROWS_CACHE" ]; then
+		rows=$ROWS_CACHE
+	else
+		rows=$(sweetspot-check --dati)
+		ROWS_CACHE=$rows
+	fi
 	liveness_round "$now"
 	{
 		[ -n "$rows" ] && printf '%s\n' "$rows"
@@ -673,20 +678,28 @@ mac_load() {
 # quello per il solo chiacchiericcio degli eventi (udev, inotify, CLI) aspetta
 # MIN_EV (60 s), cosi' a riposo e subito dopo l'avvio non ne parte uno ogni
 # poco: chi guarda lo stato lo chiede da se' e lo ha entro 12 s.
-want_round_gap() { # distanza minima dal giro precedente
+#
+# Un cambio di stato di Lyrion o del player (liveness) non cambia nulla di
+# quel che misura il check: want_light rifa' solo la parte di liveness e il
+# traffico, riusando le righe del check dell'ultimo giro completo.
+want_gap() { # distanza minima dal giro precedente, 1 = giro completo
 	local t=$((NOW + 1))
 	[ "$t" -ge $((LAST_ROUND + $1)) ] || t=$((LAST_ROUND + $1))
+	[ "$2" != 1 ] || FULL=1
 	if [ "$DIRTY" = 1 ] && [ "$DL_ROUND" -gt 0 ] && [ "$DL_ROUND" -le "$t" ]; then return 0; fi
 	DIRTY=1
 	DL_ROUND=$t
 }
-want_round() { want_round_gap "$MIN_GAP"; }
-want_round_ev() { want_round_gap "$MIN_EV"; }
+want_round() { want_gap "$MIN_GAP" 1; }
+want_round_ev() { want_round; }
+want_light() { want_round; }
 
 run_round() {
-	DIRTY=0; DL_ROUND=0
-	do_round "$EVERY"
-	lms_scanner_step
+	local m=leggero
+	[ "$FULL" != 1 ] || m=completo
+	DIRTY=0; DL_ROUND=0; FULL=0
+	do_round "$EVERY" "$m"
+	[ "$m" != completo ] || lms_scanner_step
 	up_now
 	LAST_ROUND=$NOW
 	DL_BEAT=$((NOW + BATTITO))
@@ -748,7 +761,7 @@ lms_probe() {
 	read -r lp < "$RUN/lms.pid" 2>/dev/null
 	[ -n "$lp" ] && kill -0 "$lp" 2>/dev/null || return 0
 	liveness_round "$(date +%s)"
-	[ "$LV_LYR_STATO" = "$PUB_LYR" ] || want_round
+	[ "$LV_LYR_STATO" = "$PUB_LYR" ] || want_light
 	[ "$LV_LYR_STATO" = ok ] || DL_LIVE=$((NOW + 15))
 }
 
@@ -771,7 +784,7 @@ ping_check() {
 	DL_PINGCHK=0
 	if [ "$REPLY_AT" -ge "$PING_AT" ]; then
 		LV_CLI_OK=1
-		if [ "$LV_SUSP" = 1 ]; then LV_SUSP=0; want_round; fi
+		if [ "$LV_SUSP" = 1 ]; then LV_SUSP=0; want_light; fi
 	else
 		LV_SUSP=1
 		lms_probe
@@ -788,7 +801,7 @@ mode_resolve() {
 # e backoff, tiene i contatori).
 ply_call() {
 	lv_player "$(date +%s)"
-	case "$LV_PLY_STATO" in bloccato) PLY_SUSP=0; want_round ;; esac
+	case "$LV_PLY_STATO" in bloccato) PLY_SUSP=0; want_light ;; esac
 }
 
 # Con "play" il PCM deve essere RUNNING: lo si guarda con la sola shell. Se
@@ -837,7 +850,7 @@ func_tick() {
 	DL_FUNC=$((NOW + CFG_FUNC))
 	[ "$CFG_LIVE" = 1 ] || { DL_FUNC=0; return 0; }
 	lv_func "$(date +%s)"
-	if [ "$LV_FN_BAD" = 1 ] || [ "$was" = 1 ]; then want_round; fi
+	if [ "$LV_FN_BAD" = 1 ] || [ "$was" = 1 ]; then want_light; fi
 }
 
 # --- Eventi --------------------------------------------------------------------
@@ -1071,7 +1084,7 @@ do_watch() {
 	local line pre
 	mkdir -p "$RUN"
 	NOW=0; up_now
-	DIRTY=0; DL_ROUND=0; DL_BEAT=0; DL_LIVE=0; DL_PINGCHK=0; DL_PLAYER=0; DL_FUNC=0
+	DIRTY=0; FULL=1; ROWS_CACHE=; DL_ROUND=0; DL_BEAT=0; DL_LIVE=0; DL_PINGCHK=0; DL_PLAYER=0; DL_FUNC=0
 	DL_PRE=0; DL_PRETICK=0; DL_SCAN=0
 	LAST_ROUND=$((NOW - MIN_GAP)); PRE_LAST=$((NOW - PRE_GAP)); PRE_DIRTY=0
 	CLI_UP=0; LV_CLI_OK=0; LV_SUSP=0; PUB_LYR=''; PING_AT=0; REPLY_AT=0
