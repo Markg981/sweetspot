@@ -573,7 +573,7 @@ check_player() {
 		emit INFO "Budget RAM" "sistema $(( RAM_SISTEMA / 1024 )) MB, servizi (Lyrion, catalogo, immagini, snapshot) $(( RAM_SERVIZI / 1024 )) MB, ALSA $(( RAM_ALSA / 1024 )) MB, buffer del player $(( (RAM_STREAM + RAM_OUTPUT) / 1024 )) MB, precarico $(( RAM_PRECARICO / 1024 )) MB (disponibile $(( RAM_AVAIL / 1024 )) MB di $(( RAM_TOTAL / 1024 )) MB)"
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = riserva ]; then
-		emit ATTENZIONE "Volume" "a 64 bit non disponibile ($(grep . "$RUN/volume.motivo" 2>/dev/null || echo "CamillaDSP non avviato o modalita' player")): in uso il volume software, senza dither"
+		emit ATTENZIONE "Volume" "a 64 bit non disponibile ($(grep . "$RUN/volume.motivo" 2>/dev/null || echo "CamillaDSP non avviato o modalita' player")): in uso il volume software, con dither TPDF di Squeezelite"
 	elif [ "$(mode)" = player ] && [ "$vol" != dsp ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
 	elif [ "$vol" = fisso ]; then
