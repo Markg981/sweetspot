@@ -57,8 +57,21 @@
 #     LIVENESS_PLAYER_SECONDI (20) un'ultima richiesta a Lyrion conferma e lo
 #     stato e' "bloccato": si ferma squeezelite, il supervisore
 #     (sweetspot-player) lo riavvia.
+#   - Controlli funzionali (uno ogni LIVENESS_FUNZ_PERIODO s, 120, senza
+#     processi permanenti): il player principale e ogni zona risultano
+#     connessi a Lyrion (JSON-RPC "connected ?") e, se Lyrion dice "play", il
+#     tempo di riproduzione ("time ?") avanza da un controllo al successivo;
+#     CamillaDSP, se e' nel percorso, risponde sul websocket (GetState). Dopo
+#     LIVENESS_FUNZ_FALLIMENTI (3) controlli falliti di fila si ferma il solo
+#     componente (squeezelite lo riparte sweetspot-player, che riavvia anche le
+#     zone; CamillaDSP riparte con la riapertura del dispositivo). Se Lyrion
+#     non risponde non si giudica il player: ci pensa il controllo di Lyrion.
 # I riavvii hanno un backoff (LIVENESS_BACKOFF_MIN, raddoppia fino a
-# LIVENESS_BACKOFF_MAX) e finiscono nel log e nello stato.
+# LIVENESS_BACKOFF_MAX) e un limite: al piu' LIVENESS_RIAVVII_MAX (3) riavvii
+# per componente in LIVENESS_RIAVVII_FINESTRA s (1800), poi stato "limite" e
+# nessun altro riavvio finche' i vecchi non escono dalla finestra (niente
+# cicli). Contatori per componente in liveness.c.<nome> e in stato.json
+# (liveness.funzionali); eventi nel log e nello stato.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -156,8 +169,14 @@ lv_lyrion() { # momento
 	LV_LYR_STATO=non_risponde
 	LV_LYR_FAILS=$fails
 	log "liveness: Lyrion non risponde entro $tmo s (fallimento $fails di $k)"
-	if [ "$fails" -ge "$k" ] && [ $(( now - ${last:-0} )) -ge "${bo:-0}" ]; then
+	if [ "$fails" -ge "$k" ] && [ $(( now - ${last:-0} )) -ge "${bo:-0}" ] && ! lv_budget lyrion "$now"; then
+		log "liveness: Lyrion in stallo ma gia' $(lv_num LIVENESS_RIAVVII_MAX 3) riavvii negli ultimi $(lv_num LIVENESS_RIAVVII_FINESTRA 1800) s: non riavvio (limite)"
+		LV_LYR_STATO=limite
+		bo=$(lv_next_backoff "${bo:-0}")
+		lv_save "$LV_LMS" "$fails $now $bo ${rpid:-0} ${nrest:-0}"
+	elif [ "$fails" -ge "$k" ] && [ $(( now - ${last:-0} )) -ge "${bo:-0}" ]; then
 		nrest=$(( ${nrest:-0} + 1 ))
+		lv_note_restart lyrion "$now"
 		if [ "$rpid" = "$pid" ]; then
 			log "liveness: Lyrion (pid $pid) ancora in stallo dopo il riavvio, kill -9 (riavvio $nrest)"
 			kill -9 "$pid" 2>/dev/null
@@ -200,8 +219,14 @@ lv_player() { # momento
 	if [ $(( now - since )) -ge "$T" ]; then
 		LV_PLY_STATO=bloccato
 		lv_row ERRORE "Player" "bloccato: Lyrion dice play ma il PCM ALSA non e' RUNNING da $(( now - since )) s (soglia $T s, riavvii ${nrest:-0})"
-		if [ $(( now - ${last:-0} )) -ge "${bo:-0}" ]; then
+		if [ $(( now - ${last:-0} )) -ge "${bo:-0}" ] && ! lv_budget principale "$now"; then
+			log "liveness: player bloccato ma gia' $(lv_num LIVENESS_RIAVVII_MAX 3) riavvii negli ultimi $(lv_num LIVENESS_RIAVVII_FINESTRA 1800) s: non riavvio (limite)"
+			LV_PLY_STATO=limite
+			bo=$(lv_next_backoff "${bo:-0}")
+			last=$now
+		elif [ $(( now - ${last:-0} )) -ge "${bo:-0}" ]; then
 			nrest=$(( ${nrest:-0} + 1 ))
+			lv_note_restart principale "$now"
 			log "liveness: player bloccato da $(( now - since )) s (play senza PCM RUNNING), riavvio squeezelite pid $pid (riavvio $nrest)"
 			kill "$pid" 2>/dev/null
 			bo=$(lv_next_backoff "${bo:-0}")
@@ -210,6 +235,198 @@ lv_player() { # momento
 		fi
 	fi
 	lv_save "$LV_PLY" "$since ${last:-0} ${bo:-0} ${nrest:-0}"
+}
+
+# --- Limite di riavvii e controlli funzionali ----------------------------------
+#
+# Ogni componente (lyrion, principale, zona-<id>, camilladsp) ha un file
+# $RUN/liveness.c.<nome>: FALLIMENTI RIAVVII_TOTALI TEMPO_RIAVVIO... (i tempi
+# sono quelli dei riavvii dentro la finestra LIVENESS_RIAVVII_FINESTRA).
+# Dopo LIVENESS_RIAVVII_MAX riavvii nella finestra non si riavvia piu': il
+# componente resta "limite" (visibile in Stato e in stato.json) per non fare
+# un ciclo di riavvii; si riprende da solo quando i riavvii escono dalla
+# finestra.
+
+lv_cf() { printf '%s/liveness.c.%s' "$RUN" "$1"; }
+
+lv_cread() { # nome: LV_C_FAILS LV_C_TOT LV_C_TS
+	LV_C_FAILS=0; LV_C_TOT=0; LV_C_TS=''
+	[ -r "$(lv_cf "$1")" ] && read -r LV_C_FAILS LV_C_TOT LV_C_TS < "$(lv_cf "$1")"
+	case "$LV_C_FAILS" in ''|*[!0-9]*) LV_C_FAILS=0 ;; esac
+	case "$LV_C_TOT" in ''|*[!0-9]*) LV_C_TOT=0 ;; esac
+	return 0
+}
+
+# Riavvii del componente ancora dentro la finestra.
+lv_in_window() { # nome momento
+	local win t n=0
+	win=$(lv_num LIVENESS_RIAVVII_FINESTRA 1800)
+	lv_cread "$1"
+	for t in $LV_C_TS; do
+		case "$t" in ''|*[!0-9]*) continue ;; esac
+		[ $(( $2 - t )) -lt "$win" ] && n=$(( n + 1 ))
+	done
+	echo "$n"
+}
+
+lv_budget() { # nome momento: riesce se un riavvio e' ancora consentito
+	[ "$(lv_in_window "$1" "$2")" -lt "$(lv_num LIVENESS_RIAVVII_MAX 3)" ]
+}
+
+lv_note_restart() { # nome momento
+	local win keep='' t
+	win=$(lv_num LIVENESS_RIAVVII_FINESTRA 1800)
+	lv_cread "$1"
+	for t in $LV_C_TS; do
+		case "$t" in ''|*[!0-9]*) continue ;; esac
+		[ $(( $2 - t )) -lt "$win" ] && keep="$keep $t"
+	done
+	lv_save "$(lv_cf "$1")" "0 $(( LV_C_TOT + 1 ))$keep $2"
+}
+
+lv_set_fails() { # nome valore
+	lv_cread "$1"
+	lv_save "$(lv_cf "$1")" "$2 $LV_C_TOT${LV_C_TS:+ $LV_C_TS}"
+}
+
+LV_FN=$RUN/liveness.funz   # righe: nome|etichetta|stato|riavvii|in_finestra|dettaglio
+LV_FN_NEW=''
+LV_FN_BAD=0
+
+# Esito di un controllo funzionale: dopo LIVENESS_FUNZ_FALLIMENTI esiti
+# negativi di fila si ferma il solo componente (lo riavvia chi lo
+# supervisiona), se il limite di riavvii nella finestra lo consente.
+lv_fn_esito() { # nome etichetta momento pid esito(0 ok) dettaglio
+	local nome=$1 et=$2 now=$3 pid=$4 ko=$5 det=$6 k stato=ok f
+	k=$(lv_num LIVENESS_FUNZ_FALLIMENTI 3)
+	lv_cread "$nome"
+	if [ "$ko" = 0 ]; then
+		if [ "$LV_C_FAILS" -gt 0 ]; then
+			log "liveness: $et risponde di nuovo dopo $LV_C_FAILS controlli falliti"
+			lv_set_fails "$nome" 0
+		fi
+	else
+		f=$(( LV_C_FAILS + 1 ))
+		stato=sospetto
+		log "liveness: $et: $det (controllo fallito $f di $k)"
+		if [ "$f" -ge "$k" ]; then
+			if lv_budget "$nome" "$now"; then
+				log "liveness: $et bloccato ($det), riavvio pid $pid (riavvio $(( LV_C_TOT + 1 )))"
+				kill "$pid" 2>/dev/null
+				lv_note_restart "$nome" "$now"
+				stato=riavviato
+			else
+				log "liveness: $et bloccato ($det) ma gia' $(lv_num LIVENESS_RIAVVII_MAX 3) riavvii negli ultimi $(lv_num LIVENESS_RIAVVII_FINESTRA 1800) s: non riavvio (limite)"
+				stato=limite
+				lv_set_fails "$nome" "$f"
+			fi
+		else
+			lv_set_fails "$nome" "$f"
+		fi
+	fi
+	lv_cread "$nome"
+	LV_FN_NEW="$LV_FN_NEW$nome|$et|$stato|$LV_C_TOT|$(lv_in_window "$nome" "$now")|$det
+"
+}
+
+# Un player (principale o zona): risulta connesso a Lyrion e, se Lyrion dice
+# "play", il tempo di riproduzione avanza da un controllo all'altro.
+# Lyrion che non risponde non e' colpa del player: nessun giudizio.
+lv_fn_player() { # nome etichetta momento pid mac
+	local nome=$1 et=$2 now=$3 pid=$4 mac=$5 tmo conn mode t prev det ko=0 tf
+	tmo=$(lv_num LIVENESS_LYRION_TIMEOUT 8)
+	tf="$RUN/liveness.t.$nome"
+	conn=$(LMS_TIMEOUT=$tmo lms_get '._connected' "$mac" connected '?' 2>/dev/null)
+	if [ -z "$conn" ]; then
+		LV_FN_NEW="$LV_FN_NEW$nome|$et|n/d|0|0|Lyrion non risponde: nessun giudizio sul player
+"
+		return 0
+	fi
+	if [ "$conn" != 1 ]; then
+		ko=1; det="non risulta connesso a Lyrion"
+		rm -f "$tf"
+	else
+		mode=$(LMS_TIMEOUT=$tmo lms_get '._mode' "$mac" mode '?' 2>/dev/null)
+		if [ "$mode" = play ]; then
+			t=$(LMS_TIMEOUT=$tmo lms_get '._time' "$mac" time '?' 2>/dev/null)
+			prev=''
+			[ -r "$tf" ] && read -r prev < "$tf"
+			if [ -n "$t" ] && [ "$t" = "$prev" ]; then
+				ko=1; det="in play ma il tempo di riproduzione e' fermo a $t s"
+			else
+				det="connesso a Lyrion, in play, il tempo avanza"
+			fi
+			[ -z "$t" ] || { echo "$t" > "$tf.n" && mv "$tf.n" "$tf"; }
+		else
+			rm -f "$tf"
+			det="connesso a Lyrion"
+		fi
+	fi
+	lv_fn_esito "$nome" "$et" "$now" "$pid" "$ko" "$det"
+}
+
+# Controlli funzionali con scadenza, ogni LIVENESS_FUNZ_PERIODO s (li chiama
+# il demone; nessun processo permanente). Non fanno nulla se il componente
+# non c'e'.
+lv_func() { # momento
+	local now=$1 pid mac f card id p st
+	LV_FN_NEW=''
+	LV_FN_BAD=0
+	is_yes "$(conf LIVENESS si)" || { rm -f "$LV_FN"; return 0; }
+	if [ "$(mode)" = completa ]; then
+		pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+		mac=$(cat "$RUN/player.mac" 2>/dev/null)
+		if [ -n "$pid" ] && [ -n "$mac" ] && kill -0 "$pid" 2>/dev/null; then
+			lv_fn_player principale "Player principale" "$now" "$pid" "$mac"
+		fi
+		for f in "$RUN"/zone/*; do
+			[ -f "$f" ] || continue
+			card=${f##*/}
+			read -r pid id < "$f"
+			mac=''
+			read -r mac < "$RUN/zone.mac/$card" 2>/dev/null
+			[ -n "$pid" ] && [ -n "$mac" ] && kill -0 "$pid" 2>/dev/null || continue
+			lv_fn_player "zona-$id" "Zona $id" "$now" "$pid" "$mac"
+		done
+	fi
+	# CamillaDSP, solo se e' nel percorso: deve rispondere sul websocket.
+	if [ -f "$RUN/correzione.attiva" ]; then
+		p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
+		if [ -n "$p" ]; then
+			st=$(sweetspot-camilla "$DSP_PORTA" GetState 2>/dev/null | sed -n 's/.*"value":"\([A-Za-z]*\)".*/\1/p')
+			if [ -n "$st" ]; then
+				lv_fn_esito camilladsp "CamillaDSP" "$now" "$p" 0 "websocket risponde (stato $st)"
+			else
+				lv_fn_esito camilladsp "CamillaDSP" "$now" "$p" 1 "websocket senza risposta"
+			fi
+		fi
+	fi
+	if [ -n "$LV_FN_NEW" ]; then
+		printf '%s' "$LV_FN_NEW" > "$LV_FN.n" && mv "$LV_FN.n" "$LV_FN"
+	else
+		rm -f "$LV_FN"
+	fi
+	case "$LV_FN_NEW" in *"|sospetto|"*|*"|riavviato|"*|*"|limite|"*) LV_FN_BAD=1 ;; esac
+}
+
+# Righe per la pagina Stato e JSON dei componenti dei controlli funzionali.
+lv_fn_report() {
+	local nome et stato nr win det sep='' lim e
+	LV_FN_JSON=''
+	[ -r "$LV_FN" ] || return 0
+	while IFS='|' read -r nome et stato nr win det; do
+		[ -n "$nome" ] || continue
+		case "$stato" in
+			ok) e=OK ;;
+			n/d) e=INFO ;;
+			sospetto) e=ATTENZIONE ;;
+			*) e=ERRORE ;;
+		esac
+		lv_row "$e" "$et risponde" "$det ($stato, riavvii $nr, nella finestra $win di $(lv_num LIVENESS_RIAVVII_MAX 3))"
+		lim=false; [ "$stato" = limite ] && lim=true
+		LV_FN_JSON="$LV_FN_JSON$sep{\"componente\":\"$(json_esc "$nome")\",\"stato\":\"$stato\",\"riavvii\":$nr,\"riavvii_finestra\":$win,\"limite\":$lim}"
+		sep=,
+	done < "$LV_FN"
 }
 
 liveness_round() { # momento
@@ -225,6 +442,8 @@ liveness_round() { # momento
 	[ -r "$LV_PLY" ] && read -r _ _ _ pn < "$LV_PLY"
 	LV_JSON=$(printf '"liveness":{"attiva":true,"lyrion":{"stato":"%s","fallimenti":%s,"riavvii":%s},"player":{"stato":"%s","riavvii":%s}}' \
 		"$LV_LYR_STATO" "$LV_LYR_FAILS" "${ln:-0}" "$LV_PLY_STATO" "${pn:-0}")
+	lv_fn_report
+	LV_JSON="${LV_JSON%\}},\"funzionali\":[$LV_FN_JSON]}"
 }
 
 do_round() {
@@ -289,6 +508,8 @@ cfg_load() {
 	CFG_LIVE=0; is_yes "$(conf LIVENESS si)" && CFG_LIVE=1
 	CFG_TMO=$(lv_num LIVENESS_LYRION_TIMEOUT 8)
 	CFG_PLY=$(lv_num LIVENESS_PLAYER_SECONDI 20)
+	CFG_FUNC=$(lv_num LIVENESS_FUNZ_PERIODO 120)
+	[ "$CFG_FUNC" -ge 30 ] || CFG_FUNC=30
 	LIVE_EVERY=$(lv_num LIVENESS_LYRION_PING 45)
 	[ "$LIVE_EVERY" -ge 5 ] || LIVE_EVERY=5
 	[ "$CFG_TMO" -ge 1 ] || CFG_TMO=1
@@ -458,6 +679,17 @@ player_tick() {
 	fi
 	if [ "$PLY_SUSP" = 1 ]; then PLY_SUSP=0; ply_call; fi
 	return 0
+}
+
+# Controlli funzionali (player connesso e tempo che avanza, zone, CamillaDSP):
+# uno ogni LIVENESS_FUNZ_PERIODO s, senza processi permanenti. Se il giro
+# trova qualcosa che non va (o che e' tornato a posto) chiede un giro di stato.
+func_tick() {
+	local was=$LV_FN_BAD
+	DL_FUNC=$((NOW + CFG_FUNC))
+	[ "$CFG_LIVE" = 1 ] || { DL_FUNC=0; return 0; }
+	lv_func "$(date +%s)"
+	if [ "$LV_FN_BAD" = 1 ] || [ "$was" = 1 ]; then want_round; fi
 }
 
 # --- Eventi --------------------------------------------------------------------
@@ -636,7 +868,7 @@ daemon_stop() {
 # Scadenza piu' vicina tra i timer in attesa (0 = spento).
 next_wait() {
 	local m=$((NOW + 3600)) d
-	for d in $DL_ROUND $DL_BEAT $DL_LIVE $DL_PINGCHK $DL_PLAYER $DL_PRE $DL_PRETICK $DL_SCAN; do
+	for d in $DL_ROUND $DL_BEAT $DL_LIVE $DL_PINGCHK $DL_PLAYER $DL_FUNC $DL_PRE $DL_PRETICK $DL_SCAN; do
 		[ "$d" -gt 0 ] && [ "$d" -lt "$m" ] && m=$d
 	done
 	W=$((m - NOW))
@@ -647,6 +879,7 @@ timers() {
 	[ "$TIMEDOUT" = 1 ] && [ "$DL_PINGCHK" -gt 0 ] && [ "$NOW" -ge "$DL_PINGCHK" ] && ping_check
 	[ "$DL_LIVE" -gt 0 ] && [ "$NOW" -ge "$DL_LIVE" ] && live_tick
 	[ "$DL_PLAYER" -gt 0 ] && [ "$NOW" -ge "$DL_PLAYER" ] && player_tick
+	[ "$DL_FUNC" -gt 0 ] && [ "$NOW" -ge "$DL_FUNC" ] && func_tick
 	[ "$DL_SCAN" -gt 0 ] && [ "$NOW" -ge "$DL_SCAN" ] && scan_tick
 	[ "$DL_PRETICK" -gt 0 ] && [ "$NOW" -ge "$DL_PRETICK" ] && { DL_PRETICK=0; pre_want; }
 	[ "$DL_PRE" -gt 0 ] && [ "$NOW" -ge "$DL_PRE" ] && pre_tick
@@ -659,7 +892,7 @@ do_watch() {
 	local line pre
 	mkdir -p "$RUN"
 	NOW=0; up_now
-	DIRTY=0; DL_ROUND=0; DL_BEAT=0; DL_LIVE=0; DL_PINGCHK=0; DL_PLAYER=0
+	DIRTY=0; DL_ROUND=0; DL_BEAT=0; DL_LIVE=0; DL_PINGCHK=0; DL_PLAYER=0; DL_FUNC=0
 	DL_PRE=0; DL_PRETICK=0; DL_SCAN=0
 	LAST_ROUND=$((NOW - MIN_GAP)); PRE_LAST=$((NOW - PRE_GAP)); PRE_DIRTY=0
 	CLI_UP=0; LV_CLI_OK=0; LV_SUSP=0; PUB_LYR=''; PING_AT=0; REPLY_AT=0
@@ -682,6 +915,7 @@ do_watch() {
 	[ "$CFG_COMPLETA" = 1 ] && [ -s "$RUN/lms.pid" ] && scan_window
 	run_round
 	DL_LIVE=$((NOW + LIVE_EVERY))
+	[ "$CFG_LIVE" = 1 ] && DL_FUNC=$((NOW + CFG_FUNC))
 	pre_want
 	while :; do
 		next_wait
@@ -702,6 +936,7 @@ do_watch() {
 
 case "$1" in
 	aggiorna) do_round "$EVERY" ;;
+	funzionale) lv_func "$(date +%s)"; do_round "$EVERY" ;;
 	sorveglia) do_watch ;;
-	*) echo "uso: $0 aggiorna|sorveglia" >&2; exit 1 ;;
+	*) echo "uso: $0 aggiorna|funzionale|sorveglia" >&2; exit 1 ;;
 esac

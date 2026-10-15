@@ -353,6 +353,11 @@ zone_start() { # scheda
 	dac_unity_gain "$card"
 	taskset -c "$HK" squeezelite "$@" &
 	echo "$! $id" > "$ZONE_DIR/$card"
+	# MAC della zona per i controlli funzionali di sweetspot-stato (connessa a
+	# Lyrion, tempo che avanza). In una cartella a parte: ZONE_DIR ha un file
+	# per scheda e lo leggono altri.
+	mkdir -p "$RUN/zone.mac"
+	zone_mac "$card" > "$RUN/zone.mac/$card"
 	log "player: zona \"$name\" sul DAC $id"
 }
 
