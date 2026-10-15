@@ -1035,7 +1035,7 @@ EOF
 
 # Indirizzo del server Lyrion a cui e' collegato il player (porta 3483).
 lms_server_ip() {
-	local line rem hex
+	local line rem hex b1 b2 b3 b4
 	[ -f "$PROC/net/tcp" ] || return 0
 	while read -r line; do
 		set -- $line
@@ -1045,9 +1045,10 @@ lms_server_ip() {
 			*:0D9B)
 				hex=${rem%:*}
 				# /proc/net/tcp scrive l'indirizzo IPv4 in esadecimale, byte invertiti.
-				printf '%d.%d.%d.%d\n' \
-					"0x$(echo "$hex" | cut -c7-8)" "0x$(echo "$hex" | cut -c5-6)" \
-					"0x$(echo "$hex" | cut -c3-4)" "0x$(echo "$hex" | cut -c1-2)"
+				# Byte a byte con la sola shell (era echo|cut: 8 processi).
+				b1=${hex#??????}; b2=${hex#????}; b2=${b2%??}
+				b3=${hex#??}; b3=${b3%????}; b4=${hex%??????}
+				printf '%d.%d.%d.%d\n' "0x$b1" "0x$b2" "0x$b3" "0x$b4"
 				return 0 ;;
 		esac
 	done < "$PROC/net/tcp"
@@ -1946,7 +1947,7 @@ log_tronca() { # file keep
 # Squeezelite passa da sqlog_rotate (conserva i contatori XRUN).
 log_quota() {
 	local fkb qkb f files total sq i oldest
-	fkb=$(conf LOG_FILE_KB 512); qkb=$(conf LOG_QUOTA_KB 4096)
+	confv LOG_FILE_KB 512; fkb=$CONFV; confv LOG_QUOTA_KB 4096; qkb=$CONFV
 	case "$fkb" in ''|*[!0-9]*|0) fkb=512 ;; esac
 	case "$qkb" in ''|*[!0-9]*|0) qkb=4096 ;; esac
 	sq=${SQLOG:-$LOGDIR/squeezelite.log}
@@ -1974,7 +1975,7 @@ log_quota() {
 	done
 }
 
-# Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (30).
+# Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (120).
 log_quota_tick() {
 	local now last=''
 	# Secondi dall'avvio e lettura del segno con la sola shell: i cicli dei
@@ -1986,7 +1987,8 @@ log_quota_tick() {
 	case "$last" in ''|*[!0-9]*) last=0 ;; esac
 	if [ "$now" -ge "$last" ]; then
 		[ $((now - last)) -ge 5 ] || return 0
-		[ $((now - last)) -ge "$(conf LOG_QUOTA_SECONDI 30)" ] || return 0
+		confv LOG_QUOTA_SECONDI 120
+		[ $((now - last)) -ge "${CONFV:-120}" ] || return 0
 	fi
 	echo "$now" > "$RUN/log.quota.ts" 2>/dev/null
 	log_quota
