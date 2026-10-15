@@ -805,7 +805,6 @@ player_loop() {
 				kill "$PID" 2>/dev/null
 				break
 			fi
-			log_quota_tick
 			read -r adesso_s _ < /proc/uptime
 			adesso_s=${adesso_s%%.*}
 			if [ -f "$RUN/correzione.attiva" ] || [ ! -f "$RUN/audio.tid" ] || [ "$adesso_s" -ge "$prossimo" ]; then
