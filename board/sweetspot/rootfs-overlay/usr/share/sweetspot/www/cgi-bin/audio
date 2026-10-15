@@ -122,9 +122,11 @@ verdict() { # formato frequenza canali
 	elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$hwfmt")" ] 2>/dev/null; then
 		why="il brano ha $src_bits bit, il DAC ne riceve $(alsa_bits "$hwfmt")"
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
-		why="il volume è abbassato dal software, che tronca i bit bassi senza dither"
+		why="il volume è abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
-		why="il ricampionamento è attivo"
+		why="il ricampionamento è attivo e abbassa il segnale di 1 dB"
+	elif [ "$(lower "$(conf FORMATO_USCITA auto)")" = 16 ] && [ -n "$src_bits" ] && [ "$src_bits" -gt 16 ] 2>/dev/null; then
+		why="l'uscita a 16 bit riduce il brano con dither TPDF"
 	fi
 	if [ -n "$why" ]; then
 		info_row ATTENZIONE "Non bit-perfect" "$why. Uscita: $out."
@@ -176,6 +178,110 @@ fi
 
 echo '</div>'
 
+# --- Catena del segnale ---------------------------------------------------------------
+# Stadio per stadio, dal file al DAC. Ogni stadio e' "invariato" (verificato),
+# "modifica i campioni" o "non verificabile"; il verdetto "bit-perfect" c'e'
+# solo se tutti sono invariati e verificati. L'elaborazione ad alta precisione
+# (float64, headroom, dither) e' un'altra cosa: e' accurata, ma cambia i campioni.
+chain_states=""
+chain_row() { # stato(inv|mod|nv) nome descrizione
+	local sev lab
+	case "$1" in
+		inv) sev=OK; lab="invariato" ;;
+		mod) sev=ATTENZIONE; lab="modifica i campioni" ;;
+		*) sev=INFO; lab="non verificabile" ;;
+	esac
+	chain_states="$chain_states $1"
+	info_row "$sev" "$2 - $lab" "$3"
+}
+
+echo '<h2>Catena del segnale</h2><div class="card">'
+if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$channels" ]; then
+	# 1. Sorgente: e' il riferimento, ma serve conoscerla.
+	if [ -n "$src_rate" ] && [ -n "$src_type" ]; then
+		chain_row inv "1. Sorgente" "File $src_type${src_bits:+ a $src_bits bit}, $src_rate Hz: formato originale."
+	else
+		chain_row nv "1. Sorgente" "Formato del brano sconosciuto (nessun brano riportato da Lyrion)."
+	fi
+	# 2. Lyrion: ricampionamento/transcodifica lato server.
+	top=$(cat "$RUN/frequenza.max" 2>/dev/null)
+	case "$src_type" in flc|wav|aif|aiff|pcm|alc|dsf|dff) lossless=1 ;; *) lossless="" ;; esac
+	if [ -z "$src_rate" ]; then
+		chain_row nv "2. Lyrion" "Senza il brano non si può dire se il server lo ricampioni o lo transcodifichi."
+	elif [ -n "$top" ] && [ "$src_rate" -gt "$top" ] 2>/dev/null; then
+		chain_row mod "2. Lyrion" "Il brano ($src_rate Hz) supera la frequenza massima del player ($top Hz): il server lo ricampiona con sox."
+	elif [ -z "$lossless" ]; then
+		chain_row nv "2. Lyrion" "Il tipo $src_type potrebbe essere transcodificato dal server (regole di convert.conf non leggibili da qui)."
+	elif [ -z "$top" ]; then
+		chain_row nv "2. Lyrion" "La frequenza massima del player non è nota: non si esclude il ricampionamento sox del server."
+	else
+		chain_row inv "2. Lyrion" "Brano entro la frequenza massima del player ($top Hz), formato senza perdita: nessun ricampionamento rilevato."
+	fi
+	# 3. Squeezelite: formato decodificato rispetto al brano.
+	why=""
+	case "$fmt" in
+		DSD*) chain_row nv "3. Squeezelite" "DSD nativo ($fmt): i campioni passano senza conversione, ma i marcatori non sono verificabili." ;;
+		*)
+			case "$src_type" in
+				dsf|dff)
+					if [ "$src_rate" = "$((rate * 16))" ]; then
+						chain_row nv "3. Squeezelite" "PCM a $rate Hz compatibile con il DoP: marcatori DoP e integrità non verificati."
+					else
+						chain_row mod "3. Squeezelite" "Il DSD è convertito in PCM ($fmt, $rate Hz, margine $(dsd_margine_db) dB)."
+					fi ;;
+				*)
+					if [ -n "$src_rate" ] && [ "$src_rate" != "$rate" ]; then why="frequenza cambiata da $src_rate a $rate Hz"
+					elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$fmt")" ] 2>/dev/null; then why="$src_bits bit ridotti a $(alsa_bits "$fmt")"
+					elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then why="ricampionamento attivo (cala il segnale di 1 dB)"
+					fi
+					if [ -n "$why" ]; then chain_row mod "3. Squeezelite" "Formato decodificato diverso dal brano: $why."
+					elif [ -z "$src_rate" ]; then chain_row nv "3. Squeezelite" "Formato decodificato $fmt, $rate Hz; senza il brano non si confronta."
+					else chain_row inv "3. Squeezelite" "Decodificato come $fmt, $rate Hz: stessa frequenza, bit non ridotti."
+					fi ;;
+			esac ;;
+	esac
+	# 4. Guadagno effettivo.
+	case "$(volume_effettivo)" in
+		fisso) chain_row inv "4. Guadagno" "Unitario: volume fisso al 100%." ;;
+		hardware) chain_row inv "4. Guadagno" "Unitario sui campioni: il volume agisce nel DAC (hardware), non nel flusso digitale." ;;
+		*) chain_row mod "4. Guadagno" "Non unitario: volume digitale ($(lower "$(conf VOLUME fisso)")), con arrotondamento e dither." ;;
+	esac
+	# 5. DSP.
+	dsp_what=""
+	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && dsp_what="volume digitale a 64 bit"
+	if [ -f "$RUN/correzione.filtri" ]; then
+		# FIR per frequenza (#90): quello della frequenza in riproduzione, se c'e'.
+		fir_now=""
+		for fr in $(sweetspot-dsp fir-frequenze 2>/dev/null); do [ "$fr" = "$rate" ] && fir_now=1; done
+		if [ -n "$fir_now" ]; then dsp_what="${dsp_what:+$dsp_what, }filtri della stanza con il FIR a $rate Hz"
+		else dsp_what="${dsp_what:+$dsp_what, }filtri della stanza (nessun FIR a $rate Hz: nessun ricampionamento, vedi FIR_RICAMPIONA)"; fi
+	fi
+	if [ -n "$dsp_what" ] || correction_running; then
+		chain_row mod "5. DSP" "CamillaDSP di sessione (un'unica istanza, configurazione di $rate Hz): ${dsp_what:-correzione ambientale}, calcolo in virgola mobile a 64 bit con dither all'uscita."
+	elif [ -f "$RUN/correzione.attiva" ]; then
+		chain_row nv "5. DSP" "Correzione accesa ma CamillaDSP non risulta in esecuzione."
+	else
+		chain_row inv "5. DSP" "Assente: i campioni non passano per CamillaDSP."
+	fi
+	# 6. Formato aperto sul DAC.
+	chain_row inv "6. DAC" "Aperto da hw_params: $fmt, $rate Hz, $channels canali (ALSA hw:, nessuna conversione dopo questo punto)."
+else
+	info_row INFO "Catena non valutabile" "Nessuna riproduzione in corso: la catena si legge mentre suona un brano."
+fi
+if [ -n "$chain_states" ]; then
+	# shellcheck disable=SC2086
+	cv=$(chain_verdict $chain_states)
+	case "$cv" in
+		bit-perfect) info_row OK "Verdetto: bit-perfect" "Tutti gli stadi sono invariati e verificati." ;;
+		modificato) info_row ATTENZIONE "Verdetto: non bit-perfect" "Almeno uno stadio modifica i campioni (vedi sopra)." ;;
+		*) info_row INFO "Verdetto: non verificabile" "Nessuno stadio modifica i campioni, ma almeno uno non è verificabile: il bit-perfect non è dimostrato." ;;
+	esac
+	case "$chain_states" in
+		*mod*) info_row INFO "Alta precisione, non bit-perfect" "L'elaborazione ad alta precisione (float64, headroom, dither) è accurata e non tronca, ma cambia i campioni: è un'altra cosa dal bit-perfect, che chiede campioni identici al file." ;;
+	esac
+fi
+echo '</div>'
+
 # --- Correzione ambientale ------------------------------------------------------------
 echo '<h2>Correzione ambientale</h2><div class="card">'
 case "$(lower "$(conf CORREZIONE no)")" in
@@ -208,8 +314,8 @@ if [ "$(boot_type)" = rpi ]; then
 fi
 
 # --- Impostazioni -------------------------------------------------------------------
-# Il volume software di Squeezelite moltiplica i campioni e tronca i bit
-# bassi, senza dither: l'errore resta legato al segnale, piu' udibile a basso
+# Il volume software di Squeezelite moltiplica i campioni e li arrotonda con
+# dither TPDF (patch 0006). Senza, l'errore resterebbe legato al segnale, piu' udibile a basso
 # volume e con DAC a 16 bit. Il fisso (dall'amplificatore) o il volume
 # hardware del DAC non toccano i campioni.
 volume_note() {
@@ -224,8 +330,13 @@ volume_note() {
 		printf '<p class="sub">%s</p>\n' "Il DAC non ha un controllo del volume: in uso il volume fisso al 100%, regola dall'amplificatore."
 		return 0
 	fi
+	if [ "$1" = dac ] && [ "$(volume_effettivo)" = hardware ] && [ -r "${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}" ] &&
+		tail -n 60 "${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}" | grep -q "Initialization of mixer failed, reverting to software volume"; then
+		printf '<p class="sub">%s</p>\n' "Il controllo hardware del DAC non risponde: Squeezelite ripiega sul volume software (dither TPDF, non bit-perfect), che non agisce sul DSD (convertito in PCM)."
+		return 0
+	fi
 	[ "$1" = software ] || return 0
-	printf '<p class="sub">%s</p>\n' "Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither. Sotto il 100% il segnale perde risoluzione in modo legato alla musica, più evidente a basso volume e con DAC a 16 bit. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
+	printf '<p class="sub">%s</p>\n' "Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF (rumore di ±1 LSB, senza distorsione di troncamento). Sotto il 100% il segnale non è più bit-perfect. Il volume software non agisce sul DSD nativo (un DSF suonerebbe al 100% dopo un brano attenuato, circa 30 dB più forte): per sicurezza di orecchie e diffusori i file DSD si convertono sempre in PCM, che il volume attenua. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
 }
 vol=$(lower "$(conf VOLUME fisso)")
 rs=$(lower "$(conf RICAMPIONAMENTO no)")
@@ -237,7 +348,7 @@ cat <<HTML
 $(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
 $(option dac "Dal DAC: usa il controllo hardware (dipende dal DAC)" "$vol")
 $(option dsp "A 64 bit con dither (CamillaDSP): il migliore se il volume va regolato qui" "$vol")
-$(option software "Dal software: senza dither, peggiore del fisso (solo per diffusori attivi senza volume)" "$vol")
+$(option software "Dal software: con dither TPDF, ma non bit-perfect (solo per diffusori attivi senza volume)" "$vol")
 </select>
 $(volume_note "$vol")
 

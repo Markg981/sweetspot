@@ -183,6 +183,27 @@ diffusore sinistro e uno per il destro.
 - I filtri restano sulla chiavetta, nella cartella `correzione-ambientale`
   (testo di REW, leggibile anche dal computer).
 
+### Bluetooth come sorgente
+
+Un telefono può suonare su Sweetspot (A2DP sink). È **spento di serie**: si
+accende nella pagina *Bluetooth* (o con `BLUETOOTH=si` in `sweetspot.txt`;
+`BLUETOOTH_NOME` cambia il nome che vede il telefono). L'abbinamento si apre
+dalla pagina per 2, 5 o 9 minuti: fuori dalla finestra Sweetspot non si fa
+trovare e non accetta telefoni. La pagina elenca i dispositivi abbinati (con
+*Rimuovi*) e *Stato* mostra se il servizio aspetta, è in abbinamento o suona.
+Gli abbinamenti si conservano sulla chiavetta (`sweetspot-dati/bluetooth.tar`).
+
+Scelta di integrazione: **passaggio esclusivo**. Quando il telefono comincia a
+trasmettere, il player si ferma e `bluealsa-aplay` suona sul DAC con l'uscita
+`hw:` diretta, senza mixer né secondo clock; quando il telefono smette, il DAC
+torna al player. Non c'è un ingresso nativo in Lyrion (servirebbe un plugin) e
+un loopback ALSA aggiungerebbe un dominio di clock e un ricampionamento. Limiti:
+la musica di Lyrion si ferma mentre suona il telefono e va ripresa a mano;
+l'audio è SBC (compresso), AAC richiede fdk-aac (licenza non libera), aptX e
+LDAC non sono in Buildroot; sul PC servono un dongle USB e, per alcuni modelli,
+il suo firmware. Il Bluetooth gira solo sui core di sistema, mai su quello
+isolato dell'audio né sulle sue interruzioni.
+
 ### Archivio musicale e cartella di rete
 
 Tutti i dischi restano in sola lettura tranne uno, scelto come **archivio**
@@ -302,6 +323,42 @@ niente OpenHome (le app lo usano solo se c'e', altrimenti ripiegano su
 AVTransport); un'app alla volta controlla il renderer, e la musica avviata da
 Lyrion non viene fermata da un `Stop` UPnP.
 
+### Servizi in streaming e ingressi: stato e qualificazione
+
+"Disponibile come plugin" non significa "integrazione verificata". La pagina
+**Plugin** installa dal repository ufficiale di Lyrion i plugin del catalogo
+(`usr/share/sweetspot/plugin-consigliati.txt`); SweetSpot non li sviluppa e,
+a oggi, nessuno è stato qualificato con un account reale.
+
+| Servizio o ingresso | Plugin | Stato | Limiti noti |
+| --- | --- | --- | --- |
+| Qobuz, TIDAL | `Qobuz`, `TIDAL` | disponibile come plugin; integrazione non verificata | Serve l'abbonamento. Il formato massimo dipende dal piano e dal plugin. |
+| Spotify / Spotify Connect | `Spotty` | disponibile come plugin; non verificato | Serve Premium. Usa un programma ausiliario compilato per l'architettura. |
+| Radio (Radio Paradise, Radio Browser, radio.net) | `RadioParadise`, `RadioBrowser`, `RadioNet` | disponibile come plugin; non verificato | Dipendono dal servizio remoto. |
+| AirPlay in ingresso | `ShairTunes2W` | disponibile come plugin; non verificato | AirPlay 2 non dimostrato. |
+| UPnP/DLNA verso altri diffusori | `UPnPBridge` | disponibile come plugin; non verificato | Invia a renderer esterni: non rende SweetSpot un renderer. |
+| UPnP/DLNA in ingresso | integrato (`RENDERER_UPNP=si`, vedi sopra) | su main, di serie spento; coperto dalla CI, non provato con app reali | Un'app alla volta; l'audio passa da Lyrion. |
+| Chromecast, AirPlay verso altri diffusori, gruppi | `CastBridge`, `RaopBridge`, `Groups` | disponibile come plugin; non verificato | La sincronia fra più uscite non è dimostrata. |
+| RAAT / Roon | assente | non supportato | Roon Ready richiede l'SDK e la certificazione ufficiali di Roon Labs. |
+| WASAPI / CoreAudio | non applicabile | fuori ambito | SweetSpot è un'appliance Linux con ALSA diretto. |
+
+**Architetture.** Le immagini sono per x86_64 e aarch64 (Raspberry Pi 4/5).
+I programmi inclusi in Lyrion (`Bin`) e quelli dei plugin sono presenti per
+`x86_64-linux` e `aarch64-linux`; ARM a 32 bit (armv7) non è un target e un
+plugin con binari solo armv7 non funziona.
+
+**Checklist di qualificazione** (per ogni servizio, annotare esito e data):
+
+1. Account: il piano richiesto è attivo e il plugin lo riconosce.
+2. Autenticazione: accesso dal pannello di Lyrion e permanenza dopo un riavvio.
+3. Riconnessione: ripresa dopo scollegamento della rete e dopo la sospensione del servizio.
+4. Formati massimi: frequenza e profondità effettivamente aperte sull'uscita ALSA (pagina Audio), non quelle dichiarate dal servizio.
+5. Gapless: transizione fra due brani consecutivi dello stesso album, senza interruzioni.
+6. Volume: livello fisso senza DSP, se non richiesto.
+
+Una riga passa a "verificato" solo con questi sei esiti in un rapporto
+pubblico (vedi la [matrice](docs/compatibilita.md)).
+
 ## Cosa serve
 
 - Un PC x86 a 64 bit con almeno 2 GB di RAM (consigliati 4 GB o più).
@@ -417,7 +474,8 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
   Pi 5. Due core su quattro dedicati a riproduzione e interruzioni USB,
   frequenza fissa, nessuno stato di risparmio della CPU (`cpuidle.off=1`).
 - **Uscite spente**: jack e HDMI audio (`dtparam=audio=off`), Bluetooth
-  (`disable-bt`), Wi-Fi se non configurato.
+  Wi-Fi se non configurato. Il Bluetooth integrato non è disabilitato nel
+  firmware ma il servizio è spento di serie (vedi *Bluetooth come sorgente*).
 - **DAC USB** come sul PC. **Schede DAC I2S** (HiFiBerry, Allo, IQaudio, Raspberry
   Pi DAC+/DAC Pro, JustBoom, I-Sabre...): si sceglie la scheda in *Impostazioni
   Sweetspot → Audio*, o si scrive il nome del suo overlay; il Pi si riavvia una
@@ -514,10 +572,10 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD`, `_SMB1` | cartelle di rete (fino a 9): `//server/cartella` (SMB) o `nfs://server/cartella` (NFS); `_SMB1=si` ammette SMB1, insicuro | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
 | `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
-| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite tronca i bit bassi senza dither: peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. L'unica istanza di CamillaDSP della sessione parte già al volume giusto (`-g`/`-m` dal file di volume; il cursore poi la regola dal websocket). In modalità player serve anche `SERVER` (il volume si legge da quel Lyrion; senza, volume software, e lo Stato e la pagina Audio dicono perché); se CamillaDSP non parte si usa il volume software | fisso |
-| `DSD` | `auto`, `nativo`, `dop`, `no` | auto |
+| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite arrotonda con dither TPDF, patch 0006, senza troncare: non bit-perfect, peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. L'unica istanza di CamillaDSP della sessione parte già al volume giusto (`-g`/`-m` dal file di volume, che se manca dà silenzio e non volume massimo; il cursore poi la regola dal websocket). In modalità player serve anche `SERVER` (il volume si legge da quel Lyrion; senza, volume software, e lo Stato e la pagina Audio dicono perché); se CamillaDSP non parte si usa il volume software | fisso |
+| `DSD` | `auto`, `nativo`, `dop`, `no`. Con il volume software (`VOLUME=software`, o il ripiego software di `dac`/`dsp`) il DSD si converte sempre in PCM, anche con `nativo` o `dop`: Squeezelite non applica il volume al DSD nativo e dopo un brano PCM attenuato un DSF suonerebbe al 100% (circa 30 dB più forte), un rischio per orecchie e diffusori. Vale anche per le zone (`ALTRI_DAC`), il cui volume è software | auto |
 | `DSD_PCM_MARGINE_DB` | margine in dB della conversione DSD → PCM, da -24 a 0 (mai sopra 0). I DSD "over" superano 0 dBFS fino a +3 dB (il 50% di modulazione oltre lo standard) e senza margine la conversione a 32 bit li taglierebbe; con -3 dB tutto il DSD convertito suona 3 dB più piano (il volume lo compensa). 0 = nessun margine. Non vale per il DSD nativo né per il DoP. Pagine Audio e Stato | -3 |
-| `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo` | no, lineare |
+| `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo`. Il ricampionatore abbassa il segnale di 1 dB (dichiarato in Stato e Audio, anche per il ricampionamento di ripiego `FREQUENZA_NON_SUPPORTATA=ricampiona`, anche sulle zone). Stato dichiara anche l'uscita a 16 bit, dove i brani a 24 bit si riducono con dither TPDF (patch 0006 di Squeezelite, anche con il volume software; i blocchi di silenzio digitale restano silenzio e le sorgenti a 16 bit a volume pieno restano bit-perfect) e il ricampionamento di Lyrion con sox quando il brano in riproduzione supera la frequenza massima dichiarata dal player (probe del DAC o `FREQUENZA_MAX`) | no, lineare |
 | `CORREZIONE_SE_ASSENTE`, `FIR_RICAMPIONA` | `blocca`/`diretto` (correzione o FIR di una frequenza mancanti: non si suona / si suona senza); `no`/`si` (ricampiona al FIR più vicino invece) | blocca, no |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio; la pausa al cambio di frequenza non scende mai sotto il buffer ALSA | 500, 0 |
@@ -675,6 +733,8 @@ analogiche e ascolto alla cieca quando si valutano differenze percepite.
 Con USB asincrona il clock della conversione è quello del DAC. Il programma
 alimenta i buffer tramite il driver ALSA; non può sostituire l'oscillatore del
 DAC con il clock del PC né realizzare un filtro elettrico sulle linee USB.
+Profili CPU (compreso `dinamico`), `sweetspot-banco` e la distinzione fra
+scheduling e jitter: `docs/profili-cpu.md`.
 La latenza misurata da `sweetspot-latenza` riguarda lo scheduler, non il jitter
 del clock audio. `sweetspot-alsa-misura [-c scheda] [-d dispositivo] [-t secondi]`
 campiona `/proc/asound/cardX/pcmYp/sub0/status` e `hw_params` e riassume delay
