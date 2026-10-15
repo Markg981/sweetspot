@@ -816,6 +816,7 @@ player_loop() {
 				dsp_underrun_poll
 				dsp_stato_poll
 				sqlog_rotate "$SQLOG"
+				log_quota_tick
 				zones_sync "$card"
 				apply_player_prefs
 			fi
