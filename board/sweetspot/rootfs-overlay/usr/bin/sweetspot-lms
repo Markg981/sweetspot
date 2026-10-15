@@ -13,6 +13,8 @@
 #   sweetspot-lms ricostruisci     rilegge tutta la libreria da capo
 #   sweetspot-lms plugin stato|installa NOME|rimuovi NOME
 #   sweetspot-lms riavvia          riavvia Lyrion (per i plugin)
+#   sweetspot-lms operazione avvia TIPO [NOME]   operazione lunga in background
+#   sweetspot-lms operazione stato ID            stato (JSON) di un'operazione
 #
 # Lyrion gira con un utente proprio (lms), sui core di sistema e con
 # priorita' bassa: il player, sul suo core dedicato, ha sempre la precedenza.
@@ -310,12 +312,12 @@ do_plugin() {
 	local r err
 	case "$1" in
 		stato)
-			r=$(lms_json '' sweetspot plugin-stato) || return 1
+			r=$(lms_json '' sweetspot plugin-stato) || return $?
 			printf '%s\n' "$r" | jq -r '.result | ((.plugins_loop // [])[] | "\(.nome)|\(.versione)|\(.stato)|\(.errore)"), "#\(.scaricamenti)|\(.riavvio)"'
 			;;
 		installa|rimuovi)
 			case "$2" in ''|*[!A-Za-z0-9_]*) echo "nome non valido"; return 1 ;; esac
-			r=$(LMS_TIMEOUT=60 lms_json '' sweetspot "plugin-$1" "nome:$2") || { echo "Lyrion non risponde"; return 1; }
+			r=$(LMS_TIMEOUT=${LMS_TIMEOUT_OP:-60} lms_json '' sweetspot "plugin-$1" "nome:$2") || { err=$?; lms_errore_testo "$err"; return "$err"; }
 			err=$(printf '%s\n' "$r" | jq -r '.result.errore // empty')
 			[ -z "$err" ] || { echo "$err"; return 1; }
 			log "lyrion: plugin $2: $1"
@@ -324,7 +326,137 @@ do_plugin() {
 	esac
 }
 
+# --- Operazioni lunghe in background ------------------------------------------
+# Installazione e rimozione di plugin, scansione e ricostruzione della libreria
+# non bloccano piu' la pagina: partono in background con un identificativo e
+# scrivono il loro stato in $OPS/ID.json, che si legge con /cgi-bin/operazione
+# (o con "operazione stato ID") finche' non e' "riuscita" o "fallita".
+#
+# Formato dello stato (versione 1, stabile: e' anche il corpo previsto per
+# l'API JSON versionata e per gli eventi SSE, che invieranno lo stesso oggetto):
+#   {"versione":1,"id":"1700000000-ab12cd34","tipo":"plugin-installa",
+#    "nome":"Qobuz","stato":"in_corso|riuscita|fallita","messaggio":"...",
+#    "errore":null|"non_in_esecuzione|in_avvio|timeout|applicativo|occupato|operazione",
+#    "avviata":1700000000,"aggiornata":1700000012}
+OPS=$RUN/operazioni
+
+# Testo sicuro dentro una stringa JSON.
+json_esc() {
+	printf '%s' "$1" | tr '\001-\037' ' ' | awk '{gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print}'
+}
+
+# op_scrivi ID TIPO NOME STATO MESSAGGIO ERRORE AVVIATA (scrittura atomica)
+op_scrivi() {
+	local err=null
+	[ -z "$6" ] || err="\"$6\""
+	mkdir -p "$OPS"
+	printf '{"versione":1,"id":"%s","tipo":"%s","nome":"%s","stato":"%s","messaggio":"%s","errore":%s,"avviata":%s,"aggiornata":%s}\n' \
+		"$1" "$2" "$(json_esc "$3")" "$4" "$(json_esc "$5")" "$err" "$7" "$(date +%s)" > "$OPS/$1.nuovo" &&
+		mv "$OPS/$1.nuovo" "$OPS/$1.json"
+	chmod 644 "$OPS/$1.json" 2>/dev/null
+}
+
+# Operazioni rimaste "in_corso" senza il loro processo (kill, riavvio del
+# servizio): diventano fallite, cosi' nessuno aspetta per sempre.
+op_recupera() {
+	local f id pid
+	for f in "$OPS"/*.json; do
+		[ -f "$f" ] || continue
+		grep -q '"stato":"in_corso"' "$f" || continue
+		id=$(basename "$f" .json)
+		pid=$(cat "$OPS/$id.pid" 2>/dev/null)
+		# Appena creata, il processo non ha ancora scritto il suo pid.
+		[ -z "$pid" ] && [ ! -s "$OPS/$id.pid" ] && [ "$(( $(date +%s) - $(jq -r .avviata "$f") ))" -lt 5 ] && continue
+		[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && continue
+		op_scrivi "$id" "$(jq -r .tipo "$f")" "$(jq -r .nome "$f")" fallita "Operazione interrotta." operazione "$(jq -r .avviata "$f")"
+	done
+}
+
+op_tipo_ok() { # TIPO NOME
+	case "$1" in
+		plugin-installa|plugin-rimuovi) case "$2" in ''|*[!A-Za-z0-9_]*) return 1 ;; esac ;;
+		aggiorna|ricostruisci) [ -z "$2" ] ;;
+		*) return 1 ;;
+	esac
+}
+
+# operazione avvia TIPO [NOME]: stampa l'identificativo. Una richiesta uguale
+# a una gia' in corso non ne avvia un'altra: restituisce quella.
+op_avvia() {
+	local tipo=$1 nome=${2:-} id f n
+	op_tipo_ok "$tipo" "$nome" || { echo "operazione non valida" >&2; return 1; }
+	mkdir -p "$OPS"
+	chmod 755 "$OPS" 2>/dev/null
+	op_recupera
+	f=$(grep -l "\"tipo\":\"$tipo\",\"nome\":\"$nome\",\"stato\":\"in_corso\"" "$OPS"/*.json 2>/dev/null | head -n 1)
+	if [ -n "$f" ]; then
+		basename "$f" .json
+		return 0
+	fi
+	# Si tengono le ultime 20 operazioni.
+	n=0
+	for f in $(ls -t "$OPS"/*.json 2>/dev/null); do
+		n=$((n + 1))
+		[ "$n" -le 20 ] && continue
+		rm -f "$f" "${f%.json}.pid"
+	done
+	id=$(date +%s)-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')
+	op_scrivi "$id" "$tipo" "$nome" in_corso "In corso." "" "$(date +%s)"
+	if command -v setsid > /dev/null 2>&1; then
+		setsid "$0" operazione esegui "$id" "$tipo" "$nome" < /dev/null > /dev/null 2>&1 &
+	else
+		"$0" operazione esegui "$id" "$tipo" "$nome" < /dev/null > /dev/null 2>&1 &
+	fi
+	echo "$id"
+}
+
+# operazione esegui ID TIPO NOME: il lavoro vero, nel processo in background.
+op_esegui() {
+	local id=$1 tipo=$2 nome=${3:-} avviata err="" rc=0 msg="" code
+	avviata=$(jq -r .avviata "$OPS/$id.json" 2>/dev/null || date +%s)
+	echo $$ > "$OPS/$id.pid"
+	LMS_TIMEOUT=${LMS_TIMEOUT_OP:-60}
+	case "$tipo" in
+		plugin-installa|plugin-rimuovi)
+			err=$(do_plugin "${tipo#plugin-}" "$nome") || rc=$?
+			if [ "$tipo" = plugin-installa ]; then
+				msg="Plugin in arrivo: a scaricamento finito riavvia Lyrion per attivarlo."
+			else
+				msg="Il plugin viene tolto al riavvio di Lyrion."
+			fi ;;
+		aggiorna)
+			lms_json '' rescan > /dev/null || rc=$?
+			msg="La libreria si sta aggiornando." ;;
+		ricostruisci)
+			lms_json '' wipecache > /dev/null || rc=$?
+			msg="La libreria viene riletta da capo." ;;
+	esac
+	if [ "$rc" -eq 0 ]; then
+		op_scrivi "$id" "$tipo" "$nome" riuscita "$msg" "" "$avviata"
+	else
+		[ -n "$err" ] || err=$(lms_errore_testo "$rc")
+		case "$rc" in 2|3|4|5|6) code=$(lms_errore_nome "$rc") ;; *) code=applicativo ;; esac
+		op_scrivi "$id" "$tipo" "$nome" fallita "$err" "$code" "$avviata"
+	fi
+	rm -f "$OPS/$id.pid"
+}
+
+do_operazione() {
+	case "$1" in
+		avvia) op_avvia "${2:-}" "${3:-}" ;;
+		esegui) op_esegui "${2:-}" "${3:-}" "${4:-}" ;;
+		stato)
+			case "${2:-}" in ''|*[!0-9a-f-]*) return 1 ;; esac
+			cat "$OPS/$2.json" 2>/dev/null ;;
+		*) return 1 ;;
+	esac
+}
+
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+# Le richieste delle pagine web passano dalla cache condivisa e dal limite di
+# richieste contemporanee verso Lyrion (vedi common.sh).
+case "$1" in json|plugin|operazione) LMS_WEB=1 ;; esac
 
 case "$1" in
 	prepara) do_prepare ;;
@@ -339,6 +471,7 @@ case "$1" in
 	# lascia passare solo i comandi che le pagine usano.
 	json) shift; lms_json_locale "$@" ;;
 	plugin) shift; do_plugin "$@" ;;
+	operazione) shift; do_operazione "$@" ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
-	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|plugin|riavvia" >&2; exit 1 ;;
+	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|plugin|operazione|riavvia" >&2; exit 1 ;;
 esac

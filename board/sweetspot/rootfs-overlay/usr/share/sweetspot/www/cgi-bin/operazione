@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - stato di un'operazione lunga avviata in background (installazione
+# di un plugin, scansione della libreria...), in sola lettura:
+#   GET /cgi-bin/operazione?id=ID
+# risponde con l'oggetto JSON scritto da "sweetspot-lms operazione" (versione 1:
+# id, tipo, nome, stato in_corso|riuscita|fallita, messaggio, errore, avviata,
+# aggiornata). La pagina lo interroga ogni poco finche' non e' finita; lo
+# stesso oggetto e' il corpo previsto per l'API JSON versionata e per SSE.
+# Protetto dalla stessa password del pannello (regola "/" di httpd.conf).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+id=$(query_param id)
+f=$RUN/operazioni/$id.json
+
+json_head() { # stato HTTP
+	printf 'Status: %s\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n' "$1"
+	sec_headers
+	printf '\r\n'
+}
+
+case "$id" in
+	''|*[!0-9a-f-]*) json_head '400 Bad Request'; echo '{"errore":"identificativo non valido"}' ;;
+	*)
+		if [ -s "$f" ]; then
+			json_head '200 OK'
+			cat "$f"
+		else
+			json_head '404 Not Found'
+			echo '{"errore":"operazione sconosciuta"}'
+		fi ;;
+esac
