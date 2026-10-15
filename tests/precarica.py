@@ -69,6 +69,32 @@ class PreloadToolTests(unittest.TestCase):
                 process.send_signal(signal.SIGTERM)
                 self.assertEqual(process.wait(5), 0)
 
+    def test_sigusr1_releases_files_removed_from_the_list(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            near = root / "vicino.flac"
+            far = root / "lontano.flac"
+            near.write_bytes(os.urandom(4000))
+            far.write_bytes(os.urandom(4000))
+            listing = root / "elenco"
+            listing.write_text("%s\n%s\n" % (near, far))
+            state = root / "stato"
+            process = subprocess.Popen([str(self.tool), "tieni", str(listing), str(state)])
+            try:
+                self.wait_state(state, "pronto", process)
+                listing.write_text("%s\n" % near)
+                process.send_signal(signal.SIGUSR1)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and str(far) in state.read_text():
+                    time.sleep(.05)
+                text = state.read_text()
+                self.assertIn(str(near), text)
+                self.assertNotIn(str(far), text)
+                self.assertIsNone(process.poll(), "holder must keep running")
+            finally:
+                process.send_signal(signal.SIGTERM)
+                self.assertEqual(process.wait(5), 0)
+
     def test_usage_errors_are_rejected(self):
         for args in ([], ["tieni"], ["tieni", "solo-elenco"], ["residenza"], ["altro", "x"]):
             with self.subTest(args=args):

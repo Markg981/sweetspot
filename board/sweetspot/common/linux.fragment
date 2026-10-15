@@ -124,6 +124,28 @@ CONFIG_WATCHDOG_SYSFS=y
 # CONFIG_WATCHDOG_NOWAYOUT is not set
 CONFIG_SOFT_WATCHDOG=m
 
+# --- Bluetooth come sorgente (A2DP): moduli, caricati solo se attivato -----
+# bluez e bluez-alsa parlano con il kernel con socket Bluetooth e con le
+# funzioni di cifratura (AF_ALG) per l'abbinamento. Il dongle USB (x86) usa
+# btusb; il Bluetooth integrato del Raspberry Pi usa la UART (hci_uart).
+CONFIG_BT=m
+CONFIG_BT_BREDR=y
+CONFIG_BT_RFCOMM=m
+# CONFIG_BT_LE is not set
+CONFIG_BT_HCIBTUSB=m
+CONFIG_BT_HCIBTUSB_BCM=y
+CONFIG_BT_HCIBTUSB_RTL=y
+CONFIG_BT_HCIBTUSB_MTK=y
+CONFIG_BT_HCIUART=m
+CONFIG_BT_HCIUART_SERDEV=y
+CONFIG_BT_HCIUART_BCM=y
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_CRYPTO_USER_API_SKCIPHER=y
+CONFIG_CRYPTO_USER_API_AEAD=y
+CONFIG_CRYPTO_CMAC=y
+CONFIG_CRYPTO_ECB=y
+CONFIG_CRYPTO_AES=y
+
 # --- Diagnostica: pstore / ramoops -------------------------------------------
 # Dopo un panic o un blocco il log del kernel e la console restano in una
 # memoria che sopravvive al riavvio; sweetspot-diario li copia sulla chiavetta

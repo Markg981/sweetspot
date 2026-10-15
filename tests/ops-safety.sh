@@ -255,6 +255,33 @@ expect 'modifica durante la copia: impronta precedente, nuovo salvataggio richie
 		do_save >/dev/null 2>&1; [ "$(cat "$STAMP")" = "$(fingerprint)" ] && echo uguale || echo diversa')"
 expect 'nessuna modifica durante la copia: impronta allineata' uguale \
 	"$(lock_probe 'do_save >/dev/null 2>&1; [ "$(cat "$STAMP")" = "$(fingerprint)" ] && echo uguale || echo diversa')"
+rm -f "$D/run/dati.sporco"
+expect 'modifica durante una copia lenta del database: resta da salvare' si-diversa \
+	"$(lock_probe 'db_copy() { sleep 1; echo concorrente >> "$LMS_DATA/prefs/server.prefs"; command sqlite3 "$1" ".backup '"'"'$2'"'"'"; }
+		do_save >/dev/null 2>&1; [ -s "$DIRTY_SINCE" ] && printf si- || printf no-
+		[ "$(cat "$STAMP")" = "$(fingerprint)" ] && echo uguale || echo diversa')"
+expect 'dopo la modifica concorrente il salvataggio successivo allinea e azzera' uguale-no \
+	"$(lock_probe 'do_save >/dev/null 2>&1; [ "$(cat "$STAMP")" = "$(fingerprint)" ] && printf uguale- || printf diversa-
+		[ -e "$DIRTY_SINCE" ] && echo si || echo no')"
+
+echo 'Eta massima dei dati non persistiti'
+cp "$D/run/sweetspot.conf" "$D/conf.salvata" 2>/dev/null
+echo 'DATI_ETA_MAX_MIN=10' > "$D/run/sweetspot.conf"
+expect 'eta massima letta da configurazione (minuti -> secondi)' 600 "$(lock_probe 'eta_max_s')"
+rm -f "$D/run/dati.sporco"
+expect 'nessuna modifica in sospeso: eta non superata' no "$(lock_probe 'dirty_too_old && echo si || echo no')"
+echo $(( $(date +%s) - 300 )) > "$D/run/dati.sporco"
+expect 'dati non salvati da 5 minuti: sotto il limite' no "$(lock_probe 'dirty_too_old && echo si || echo no')"
+echo $(( $(date +%s) - 700 )) > "$D/run/dati.sporco"
+expect 'dati non salvati da oltre il limite: si salva comunque' si "$(lock_probe 'dirty_too_old && echo si || echo no')"
+echo 'DATI_ETA_MAX_MIN=0' > "$D/run/sweetspot.conf"
+expect 'limite 0: nessun salvataggio forzato' no "$(lock_probe 'dirty_too_old && echo si || echo no')"
+echo 'DATI_ETA_MAX_MIN=10' > "$D/run/sweetspot.conf"
+expect 'salvataggio forzato a bassa priorita: riuscito' 0 "$(lock_probe 'bg_self() { echo bassa > "$RUN/bassa"; }; do_save_low >/dev/null 2>&1; echo $?')"
+expect 'salvataggio forzato: eseguito a bassa priorita e dati azzerati' bassa-no \
+	"$(printf '%s-' "$(cat "$D/run/bassa" 2>/dev/null)"; [ -e "$D/run/dati.sporco" ] && echo si || echo no)"
+if [ -f "$D/conf.salvata" ]; then cp "$D/conf.salvata" "$D/run/sweetspot.conf"; else rm -f "$D/run/sweetspot.conf"; fi
+rm -f "$D/run/bassa" "$D/run/dati.sporco"
 
 echo 'Checkpoint e spazio sulla chiavetta'
 # dprobe MARGINE_KB RITENTA_S COMANDI: comandi dopo il caricamento di sweetspot-dati.

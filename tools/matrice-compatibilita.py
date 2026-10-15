@@ -38,6 +38,27 @@ momento; la prova di durata è `sweetspot-durata` (24 ore di ascolto).
 """
 
 
+FOOTER = """
+## Come compilare un rapporto
+
+Il rapporto JSON (`sweetspot-rapporto`) registra ciò che il sistema sa da
+solo. Per la parte che solo chi ascolta può dire, dal terminale:
+
+    sweetspot-rapporto modello
+
+stampa un modello in Markdown già compilato con DAC, firmware (bcdDevice),
+frequenze dichiarate, piattaforma, kernel, release di SweetSpot e avvisi della
+pagina Stato. Restano da riempire, con "non provato" come valore di partenza,
+le prove di PCM (44,1-48 e 88,2-192 kHz), DSD nativo, DoP, cambio di
+frequenza fra brani, hotplug del DAC e l'esito complessivo. Incolla il modello
+e il JSON nella segnalazione *Rapporto di compatibilità*.
+
+Il modello non certifica nulla: un esito OK senza ascolto o misura dei
+campioni non va dichiarato. Un riconoscimento del DAC non è una verifica
+audio (vedi [audio-verification.md](audio-verification.md)).
+"""
+
+
 def cell(text):
     return str(text or "").replace("|", "/").replace("\n", " ").strip() or "—"
 
@@ -88,12 +109,14 @@ def render(reports):
     out = [HEADER]
     if not reports:
         out.append("Nessun rapporto ancora: il primo arriverà dalle prove sull'hardware.\n")
+        out.append(FOOTER)
         return "".join(out)
     cols = ["Data", "Versione", "Computer", "CPU", "Rete", "DAC", "Avvisi", "Verifiche audio", "Prova di durata"]
     out.append("| " + " | ".join(cols) + " |\n")
     out.append("|" + "---|" * len(cols) + "\n")
     for rep in reports:
         out.append("| " + " | ".join(row(rep)) + " |\n")
+    out.append(FOOTER)
     return "".join(out)
 
 

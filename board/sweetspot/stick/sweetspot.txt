@@ -84,7 +84,7 @@ ALTRI_DAC=no
 # Volume:
 #   fisso    = 100%, si regola dall'amplificatore (bit-perfect, consigliato)
 #   dac      = usa il controllo di volume del DAC (bit-perfect)
-#   software = attenuazione digitale di Squeezelite, senza dither
+#   software = attenuazione digitale di Squeezelite, con dither TPDF
 #   dsp      = volume a 64 bit con dither (CamillaDSP), solo in modalita'
 #              completa: il migliore se il volume va regolato da Lyrion
 VOLUME=fisso
@@ -175,7 +175,9 @@ RISPARMIO_RETE=no
 
 # --- Sistema --------------------------------------------------------------
 # Profilo di funzionamento del processore:
-#   bilanciato  = frequenza fissa intermedia (consigliato)
+#   bilanciato  = frequenza fissa intermedia, non dinamica (consigliato)
+#   dinamico    = frequenza che segue il carico, stati di riposo profondi
+#                 (esclusi i core audio isolati): meno consumo a riposo
 #   silenzio    = frequenza fissa al minimo: meno consumo e meno calore
 #   prestazioni = frequenza fissa alla nominale, processore sempre sveglio
 PROFILO=bilanciato
