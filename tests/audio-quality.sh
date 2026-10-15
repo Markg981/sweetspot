@@ -182,12 +182,17 @@ expect "volume fisso (predefinito): Squeezelite ignora il guadagno di Lyrion (-F
 # Squeezelite lascia i campioni invariati (-F).
 cat > "$E/bin/sweetspot-dsp" <<'DSP'
 #!/bin/sh
-case "$1" in attiva|volume) exit 0 ;; prepara) echo sweetspot_correzione; exit 0 ;; guadagno) echo 0.0; exit 0 ;; esac
+case "$1" in attiva|volume) exit 0 ;; prepara) echo sweetspot_correzione; exit 0 ;; guadagno) echo 0.0; exit 0 ;; avvio) echo "-l warn"; exit 0 ;; esac
 exit 1
 DSP
+# L'unica istanza di CamillaDSP della sessione la avvia il player: qui un
+# processo finto che resta in attesa e un websocket che risponde.
+printf '#!/bin/sh\nexec sleep 30\n' > "$E/camilla-finto"
+printf '#!/bin/sh\nexit 0\n' > "$E/bin/sweetspot-camilla"
+chmod +x "$E/camilla-finto" "$E/bin/sweetspot-camilla"
 printf 'DAC=auto\nVOLUME=dsp\nMODALITA=completa\n' > "$E/settings"
 common "config_build '$E/settings'"
-player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
+player "CAMILLADSP=$E/camilla-finto; taskset() { case \"\$3\" in *camilla-finto) shift 2; \"\$@\" ;; esac; }; HK=0; run_player 1; wait \"\$PID\"; stop_dsp"
 expect "volume a 64 bit: CamillaDSP nel percorso e Squeezelite con guadagno fisso (-F)" 'dsp|sweetspot_correzione|1' \
 	"$(cat "$E/run/volume.modo")|$(sed -n 's/^-o \([^ ]*\).*/\1/p' "$E/run/player.args")|$(grep -c -- ' -F ' "$E/run/player.args")"
 printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
@@ -447,8 +452,12 @@ expect "fisso: Lyrion non digitale, volume a 100" '0 100' "$(common 'volume_pref
 expect "software: Lyrion digitale, nessun volume imposto" '1 -' "$(common 'volume_prefs software')"
 printf 'VOLUME=dsp\nMODALITA=player\nSERVER=192.168.1.50:3483\n' > "$E/settings"
 common "config_build '$E/settings'"
-rm -f "$E/run/volume.modo"
+rm -f "$E/run/volume.modo" "$E/run/volume.motivo"
 expect "dsp senza CamillaDSP: ripiego sul software con motivo" 'software|volume a 64 bit non disponibile (CamillaDSP assente o non avviato)' "$(common 'volume_modo_calcola ""')"
+echo riserva > "$E/run/volume.modo"
+echo "modalita' player senza SERVER: il volume si legge da Lyrion e il suo indirizzo non e' noto (indica SERVER)" > "$E/run/volume.motivo"
+expect "dsp in modalita' player senza SERVER: il motivo del player passa da volume_modo_calcola" "software|modalita' player senza SERVER: il volume si legge da Lyrion e il suo indirizzo non e' noto (indica SERVER)" "$(common 'volume_modo_calcola ""')"
+rm -f "$E/run/volume.modo" "$E/run/volume.motivo"
 echo dsp > "$E/run/volume.modo"
 expect "dsp con CamillaDSP: modalita' dsp senza motivo" 'dsp|' "$(common 'volume_modo_calcola ""')"
 rm -f "$E/run/volume.modo"

@@ -615,7 +615,9 @@ check_player() {
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
 		emit INFO "Budget RAM" "sistema $(( RAM_SISTEMA / 1024 )) MB, servizi (Lyrion, catalogo, immagini, snapshot) $(( RAM_SERVIZI / 1024 )) MB, ALSA $(( RAM_ALSA / 1024 )) MB, buffer del player $(( (RAM_STREAM + RAM_OUTPUT) / 1024 )) MB, precarico $(( RAM_PRECARICO / 1024 )) MB (disponibile $(( RAM_AVAIL / 1024 )) MB di $(( RAM_TOTAL / 1024 )) MB)"
 	vol=$(lower "$(conf VOLUME fisso)")
-	if [ "$(mode)" = player ]; then
+	if [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = riserva ]; then
+		emit ATTENZIONE "Volume" "a 64 bit non disponibile ($(grep . "$RUN/volume.motivo" 2>/dev/null || echo "CamillaDSP non avviato o modalita' player")): in uso il volume software, con dither TPDF di Squeezelite"
+	elif [ "$(mode)" = player ] && [ "$vol" != dsp ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
 		if [ -s "$RUN/volume.modalita" ]; then
 			emit INFO "Volume effettivo" "$(volume_descrizione)"
@@ -633,8 +635,6 @@ check_player() {
 		emit ATTENZIONE "Volume" "a 64 bit: $(volume_dsp_diverso); si risincronizza da solo"
 	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
 		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati$(volume_dsp_now); non e' bit-perfect, ma senza troncamenti"
-	elif [ "$vol" = dsp ] && [ -f "$RUN/volume.modo" ]; then
-		emit ATTENZIONE "Volume" "a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, con dither TPDF di Squeezelite"
 	else
 		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
 	fi
@@ -655,6 +655,11 @@ check_player() {
 			emit ATTENZIONE "Correzione ambientale" "non applicata, il DAC riceve il segnale senza correzione: $(cat "$RUN/correzione.errore")"
 		fi
 	fi
+	# FIR solo per alcune frequenze: i brani alle altre non suonano (blocca),
+	# suonano senza FIR (diretto) o sono ricampionati (FIR_RICAMPIONA=si).
+	if [ -f "$RUN/correzione.attiva" ] && [ -s "$RUN/correzione.avviso" ]; then
+		emit ATTENZIONE "Filtri FIR per frequenza" "$(cat "$RUN/correzione.avviso")"
+	fi
 	if [ -f "$RUN/correzione.attiva" ]; then
 		check_dsp_threads
 		check_dsp_clipping
@@ -668,10 +673,10 @@ check_player() {
 # patch il thread di elaborazione si chiama "Processing"; senza, tutti i
 # thread contano come audio.
 check_dsp_threads() {
-	local p t sched comm named total=0 rt=0 others=0 prios="" cpus="" c
+	local p t sched comm named total=0 rt=0 others=0 prios="" cpus="" c pplay="" pproc=""
 	p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
 	if [ -z "$p" ]; then
-		emit INFO "CamillaDSP in real-time" "non in esecuzione: parte con il primo brano"
+		emit INFO "CamillaDSP in real-time" "non in esecuzione: il player la riavvia"
 		return
 	fi
 	named=0
@@ -694,13 +699,19 @@ check_dsp_threads() {
 		total=$((total + 1))
 		if [ "${sched#* }" = 1 ]; then
 			rt=$((rt + 1))
+			case "$comm" in
+				AlsaPlayback) pplay=${sched% *} ;;
+				Processing) pproc=${sched% *} ;;
+			esac
 			case " $prios " in *" ${sched% *} "*) ;; *) prios="$prios ${sched% *}" ;; esac
 		fi
 		c=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$t/status" 2>/dev/null)
 		[ -n "$c" ] && [ -z "$cpus" ] && cpus=$c
 	done
 	[ -n "$cpus" ] || cpus=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$PROC/$p/status" 2>/dev/null)
-	if [ "$total" -gt 0 ] && [ "$rt" = "$total" ] && [ "$others" = 0 ]; then
+	if [ -n "$pplay" ] && [ -n "$pproc" ] && [ "$pplay" -lt "$pproc" ]; then
+		emit ATTENZIONE "CamillaDSP in real-time" "il thread di riproduzione (priorita' $pplay) e' sotto l'elaborazione ($pproc): sotto carico il DAC puo' andare in underrun; si sistema entro pochi secondi"
+	elif [ "$total" -gt 0 ] && [ "$rt" = "$total" ] && [ "$others" = 0 ]; then
 		emit OK "CamillaDSP in real-time" "$total thread audio a priorita'${prios} sul core ${cpus:-?}$([ "$named" = 1 ] && echo ', gli altri sui core di sistema')"
 	elif [ "$total" -gt 0 ] && [ "$rt" = "$total" ]; then
 		emit ATTENZIONE "CamillaDSP in real-time" "$total thread audio a priorita'${prios}, ma $others thread non audio ancora in real-time: si sistemano entro pochi secondi"

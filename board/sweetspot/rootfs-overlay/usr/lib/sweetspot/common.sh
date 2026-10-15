@@ -26,6 +26,9 @@ STICK_LABEL=SWEETSPOT
 # Server websocket di CamillaDSP, solo locale: ne leggiamo i contatori.
 # shellcheck disable=SC2034
 DSP_PORTA=${SWEETSPOT_DSP_PORTA:-1234}
+# Pipe da cui CamillaDSP legge i campioni (stdin): vi scrive il plugin cdsp.
+# shellcheck disable=SC2034
+DSP_FIFO=${SWEETSPOT_DSP_FIFO:-$RUN/camilladsp.fifo}
 # SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
 STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 
@@ -1185,6 +1188,7 @@ volume_effettivo() {
 # $1: controllo di volume del DAC (vuoto se manca). volume.modo (dsp o
 # riserva) lo scrive il player prima, quando sa se CamillaDSP c'e'.
 volume_modo_calcola() { # controllo
+	local mot
 	case "$(lower "$(conf VOLUME fisso)")" in
 		dac)
 			if [ -n "$1" ]; then echo "dac|"
@@ -1192,7 +1196,12 @@ volume_modo_calcola() { # controllo
 		software) echo "software|" ;;
 		dsp)
 			if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then echo "dsp|"
-			else echo "software|volume a 64 bit non disponibile (CamillaDSP assente o non avviato)"; fi ;;
+			else
+				# Il motivo preciso lo scrive il player in volume.motivo (modalita'
+				# player senza SERVER, CamillaDSP non preparato...).
+				mot=$(head -n 1 "$RUN/volume.motivo" 2>/dev/null)
+				echo "software|${mot:-volume a 64 bit non disponibile (CamillaDSP assente o non avviato)}"
+			fi ;;
 		*) echo "fisso|" ;;
 	esac
 }

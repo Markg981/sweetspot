@@ -249,9 +249,15 @@ if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$chann
 	# 5. DSP.
 	dsp_what=""
 	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && dsp_what="volume digitale a 64 bit"
-	[ -f "$RUN/correzione.filtri" ] && dsp_what="${dsp_what:+$dsp_what, }filtri FIR della stanza"
+	if [ -f "$RUN/correzione.filtri" ]; then
+		# FIR per frequenza (#90): quello della frequenza in riproduzione, se c'e'.
+		fir_now=""
+		for fr in $(sweetspot-dsp fir-frequenze 2>/dev/null); do [ "$fr" = "$rate" ] && fir_now=1; done
+		if [ -n "$fir_now" ]; then dsp_what="${dsp_what:+$dsp_what, }filtri della stanza con il FIR a $rate Hz"
+		else dsp_what="${dsp_what:+$dsp_what, }filtri della stanza (nessun FIR a $rate Hz: nessun ricampionamento, vedi FIR_RICAMPIONA)"; fi
+	fi
 	if [ -n "$dsp_what" ] || correction_running; then
-		chain_row mod "5. DSP" "CamillaDSP attivo: ${dsp_what:-correzione ambientale}, calcolo in virgola mobile a 64 bit con dither all'uscita."
+		chain_row mod "5. DSP" "CamillaDSP di sessione (un'unica istanza, configurazione di $rate Hz): ${dsp_what:-correzione ambientale}, calcolo in virgola mobile a 64 bit con dither all'uscita."
 	elif [ -f "$RUN/correzione.attiva" ]; then
 		chain_row nv "5. DSP" "Correzione accesa ma CamillaDSP non risulta in esecuzione."
 	else
@@ -319,7 +325,10 @@ volume_note() {
 		printf '<p class="sub">Volume effettivo: %s.</p>\n' "$(esc "$(volume_descrizione)")"
 	fi
 	if [ "$1" = dsp ]; then
-		printf '<p class="sub">%s</p>\n' "Volume a 64 bit: Squeezelite lascia i campioni invariati e il volume di Lyrion (stessa scala del volume software) lo applica CamillaDSP in virgola mobile, con dither TPDF alla risoluzione del DAC (24 o 16 bit), presente anche al 100%: non è bit-perfect, ma non tronca; per il percorso bit-perfect scegli Fisso. I file DSD si convertono in PCM. Solo nella modalità completa; se CamillaDSP non parte si usa il volume software, mai il massimo."
+		printf '<p class="sub">%s</p>\n' "Volume a 64 bit: Squeezelite lascia i campioni invariati e il volume di Lyrion (stessa scala del volume software) lo applica CamillaDSP in virgola mobile, con dither TPDF alla risoluzione del DAC (24 o 16 bit), presente anche al 100%: non è bit-perfect, ma non tronca; per il percorso bit-perfect scegli Fisso. I file DSD si convertono in PCM. In modalità player serve anche SERVER (l'indirizzo del Lyrion da cui si legge il volume): senza, si usa il volume software e lo Stato ne spiega il motivo; se CamillaDSP non parte si usa il volume software, mai il massimo."
+		if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = riserva ] && [ -s "$RUN/volume.motivo" ]; then
+			printf '<p class="sub"><b>Volume a 64 bit non disponibile:</b> %s</p>\n' "$(esc "$(cat "$RUN/volume.motivo")")"
+		fi
 		return 0
 	fi
 	if [ "$1" = dac ] && [ "$(volume_effettivo)" = fisso ]; then

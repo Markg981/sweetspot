@@ -14,6 +14,8 @@ case "$1" in
 	stop)
 		start-stop-daemon -K -p "$PIDFILE" 2>/dev/null
 		killall squeezelite 2>/dev/null
+		# L'unica istanza di CamillaDSP della sessione (libera il DAC).
+		killall camilladsp 2>/dev/null
 		# Libreria, plugin e impostazioni sulla chiavetta prima di spegnere
 		# (Lyrion e' gia' fermo: si ferma prima del player).
 		# Con "restart" (Salva e applica) Lyrion resta in funzione e il
