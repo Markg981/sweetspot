@@ -572,6 +572,9 @@ check_player() {
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$(mode)" = player ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
+		if [ -s "$RUN/volume.modalita" ]; then
+			emit INFO "Volume effettivo" "$(volume_descrizione)"
+		fi
 	elif [ "$vol" = fisso ]; then
 		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
 	elif [ "$vol" = software ]; then
