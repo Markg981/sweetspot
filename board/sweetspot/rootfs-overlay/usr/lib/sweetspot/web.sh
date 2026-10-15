@@ -68,6 +68,22 @@ lms_json() {
 	fi
 }
 
+# lms_avviso CODICE: titolo e spiegazione (HTML) per un errore di lms_json,
+# distinti per causa: non in esecuzione, in avvio, non risponde, errore di
+# Lyrion, troppe richieste. Prima era sempre "si sta avviando".
+lms_avviso() {
+	local t v
+	case "$1" in
+		2) t="Lyrion non è in esecuzione"; v="Il servizio non risulta attivo: guarda la pagina Stato. La pagina riprova da sola." ;;
+		3) t="Lyrion si sta avviando"; v="La pagina si aggiorna da sola tra poco." ;;
+		4) t="Lyrion non risponde"; v="Ha superato il tempo di attesa: potrebbe essere occupato o bloccato. La pagina riprova da sola." ;;
+		5) t="Lyrion ha risposto con un errore"; v="La risposta non è utilizzabile: se dura, guarda il registro nella pagina Stato." ;;
+		6) t="Lyrion è occupato"; v="Ci sono troppe richieste in corso: la pagina riprova da sola tra poco." ;;
+		*) t="Lyrion non è raggiungibile"; v="La pagina riprova da sola." ;;
+	esac
+	printf '<div class="k">%s</div><div class="v">%s</div>\n' "$t" "$v"
+}
+
 # Testo sicuro dentro l'HTML (anche tra virgolette negli attributi).
 esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'; }
 

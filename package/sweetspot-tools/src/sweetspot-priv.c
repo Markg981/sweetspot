@@ -122,6 +122,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
 	{"sweetspot-lms", "json", "", "", 0}, // controllato a parte (lms_json_ok)
+	{"sweetspot-lms", "operazione", "", "", 0}, // controllato a parte (operazione_ok)
 	{"sweetspot-lms", "plugin", "", "", 0}, // controllato a parte
 	{"sweetspot-lms", "ricostruisci", "", "", 0},
 	{"sweetspot-lms", "riavvia", "", "", 0},
@@ -387,6 +388,24 @@ static int plugin_ok(int argc, char **argv)
 		return 0;
 	for (i = 0; argv[1][i]; i++)
 		if (!isalnum((unsigned char)argv[1][i]) && argv[1][i] != '_')
+			return 0;
+	return i > 0 && i <= 64;
+}
+
+// Operazioni lunghe in background (sweetspot-lms operazione): solo "avvia",
+// con un tipo dell'elenco. Lo stato lo legge la pagina direttamente.
+static int operazione_ok(int argc, char **argv)
+{
+	// argv: avvia plugin-installa|plugin-rimuovi NOME | avvia aggiorna|ricostruisci
+	size_t i;
+	if (argc < 2 || strcmp(argv[0], "avvia"))
+		return 0;
+	if (argc == 2)
+		return !strcmp(argv[1], "aggiorna") || !strcmp(argv[1], "ricostruisci");
+	if (argc != 3 || (strcmp(argv[1], "plugin-installa") && strcmp(argv[1], "plugin-rimuovi")))
+		return 0;
+	for (i = 0; argv[2][i]; i++)
+		if (!isalnum((unsigned char)argv[2][i]) && argv[2][i] != '_')
 			return 0;
 	return i > 0 && i <= 64;
 }
@@ -676,6 +695,15 @@ int main(int argc, char **argv)
 			return NO_ELENCO;
 		for (i = 0; i < (size_t)argc; i++)
 			av[2 + i] = argv[i];
+		esegui(av);
+	}
+	if (!strcmp(r->sub, "operazione") && !strcmp(r->script, "sweetspot-lms")) {
+		if (!operazione_ok(argc, argv))
+			return NO_ELENCO;
+		av = realloc(av, ((size_t)argc + 4) * sizeof *av);
+		for (i = 0; i < (size_t)argc; i++)
+			av[2 + i] = argv[i];
+		av[2 + argc] = NULL;
 		esegui(av);
 	}
 	if (!strcmp(r->sub, "plugin") && !strcmp(r->script, "sweetspot-lms")) {

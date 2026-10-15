@@ -205,11 +205,13 @@ case "$F_a" in
 
 	# --- Musica ------------------------------------------------------------------
 	aggiorna)
-		priv sweetspot-lms aggiorna
+		priv sweetspot-lms operazione avvia aggiorna > /dev/null ||
+			done_to musica "Aggiornamento non avviato: riprova tra poco."
 		done_to musica "Aggiornamento della libreria avviato." ;;
 
 	ricostruisci)
-		priv sweetspot-lms ricostruisci
+		priv sweetspot-lms operazione avvia ricostruisci > /dev/null ||
+			done_to musica "Ricostruzione non avviata: riprova tra poco."
 		done_to musica "Ricostruzione della libreria avviata: con molti brani richiede alcuni minuti." ;;
 
 	aggiungi_condivisione)
@@ -361,18 +363,22 @@ case "$F_a" in
 	# --- Plugin -------------------------------------------------------------------
 	plugin_installa)
 		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
-		if err=$(priv sweetspot-lms plugin installa "$F_nome"); then
-			done_to plugin "Plugin in arrivo: a scaricamento finito riavvia Lyrion per attivarlo."
+		# In background: la pagina segue l'operazione (pochi secondi di polling)
+		# invece di restare bloccata fino a 60 s.
+		if id=$(priv sweetspot-lms operazione avvia plugin-installa "$F_nome") && [ -n "$id" ]; then
+			redirect "/cgi-bin/plugin?op=$id"
+			exit 0
 		fi
-		done_to plugin "Plugin non installato: ${err:-errore sconosciuto}. Sweetspot è collegato a Internet?" ;;
+		done_to plugin "Installazione non avviata: riprova tra poco." ;;
 
 	plugin_rimuovi)
 		case "$F_nome" in ''|*[!A-Za-z0-9_]*) done_to plugin "Richiesta non valida." ;; esac
 		[ "$F_nome" = MaterialSkin ] && done_to plugin "L'interfaccia Material non si può togliere da qui."
-		if err=$(priv sweetspot-lms plugin rimuovi "$F_nome"); then
-			done_to plugin "Il plugin viene tolto al riavvio di Lyrion."
+		if id=$(priv sweetspot-lms operazione avvia plugin-rimuovi "$F_nome") && [ -n "$id" ]; then
+			redirect "/cgi-bin/plugin?op=$id"
+			exit 0
 		fi
-		done_to plugin "Plugin non rimosso: ${err:-errore sconosciuto}." ;;
+		done_to plugin "Rimozione non avviata: riprova tra poco." ;;
 
 	riavvia_lyrion)
 		priv sweetspot-lms riavvia
