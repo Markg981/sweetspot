@@ -391,7 +391,7 @@ lv_func() { # momento
 	fi
 	# CamillaDSP, solo se e' nel percorso: deve rispondere sul websocket.
 	if [ -f "$RUN/correzione.attiva" ]; then
-		p=$(pidof camilladsp 2>/dev/null | cut -d' ' -f1)
+		p=$(${SWEETSPOT_PIDOF:-pidof} camilladsp 2>/dev/null | cut -d' ' -f1)
 		if [ -n "$p" ]; then
 			st=$(sweetspot-camilla "$DSP_PORTA" GetState 2>/dev/null | sed -n 's/.*"value":"\([A-Za-z]*\)".*/\1/p')
 			if [ -n "$st" ]; then

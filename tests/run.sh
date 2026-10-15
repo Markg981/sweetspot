@@ -498,7 +498,7 @@ chmod +x "$FB"/*
 printf 'LIVENESS_FUNZ_FALLIMENTI=3\nLIVENESS_RIAVVII_MAX=2\nLIVENESS_RIAVVII_FINESTRA=1800\nLIVENESS_BACKOFF_MIN=3600\n' > "$LV/run/sweetspot.conf"
 lv_fn() { # wget
 	local w=${1:-$FB/wget}
-	env SWEETSPOT_RUN=$LV/run SWEETSPOT_PROCFS=$LV/proc SWEETSPOT_LOG=$LV/log SWEETSPOT_WGET=$w \
+	env SWEETSPOT_RUN=$LV/run SWEETSPOT_PROCFS=$LV/proc SWEETSPOT_LOG=$LV/log SWEETSPOT_WGET=$w SWEETSPOT_PIDOF=$FB/pidof \
 		SWEETSPOT_PATH="$FB:$LV/bin:$SWEETSPOT_PATH" SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf PATH="$FB:$LV/bin:$PATH" \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" funzionale
 }
