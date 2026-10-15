@@ -204,8 +204,15 @@ id=$(op avvia aggiorna); attendi "$id"
 expect "operazione orfana recuperata come fallita" "fallita operazione" "$(op stato 1-aa | jq -r '"\(.stato) \(.errore)"')"
 
 echo "CGI operazione"
-cgi() { # QUERY
-	SWEETSPOT_RUN=$RUNDIR REQUEST_METHOD=GET QUERY_STRING="$1" HTTP_HOST=sweetspot.local sh "$CGI/operazione"
+# httpd -d (decodifica dell'URL) c'e' solo in BusyBox: senza, un finto in coda al PATH.
+mkdir -p "$WORK/fakebin"
+cat > "$WORK/fakebin/httpd" <<'EOF'
+#!/bin/sh
+[ "$1" = -d ] && printf '%s\n' "$2"
+EOF
+chmod +x "$WORK/fakebin/httpd"
+cgi() { # QUERY (con & finale: query_param legge righe intere)
+	PATH="$PATH:$WORK/fakebin" SWEETSPOT_RUN=$RUNDIR REQUEST_METHOD=GET QUERY_STRING="$1&" HTTP_HOST=sweetspot.local sh "$CGI/operazione"
 }
 modo ok
 id=$(op avvia aggiorna); attendi "$id"
