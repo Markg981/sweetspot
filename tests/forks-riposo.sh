@@ -63,17 +63,48 @@ if [ "$1" = --dettaglio ]; then
 	exit 0
 fi
 
-sleep "${FORKS_ATTESA:-20}"
+# FORKS_PRIMA=N: durante i primi N secondi dell'attesa classifica i processi
+# nati (come --dettaglio) e li stampa solo se la soglia e' superata: mostra
+# le raffiche dell'assestamento che la misura successiva conta.
+PRIMA=
+ATT=${FORKS_ATTESA:-20}
+if [ "${FORKS_PRIMA:-0}" -gt 0 ]; then
+	PRIMA=$(dettaglio "$FORKS_PRIMA")
+	ATT=$((ATT - FORKS_PRIMA))
+fi
+[ "$ATT" -le 0 ] || sleep "$ATT"
+# Conta i fork con la sola shell (FKV): la serie a passi di 5 s non costa awk.
+forks_v() {
+	local k v r
+	while read -r k v r; do
+		[ "$k" = processes ] && { FKV=$v; return 0; }
+	done < "$PROC/stat"
+}
 a=$(forks)
-sleep "$SECONDI"
+serie=
+passi=0
+resto=$SECONDI
+forks_v; prec=$FKV
+while [ "$resto" -gt 0 ]; do
+	p=5; [ "$resto" -ge 5 ] || p=$resto
+	sleep "$p"
+	resto=$((resto - p)); passi=$((passi + 1))
+	forks_v; serie="$serie $((FKV - prec))"; prec=$FKV
+done
 b=$(forks)
-# awk, sleep e la sostituzione dei comandi di questo script: 4-5 fork propri.
-propri=${FORKS_PROPRI:-5}
+# awk, sleep e la sostituzione dei comandi di questo script: 4-5 fork propri,
+# piu' uno sleep per ogni passo della serie oltre il primo.
+propri=$(( ${FORKS_PROPRI:-5} + passi - 1 ))
 tot=$((b - a - propri))
 [ "$tot" -ge 0 ] || tot=0
 al_minuto=$((tot * 60 / SECONDI))
 echo "fork in ${SECONDI}s: $tot (al minuto: $al_minuto, massimo $MASSIMO)"
 if [ "$al_minuto" -ge "$MASSIMO" ]; then
+	echo "Fork ogni 5 s:$serie"
+	if [ -n "$PRIMA" ]; then
+		echo "Classifica dei primi ${FORKS_PRIMA} s (padre > comando: numero):"
+		echo "$PRIMA"
+	fi
 	echo "Troppi fork. Classifica dei processi nati in ${FORKS_DETTAGLIO:-30} s (padre > comando: numero):"
 	dettaglio "${FORKS_DETTAGLIO:-30}"
 	exit 1

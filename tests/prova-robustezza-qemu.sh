@@ -167,7 +167,7 @@ pid1=$(squeezelite_pid)
 echo "== 2b. Fork a riposo (demone a eventi, meno di 100 al minuto)"
 # DAC collegato, player attivo, nessun ascolto e nessuna pagina aperta: il
 # contatore "processes" di /proc/stat misura il lavoro dei servizi.
-if guest 'sh -s 60 100' < "$TEST_DIR/forks-riposo.sh" > "$OUT/forks-riposo.txt" 2>&1; then
+if guest 'FORKS_PRIMA=18 sh -s 60 100'< "$TEST_DIR/forks-riposo.sh" > "$OUT/forks-riposo.txt" 2>&1; then
 	esito OK "fork a riposo: $(head -n 1 "$OUT/forks-riposo.txt")"
 else
 	esito NO "fork a riposo: $(tr '\n' ' ' < "$OUT/forks-riposo.txt")"
