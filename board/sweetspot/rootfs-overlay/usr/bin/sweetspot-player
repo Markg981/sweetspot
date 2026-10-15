@@ -260,7 +260,13 @@ dsp_session_check() {
 	[ "$(date +%s)" -ge "$DSP_RIPROVA" ] || return 0
 	DSP_RIPROVA=$(( $(date +%s) + 10 ))
 	log "player: CamillaDSP terminato, riavvio"
-	start_dsp || log "player: CamillaDSP non riparte: $(cat "$RUN/correzione.motivo" 2>/dev/null)"
+	if start_dsp; then
+		# La nuova istanza parte dal file di volume: si riallinea al volume
+		# richiesto e volume.applicato torna quello confermato dalla nuova istanza.
+		[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && sweetspot-volume risincronizza
+	else
+		log "player: CamillaDSP non riparte: $(cat "$RUN/correzione.motivo" 2>/dev/null)"
+	fi
 }
 
 # Inizio della sessione del player: da qui si contano XRUN, interruzioni

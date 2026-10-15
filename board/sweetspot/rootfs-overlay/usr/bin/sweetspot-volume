@@ -89,6 +89,16 @@ dsp_resync() {
 	fi
 }
 
+# Riapplica sempre il volume richiesto, senza confronti: dopo che il player ha
+# riavviato l'istanza di sessione di CamillaDSP (riparte dal file di volume)
+# volume.applicato torna quello confermato dalla nuova istanza.
+dsp_reapply() {
+	local v d m
+	[ -s "$RUN/volume.dsp" ] || return 0
+	read -r v d m < "$RUN/volume.dsp"
+	apply "$v" "$m"
+}
+
 # Volume e sordina attuali del player, letti da Lyrion. Esce con 1 se Lyrion
 # non risponde o non conosce ancora il player.
 sync_now() { # mac
@@ -153,6 +163,7 @@ follow() { # mac
 case "$1" in
 	segui) follow "${2:?mac}" ;;
 	applica) apply "${2:?volume}" "${3:-0}" ;;
+	risincronizza) dsp_reapply ;;
 	db) db "${2:?volume}"; echo ;;
-	*) echo "uso: $0 segui MAC | applica VOLUME MUTO | db VOLUME" >&2; exit 1 ;;
+	*) echo "uso: $0 segui MAC | applica VOLUME MUTO | risincronizza | db VOLUME" >&2; exit 1 ;;
 esac

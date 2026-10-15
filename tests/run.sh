@@ -1160,6 +1160,12 @@ expect "riavvio di CamillaDSP: il volume richiesto viene riapplicato" "-9.9|fals
 rm -f "$DSPE/run/camilla.call"
 volfn 'dsp_resync'
 expect "gia' allineato: nessun comando di scrittura" "0" "$(grep -c Set "$DSPE/run/camilla.call")"
+# Istanza di sessione riavviata dal player: risincronizza riapplica sempre il
+# volume richiesto e volume.applicato torna quello confermato.
+echo errore > "$DSPE/run/volume.applicato"
+vol risincronizza
+expect "riavvio dell'istanza di sessione: volume.applicato riallineato" "80 -9.9 0" "$(cat "$DSPE/run/volume.applicato")"
+expect "player: dopo il riavvio dell'istanza chiama sweetspot-volume risincronizza" "1" "$(grep -c 'sweetspot-volume risincronizza' "$OVERLAY/usr/bin/sweetspot-player")"
 echo 99 > "$DSPE/run/camilla.fail"; echo "-74.0" > "$DSPE/run/camilla.vol"
 volfn 'dsp_resync'; echo 0 > "$DSPE/run/camilla.fail"
 expect "DSP irraggiungibile durante il riavvio: nessun errore, nessuna modifica" "-74.0" "$(cat "$DSPE/run/camilla.vol")"
