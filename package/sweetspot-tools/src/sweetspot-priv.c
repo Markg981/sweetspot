@@ -392,8 +392,8 @@ static char *file_web(const char *s, uid_t web)
 		atteso = 0;
 	} else
 		return NULL;
-	if (!s[strlen(base)])
-		return NULL;
+	if (!s[strlen(base)] || strstr(s + strlen(base), "//") || s[strlen(s) - 1] == '/')
+		return NULL; // niente componenti vuoti (stesso esito con openat2 e col ripiego)
 	fd = apri_sotto(base, s + strlen(base));
 	if (fd < 0)
 		return NULL;
