@@ -128,7 +128,7 @@ SSH=si")"
 		expect "lms operazione: plugin senza nome" "NIENTE(126)" "$(priv sweetspot-lms operazione avvia plugin-rimuovi)"
 		expect "lms operazione: tipo sconosciuto" "NIENTE(126)" "$(priv sweetspot-lms operazione avvia riavvia)"
 		expect "lms operazione: solo avvia (esegui riservato)" "NIENTE(126)" "$(priv sweetspot-lms operazione esegui x aggiorna)"
-		expect "lms json stato del server""sweetspot-lms|json||serverstatus|0|0" "$(priv sweetspot-lms json '' serverstatus 0 0)"
+		expect "lms json stato del server" "sweetspot-lms|json||serverstatus|0|0" "$(priv sweetspot-lms json '' serverstatus 0 0)"
 		expect "lms json nome del player" "sweetspot-lms|json|aa:bb:cc:dd:ee:ff|name|Salotto" "$(priv sweetspot-lms json aa:bb:cc:dd:ee:ff name Salotto)"
 		expect "lms json brano in ascolto" "sweetspot-lms|json|aa:bb|status|-|1|tags:aloITr" "$(priv sweetspot-lms json aa:bb status - 1 tags:aloITr)"
 		expect "lms json anteprima" "sweetspot-lms|json|aa:bb|playlist|preview|url:file:///tmp/p.wav|title:Prova DoP" \
