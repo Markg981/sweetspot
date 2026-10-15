@@ -964,9 +964,12 @@ class DriverTests(unittest.TestCase):
             rc, report, entries = self.aggregate_report(Path(temp))
         self.assertEqual(rc, 0)
         self.assertEqual(report["status"], "pass")
-        self.assertEqual(len(report["cases"]), 24)
-        self.assertEqual(len({case["id"] for case in report["cases"]}), 24)
-        self.assertEqual({tuple(case["source_rates"]) for case in report["cases"][18:]},
+        self.assertEqual(len(report["cases"]), 32)
+        self.assertEqual(len({case["id"] for case in report["cases"]}), 32)
+        self.assertEqual([case["id"] for case in report["cases"][24:]],
+                         ["%s-%s-%s" % (codec, rate, bits) for codec in ("flac", "alac")
+                          for rate, bits in ((44100, 16), (48000, 24), (96000, 24), (192000, 24))])
+        self.assertEqual({tuple(case["source_rates"]) for case in report["cases"][18:24]},
                          {(44100, 48000), (48000, 44100), (44100, 96000),
                           (96000, 44100), (48000, 96000), (96000, 48000)})
         self.assertEqual([case["id"] for case in report["cases"][:14]],
@@ -975,7 +978,7 @@ class DriverTests(unittest.TestCase):
                           for rate in (44100, 48000, 96000)] +
                          ["dop-176400-24-24", "dop-352800-24-24"])
         self.assertEqual({(case["rate"], tuple(case["source_bits"])) for case in report["cases"]
-                          if case["kind"] == "pcm"},
+                          if case["kind"] == "pcm" and case["id"].startswith("pcm-")},
                          {(44100, (16, 16)), (44100, (24, 24)), (48000, (16, 16)), (48000, (24, 24)),
                           (96000, (16, 16)), (96000, (24, 24)), (44100, (16, 24)), (44100, (24, 16)),
                           (48000, (16, 24)), (48000, (24, 16)), (96000, (16, 24)), (96000, (24, 16))})
