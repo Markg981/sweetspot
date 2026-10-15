@@ -19,6 +19,10 @@ empty completely lets the device re-read stale mmap data (about 80 ms heard
 again) until the close; some drivers (snd-aloop) also move the pointer by
 whole periods.
 
+The PCM is also opened with ALSA auto-silence (silence_threshold 0,
+silence_size boundary): a ring that runs dry plays silence instead of the old
+mmap data (about 85 ms heard again before the next stream opened).
+
 Source: local change
 Upstream: Not submitted (local option)
 
@@ -91,7 +95,30 @@ Upstream: Not submitted (local option)
  static void alsa_close(void) {
  	int err;
  	if ((err = snd_pcm_close(pcmp)) < 0) {
-@@ -689,6 +749,8 @@
+@@ -541,6 +601,22 @@
+ 		return err;
+ 	}
+ 
++	// auto-silence: ALSA zeroes every area already played, so a ring that runs
++	// dry (end of a track, wait for the next stream) plays silence and never
++	// the old data of the mmap area again. Not fatal if the driver refuses.
++	{
++		snd_pcm_sw_params_t *sw_params;
++		snd_pcm_uframes_t boundary;
++		snd_pcm_sw_params_alloca(&sw_params);
++		if ((err = snd_pcm_sw_params_current(pcmp, sw_params)) < 0 ||
++			(err = snd_pcm_sw_params_get_boundary(sw_params, &boundary)) < 0 ||
++			(err = snd_pcm_sw_params_set_silence_threshold(pcmp, sw_params, 0)) < 0 ||
++			(err = snd_pcm_sw_params_set_silence_size(pcmp, sw_params, boundary)) < 0 ||
++			(err = snd_pcm_sw_params(pcmp, sw_params)) < 0) {
++			LOG_WARN("unable to set auto-silence: %s", snd_strerror(err));
++		}
++	}
++
+ 	// dump info
+ 	if (loglevel == lSDEBUG) {
+ 		static snd_output_t *debug_output;
+@@ -689,6 +765,8 @@
  				relay_script(1);
  			}
  #endif
