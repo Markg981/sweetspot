@@ -26,7 +26,12 @@ LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
 # porta eventuale e' quella di Squeezelite: qui serve solo l'indirizzo).
 if [ "$(mode)" != completa ] && [ -n "$(conf SERVER)" ]; then
 	LMS_HOST=$(conf SERVER)
-	LMS_HOST=${LMS_HOST%%:*}
+	# "[v6]:porta", v6 senza porta (piu' di un ':'), host:porta o solo host.
+	case "$LMS_HOST" in
+		\[*\]*) LMS_HOST=${LMS_HOST#\[}; LMS_HOST=${LMS_HOST%%\]*} ;;
+		*:*:*) ;;
+		*) LMS_HOST=${LMS_HOST%%:*} ;;
+	esac
 fi
 
 db() { # volume 0-100

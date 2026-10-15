@@ -1085,6 +1085,8 @@ expect "volume a 64 bit in modalita' player con SERVER: disponibile" "0|0" \
 	"$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player\nSERVER=192.168.1.5')" attiva; echo $?)|$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player\nSERVER=192.168.1.5')" volume; echo $?)"
 expect "volume a 64 bit in modalita' player: il sorvegliante legge il Lyrion indicato" "192.168.1.5|127.0.0.1" \
 	"$(printf 'MODALITA=player\nSERVER=192.168.1.5:3483\n' > "$DSPE/s.txt"; SWEETSPOT_RUN=$DSPE/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LOG=$DSPE/log SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; echo \$LMS_HOST")|$(printf 'MODALITA=completa\nSERVER=192.168.1.5\n' > "$DSPE/s.txt"; SWEETSPOT_RUN=$DSPE/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LOG=$DSPE/log SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; echo \$LMS_HOST")"
+lmshost() { printf 'MODALITA=player\nSERVER=%s\n' "$1" > "$DSPE/s.txt"; SWEETSPOT_RUN=$DSPE/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LOG=$DSPE/log SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; echo \$LMS_HOST"; }
+expect "volume: SERVER IPv6 con porta, IPv6 senza porta, host:porta, host" "fe80::1|fe80::1|lyrion.lan|10.0.0.2" 	"$(lmshost '[fe80::1]:3483')|$(lmshost 'fe80::1')|$(lmshost 'lyrion.lan:3483')|$(lmshost '10.0.0.2')"
 rm -f "$DSPE/run/camilladsp.volume"
 mv "$DSPE/run/correzione/sinistro.txt" "$DSPE/sinistro.bak"
 dsp 'VOLUME=dsp' prepara 1 > /dev/null
@@ -2344,6 +2346,7 @@ PY
 fi
 expect "la prova ALSA in QEMU include il caso CamillaDSP di sessione (stesso PID, 44,1 -> 96 kHz)" "1|1" \
 	"$(grep -c 'camilladsp-sessione.py' "$ROOT/tests/prova-alsa-qemu.sh")|$(grep -c 'RATES = (44100, 96000)' "$ROOT/tests/camilladsp-sessione.py")"
+expect "pacchetto alsa-cdsp: il conteggio dei frame riparte con una FIFO nuova, timeout websocket brevi" "1|1|1" 	"$(grep -c 'session_frames = 0;' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'ps.st_ino != st.st_ino' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'ws_timeout_ms > 0 ? pcm->ws_timeout_ms : 500' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")"
 expect "pacchetto alsa-cdsp: patch della modalita' sessione (pipe, websocket, coda)" "1|1|1" \
 	"$(grep -c 'strcmp(id, "fifo")' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'snprintf(cmd, sizeof(cmd), "{.*SetConfigFilePath' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'static void end_session' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")"
 expect "plugin in modalita' sessione: nessun fork, nessun waitpid" "0" \

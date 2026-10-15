@@ -14,6 +14,10 @@ the supervisor:
   <prefix><rate>.yml, sends SetConfigFilePath and Reload. CamillaDSP keeps
   its PID and reopens only its devices. It reads stdin and looks at commands
   only between two chunks, so one chunk of silence follows the reload.
+- ws_timeout_ms (default 500): timeout of each websocket call; the whole
+  setup in hw_params is bounded to three times that.
+- The count of frames written (for the chunk boundary) restarts when the
+  FIFO is a new one, i.e. when the supervisor restarted CamillaDSP.
 - tail_frames, chunk_frames: at hw_free the plugin writes the tail of the
   filters as silence, up to a chunk boundary (a partial chunk would wait for
   data), closes the pipe and does not wait for the process.
@@ -25,18 +29,19 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 ---
 --- a/libasound_module_pcm_cdsp.c
 +++ b/libasound_module_pcm_cdsp.c
-@@ -20,6 +20,10 @@
+@@ -20,6 +20,11 @@
  #include <sys/eventfd.h>
  #include <sys/ioctl.h>
  #include <sys/wait.h>
 +#include <sys/socket.h>
 +#include <sys/time.h>
++#include <sys/stat.h>
 +#include <netinet/in.h>
 +#include <arpa/inet.h>
  #include <time.h>
  #include <unistd.h>
  #include <assert.h>
-@@ -211,6 +215,18 @@
+@@ -211,6 +216,19 @@
    // A command to run just before the CamillaDSP process is ended
    // A good time to update the gain and mute values for example
    char *camilla_exit_cmd;
@@ -50,12 +55,13 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +  char *fifo_path;
 +  char *cfg_prefix;
 +  long ws_port;
++  long ws_timeout_ms;
 +  long tail_frames;
 +  long chunk_frames;
  } cdsp_t;
  
  #if SND_LIB_VERSION < 0x010106
-@@ -234,6 +250,251 @@
+@@ -234,6 +252,281 @@
  }
  #endif
  
@@ -63,6 +69,11 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +// stream is closed on a chunk boundary, so that CamillaDSP does not keep a
 +// partial chunk (the end of the track) waiting for data.
 +static unsigned long long session_frames;
++// The frame count belongs to one CamillaDSP process. The supervisor recreates
++// the FIFO when it restarts CamillaDSP, so a different FIFO inode means a new
++// process with its own count from zero. The inode is pinned (O_PATH, no
++// reader semantics) so that the new FIFO can not get the same inode number.
++static int session_pin = -1;
 +#define SESSION_FRAME_BYTES 8 // two S32_LE channels
 +
 +static int ws_write(int fd, const void *buf, size_t len) {
@@ -89,18 +100,18 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +
 +// One command to the CamillaDSP websocket server (127.0.0.1 only). The text
 +// reply is stored in reply. Returns 0 if the reply says "Ok".
-+static int ws_command(int port, const char *cmd, char *reply, size_t cap) {
++static int ws_command(int port, long timeout_ms, const char *cmd, char *reply, size_t cap) {
 +  static const unsigned char mask[4] = { 0x5e, 0x37, 0xa1, 0x0c };
 +  static const unsigned char close_frame[6] = { 0x88, 0x80, 0x5e, 0x37, 0xa1, 0x0c };
 +  struct sockaddr_in addr;
-+  struct timeval tv = { 2, 0 };
++  struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
 +  unsigned char frame[14 + 512], h[8], junk[64];
 +  char req[256], head[1024];
 +  size_t len = strlen(cmd), hl = 0, used = 0, i;
 +  unsigned long long rlen;
 +  int fd, rc = -1;
 +
-+  if(len > 500 || cap < 2) return -1;
++  if(len > 500 || cap < 2 || timeout_ms <= 0) return -1;
 +  reply[0] = '\0';
 +  fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 +  if(fd < 0) return -1;
@@ -164,12 +175,12 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +}
 +
 +// Silence in the FIFO, without ever blocking for ever if CamillaDSP stops
-+// reading: the limit is the duration of the silence plus two seconds.
++// reading: the limit is the duration of the silence plus half a second.
 +static int session_silence(int fd, unsigned long long frames, unsigned int rate) {
 +  static const char zero[4096 * SESSION_FRAME_BYTES];
 +  struct pollfd p = { fd, POLLOUT, 0 };
 +  struct timespec t0, t;
-+  long limit_ms = 2000 + (long)(frames * 1000ULL / (rate ? rate : 44100));
++  long limit_ms = 500 + (long)(frames * 1000ULL / (rate ? rate : 44100));
 +  int flags = fcntl(fd, F_GETFL), rc = 0;
 +
 +  if(flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
@@ -211,14 +222,32 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +  return (chunk - session_frames % chunk) % chunk;
 +}
 +
++// Websocket call with a short timeout (ws_timeout_ms, 500 by default) and a
++// total budget of three calls for the whole start_session: it runs in
++// hw_params, in the real-time thread of the player.
++static int ws_call(const cdsp_t *pcm, const struct timespec *t0, const char *cmd, char *reply, size_t cap) {
++  struct timespec t;
++  long per = pcm->ws_timeout_ms > 0 ? pcm->ws_timeout_ms : 500, left;
++  clock_gettime(CLOCK_MONOTONIC, &t);
++  left = 3 * per - ((t.tv_sec - t0->tv_sec) * 1000L + (t.tv_nsec - t0->tv_nsec) / 1000000L);
++  if(left <= 0) {
++    snprintf(reply, cap, "timeout of the CamillaDSP session setup");
++    return -1;
++  }
++  return ws_command((int)pcm->ws_port, left < per ? left : per, cmd, reply, cap);
++}
++
 +// Opens the FIFO of the running CamillaDSP and, if its configuration is not
 +// the one of this sample rate, loads it with the websocket server. The same
 +// process keeps running: only its devices are reopened by CamillaDSP.
 +static int start_session(cdsp_t *pcm) {
 +  char path[300], cmd[400], reply[2048];
 +  char want[300];
++  struct timespec t0;
++  struct stat st, ps;
 +  int fd, flags;
 +
++  clock_gettime(CLOCK_MONOTONIC, &t0);
 +  if(pcm->io.format != SND_PCM_FORMAT_S32_LE || pcm->io.channels != 2) {
 +    SNDERR("Session mode needs S32_LE stereo, got %s %u channels",
 +        snd_pcm_format_name(pcm->io.format), pcm->io.channels);
@@ -231,9 +260,16 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +    SNDERR("Cannot open the FIFO %s of CamillaDSP: %s", pcm->fifo_path, strerror(errno));
 +    return -ENODEV;
 +  }
++  // New FIFO (the supervisor restarted CamillaDSP): the chunk count restarts.
++  if(fstat(fd, &st) == 0 && (session_pin < 0 || fstat(session_pin, &ps) != 0 ||
++      ps.st_ino != st.st_ino || ps.st_dev != st.st_dev)) {
++    session_frames = 0;
++    if(session_pin >= 0) close(session_pin);
++    session_pin = open(pcm->fifo_path, O_PATH | O_CLOEXEC);
++  }
 +  snprintf(want, sizeof(want), "%s%u.yml", pcm->cfg_prefix, pcm->io.rate);
 +  path[0] = '\0';
-+  if(ws_command((int)pcm->ws_port, "\"GetConfigFilePath\"", reply, sizeof(reply)) == 0) {
++  if(ws_call(pcm, &t0, "\"GetConfigFilePath\"", reply, sizeof(reply)) == 0) {
 +    char *v = strstr(reply, "\"value\":\"");
 +    if(v) {
 +      size_t n;
@@ -248,12 +284,12 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +  if(strcmp(path, want) != 0) {
 +    info("CamillaDSP: configuration %s\n", want);
 +    snprintf(cmd, sizeof(cmd), "{\"SetConfigFilePath\":\"%s\"}", want);
-+    if(ws_command((int)pcm->ws_port, cmd, reply, sizeof(reply)) != 0) {
++    if(ws_call(pcm, &t0, cmd, reply, sizeof(reply)) != 0) {
 +      SNDERR("CamillaDSP refused the configuration %s: %s", want, reply);
 +      close(fd);
 +      return -ENODEV;
 +    }
-+    if(ws_command((int)pcm->ws_port, "\"Reload\"", reply, sizeof(reply)) != 0) {
++    if(ws_call(pcm, &t0, "\"Reload\"", reply, sizeof(reply)) != 0) {
 +      SNDERR("CamillaDSP did not reload the configuration %s: %s", want, reply);
 +      close(fd);
 +      return -ENODEV;
@@ -307,7 +343,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
  // Helper function for closing PCM transport.
  static int close_transport(cdsp_t *pcm) {
    int rv = 0;
-@@ -423,6 +684,7 @@
+@@ -423,6 +716,7 @@
        head += ret;
        len -= ret;
      } while (len != 0);
@@ -315,7 +351,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
      io_thread_update_delay(pcm, io_hw_ptr);
      // Things tend to run a little smoother if writes take at least
      // some time.  So slow down when the pipe was empty enough that the
-@@ -463,6 +725,8 @@
+@@ -463,6 +757,8 @@
  }
  
  static int start_camilla(cdsp_t *pcm) {
@@ -324,7 +360,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    char sformat[20];
    switch (pcm->io.format) {
      case SND_PCM_FORMAT_S16_LE:
-@@ -767,6 +1031,10 @@
+@@ -767,6 +1063,10 @@
      free((void *)(*pcm)->start_cmd);
    if((*pcm)->camilla_exit_cmd)
      free((void *)(*pcm)->camilla_exit_cmd);
@@ -335,7 +371,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    pthread_mutex_destroy(&(*pcm)->mutex);
    pthread_cond_destroy(&(*pcm)->pause_cond);
    free((void *)*pcm);
-@@ -795,8 +1063,8 @@
+@@ -795,8 +1095,8 @@
    // it is possible to modify the size of this buffer we will set is to some
    // low value, but big enough to prevent audio tearing. Note, that the size
    // will be rounded up to the page size (typically 4096 bytes).
@@ -346,7 +382,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
  
    info("FIFO buffer size: %ld frames\n", pcm->delay_fifo_size);
  
-@@ -823,6 +1091,13 @@
+@@ -823,6 +1123,13 @@
        SNDERR("Error executing camilla_exit_cmd %s\n", pcm->camilla_exit_cmd);
      }
    } 
@@ -360,7 +396,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    debug("Stopping Camilla\n");
    if (close_transport(pcm) == -1)
      return -errno;
-@@ -1322,6 +1597,28 @@
+@@ -1322,6 +1629,32 @@
        if((err = alloc_copy_string(&pcm->start_cmd, temp)) < 0) goto _err;
        continue;
      }
@@ -378,6 +414,10 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +      if((err = snd_config_get_integer(n, &pcm->ws_port)) < 0) goto _err;
 +      continue;
 +    }
++    if(strcmp(id, "ws_timeout_ms") == 0) {
++      if((err = snd_config_get_integer(n, &pcm->ws_timeout_ms)) < 0) goto _err;
++      continue;
++    }
 +    if(strcmp(id, "tail_frames") == 0) {
 +      if((err = snd_config_get_integer(n, &pcm->tail_frames)) < 0) goto _err;
 +      continue;
@@ -389,7 +429,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
      if(strcmp(id, "camilla_exit_cmd") == 0) {
        if((err = snd_config_get_string(n, &temp)) < 0) goto _err;
        if((err = alloc_copy_string(&pcm->camilla_exit_cmd, temp)) < 0) goto _err;
-@@ -1356,6 +1653,12 @@
+@@ -1356,6 +1689,12 @@
      }
    }
  
@@ -402,7 +442,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    if(!pcm->cargs[1]) {
      SNDERR("Must supply config_out file parameter.");
      err = -EINVAL;
-@@ -1475,7 +1778,11 @@
+@@ -1475,7 +1814,11 @@
      SND_PCM_FORMAT_FLOAT_LE,
      SND_PCM_FORMAT_FLOAT64_LE
    };
