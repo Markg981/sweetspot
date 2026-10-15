@@ -47,8 +47,9 @@ case "$min" in ''|*[!0-9]*) min=2 ;; esac
 { printf '\033[9;%s]\033[14;%s]' "$min" "$min" > "$TTY"; } 2>/dev/null
 
 last=""
+nap_init
 while true; do
-	ip=$(net_ipv4)
+	net_ipv4_v; ip=$IPV4
 	pst=''
 	read -r pst < "$RUN/player.stato" 2>/dev/null
 	now="$ip|$pst|$(lms_server_ip)"
@@ -57,5 +58,5 @@ while true; do
 		last=$now
 	fi
 	# Il testo cambia di rado (rete, stato del player): ogni 20 s bastano.
-	sleep 20
+	nap 20
 done

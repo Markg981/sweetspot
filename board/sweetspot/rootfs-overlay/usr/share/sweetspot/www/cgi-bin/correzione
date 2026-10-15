@@ -67,14 +67,19 @@ HTML
 nsx=$(count_filters sinistro)
 ndx=$(count_filters destro)
 fir=$(priv sweetspot-dsp fir) || fir=""
+firs=$(priv sweetspot-dsp fir-frequenze 2>/dev/null | tr '\n' ' ' | sed 's/ $//') || firs=""
 echo '<h2>Stato</h2><div class="card">'
-# Impulsi FIR (rePhase, Acourate, REW) copiati dal computer sulla chiavetta.
-if [ -n "$fir" ]; then
+# Impulsi FIR (rePhase, Acourate, REW) copiati dal computer sulla chiavetta:
+# uno per frequenza di campionamento (fir-sinistro-44100.wav, fir-48000.wav...).
+if [ -n "$fir" ] && [ -n "$firs" ]; then
 	set -- $fir
-	if [ "$3" = proprio ]; then fd="il destro ha il suo file"; elif [ "$2" = 2 ]; then fd="un file stereo per i due canali"; else fd="il destro usa il file del sinistro"; fi
-	info_row OK "Filtri FIR" "Impulsi a $1 Hz, $fd. CamillaDSP lavora a $1 Hz e ricampiona i brani a frequenze diverse; attenuazione in più di $4 dB per i FIR. Si usano con la correzione accesa."
-elif [ -e "$RUN/correzione/fir-sinistro.wav" ] || [ -e "$RUN/correzione/fir-destro.wav" ]; then
-	info_row ATTENZIONE "Filtri FIR non usati" "fir-sinistro.wav manca o non è un WAV valido (mono o stereo, al massimo 16 MB, stessa frequenza per i due canali)."
+	info_row OK "Filtri FIR" "Impulsi per le frequenze $firs Hz (il primo: $(if [ "$3" = proprio ]; then echo "il destro ha il suo file"; elif [ "$2" = 2 ]; then echo "un file stereo per i due canali"; else echo "il destro usa il file del sinistro"; fi)). Ogni brano usa il FIR della sua frequenza, senza ricampionare; attenuazione in più di $4 dB per i FIR. Si usano con la correzione accesa."
+	# Frequenze del DAC senza FIR: cosa succede lo dice l'avviso della preparazione.
+	if [ -s "$RUN/correzione.avviso" ]; then
+		info_row ATTENZIONE "Frequenze senza FIR" "$(cat "$RUN/correzione.avviso")."
+	fi
+elif ls "$RUN"/correzione/fir-*.wav > /dev/null 2>&1; then
+	info_row ATTENZIONE "Filtri FIR non usati" "Un file non è valido o manca il sinistro di una frequenza: servono WAV mono o stereo, al massimo 16 MB, con la frequenza del nome (fir-sinistro-44100.wav, fir-destro-44100.wav oppure fir-44100.wav) e gli stessi canali nei due file."
 fi
 # L'errore sta fuori dal controllo dei filtri: con file mancanti o rotti e'
 # proprio il caso da mostrare.
@@ -158,6 +163,17 @@ i buchi della stanza non si riempiono alzando il volume, si consuma solo potenza
 </ol>
 <p class="sub">Filtri accettati: quelli dell'equalizzatore Generic (PK, LS/HS, LSC/HSC, HP/LP, NO, BP, AP), fino a 60 per canale.
 Valgono per tutte le frequenze di campionamento. Il DSD viene convertito in PCM mentre la correzione è attiva.</p>
+</details>
+<details>
+<summary>Filtri FIR: un file per ogni frequenza di campionamento</summary>
+<p class="sub">Gli impulsi esportati da rePhase, Acourate o REW (WAV mono o stereo, al massimo 16 MB) si copiano dal computer nella cartella
+<b>correzione-ambientale</b> della chiavetta, con la frequenza nel nome: <b>fir-44100.wav</b>, <b>fir-48000.wav</b>, <b>fir-96000.wav</b>...
+(un file per i due canali; se è stereo il sinistro usa il canale 1 e il destro il canale 2) oppure <b>fir-sinistro-44100.wav</b> e
+<b>fir-destro-44100.wav</b>. Ogni brano usa il FIR della sua frequenza, senza ricampionare; la frequenza scritta nel file deve essere quella del nome.
+I nomi senza frequenza (<b>fir-sinistro.wav</b>, <b>fir-destro.wav</b>) valgono solo per la frequenza che hanno scritta dentro.</p>
+<p class="sub">Per le frequenze senza FIR decide la politica CORREZIONE_SE_ASSENTE in sweetspot.txt: <b>blocca</b> (predefinita)
+non riproduce quei brani e lo dice qui e nello Stato; <b>diretto</b> li suona senza FIR, con un avviso. Il ricampionamento al FIR più vicino
+parte solo se lo scegli, con FIR_RICAMPIONA=si in sweetspot.txt.</p>
 </details>
 </div>
 HTML

@@ -1273,5 +1273,146 @@ class SignalMatrixTests(unittest.TestCase):
         self.assertIn("ffmpeg", state["motivo"])
 
 
+def decode_flac_verbatim(data):
+    """Decodificatore minimo dei soli frame verbatim: rate, bit, MD5 e PCM interleaved LE."""
+    assert data[:4] == b"fLaC" and data[4] == 0x80 and data[5:8] == b"\0\0\x22"
+    info = data[8:42]
+    packed = int.from_bytes(info[10:18], "big")
+    rate, channels, bits, total = packed >> 44, ((packed >> 41) & 7) + 1, ((packed >> 36) & 31) + 1, packed & ((1 << 36) - 1)
+    width = bits // 8
+    position, number, out = 42, 0, bytearray()
+    while position < len(data):
+        start = position
+        assert data[position:position + 2] == b"\xff\xf8"
+        assert data[position + 2] == 0x70 and data[position + 3] == 0x10
+        position += 4
+        assert data[position] == number < 0x80  # numeri di frame di un solo byte UTF-8
+        position += 1
+        size = int.from_bytes(data[position:position + 2], "big") + 1
+        position += 2
+        assert verifier._crc(data[start:position], 0x07, 8) == data[position]
+        position += 1
+        left = data[position + 1:position + 1 + size * width]
+        assert data[position] == 0x02
+        position += 1 + size * width
+        right = data[position + 1:position + 1 + size * width]
+        assert data[position] == 0x02
+        position += 1 + size * width
+        assert verifier._crc(data[start:position], 0x8005, 16) == int.from_bytes(data[position:position + 2], "big")
+        position += 2
+        for index in range(size):
+            out += left[index * width:(index + 1) * width][::-1] + right[index * width:(index + 1) * width][::-1]
+        number += 1
+    return rate, bits, total, info[18:34], bytes(out)
+
+
+def decode_alac_uncompressed(data):
+    """Percorre ftyp/moov/mdat e rilegge i pacchetti ALAC non compressi."""
+    def boxes(blob, start=0, end=None):
+        end = len(blob) if end is None else end
+        while start < end:
+            size, kind = struct.unpack(">I4s", blob[start:start + 8])
+            yield kind, start + 8, start + size
+            start += size
+
+    top = {kind: (a, b) for kind, a, b in boxes(data)}
+    assert list(top) == [b"ftyp", b"moov", b"mdat"]
+
+    def find(path, region):
+        for kind, a, b in boxes(data, *region):
+            if kind == path[0]:
+                return (a, b) if len(path) == 1 else find(path[1:], (a, b))
+        raise AssertionError(path)
+
+    stbl = find([b"trak", b"mdia", b"minf", b"stbl"], top[b"moov"])
+    stsd = find([b"stsd"], stbl)
+    entry = data[stsd[0] + 8:stsd[1]]  # dopo versione/flags e numero di voci
+    assert entry[4:8] == b"alac" and entry[8 + 28:8 + 32] == struct.pack(">I", 36)
+    cookie = entry[8 + 28 + 8 + 4:8 + 28 + 36]
+    frame_length, _, bits, _, _, _, channels, _, _, _, rate = struct.unpack(">IBBBBBBHIII", cookie)
+    sizes_at = find([b"stsz"], stbl)[0]
+    count = struct.unpack(">I", data[sizes_at + 8:sizes_at + 12])[0]
+    sizes = struct.unpack(">%dI" % count, data[sizes_at + 12:sizes_at + 12 + 4 * count])
+    offset = struct.unpack(">I", data[find([b"stco"], stbl)[0] + 8:find([b"stco"], stbl)[0] + 12])[0]
+    assert offset == top[b"mdat"][0]
+    out = bytearray()
+    for size in sizes:
+        packet = int.from_bytes(data[offset:offset + size], "big")
+        total_bits = size * 8
+        bit = 0
+
+        def take(n):
+            nonlocal bit
+            bit += n
+            return (packet >> (total_bits - bit)) & ((1 << n) - 1)
+
+        assert take(3) == 1 and take(4) == 0 and take(12) == 0
+        assert take(1) == 1 and take(2) == 0 and take(1) == 1
+        samples = take(32)
+        assert samples <= frame_length
+        for _ in range(samples * channels):
+            value = take(bits)
+            out += (value - (1 << bits) if value >> (bits - 1) else value).to_bytes(bits // 8, "little", signed=True)
+        assert take(3) == 7
+        offset += size
+    return rate, bits, bytes(out)
+
+
+class CodecFixtureTests(unittest.TestCase):
+    """FLAC e ALAC sono contenitori validi con gli stessi campioni del WAV di riferimento."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+
+    def reference_pcm(self, path):
+        with wave.open(str(path), "rb") as stream:
+            return stream.readframes(stream.getnframes())
+
+    def test_flac_round_trip_is_bit_identical(self):
+        # 9000 campioni: due blocchi interi e un ultimo parziale.
+        for rate, bits in ((44100, 16), (96000, 24), (192000, 24)):
+            with self.subTest(rate=rate, bits=bits):
+                sources, references = verifier.generate_codec_fixtures(self.directory / f"f{rate}", rate, bits, "flac",
+                                                                       frames=9000)
+                for source, reference in zip(sources, references):
+                    self.assertEqual(source.suffix, ".flac")
+                    pcm = self.reference_pcm(reference)
+                    got_rate, got_bits, total, md5, decoded = decode_flac_verbatim(source.read_bytes())
+                    self.assertEqual((got_rate, got_bits, total), (rate, bits, 9000))
+                    self.assertEqual(decoded, pcm)
+                    self.assertEqual(md5, hashlib.md5(pcm).digest())
+
+    def test_alac_round_trip_is_bit_identical(self):
+        for rate, bits in ((44100, 16), (96000, 24), (192000, 24)):
+            with self.subTest(rate=rate, bits=bits):
+                sources, references = verifier.generate_codec_fixtures(self.directory / f"a{rate}", rate, bits, "alac",
+                                                                       frames=9000)
+                for source, reference in zip(sources, references):
+                    self.assertEqual(source.suffix, ".m4a")
+                    got_rate, got_bits, decoded = decode_alac_uncompressed(source.read_bytes())
+                    self.assertEqual((got_rate, got_bits), (rate, bits))
+                    self.assertEqual(decoded, self.reference_pcm(reference))
+
+    def test_tracks_differ_and_are_deterministic(self):
+        first, _ = verifier.generate_codec_fixtures(self.directory / "uno", 48000, 24, "flac", frames=500)
+        second, _ = verifier.generate_codec_fixtures(self.directory / "due", 48000, 24, "flac", frames=500)
+        self.assertNotEqual(first[0].read_bytes(), first[1].read_bytes())
+        self.assertEqual(first[0].read_bytes(), second[0].read_bytes())
+
+    def test_rejects_unknown_codec_and_depth(self):
+        with self.assertRaises(ValueError):
+            verifier.generate_codec_fixtures(self.directory, 44100, 16, "mp3")
+        with self.assertRaises(ValueError):
+            verifier.generate_codec_fixtures(self.directory, 44100, 32, "flac", frames=10)
+
+    def test_utf8_frame_numbers(self):
+        self.assertEqual(verifier._utf8_number(0x7F), b"\x7f")
+        self.assertEqual(verifier._utf8_number(0x80), b"\xc2\x80")
+        self.assertEqual(verifier._utf8_number(0x7FF), b"\xdf\xbf")
+        self.assertEqual(verifier._utf8_number(0x800), b"\xe0\xa0\x80")
+
+
 if __name__ == "__main__":
     unittest.main()

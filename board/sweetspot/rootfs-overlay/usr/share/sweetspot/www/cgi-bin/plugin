@@ -15,9 +15,50 @@ if [ "$(mode)" = player ]; then
 	exit 0
 fi
 
+# Operazione in background (installazione/rimozione) avviata dalla pagina:
+# finche' e' in corso la pagina la interroga ogni poco (/cgi-bin/operazione)
+# e si ricarica da sola a lavoro finito; senza JavaScript si ricarica ogni 3 s.
+op=$(query_param op)
+case "$op" in ''|*[!0-9a-f-]*) op="" ;; esac
+if [ -n "$op" ] && [ -s "$RUN/operazioni/$op.json" ]; then
+	op_stato=$(jq -r '.stato' "$RUN/operazioni/$op.json" 2>/dev/null)
+	op_msg=$(jq -r '.messaggio' "$RUN/operazioni/$op.json" 2>/dev/null)
+	case "$op_stato" in
+		in_corso)
+			echo '<div class="card"><div class="row ATTENZIONE"><span class="dot"></span><div class="grow">'
+			echo '<div class="k" id="op-testo">Operazione in corso...</div>'
+			echo '<div class="v">Puoi lasciare aperta la pagina: si aggiorna da sola.</div>'
+			echo '</div></div></div>'
+			printf '<noscript><meta http-equiv="refresh" content="3"></noscript>\n'
+			cat <<HTML
+<script>
+(function () {
+	var id = "$op";
+	function controlla() {
+		fetch("/cgi-bin/operazione?id=" + id, { cache: "no-store" })
+			.then(function (r) { return r.json(); })
+			.then(function (o) {
+				if (o.stato && o.stato !== "in_corso") { location.href = "/cgi-bin/plugin?op=" + id; }
+				else { setTimeout(controlla, 1500); }
+			})
+			.catch(function () { setTimeout(controlla, 3000); });
+	}
+	setTimeout(controlla, 1500);
+})();
+</script>
+HTML
+			;;
+		riuscita) printf '<p class="msg">%s</p>\n' "$(esc "$op_msg")" ;;
+		fallita) printf '<p class="msg">Operazione non riuscita: %s</p>\n' "$(esc "$op_msg")" ;;
+	esac
+fi
+
 state=$(priv sweetspot-lms plugin stato 2>/dev/null)
+rc=$?
 if [ -z "$state" ]; then
-	echo '<div class="card"><div class="row"><div class="grow"><div class="k">Lyrion si sta avviando</div><div class="v">La pagina si aggiorna da sola tra poco.</div></div></div></div>'
+	echo '<div class="card"><div class="row"><div class="grow">'
+	lms_avviso "$rc"
+	echo '</div></div></div>'
 	echo '<meta http-equiv="refresh" content="10">'
 	page_end
 	exit 0

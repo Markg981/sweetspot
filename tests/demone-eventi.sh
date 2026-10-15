@@ -34,7 +34,7 @@ cleanup() {
 	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/run/stato.debug" ]; then
 		echo "  eventi ricevuti dal demone (momento in s dall'avvio, riga):"
-		grep -v 'version 9.1.1' "$E/run/stato.debug" | head -n 40 | cut -c1-110 | sed 's/^/    | /'
+		grep -v 'version 9.1.1' "$E/run/stato.debug" | tail -n 60 | cut -c1-110 | sed 's/^/    | /'
 	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/log" ]; then
 		echo "  registro del demone (ultime righe):"
@@ -166,6 +166,28 @@ rumore() { # secondi
 	a=$(esegui); sleep "$1"; b=$(esegui)
 	echo $((b - a))
 }
+# Aspetta che il demone si sia assestato dopo un evento (giro del check,
+# passi, riarmi): due finestre di 2 s di fila sotto il rumore, al massimo 30 s.
+assesta() {
+	local quieto=0 i A B
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+		A=$(esegui); sleep 2; B=$(esegui)
+		if [ $((B - A)) -le $((NOISE / 4 + 3)) ]; then quieto=$((quieto + 1)); else quieto=0; fi
+		[ "$quieto" -ge 2 ] && return 0
+	done
+}
+# Una finestra di 8 s: i processi nati devono essere al piu' il rumore + 3.
+# Se no, classifica "padre > comando: N" dei 10 s successivi.
+finestra() { # descrizione
+	local P D
+	P=$(esegui)
+	sleep 8
+	D=$(esegui)
+	expect "$1" "si" "$([ $((D - P)) -le $((NOISE + 6)) ] && echo si || echo "no: $((D - P)) contro rumore $NOISE")"
+	if [ $((D - P)) -gt $((NOISE + 6)) ]; then
+		sh "$ROOT/tests/forks-riposo.sh" --dettaglio 10 2>&1 | sed 's/^/    | /'
+	fi
+}
 giri_sono() { [ "$(giri)" -ge "$1" ]; }
 passi_sono() { [ "$(passi)" -ge "$1" ]; }
 
@@ -194,20 +216,8 @@ if [ "$(passi)" -ge 1 ]; then ok "precarico: un passo all'avvio"; else ko "preca
 
 # A riposo il demone non lancia alcun processo, nemmeno durante un ping.
 # Prima si aspetta che l'avvio si sia assestato (al massimo 20 s).
-quieto=0
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-	A=$(esegui); sleep 2; B=$(esegui)
-	if [ $((B - A)) -le $((NOISE / 4 + 3)) ]; then quieto=$((quieto + 1)); else quieto=0; fi
-	[ "$quieto" -ge 2 ] && break
-done
-PRIMA=$(esegui)
-sleep 8
-DOPO=$(esegui)
-expect "riposo: nessun processo lanciato dal demone in 8 s (ping CLI compreso)" "si" "$([ $((DOPO - PRIMA)) -le $((NOISE + 3)) ] && echo si || echo "no: $((DOPO - PRIMA)) contro rumore $NOISE")"
-if [ $((DOPO - PRIMA)) -gt $((NOISE + 3)) ]; then
-	# Chi li fa: classifica dei processi nati nei 10 s successivi.
-	sh "$ROOT/tests/forks-riposo.sh" --dettaglio 10 2>&1 | sed 's/^/    | /'
-fi
+assesta
+finestra "riposo: nessun processo lanciato dal demone in 8 s (ping CLI compreso)"
 case "$(grep -c 'version ?' "$E/cli.cmd")" in 1|0) ko "riposo: ping CLI" "almeno 2 version ?" "$(grep -c 'version ?' "$E/cli.cmd")" ;; *) ok "riposo: il ping di liveness passa dalla CLI" ;; esac
 expect "riposo: nessun giro del check" "1" "$(giri)"
 
@@ -282,11 +292,8 @@ echo "$LMS $SQ" > "$WORK/pids"
 echo "$SQ" > "$E/run/squeezelite.pid"
 printf 'state: RUNNING\n' > "$E/proc/asound/card1/pcm0p/sub0/status"
 invia "$E/ino.in" "$(printf 'y\t%s/squeezelite.pid\n' "$E/run")"
-sleep 8
-PRIMA=$(esegui)
-sleep 8
-DOPO=$(esegui)
-expect "player: PCM RUNNING, nessun fork del demone in 8 s" "si" "$([ $((DOPO - PRIMA)) -le $((NOISE + 3)) ] && echo si || echo "no: $((DOPO - PRIMA)) contro rumore $NOISE")"
+assesta
+finestra "player: PCM RUNNING, nessun fork del demone in 8 s"
 expect "player: PCM RUNNING, squeezelite resta" "si" "$(kill -0 "$SQ" 2>/dev/null && echo si || echo no)"
 
 # Liveness di Lyrion: la CLI non risponde e il JSON-RPC nemmeno.

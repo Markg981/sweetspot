@@ -18,6 +18,7 @@ fi
 
 # --- Libreria ---------------------------------------------------------------------
 r=$(lms_json '' serverstatus 0 0)
+rc=$?
 songs=$(printf '%s' "$r" | jq -r '.result."info total songs" // empty' 2>/dev/null)
 albums=$(printf '%s' "$r" | jq -r '.result."info total albums" // 0' 2>/dev/null)
 artists=$(printf '%s' "$r" | jq -r '.result."info total artists" // 0' 2>/dev/null)
@@ -26,7 +27,7 @@ progress=$(printf '%s' "$r" | jq -r 'if .result.progressname then "\(.result.pro
 
 echo '<h2>Libreria</h2><div class="card"><div class="row"><div class="grow">'
 if [ -z "$r" ]; then
-	echo '<div class="k">Lyrion si sta avviando</div><div class="v">La pagina si aggiorna da sola tra poco.</div>'
+	lms_avviso "$rc"
 	echo '<meta http-equiv="refresh" content="10">'
 else
 	printf '<div class="k">%s brani, %s album, %s artisti</div>' "${songs:-0}" "$albums" "$artists"

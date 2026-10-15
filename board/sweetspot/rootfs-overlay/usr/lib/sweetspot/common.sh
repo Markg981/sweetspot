@@ -26,6 +26,9 @@ STICK_LABEL=SWEETSPOT
 # Server websocket di CamillaDSP, solo locale: ne leggiamo i contatori.
 # shellcheck disable=SC2034
 DSP_PORTA=${SWEETSPOT_DSP_PORTA:-1234}
+# Pipe da cui CamillaDSP legge i campioni (stdin): vi scrive il plugin cdsp.
+# shellcheck disable=SC2034
+DSP_FIFO=${SWEETSPOT_DSP_FIFO:-$RUN/camilladsp.fifo}
 # SWEETSPOT_STICK_DIR: nei test una cartella fa da chiavetta.
 STICK_MNT=${SWEETSPOT_STICK_DIR:-$RUN/chiavetta}
 
@@ -159,6 +162,43 @@ conf() {
 		done < "$CONF"
 	fi
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
+}
+
+# conf senza sottoshell: il valore resta in CONFV. Per i cicli dei servizi:
+# "$(conf ...)" costa un fork a ogni chiamata.
+confv() { # chiave [predefinito]
+	local l
+	CONFV=""
+	if [ -f "$CONF" ]; then
+		while IFS= read -r l || [ -n "$l" ]; do
+			case "$l" in "$1="*) CONFV=${l#*=} ;; esac
+		done < "$CONF"
+	fi
+	[ -n "$CONFV" ] || CONFV=$2
+	return 0
+}
+
+# Attesa senza fork. nap_init apre (una volta, nel servizio) una FIFO che
+# nessuno scrive sul descrittore 4; nap legge con timeout. Era "sleep": un
+# processo nuovo a ogni giro di ogni ciclo, la meta' dei fork a riposo.
+# Senza FIFO ripiega su sleep. Solo secondi interi.
+# shellcheck disable=SC3045
+nap() { # secondi
+	if [ "${NAP_OK:-0}" = 1 ]; then
+		read -r -t "$1" _ <&4 || [ $? -gt 128 ] || sleep "$1"
+	else
+		sleep "$1"
+	fi
+}
+nap_init() {
+	local f="${RUN:-/run/sweetspot}/nap.$$"
+	NAP_OK=0
+	mkdir -p "$RUN" 2>/dev/null
+	mkfifo -m 600 "$f" 2>/dev/null || return 0
+	exec 4<>"$f"
+	NAP_OK=1
+	rm -f "$f"
+	return 0
 }
 
 # Profilo energetico: "fisso" (predefinito: SMT spento, stati C limitati,
@@ -615,7 +655,9 @@ ram_quote_calc() {
 	RAM_RISERVA=$((RAM_SISTEMA + RAM_SERVIZI + RAM_ALSA))
 	rest=$((RAM_POOL - RAM_RISERVA))
 	[ "$rest" -gt 0 ] || rest=0
-	budget=$((rest / 2))
+	# PLAYER_BUFFERS_DIV: le zone (altri DAC) si dividono il budget fra loro,
+	# cosi' piu' player non superano insieme quello di uno.
+	budget=$((rest / 2 / ${PLAYER_BUFFERS_DIV:-1}))
 	smax=$RAM_STREAM_MAX_KB
 	omax=$RAM_OUTPUT_MAX_KB
 	if [ "$budget" -lt $((smax + omax)) ]; then
@@ -976,6 +1018,20 @@ net_ipv4() {
 	ip -4 -o addr show scope global 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -n 1
 }
 
+# Come net_ipv4, con un solo processo (ip) e nessuna sottoshell aggiuntiva
+# per sed e head: l'indirizzo resta in IPV4.
+net_ipv4_v() {
+	local out l
+	IPV4=""
+	out=$(ip -4 -o addr show scope global 2>/dev/null)
+	while IFS= read -r l; do
+		case "$l" in *" inet "*) l=${l#* inet }; IPV4=${l%%[/ ]*}; return 0 ;; esac
+	done <<EOF
+$out
+EOF
+	return 0
+}
+
 # Indirizzo del server Lyrion a cui e' collegato il player (porta 3483).
 lms_server_ip() {
 	local line rem hex
@@ -1024,20 +1080,170 @@ lms_json() { lms_json_locale "$@"; }
 # Le pagine web (utente "web") la ridefiniscono in web.sh: non conoscono la
 # password di Lyrion, quindi passano dall'helper privilegiato.
 lms_json_locale() {
-	local player=$1 args="" w out auth
+	local player=$1 tmo
 	shift
+	if lms_lettura "$@"; then
+		tmo=${LMS_TIMEOUT:-${LMS_TIMEOUT_LETTURA:-5}}
+		# Per le pagine web (LMS_WEB=1) le letture amministrative si
+		# condividono per pochi secondi, senza duplicare quella in volo.
+		if [ "${LMS_WEB:-0}" = 1 ] && [ "${LMS_CACHE_TTL:-3}" -gt 0 ] 2>/dev/null; then
+			lms_json_cache "$tmo" "$player" "$@"
+			return
+		fi
+	else
+		tmo=${LMS_TIMEOUT:-${LMS_TIMEOUT_SCRITTURA:-10}}
+		# Una scrittura cambia lo stato di Lyrion: le letture in cache non valgono piu'.
+		rm -f "$RUN/lms-cache"/* 2>/dev/null
+	fi
+	lms_json_diretto "$tmo" "$player" "$@"
+}
+
+# Esiti distinti di lms_json (codice di uscita), per dire all'utente cosa non va
+# invece di un generico "si sta avviando". Il nome e' lo stesso che finisce nello
+# stato delle operazioni (campo "errore") e quindi nell'API.
+#   2 non_in_esecuzione   il servizio di Lyrion non c'e'
+#   3 in_avvio            il processo c'e' ma non accetta ancora connessioni
+#   4 timeout             connesso ma non risponde entro il tempo previsto
+#   5 applicativo         risposta vuota, non JSON o con errore RPC
+#   6 occupato            troppe richieste a Lyrion in corso
+lms_errore_nome() {
+	case "$1" in
+		2) echo non_in_esecuzione ;;
+		3) echo in_avvio ;;
+		4) echo timeout ;;
+		5) echo applicativo ;;
+		6) echo occupato ;;
+		*) echo sconosciuto ;;
+	esac
+}
+lms_errore_testo() {
+	case "$1" in
+		2) echo "Lyrion non è in esecuzione." ;;
+		3) echo "Lyrion si sta avviando." ;;
+		4) echo "Lyrion non risponde (tempo scaduto)." ;;
+		5) echo "Lyrion ha risposto con un errore." ;;
+		6) echo "Troppe richieste a Lyrion in corso: riprova tra poco." ;;
+		*) echo "Errore sconosciuto nella richiesta a Lyrion." ;;
+	esac
+}
+
+# La richiesta non cambia nulla in Lyrion? (letture: stato, versione, "?")
+lms_lettura() {
+	local cmd=${1:-} ultimo=""
+	for ultimo in "$@"; do :; done
+	case "$cmd" in
+		serverstatus|status|version|players|player|syncgroups) return 0 ;;
+		sweetspot) case "${2:-}" in stato|plugin-stato) return 0 ;; esac ;;
+	esac
+	[ "$ultimo" = '?' ]
+}
+
+# Il servizio di Lyrion e' vivo? (lo supervisiona sweetspot-lms servizio)
+lms_in_esecuzione() {
+	local pid
+	pid=$(cat "$RUN/lms.pid" 2>/dev/null)
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# Limite alle richieste contemporanee verso Lyrion (solo pagine web): ogni
+# richiesta prende un posto (cartella creata in modo atomico con il suo pid) e
+# lo rilascia a fine lavoro; i posti di processi morti si recuperano. Se non ce
+# n'e' uno libero entro LMS_ATTESA_POSTO secondi la richiesta cade subito con
+# l'errore "occupato" invece di accodare un altro processo bloccato.
+lms_posto_prendi() {
+	local fine i d p max=${LMS_MAX_CONCORRENTI:-4}
+	fine=$(( $(date +%s) + ${LMS_ATTESA_POSTO:-3} ))
+	mkdir -p "$RUN/lms-posti" 2>/dev/null
+	while :; do
+		i=1
+		while [ "$i" -le "$max" ]; do
+			d=$RUN/lms-posti/$i
+			if mkdir "$d" 2>/dev/null; then
+				echo $$ > "$d/pid"
+				echo "$i"
+				return 0
+			fi
+			p=$(cat "$d/pid" 2>/dev/null)
+			if [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; then
+				rm -rf "$d"
+				continue
+			fi
+			i=$((i + 1))
+		done
+		[ "$(date +%s)" -lt "$fine" ] || return 1
+		sleep 0.2
+	done
+}
+
+# lms_json_diretto TIMEOUT PLAYER PAROLA...: la richiesta vera, senza cache.
+lms_json_diretto() {
+	local tmo=$1 player=$2 args="" w out auth rc posto="" t0 t1
+	shift 2
 	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
 	auth=$(lms_auth_header)
-	out=$("${SWEETSPOT_WGET:-wget}" -q -T "${LMS_TIMEOUT:-20}" -O - --header 'Content-Type: application/json' \
+	if [ "${LMS_WEB:-0}" = 1 ]; then
+		posto=$(lms_posto_prendi) || return 6
+	fi
+	t0=$(date +%s)
+	out=$("${SWEETSPOT_WGET:-wget}" -q -T "$tmo" -O - --header 'Content-Type: application/json' \
 		${auth:+--header "$auth"} \
 		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
-		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null) || return 1
-	[ -n "$out" ] || return 1
+		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null)
+	rc=$?
+	t1=$(date +%s)
+	[ -z "$posto" ] || rm -rf "$RUN/lms-posti/$posto"
+	if [ "$rc" -ne 0 ]; then
+		# wget non distingue i motivi: li deduciamo dal tempo impiegato (tempo
+		# scaduto) e dal servizio (connessione rifiutata mentre parte o ferma).
+		[ $((t1 - t0)) -ge "$tmo" ] && return 4
+		lms_in_esecuzione && return 3
+		return 2
+	fi
+	[ -n "$out" ] || return 5
 	# HTTP 200 puo' contenere un errore RPC o una pagina del proxy. Accetta
 	# una sola risposta JSON con il risultato di Lyrion, senza errore.
 	printf '%s\n' "$out" | jq -e -s 'length == 1 and
-		(.[0] | type == "object" and .error == null and (.result | type == "object"))' > /dev/null 2>&1 || return 1
+		(.[0] | type == "object" and .error == null and (.result | type == "object"))' > /dev/null 2>&1 || return 5
 	printf '%s\n' "$out"
+}
+
+# lms_json_cache TIMEOUT PLAYER PAROLA...: lettura con cache condivisa fra le
+# richieste (file in $RUN/lms-cache: riga "momento codice", poi la risposta).
+# Chi arriva mentre un'altra richiesta uguale e' in volo (cartella .lock con il
+# pid) aspetta il suo risultato; anche un errore resta in cache LMS_CACHE_TTL
+# secondi, cosi' con Lyrion fermo o lento non si accumulano processi.
+lms_json_cache() {
+	local tmo=$1 f st rc now fine p out ttl=${LMS_CACHE_TTL:-3}
+	f=$RUN/lms-cache/$(printf '%s\n' "$@" | cksum | cut -d' ' -f1)
+	mkdir -p "$RUN/lms-cache" 2>/dev/null
+	# Quanto puo' durare chi ha il lock: attesa di un posto piu' timeout.
+	fine=$(( $(date +%s) + tmo + ${LMS_ATTESA_POSTO:-3} + 1 ))
+	while :; do
+		if [ -s "$f" ] && read -r st rc < "$f"; then
+			now=$(date +%s)
+			if [ $((now - st)) -le "$ttl" ]; then
+				tail -n +2 "$f"
+				return "$rc"
+			fi
+		fi
+		if mkdir "$f.lock" 2>/dev/null; then
+			echo $$ > "$f.lock/pid"
+			out=$(lms_json_diretto "$@")
+			rc=$?
+			{ date +%s | tr '\n' ' '; echo "$rc"; printf '%s\n' "$out"; } > "$f.$$" && mv "$f.$$" "$f"
+			rm -rf "$f.lock"
+			[ "$rc" -ne 0 ] || printf '%s\n' "$out"
+			return "$rc"
+		fi
+		p=$(cat "$f.lock/pid" 2>/dev/null)
+		if [ -n "$p" ] && ! kill -0 "$p" 2>/dev/null; then
+			rm -rf "$f.lock"
+			continue
+		fi
+		# Attesa esaurita: richiesta propria, senza cache.
+		[ "$(date +%s)" -lt "$fine" ] || { lms_json_diretto "$@"; return; }
+		sleep 0.2
+	done
 }
 
 # lms_get FILTRO PLAYER PAROLA...: valore del risultato scelto con un filtro
@@ -1092,6 +1298,7 @@ volume_effettivo() {
 # $1: controllo di volume del DAC (vuoto se manca). volume.modo (dsp o
 # riserva) lo scrive il player prima, quando sa se CamillaDSP c'e'.
 volume_modo_calcola() { # controllo
+	local mot
 	case "$(lower "$(conf VOLUME fisso)")" in
 		dac)
 			if [ -n "$1" ]; then echo "dac|"
@@ -1099,7 +1306,12 @@ volume_modo_calcola() { # controllo
 		software) echo "software|" ;;
 		dsp)
 			if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then echo "dsp|"
-			else echo "software|volume a 64 bit non disponibile (CamillaDSP assente o non avviato)"; fi ;;
+			else
+				# Il motivo preciso lo scrive il player in volume.motivo (modalita'
+				# player senza SERVER, CamillaDSP non preparato...).
+				mot=$(head -n 1 "$RUN/volume.motivo" 2>/dev/null)
+				echo "software|${mot:-volume a 64 bit non disponibile (CamillaDSP assente o non avviato)}"
+			fi ;;
 		*) echo "fisso|" ;;
 	esac
 }
@@ -1763,10 +1975,18 @@ log_quota() {
 
 # Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (30).
 log_quota_tick() {
-	local now last
-	now=$(date +%s); last=$(cat "$RUN/log.quota.ts" 2>/dev/null)
+	local now last=''
+	# Secondi dall'avvio e lettura del segno con la sola shell: i cicli dei
+	# servizi la chiamano ogni pochi secondi; la configurazione si legge solo
+	# se e' passato un po' di tempo.
+	read -r now _ < /proc/uptime
+	now=${now%%.*}
+	read -r last < "$RUN/log.quota.ts" 2>/dev/null
 	case "$last" in ''|*[!0-9]*) last=0 ;; esac
-	[ $((now - last)) -ge "$(conf LOG_QUOTA_SECONDI 30)" ] || return 0
+	if [ "$now" -ge "$last" ]; then
+		[ $((now - last)) -ge 5 ] || return 0
+		[ $((now - last)) -ge "$(conf LOG_QUOTA_SECONDI 30)" ] || return 0
+	fi
 	echo "$now" > "$RUN/log.quota.ts" 2>/dev/null
 	log_quota
 }

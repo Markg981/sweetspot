@@ -88,7 +88,7 @@ verify() {
 		'$1$'*)
 			salt=${stored#'$1$'}
 			salt=${salt%%'$'*}
-			calc=$(mkpasswd -m md5 -S "$salt" "$pw" 2>/dev/null) || return 1
+			calc=$(mkpasswd -m md5 -S "$salt" -- "$pw" 2>/dev/null) || return 1
 			[ "$calc" = "$stored" ] ;;
 		*) [ "$pw" = "$stored" ] ;;
 	esac

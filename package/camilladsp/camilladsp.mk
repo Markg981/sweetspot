@@ -21,8 +21,9 @@ CAMILLADSP_POST_EXTRACT_HOOKS += CAMILLADSP_COPY_CARGO_LOCK
 
 # Caratteristiche predefinite (il server websocket resta spento: si attiva
 # solo con -p; senza, CamillaDSP 4.1 si ferma all'avvio). Lo avvia il
-# plugin ALSA cdsp con i parametri del brano; sweetspot-dsp gli passa -p
-# su 127.0.0.1 per leggere i campioni tagliati (sweetspot-camilla).
+# supervisore (sweetspot-player) una volta per sessione, con -p su 127.0.0.1;
+# il plugin ALSA cdsp gli scrive i campioni e, a ogni cambio di frequenza,
+# gli fa caricare dal websocket la configurazione di quella frequenza.
 define CAMILLADSP_BUILD_CMDS
 	cd $(@D) && \
 	$(TARGET_MAKE_ENV) \

@@ -122,6 +122,12 @@ SSH=si")"
 		expect "lms plugin installa" "sweetspot-lms|plugin|installa|Qobuz" "$(priv sweetspot-lms plugin installa Qobuz)"
 		expect "lms plugin con nome strano" "NIENTE(126)" "$(priv sweetspot-lms plugin installa '../x')"
 		expect "lms plugin sconosciuto" "NIENTE(126)" "$(priv sweetspot-lms plugin cancella Qobuz)"
+		expect "lms operazione: installa plugin" "sweetspot-lms|operazione|avvia|plugin-installa|Qobuz" "$(priv sweetspot-lms operazione avvia plugin-installa Qobuz)"
+		expect "lms operazione: aggiorna la libreria" "sweetspot-lms|operazione|avvia|aggiorna" "$(priv sweetspot-lms operazione avvia aggiorna)"
+		expect "lms operazione: nome strano" "NIENTE(126)" "$(priv sweetspot-lms operazione avvia plugin-installa '../x')"
+		expect "lms operazione: plugin senza nome" "NIENTE(126)" "$(priv sweetspot-lms operazione avvia plugin-rimuovi)"
+		expect "lms operazione: tipo sconosciuto" "NIENTE(126)" "$(priv sweetspot-lms operazione avvia riavvia)"
+		expect "lms operazione: solo avvia (esegui riservato)" "NIENTE(126)" "$(priv sweetspot-lms operazione esegui x aggiorna)"
 		expect "lms json stato del server" "sweetspot-lms|json||serverstatus|0|0" "$(priv sweetspot-lms json '' serverstatus 0 0)"
 		expect "lms json nome del player" "sweetspot-lms|json|aa:bb:cc:dd:ee:ff|name|Salotto" "$(priv sweetspot-lms json aa:bb:cc:dd:ee:ff name Salotto)"
 		expect "lms json brano in ascolto" "sweetspot-lms|json|aa:bb|status|-|1|tags:aloITr" "$(priv sweetspot-lms json aa:bb status - 1 tags:aloITr)"
@@ -142,6 +148,32 @@ SSH=si")"
 			expect "dsp leggi: collegamento simbolico rifiutato" "NIENTE(126)" "$(priv sweetspot-dsp leggi "$W/link.txt")"
 		fi
 		ln "$W/a.txt" "$W/b.txt" 2> /dev/null && expect "dsp leggi: file con piu' nomi rifiutato" "NIENTE(126)" "$(priv sweetspot-dsp leggi "$W/a.txt")"
+		# Collegamento simbolico a una CARTELLA sotto la base: O_NOFOLLOW non basta.
+		mkdir -p "$WORK/fuori" && printf 'segreto\n' > "$WORK/fuori/shadow"
+		if ln -s "$WORK/fuori" "$W/dir" 2> /dev/null && [ -L "$W/dir" ]; then
+			expect "dsp leggi: collegamento a cartella rifiutato" "NIENTE(126)" "$(priv sweetspot-dsp leggi "$W/dir/shadow")"
+		fi
+		mkdir -p "$W/sotto" && printf 'x\n' > "$W/sotto/f.txt"
+		got=$(priv sweetspot-dsp leggi "$W/sotto/f.txt")
+		case "$got" in "sweetspot-dsp|leggi|/proc/self/fd/"*) ok "dsp leggi: file in sottocartella vera ammesso" ;; *) FAIL=$((FAIL + 1)); echo "  NO  dsp leggi sottocartella: [$got]" ;; esac
+		expect "dsp leggi: componenti vuoti rifiutati" "NIENTE(126)" "$(priv sweetspot-dsp leggi "$W/sotto//f.txt")"
+		expect "dsp leggi: la sola base rifiutata" "NIENTE(126)" "$(priv sweetspot-dsp leggi "$W/")"
+		# File di un altro proprietario sotto BASE_WEB (qui "web" e' un altro uid).
+		rm -f "$WORK/chiamata"
+		SWEETSPOT_PROVA_UID=$(($(id -u) + 1)) "$WORK/priv" sweetspot-dsp leggi "$W/a.txt" > /dev/null 2>&1
+		expect "dsp leggi: file non di web sotto BASE_WEB rifiutato" "no" "$([ -f "$WORK/chiamata" ] && echo si || echo no)"
+		# Opzioni: testo o parola che inizia con '-' non va agli script di root.
+		expect "copia avvia: '-x' rifiutato" "NIENTE(126)" "$(priv sweetspot-copia avvia -x)"
+		expect "bluetooth rimuovi: '-x' rifiutato" "NIENTE(126)" "$(priv sweetspot-bluetooth rimuovi -x)"
+		expect "config imposta: valore con '-' iniziale ammesso" "sweetspot-config|imposta|NOME_PLAYER|-x" "$(priv sweetspot-config imposta NOME_PLAYER -x)"
+		# Gli script che accettano un '-' iniziale non lo trattano da opzione.
+		expect "accesso hash: '-n' arriva come argomento" "sweetspot-accesso|hash|-n" "$(priv sweetspot-accesso hash -n)"
+		expect "cd copia: nomi con '-' iniziale ammessi" "sweetspot-cd|copia|-e|--help|-n" "$(priv sweetspot-cd copia -e --help -n)"
+		expect "accesso: mkpasswd con -- davanti alla password" "1" "$(grep -c 'mkpasswd -m md5 -S "\$salt" -- "\$pw"' "$OVERLAY/usr/bin/sweetspot-accesso")"
+		expect "config: i valori passano da ENVIRON, non da opzioni" "0" "$(grep -c 'awk -v VAL\|echo "\$VAL"' "$OVERLAY/usr/bin/sweetspot-config")"
+		# @log: riga troppo lunga rifiutata.
+		"$WORK/priv" @log "$(printf '%0600d' 0)" > /dev/null 2>&1
+		expect "@log troppo lungo rifiutato" "126" "$?"
 		# L'ambiente non passa agli script.
 		printf '#!/bin/sh\nenv > "%s/env"\n' "$WORK" > "$B/sweetspot-check"
 		SWEETSPOT_PATH=/evil LD_PRELOAD=/x IFS=x "$WORK/priv" sweetspot-check --dati > /dev/null 2>&1
