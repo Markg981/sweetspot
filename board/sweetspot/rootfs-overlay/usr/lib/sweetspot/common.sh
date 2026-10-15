@@ -136,9 +136,15 @@ config_build() {
 }
 
 # conf CHIAVE [predefinito]: l'ultima riga vince.
+# Solo comandi interni della shell (prima grep, tail e cut: quattro processi
+# a ogni lettura, centinaia al minuto nei cicli dei servizi).
 conf() {
-	local v=""
-	[ -f "$CONF" ] && v=$(grep "^$1=" "$CONF" | tail -n 1 | cut -d= -f2-)
+	local v="" l
+	if [ -f "$CONF" ]; then
+		while IFS= read -r l || [ -n "$l" ]; do
+			case "$l" in "$1="*) v=${l#*=} ;; esac
+		done < "$CONF"
+	fi
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
 }
 
@@ -152,7 +158,13 @@ energia() {
 	esac
 }
 
-lower() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
+# tr solo se c'e' una maiuscola (di norma i valori sono gia' minuscoli).
+lower() {
+	case "$1" in
+		*[A-Z]*) printf '%s' "$1" | tr 'A-Z' 'a-z' ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
 
 # Modalita' di funzionamento:
 #   completa  Lyrion Music Server (libreria, plugin, interfaccia web) e
@@ -224,8 +236,12 @@ put() {
 }
 
 is_yes() {
-	case "$(lower "$1")" in
+	case "$1" in
 		si|sì|s|yes|y|1|true|on|vero|attivo) return 0 ;;
+		*[A-Z]*)
+			case "$(lower "$1")" in
+				si|sì|s|yes|y|1|true|on|vero|attivo) return 0 ;;
+			esac ;;
 	esac
 	return 1
 }

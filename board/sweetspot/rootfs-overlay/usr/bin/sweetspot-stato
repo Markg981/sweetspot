@@ -577,6 +577,8 @@ cli_down() {
 }
 
 handle() {
+	# Diagnosi: SWEETSPOT_STATO_DEBUG=1 annota ogni evento con il momento.
+	[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "$NOW $1" >> "$RUN/stato.debug"
 	case "$1" in
 		"L "*) cli_line "${1#L }" ;;
 		"U "*) udev_line "${1#U }" ;;
@@ -595,6 +597,11 @@ start_feeders() {
 	mkfifo -m 622 "$REQ" || return 1
 	exec 3<>"$EV" 5<>"$CLIF" 6<>"$REQ" 7<>"$SOSTA"
 	FEEDERS=''
+	# Il tempo: una riga T al secondo (nap non lancia processi).
+	(
+		while :; do nap 1; echo T; done >&3
+	) &
+	FEEDERS="$FEEDERS $!"
 	# Richieste di chi legge la cache: qualunque riga vale "R".
 	(
 		while IFS= read -r _; do echo R; done <&6 >&3
@@ -654,16 +661,6 @@ daemon_stop() {
 	exit 0
 }
 
-# Scadenza piu' vicina tra i timer in attesa (0 = spento).
-next_wait() {
-	local m=$((NOW + 3600)) d
-	for d in $DL_ROUND $DL_BEAT $DL_LIVE $DL_PINGCHK $DL_PLAYER $DL_PRE $DL_PRETICK $DL_SCAN; do
-		[ "$d" -gt 0 ] && [ "$d" -lt "$m" ] && m=$d
-	done
-	W=$((m - NOW))
-	[ "$W" -ge 1 ] || W=1
-}
-
 timers() {
 	[ "$TIMEDOUT" = 1 ] && [ "$DL_PINGCHK" -gt 0 ] && [ "$NOW" -ge "$DL_PINGCHK" ] && ping_check
 	[ "$DL_LIVE" -gt 0 ] && [ "$NOW" -ge "$DL_LIVE" ] && live_tick
@@ -705,16 +702,17 @@ do_watch() {
 	DL_LIVE=$((NOW + LIVE_EVERY))
 	pre_want
 	while :; do
-		next_wait
 		TIMEDOUT=0
-		# shellcheck disable=SC3045
-		if read -r -t "$W" line <&3; then
-			up_now
-			handle "$line"
-		else
-			up_now
-			TIMEDOUT=1
-		fi
+		# Lettura bloccante, senza -t: un timeout che scade a meta' riga
+		# butta via i primi byte (la riga dopo arriva troncata). Il "tempo
+		# che passa" arriva come riga T da un ascoltatore che dorme un secondo
+		# alla volta, senza lanciare processi.
+		read -r line <&3
+		up_now
+		case "$line" in
+			T) TIMEDOUT=1 ;;
+			*) handle "$line" ;;
+		esac
 		timers
 	done
 }

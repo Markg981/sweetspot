@@ -33,7 +33,7 @@
 SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
 PSTORE=${SWEETSPOT_PSTORE:-$SYS/fs/pstore}
 DIARIO_DIR_NAME=diagnostica
-TICK=${SWEETSPOT_DIARIO_TICK:-5}
+TICK=${SWEETSPOT_DIARIO_TICK:-15}
 DEBOUNCE=${SWEETSPOT_DIARIO_DEBOUNCE:-60}
 PSTORE_MAX=8
 
@@ -247,25 +247,34 @@ osserva() {
 
 # "FORMATO FREQUENZA" del primo PCM di riproduzione aperto, vuoto se nessuno.
 pcm_aperto() {
-	local f
+	local f l fm r
 	for f in "$PROC"/asound/card*/pcm*p/sub*/hw_params; do
 		[ -r "$f" ] || continue
-		awk '/^format:/ { fm = $2 } /^rate:/ { r = $2 } END { if (r != "") print fm " " r }' "$f" 2>/dev/null
-	done | head -n 1
+		fm=''; r=''
+		while IFS= read -r l; do
+			case "$l" in
+				format:*) fm=${l#format:}; fm=${fm# }; fm=${fm%% *} ;;
+				rate:*) r=${l#rate:}; r=${r# }; r=${r%% *} ;;
+			esac
+		done < "$f"
+		if [ -n "$r" ]; then printf '%s %s\n' "$fm" "$r"; return 0; fi
+	done
 }
 
 adesso() { date +%s; }
+# Secondi dall'avvio (nessun processo): per i soli intervalli del ciclo.
+mono() { local u; read -r u _ < /proc/uptime; MONO=${u%%.*}; }
 
 do_sorveglia() {
 	local ult sec tardi=0 now
 	attivo || exit 0
 	sec=$(( $(num_chiave DIARIO_ORE 2 1 24) * 3600 ))
-	ult=$(adesso)
+	mono; ult=$MONO
 	osserva
 	while true; do
 		sleep "$TICK"
 		osserva
-		now=$(adesso)
+		mono; now=$MONO
 		if [ -f "$DIARIO_FLAG" ]; then
 			# Eventi critici: subito, ma non piu' di una volta al minuto.
 			if [ $((now - ult)) -ge "$DEBOUNCE" ]; then
