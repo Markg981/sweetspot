@@ -1020,6 +1020,7 @@ net_ipv4() {
 
 # Come net_ipv4, con un solo processo (ip) e nessuna sottoshell aggiuntiva
 # per sed e head: l'indirizzo resta in IPV4.
+# shellcheck disable=SC2034  # IPV4 la legge chi chiama
 net_ipv4_v() {
 	local out l
 	IPV4=""
