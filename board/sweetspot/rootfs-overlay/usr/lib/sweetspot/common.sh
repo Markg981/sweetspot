@@ -1458,6 +1458,8 @@ log_quota() {
 		total=$(wc -c $files 2>/dev/null | awk '$2 != "total" { t += $1 } END { print t + 0 }')
 		[ "$total" -gt $((qkb * 1024)) ] || return 0
 		oldest=""
+		# I percorsi sono nostri e senza spazi: ls -tr li ordina dal piu' vecchio.
+		# shellcheck disable=SC2045
 		for f in $(ls -tr $files 2>/dev/null); do
 			[ "$f" = "$sq" ] && continue
 			[ -s "$f" ] && { oldest=$f; break; }
