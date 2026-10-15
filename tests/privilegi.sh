@@ -166,6 +166,11 @@ SSH=si")"
 		expect "copia avvia: '-x' rifiutato" "NIENTE(126)" "$(priv sweetspot-copia avvia -x)"
 		expect "bluetooth rimuovi: '-x' rifiutato" "NIENTE(126)" "$(priv sweetspot-bluetooth rimuovi -x)"
 		expect "config imposta: valore con '-' iniziale ammesso" "sweetspot-config|imposta|NOME_PLAYER|-x" "$(priv sweetspot-config imposta NOME_PLAYER -x)"
+		# Gli script che accettano un '-' iniziale non lo trattano da opzione.
+		expect "accesso hash: '-n' arriva come argomento" "sweetspot-accesso|hash|-n" "$(priv sweetspot-accesso hash -n)"
+		expect "cd copia: nomi con '-' iniziale ammessi" "sweetspot-cd|copia|-e|--help|-n" "$(priv sweetspot-cd copia -e --help -n)"
+		expect "accesso: mkpasswd con -- davanti alla password" "1" "$(grep -c 'mkpasswd -m md5 -S "\$salt" -- "\$pw"' "$OVERLAY/usr/bin/sweetspot-accesso")"
+		expect "config: i valori passano da ENVIRON, non da opzioni" "0" "$(grep -c 'awk -v VAL\|echo "\$VAL"' "$OVERLAY/usr/bin/sweetspot-config")"
 		# @log: riga troppo lunga rifiutata.
 		"$WORK/priv" @log "$(printf '%0600d' 0)" > /dev/null 2>&1
 		expect "@log troppo lungo rifiutato" "126" "$?"
