@@ -164,6 +164,43 @@ conf() {
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
 }
 
+# conf senza sottoshell: il valore resta in CONFV. Per i cicli dei servizi:
+# "$(conf ...)" costa un fork a ogni chiamata.
+confv() { # chiave [predefinito]
+	local l
+	CONFV=""
+	if [ -f "$CONF" ]; then
+		while IFS= read -r l || [ -n "$l" ]; do
+			case "$l" in "$1="*) CONFV=${l#*=} ;; esac
+		done < "$CONF"
+	fi
+	[ -n "$CONFV" ] || CONFV=$2
+	return 0
+}
+
+# Attesa senza fork. nap_init apre (una volta, nel servizio) una FIFO che
+# nessuno scrive sul descrittore 4; nap legge con timeout. Era "sleep": un
+# processo nuovo a ogni giro di ogni ciclo, la meta' dei fork a riposo.
+# Senza FIFO ripiega su sleep. Solo secondi interi.
+# shellcheck disable=SC3045
+nap() { # secondi
+	if [ "${NAP_OK:-0}" = 1 ]; then
+		read -r -t "$1" _ <&4 || [ $? -gt 128 ] || sleep "$1"
+	else
+		sleep "$1"
+	fi
+}
+nap_init() {
+	local f="${RUN:-/run/sweetspot}/nap.$$"
+	NAP_OK=0
+	mkdir -p "$RUN" 2>/dev/null
+	mkfifo -m 600 "$f" 2>/dev/null || return 0
+	exec 4<>"$f"
+	NAP_OK=1
+	rm -f "$f"
+	return 0
+}
+
 # Profilo energetico: "fisso" (predefinito: SMT spento, stati C limitati,
 # frequenza fissa) o "conservativo" (SMT attivo, stati C liberi, governor
 # schedutil/ondemand). Vedi docs/profilo-energetico.md.
@@ -979,6 +1016,20 @@ dac_usb_device() {
 
 net_ipv4() {
 	ip -4 -o addr show scope global 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -n 1
+}
+
+# Come net_ipv4, con un solo processo (ip) e nessuna sottoshell aggiuntiva
+# per sed e head: l'indirizzo resta in IPV4.
+net_ipv4_v() {
+	local out l
+	IPV4=""
+	out=$(ip -4 -o addr show scope global 2>/dev/null)
+	while IFS= read -r l; do
+		case "$l" in *" inet "*) l=${l#* inet }; IPV4=${l%%[/ ]*}; return 0 ;; esac
+	done <<EOF
+$out
+EOF
+	return 0
 }
 
 # Indirizzo del server Lyrion a cui e' collegato il player (porta 3483).

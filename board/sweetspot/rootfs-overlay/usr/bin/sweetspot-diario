@@ -33,7 +33,7 @@
 SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
 PSTORE=${SWEETSPOT_PSTORE:-$SYS/fs/pstore}
 DIARIO_DIR_NAME=diagnostica
-TICK=${SWEETSPOT_DIARIO_TICK:-15}
+TICK=${SWEETSPOT_DIARIO_TICK:-30}
 DEBOUNCE=${SWEETSPOT_DIARIO_DEBOUNCE:-60}
 PSTORE_MAX=8
 
@@ -97,6 +97,11 @@ sorgenti() {
 }
 
 dim_file() { wc -c < "$1" 2>/dev/null | tr -d ' '; }
+# Come dim_file, senza la pipe e il tr: la dimensione resta in DIM.
+dim_v() { read -r DIM _ <<EOF
+$(wc -c < "$1" 2>/dev/null)
+EOF
+}
 
 # Byte gia' portati sulla chiavetta, per sorgente (in RAM: dopo un riavvio
 # il file sorgente e' nuovo e si riparte da zero).
@@ -226,7 +231,7 @@ LAST_FMT=
 osserva() {
 	local size n cur
 	if [ -f "$SQLOG" ]; then
-		size=$(dim_file "$SQLOG")
+		dim_v "$SQLOG"; size=$DIM
 		if [ -z "$XOFF" ]; then XOFF=$size
 		else
 			[ "$size" -lt "$XOFF" ] && XOFF=0
@@ -237,7 +242,7 @@ osserva() {
 			fi
 		fi
 	fi
-	cur=$(pcm_aperto)
+	pcm_aperto_v; cur=$PCM_CUR
 	if [ -n "$cur" ] && [ "$cur" != "$LAST_FMT" ]; then
 		if [ -n "$LAST_FMT" ]; then evento alsa frequenza "$cur (prima $LAST_FMT)"
 		else evento alsa frequenza "$cur"; fi
@@ -246,8 +251,10 @@ osserva() {
 }
 
 # "FORMATO FREQUENZA" del primo PCM di riproduzione aperto, vuoto se nessuno.
-pcm_aperto() {
+pcm_aperto() { pcm_aperto_v; [ -z "$PCM_CUR" ] || echo "$PCM_CUR"; }
+pcm_aperto_v() {
 	local f l fm r
+	PCM_CUR=""
 	for f in "$PROC"/asound/card*/pcm*p/sub*/hw_params; do
 		[ -r "$f" ] || continue
 		fm=''; r=''
@@ -257,7 +264,7 @@ pcm_aperto() {
 				rate:*) r=${l#rate:}; r=${r# }; r=${r%% *} ;;
 			esac
 		done < "$f"
-		if [ -n "$r" ]; then printf '%s %s\n' "$fm" "$r"; return 0; fi
+		if [ -n "$r" ]; then PCM_CUR="$fm $r"; return 0; fi
 	done
 }
 
@@ -268,11 +275,12 @@ mono() { local u; read -r u _ < /proc/uptime; MONO=${u%%.*}; }
 do_sorveglia() {
 	local ult sec tardi=0 now
 	attivo || exit 0
+	nap_init
 	sec=$(( $(num_chiave DIARIO_ORE 2 1 24) * 3600 ))
 	mono; ult=$MONO
 	osserva
 	while true; do
-		sleep "$TICK"
+		nap "$TICK"
 		osserva
 		log_quota_tick
 		mono; now=$MONO

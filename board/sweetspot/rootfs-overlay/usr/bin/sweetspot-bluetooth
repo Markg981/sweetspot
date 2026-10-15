@@ -50,6 +50,10 @@ BT_P_PID=$RUN/bluealsa-aplay.pid
 BT_STICK_FILE=sweetspot-dati/bluetooth.tar
 SUPERVISORE_PID=$RUN/supervisore.pid
 BT_SONDA=${SWEETSPOT_BT_SONDA:-1}
+# Senza telefoni collegati e senza trasmissione la sonda e' piu' rada, e senza
+# adattatore ancora di piu': a riposo ogni giro costava 5-10 processi.
+BT_RIPOSO=${SWEETSPOT_BT_RIPOSO:-5}
+BT_ASSENTE=${SWEETSPOT_BT_ASSENTE:-30}
 
 bt_enabled() { is_yes "$(conf BLUETOOTH no)"; }
 
@@ -70,8 +74,10 @@ valid_mac() {
 }
 
 say() { # testo: scrive lo stato solo se cambia
-	[ "$(cat "$BT_STATO" 2>/dev/null)" = "$1" ] && return 0
-	mkdir -p "$RUN"
+	local cur=''
+	read -r cur < "$BT_STATO" 2>/dev/null
+	[ "$cur" = "$1" ] && return 0
+	[ -d "$RUN" ] || mkdir -p "$RUN"
 	echo "$1" > "$BT_STATO"
 }
 
@@ -191,7 +197,33 @@ stop_services() {
 	done
 }
 
-adapter_present() { bluetoothctl list 2>/dev/null | grep -q '^Controller '; }
+adapter_present() {
+	local d
+	# L'adattatore registrato dal kernel si vede senza processi.
+	for d in "$SYS"/class/bluetooth/hci[0-9]*; do
+		case "$d" in *:*) continue ;; esac
+		[ -e "$d" ] && return 0
+	done
+	bluetoothctl list 2>/dev/null | grep -q '^Controller '
+}
+
+# Telefoni collegati, con la sola shell dopo un solo bluetoothctl: MAC in
+# CONN_MACS (separati da spazio) e nome del primo in CONN_NOME.
+conn_leggi() {
+	local out l m
+	CONN_MACS=""; CONN_NOME=""
+	out=$(bluetoothctl devices Connected 2>/dev/null)
+	while IFS= read -r l; do
+		case "$l" in "Device "*) ;; *) continue ;; esac
+		l=${l#Device }
+		m=${l%% *}
+		CONN_MACS="$CONN_MACS $m"
+		[ -n "$CONN_NOME" ] || { l=${l#"$m"}; CONN_NOME=${l# }; }
+	done <<EOF
+$out
+EOF
+	CONN_MACS=${CONN_MACS# }
+}
 
 adapter_setup() {
 	bluetoothctl power on > /dev/null 2>&1
@@ -322,9 +354,13 @@ lib_impronta() {
 # (MediaTransport1.State: idle, pending, active).
 stream_active() {
 	local mac hci path node st
-	hci=$(ls "$SYS/class/bluetooth" 2>/dev/null | sed -n 's/^\(hci[0-9]*\)$/\1/p' | head -n 1)
+	for path in "$SYS"/class/bluetooth/hci[0-9]*; do
+		case "$path" in *:*) continue ;; esac
+		[ -e "$path" ] && { hci=${path##*/}; break; }
+	done
 	[ -n "$hci" ] || hci=hci0
-	for mac in $(bt_devices Connected | cut -d'|' -f1); do
+	if [ "${CONN_PRE:-0}" = 1 ]; then mac=$CONN_MACS; else mac=$(bt_devices Connected | cut -d"|" -f1); fi
+	for mac in $mac; do
 		valid_mac "$mac" || continue
 		path=/org/bluez/$hci/dev_$(printf '%s' "$mac" | tr ':' '_')
 		for node in $(dbus-send --system --print-reply --dest=org.bluez "$path" \
@@ -431,16 +467,33 @@ cmd_stato() {
 
 # --- Sorveglianza -----------------------------------------------------------------
 
+# Stato di un giro della sorveglianza, con la sola shell (stesse parole di
+# stato_testo; l'adattatore c'e' e il sorvegliante e' questo processo).
+stato_giro() {
+	local t
+	if [ -e "$BT_ATTIVO" ]; then
+		t="in ascolto: ${CONN_NOME:-telefono}"
+	elif [ -e "$BT_ABBINA" ] && abbina_aperta; then
+		t="abbinamento aperto"
+	elif [ -n "$CONN_NOME" ]; then
+		t="collegato: $CONN_NOME"
+	else
+		t="pronto, in attesa del telefono"
+	fi
+	say "$t"
+}
+
 sorveglia() {
-	local presente=0 assenti=0 imp imp0 giri=0
+	local presente=0 assenti=0 imp imp0 giri=0 attesa
 	trap 'handoff_cleanup; exit 0' TERM INT
+	nap_init
 	imp0=$(lib_impronta)
-	while bt_enabled; do
+	while confv BLUETOOTH no; is_yes "$CONFV"; do
 		giri=$((giri + 1))
 		if ! adapter_present; then
 			presente=0
 			say "nessun adattatore Bluetooth"
-			sleep 5
+			nap "$BT_ASSENTE"
 			continue
 		fi
 		if [ $presente -eq 0 ]; then
@@ -448,6 +501,8 @@ sorveglia() {
 			bt_irq_housekeeping
 			presente=1
 		fi
+		conn_leggi
+		CONN_PRE=1
 		if [ -e "$BT_ATTIVO" ]; then
 			if stream_active; then assenti=0; else assenti=$((assenti + 1)); fi
 			# Sei sonde senza trasmissione (o altrettanto tempo di pausa): il DAC torna al player.
@@ -455,10 +510,11 @@ sorveglia() {
 				handoff_end
 				assenti=0
 			fi
-		elif stream_active; then
+		elif [ -n "$CONN_MACS" ] && stream_active; then
 			assenti=0
 			handoff_start
 		fi
+		CONN_PRE=0
 		# Ogni circa 30 secondi: niente abbinamento aperto per errore, chiavi
 		# nuove sulla chiavetta (mai durante la trasmissione).
 		if [ $((giri % 30)) -eq 0 ] && [ ! -e "$BT_ATTIVO" ]; then
@@ -469,8 +525,10 @@ sorveglia() {
 			imp=$(lib_impronta)
 			if [ "$imp" != "$imp0" ]; then salva; imp0=$imp; fi
 		fi
-		cmd_stato > /dev/null
-		sleep "$BT_SONDA"
+		stato_giro
+		attesa=$BT_SONDA
+		[ -e "$BT_ATTIVO" ] || [ -n "$CONN_MACS" ] || [ -e "$BT_ABBINA" ] || attesa=$BT_RIPOSO
+		nap "$attesa"
 	done
 	say "spento"
 }
