@@ -182,12 +182,17 @@ expect "senza volume a 64 bit Squeezelite applica il volume di Lyrion" 0 "$(grep
 # Squeezelite lascia i campioni invariati (-F).
 cat > "$E/bin/sweetspot-dsp" <<'DSP'
 #!/bin/sh
-case "$1" in attiva|volume) exit 0 ;; prepara) echo sweetspot_correzione; exit 0 ;; guadagno) echo 0.0; exit 0 ;; esac
+case "$1" in attiva|volume) exit 0 ;; prepara) echo sweetspot_correzione; exit 0 ;; guadagno) echo 0.0; exit 0 ;; avvio) echo "-l warn"; exit 0 ;; esac
 exit 1
 DSP
+# L'unica istanza di CamillaDSP della sessione la avvia il player: qui un
+# processo finto che resta in attesa e un websocket che risponde.
+printf '#!/bin/sh\nexec sleep 30\n' > "$E/camilla-finto"
+printf '#!/bin/sh\nexit 0\n' > "$E/bin/sweetspot-camilla"
+chmod +x "$E/camilla-finto" "$E/bin/sweetspot-camilla"
 printf 'DAC=auto\nVOLUME=dsp\nMODALITA=completa\n' > "$E/settings"
 common "config_build '$E/settings'"
-player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
+player "CAMILLADSP=$E/camilla-finto; taskset() { case \"\$3\" in *camilla-finto) shift 2; \"\$@\" ;; esac; }; HK=0; run_player 1; wait \"\$PID\"; stop_dsp"
 expect "volume a 64 bit: CamillaDSP nel percorso e Squeezelite con guadagno fisso (-F)" 'dsp|sweetspot_correzione|1' \
 	"$(cat "$E/run/volume.modo")|$(sed -n 's/^-o \([^ ]*\).*/\1/p' "$E/run/player.args")|$(grep -c -- ' -F ' "$E/run/player.args")"
 printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
