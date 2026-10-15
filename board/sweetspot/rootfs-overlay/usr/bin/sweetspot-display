@@ -49,10 +49,13 @@ case "$min" in ''|*[!0-9]*) min=2 ;; esac
 last=""
 while true; do
 	ip=$(net_ipv4)
-	now="$ip|$(cat "$RUN/player.stato" 2>/dev/null)|$(lms_server_ip)"
+	pst=''
+	read -r pst < "$RUN/player.stato" 2>/dev/null
+	now="$ip|$pst|$(lms_server_ip)"
 	if [ "$now" != "$last" ]; then
 		{ draw "$ip" > "$TTY"; } 2>/dev/null
 		last=$now
 	fi
-	sleep 10
+	# Il testo cambia di rado (rete, stato del player): ogni 20 s bastano.
+	sleep 20
 done

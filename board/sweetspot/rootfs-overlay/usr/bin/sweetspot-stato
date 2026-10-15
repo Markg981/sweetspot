@@ -498,6 +498,7 @@ EV=$RUN/stato.eventi         # FIFO: una riga per evento (L, U, I, C, R)
 CLIF=$RUN/stato.cli          # FIFO verso la connessione CLI di Lyrion (nc)
 REQ=$RUN/stato.richiesta     # FIFO scrivibile da tutti: chiede un giro
 SOSTA=$RUN/stato.sosta       # FIFO mai scritta: serve a "dormire" senza fork
+ALLARME=$RUN/stato.allarme   # FIFO: secondi alla prossima scadenza, per l'allarme
 ATTIVA=$RUN/dac.cache.attiva # esiste finche' il demone gira (cache del DAC)
 # Porta CLI di Lyrion (la stessa di sweetspot-volume) e strumenti di ascolto
 # (sostituibili nelle prove: BusyBox preferisce i suoi applet al PATH).
@@ -809,6 +810,8 @@ cli_down() {
 }
 
 handle() {
+	# Diagnosi: SWEETSPOT_STATO_DEBUG=1 annota ogni evento con il momento.
+	[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "$NOW $1" >> "$RUN/stato.debug"
 	case "$1" in
 		"L "*) cli_line "${1#L }" ;;
 		"U "*) udev_line "${1#U }" ;;
@@ -822,11 +825,25 @@ handle() {
 # --- Ascoltatori: processi di lunga durata, avviati una sola volta -------------
 
 start_feeders() {
-	rm -f "$EV" "$CLIF" "$REQ" "$SOSTA"
-	mkfifo -m 600 "$EV" "$CLIF" "$SOSTA" || return 1
+	rm -f "$EV" "$CLIF" "$REQ" "$SOSTA" "$ALLARME"
+	mkfifo -m 600 "$EV" "$CLIF" "$SOSTA" "$ALLARME" || return 1
 	mkfifo -m 622 "$REQ" || return 1
-	exec 3<>"$EV" 5<>"$CLIF" 6<>"$REQ" 7<>"$SOSTA"
+	exec 3<>"$EV" 5<>"$CLIF" 6<>"$REQ" 7<>"$SOSTA" 8<>"$ALLARME"
 	FEEDERS=''
+	# L'allarme: attende i secondi scritti nella FIFO e poi scrive T.
+	(
+		w=3600
+		while :; do
+			# shellcheck disable=SC3045
+			if read -r -t "$w" a <&8; then
+				case "$a" in ''|*[!0-9]*) ;; *) w=$a ;; esac
+			else
+				echo T >&3
+				w=3600
+			fi
+		done
+	) &
+	FEEDERS="$FEEDERS $!"
 	# Richieste di chi legge la cache: qualunque riga vale "R".
 	(
 		while IFS= read -r _; do echo R; done <&6 >&3
@@ -882,18 +899,30 @@ daemon_stop() {
 		kill "$p" 2>/dev/null
 	done
 	if [ "$PRE_OK" = 1 ]; then release; write_summary spento; fi
-	rm -f "$ATTIVA" "$EV" "$CLIF" "$REQ" "$SOSTA"
+	rm -f "$ATTIVA" "$EV" "$CLIF" "$REQ" "$SOSTA" "$ALLARME"
 	exit 0
 }
 
-# Scadenza piu' vicina tra i timer in attesa (0 = spento).
-next_wait() {
-	local m=$((NOW + 3600)) d
+# Il tempo che passa arriva come riga T, scritta da un solo allarme di lunga
+# durata (subshell avviata una volta, vedi start_feeders): attende con read -t
+# sulla FIFO dell'allarme i secondi che il demone gli scrive (la scadenza piu'
+# vicina), poi scrive T. Si riarma solo quando e' scattato o se una scadenza
+# nuova e' piu' vicina: nessun processo per scadenza, nessun ticker. Se il
+# comando di riarmo si perdesse a meta' riga, l'allarme scatta comunque col
+# vecchio tempo e il demone lo riarma.
+arm_alarm() {
+	local m=0 d w
 	for d in $DL_ROUND $DL_BEAT $DL_LIVE $DL_PINGCHK $DL_PLAYER $DL_FUNC $DL_PRE $DL_PRETICK $DL_SCAN; do
-		[ "$d" -gt 0 ] && [ "$d" -lt "$m" ] && m=$d
+		[ "$d" -gt 0 ] || continue
+		if [ "$m" -eq 0 ] || [ "$d" -lt "$m" ]; then m=$d; fi
 	done
-	W=$((m - NOW))
-	[ "$W" -ge 1 ] || W=1
+	[ "$m" -gt 0 ] || return 0
+	w=$((m - NOW))
+	[ "$w" -ge 1 ] || w=1
+	if [ "$ALARM_FIRE" -le "$NOW" ] || [ $((NOW + w)) -lt "$ALARM_FIRE" ]; then
+		ALARM_FIRE=$((NOW + w))
+		echo "$w" >&8
+	fi
 }
 
 timers() {
@@ -918,7 +947,7 @@ do_watch() {
 	LAST_ROUND=$((NOW - MIN_GAP)); PRE_LAST=$((NOW - PRE_GAP)); PRE_DIRTY=0
 	CLI_UP=0; LV_CLI_OK=0; LV_SUSP=0; PUB_LYR=''; PING_AT=0; REPLY_AT=0
 	LMS_MODE=''; PLY_SUSP=0; PLY_T0=0; SCANNING=0; SCAN_UNTIL=0; TIMEDOUT=0
-	FEEDERS=''; PRE_OK=0
+	FEEDERS=''; PRE_OK=0; ALARM_FIRE=0
 	cfg_load; mac_load
 	trap daemon_stop TERM INT
 	: > "$ATTIVA"
@@ -939,16 +968,16 @@ do_watch() {
 	[ "$CFG_LIVE" = 1 ] && DL_FUNC=$((NOW + CFG_FUNC))
 	pre_want
 	while :; do
-		next_wait
 		TIMEDOUT=0
-		# shellcheck disable=SC3045
-		if read -r -t "$W" line <&3; then
-			up_now
-			handle "$line"
-		else
-			up_now
-			TIMEDOUT=1
-		fi
+		arm_alarm
+		# Lettura bloccante, senza -t: un timeout che scade a meta' riga
+		# butta via i primi byte (la riga dopo arriva troncata).
+		read -r line <&3
+		up_now
+		case "$line" in
+			T) TIMEDOUT=1 ;;
+			*) handle "$line" ;;
+		esac
 		timers
 	done
 }

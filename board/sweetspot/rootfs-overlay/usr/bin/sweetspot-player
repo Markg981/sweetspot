@@ -484,7 +484,7 @@ correzione_non_applicabile() { # motivo
 }
 
 run_player() {
-	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp top
+	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp top a
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	name=$(conf NOME_PLAYER Sweetspot)
@@ -588,25 +588,27 @@ run_player() {
 	[ -n "$top" ] && echo "$top" > "$RUN/frequenza.max"
 	# Modalita' effettiva del volume, calcolata una volta (hardware, fisso,
 	# digitale) e condivisa con Lyrion e con l'interfaccia web.
-	vol=$(lower "$(conf VOLUME fisso)")
-	case "$vol" in
-		dac)
-			ctl=$(dac_volume_control "$card")
-			if [ -n "$ctl" ]; then
-				set -- "$@" -V "$ctl"
-				echo hardware > "$RUN/volume.effettivo"
-			else
-				log "player: il DAC non ha un controllo del volume, volume fisso"
-				echo fisso > "$RUN/volume.effettivo"
-			fi ;;
-		software|dsp) echo digitale > "$RUN/volume.effettivo" ;;
-		*) echo fisso > "$RUN/volume.effettivo" ;;
-	esac
-	# Volume a 64 bit: Lyrion tiene il controllo digitale del volume (cosi'
-	# Material e le app mostrano il cursore) e manda il guadagno a
-	# Squeezelite, che con -F lo ignora: i campioni escono invariati e il
-	# volume lo applica CamillaDSP (sweetspot-volume segue il cursore).
-	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && set -- "$@" -F
+	# Una sola funzione decide la modalita' (volume_modo_calcola, common.sh) e
+	# da lei derivano argomenti, preferenze di Lyrion e diagnostica.
+	ctl=""
+	[ "$(lower "$(conf VOLUME fisso)")" = dac ] && ctl=$(dac_volume_control "$card")
+	vol=$(volume_modo_calcola "$ctl")
+	VOL_MODO=${vol%%|*}
+	VOL_MOTIVO=${vol#*|}
+	[ -n "$VOL_MOTIVO" ] && log "player: volume $(lower "$(conf VOLUME fisso)") non applicabile ($VOL_MOTIVO), modalita' effettiva: $VOL_MODO"
+	# Fisso e a 64 bit: Squeezelite ignora il guadagno (-F) e i campioni
+	# escono invariati, qualunque cosa mandi Lyrion (anche remoto, dove le
+	# preferenze possono non essere imponibili). Con dsp Lyrion tiene il
+	# controllo digitale (cosi' Material mostra il cursore) e il volume lo
+	# applica CamillaDSP (sweetspot-volume segue il cursore).
+	while IFS= read -r a; do
+		[ -n "$a" ] && set -- "$@" "$a"
+	done <<EOF
+$(volume_args "$VOL_MODO" "$ctl")
+EOF
+	# Con il volume fisso anche il mixer del DAC va a 0 dB (garanzia locale);
+	# VOLUME=dac che ripiega su fisso (niente mixer) comprende questo caso.
+	[ "$VOL_MODO" = dac ] || dac_unity_gain "$card"
 
 	dsd=$(lower "$(conf DSD auto)")
 	fmt=$(dac_native_dsd "$card")
@@ -617,7 +619,7 @@ run_player() {
 	# Per orecchie e diffusori il DSD si converte sempre in PCM, che il volume
 	# attenua; il DSD nativo resta con volume fisso, del DAC o a 64 bit.
 	rm -f "$RUN/dsd.volume"
-	if [ "$(volume_effettivo)" = digitale ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" != dsp ] && [ "$dsd" != pcm ]; then
+	if [ "$VOL_MODO" = software ] && [ "$dsd" != pcm ]; then
 		dsd=pcm
 		echo pcm > "$RUN/dsd.volume"
 		log "player: volume software: il DSD si converte in PCM (il volume non agisce sul DSD nativo)"
@@ -639,6 +641,8 @@ run_player() {
 	esac
 
 	printf '%s ' "$@" > "$RUN/player.args"
+	# Stato per Stato/Audio, con la verifica sugli argomenti reali.
+	volume_stato_scrivi "$VOL_MODO" "$VOL_MOTIVO"
 	session_start
 	taskset -c "$HK" squeezelite "$@" &
 	PID=$!
@@ -678,13 +682,13 @@ prefs_divergenti() { # digitale
 }
 
 apply_player_prefs() {
-	local digital=0 vol_dsp=0 sig now div srv LMS_HOST=$LMS_HOST
+	local digital=0 vol_dsp=0 sig now div srv prefs LMS_HOST=$LMS_HOST
 	if [ "$(mode)" != completa ]; then
 		# Server esterno: raggiungibile solo se indicato (SERVER); con la
 		# ricerca automatica non si sa dove sia.
 		srv=$(conf SERVER)
 		if [ -z "$srv" ]; then
-			prefs_stato "non verificabili (server esterno non indicato)"
+			prefs_stato "non verificabili (server esterno non indicato; guadagno locale $(cat "$RUN/volume.locale" 2>/dev/null || echo "non verificato"), modalita' $(volume_modalita))"
 			return 0
 		fi
 		LMS_HOST=${srv%%:*}
@@ -693,10 +697,10 @@ apply_player_prefs() {
 	# Lyrion (senza, Material e le app mostrano il player a volume fisso e
 	# nascondono il cursore); Squeezelite lo ignora (-F) e il cursore lo
 	# segue sweetspot-volume. Se CamillaDSP manca, volume software.
-	case "$(volume_effettivo)" in
-		hardware) digital=1 ;;
-		digitale) digital=1; [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && vol_dsp=1 ;;
-	esac
+	# Preferenze derivate dalla stessa modalita' effettiva degli argomenti.
+	prefs=$(volume_prefs "$(volume_modalita)")
+	digital=${prefs% *}
+	[ "$(volume_modalita)" = dsp ] && vol_dsp=1
 	sig="$digital$vol_dsp$LMS_HOST"
 	now=$(date +%s)
 	if [ "$PREFS_SET" = 1 ] && [ "${PREFS_SIG:-}" = "$sig" ] && [ $(( now - ${PREFS_T:-0} )) -lt "$PREFS_OGNI" ]; then
@@ -732,6 +736,24 @@ apply_player_prefs() {
 	fi
 }
 
+# Istanza del DAC senza processi: id ALSA e, per USB, busnum:devnum del
+# dispositivo (come dac_instance, ma con la sola shell; il percorso USB si
+# ricava una volta per sessione con inst_fast_start).
+inst_fast_start() { # scheda
+	INSTP=$(dac_usb_device "$1" 2>/dev/null)
+	inst_fast "$1"
+}
+inst_fast() { # scheda
+	local id='' bus='' dev=''
+	read -r id < "$PROC/asound/card$1/id" 2>/dev/null
+	if [ -n "$INSTP" ] && [ -f "$INSTP/devnum" ]; then
+		read -r bus < "$INSTP/busnum" 2>/dev/null
+		read -r dev < "$INSTP/devnum" 2>/dev/null
+	fi
+	IFAST="$id $bus:$dev"
+}
+SORVEGLIA_LUNGO=${SWEETSPOT_SORVEGLIA_LUNGO:-30}
+
 player_loop() {
 	BACKOFF=0
 	while true; do
@@ -749,10 +771,8 @@ player_loop() {
 			sleep 3
 			continue
 		fi
-		inst=$(dac_instance "$card")
 		remember_main_dac "$card"
 		setup_usb_irq "$card"
-		[ "$(lower "$(conf VOLUME fisso)")" = dac ] || dac_unity_gain "$card"
 		run_player "$card" || {
 			if [ -s "$RUN/correzione.errore" ] && [ "$(dsp_politica)" = blocca ]; then
 				[ "$(cat "$STATE" 2>/dev/null)" = "bloccato: correzione non disponibile" ] || say "bloccato: correzione non disponibile"
@@ -770,22 +790,39 @@ player_loop() {
 		start_volume_watch
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"
+		# Il DAC e la sua istanza si guardano a ogni giro con la sola shell
+		# (nessun processo); il resto (zone, preferenze, rotazione del
+		# registro, stato di CamillaDSP) a riposo ogni SORVEGLIA_LUNGO s: a
+		# ogni giro costava decine di processi, la fonte principale dei fork
+		# a riposo. Con la correzione attiva, o finche' il thread audio non
+		# e' agganciato, il giro completo resta ogni 2 s.
+		inst_fast_start "$card"
+		inst_ref=$IFAST
+		prossimo=0
 		while kill -0 "$PID" 2>/dev/null; do
 			# Con CamillaDSP nel percorso si guarda piu' spesso: ogni nuovo
 			# processo nasce con la priorita' del player e va sistemato.
 			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then sleep 5; else sleep 2; fi
-			pin_output_thread "$PID"
-			pin_dsp
-			dsp_clip_poll
-			dsp_underrun_poll
-			dsp_stato_poll
-			sqlog_rotate "$SQLOG"
-			zones_sync "$card"
-			apply_player_prefs
-			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_instance "$card")" != "$inst" ]; then
+			inst_fast "$card"
+			if [ ! -d "$PROC/asound/card$card" ] || [ "$IFAST" != "$inst_ref" ]; then
 				log "player: DAC scollegato o ricollegato"
 				LOST=1
 				kill "$PID" 2>/dev/null
+				break
+			fi
+			read -r adesso_s _ < /proc/uptime
+			adesso_s=${adesso_s%%.*}
+			if [ -f "$RUN/correzione.attiva" ] || [ ! -f "$RUN/audio.tid" ] || [ "$adesso_s" -ge "$prossimo" ]; then
+				prossimo=$((adesso_s + SORVEGLIA_LUNGO))
+				pin_output_thread "$PID"
+				pin_dsp
+				dsp_clip_poll
+				dsp_underrun_poll
+				dsp_stato_poll
+				sqlog_rotate "$SQLOG"
+				log_quota_tick
+				zones_sync "$card"
+				apply_player_prefs
 			fi
 		done
 		wait "$PID" 2>/dev/null

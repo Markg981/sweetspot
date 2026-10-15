@@ -9,7 +9,7 @@
 #   sweetspot-lms attendi [s]      aspetta che Lyrion risponda
 #   sweetspot-lms primo-controllo  dopo l'avvio: cerca i brani aggiunti mentre
 #                                  Sweetspot era spento
-#   sweetspot-lms aggiorna         cerca nella libreria i brani nuovi o cambiati
+#   sweetspot-lms aggiorna [DIR]   cerca i brani nuovi o cambiati (solo in DIR, se indicata)
 #   sweetspot-lms ricostruisci     rilegge tutta la libreria da capo
 #   sweetspot-lms plugin stato|installa NOME|rimuovi NOME
 #   sweetspot-lms riavvia          riavvia Lyrion (per i plugin)
@@ -139,35 +139,142 @@ art_ram_check() {
 	fi
 }
 
-link_caches() {
-	local arch dir f
-	arch=$(sweetspot-dischi archivio)
-	[ -n "$arch" ] && [ -d "$arch" ] || { link_caches_ram; return 0; }
-	dir=$arch/.sweetspot-cache
-	mkdir -p "$dir" 2>/dev/null || { log "lyrion: archivio non scrivibile, copertine in RAM"; link_caches_ram; return 0; }
-	for f in $CACHE_DBS; do
-		# Una cache rimasta in RAM (es. archivio scelto dopo l'avvio) si sposta.
-		if [ -f "$CACHE/$f" ] && [ ! -L "$CACHE/$f" ] && [ ! -f "$dir/$f" ]; then
-			mv "$CACHE/$f" "$dir/$f" 2>/dev/null
-		fi
-		rm -f "$CACHE/$f" "$CACHE/$f-wal" "$CACHE/$f-shm"
-		ln -s "$dir/$f" "$CACHE/$f"
-	done
-	chown -R "$LMS_USER:$LMS_USER" "$dir" 2>/dev/null
-	rm -f "$ART_FULL"
-	log "lyrion: cache delle copertine sull'archivio ($dir)"
+# Dove tenere le cache delle copertine (CACHE_COPERTINE):
+#   auto       sull'archivio musicale se c'e', altrimenti in RAM (come prima)
+#   ram        sempre in RAM, nel tmpfs a tetto (ARTWORK_RAM_MB)
+#   archivio   sull'archivio musicale; senza archivio ripiega in RAM
+#   disco      su un altro disco scelto (CACHE_COPERTINE_DISCO, il nome con cui
+#              compare in /media); deve essere scrivibile, altrimenti ripiega
+# Sul disco il tetto e' CACHE_COPERTINE_MB (auto = 1024 MB): oltre il tetto la
+# cache si butta e si rifa' (e' ricostruibile). Il ripiego in RAM e' sempre
+# dichiarato: nel registro, nel file di stato e nella pagina Stato.
+ART_STATE=$RUN/lms.artwork.stato   # posizione|cartella|tetto_mb|usati_mb|motivo
+
+art_disk_mb() {
+	local mb
+	mb=$(conf CACHE_COPERTINE_MB auto)
+	case "$mb" in ''|auto|*[!0-9]*|0) mb=1024 ;; esac
+	echo "$mb"
 }
 
-# Cache in RAM con tetto: collegamenti verso il tmpfs a misura.
-link_caches_ram() {
-	local f
-	art_ram_mount || { log "lyrion: tmpfs delle copertine non montato, cache senza tetto"; return 0; }
+# Cartella scrivibile? (si prova davvero a scriverci)
+art_writable() {
+	mkdir -p "$1" 2>/dev/null || return 1
+	: > "$1/.prova.$$" 2>/dev/null || return 1
+	rm -f "$1/.prova.$$"
+}
+
+# Decide la posizione: stampa "ram|motivo" oppure "disco|cartella".
+art_target() {
+	local scelta arch name d
+	scelta=$(lower "$(conf CACHE_COPERTINE auto)")
+	case "$scelta" in
+		ram) echo "ram|scelta dell'utente"; return ;;
+		disco)
+			name=$(conf CACHE_COPERTINE_DISCO)
+			case "$name" in
+				''|*/*|.|..) echo "ram|disco per le copertine non indicato"; return ;;
+			esac
+			d=$MEDIA_DIR/$name
+			[ -d "$d" ] || { echo "ram|disco \"$name\" non collegato"; return; }
+			art_writable "$d/.sweetspot-cache" || { echo "ram|disco \"$name\" non scrivibile (i dischi si montano in sola lettura)"; return; }
+			echo "disco|$d/.sweetspot-cache"; return ;;
+		archivio|auto) ;;
+		*) scelta=auto ;;
+	esac
+	arch=$(sweetspot-dischi archivio)
+	if [ -z "$arch" ] || [ ! -d "$arch" ]; then
+		if [ "$scelta" = archivio ]; then echo "ram|archivio musicale non collegato"; else echo "ram|"; fi
+		return
+	fi
+	art_writable "$arch/.sweetspot-cache" || { echo "ram|archivio non scrivibile"; return; }
+	echo "disco|$arch/.sweetspot-cache"
+}
+
+# Spazio (MB) occupato dalle cache in una cartella.
+art_used_mb() {
+	local f n=0 s
 	for f in $CACHE_DBS; do
-		# Le cache sono ricostruibili: un file vero (avvio precedente senza
-		# tetto) o un collegamento vecchio si sostituisce.
-		rm -f "$CACHE/$f" "$CACHE/$f-wal" "$CACHE/$f-shm"
-		ln -s "$ART_RAM/$f" "$CACHE/$f"
+		[ -f "$1/$f" ] || continue
+		s=$(wc -c < "$1/$f") || s=0
+		n=$((n + ${s:-0}))
 	done
+	echo $((n / 1048576))
+}
+
+# Sposta una cache da dove sta a dove va, senza perdere nulla se non entra: si
+# copia in un file provvisorio e solo a copia riuscita si toglie l'originale.
+# Se il file supera il tetto non si porta dietro (si rifa').
+art_move() { # origine destinazione tetto_mb
+	local sz
+	[ -f "$1" ] || return 0
+	[ "$1" = "$2" ] && return 0
+	[ -f "$2" ] && return 0
+	sz=$(wc -c < "$1") || sz=0
+	if [ $((${sz:-0} / 1048576)) -ge "$3" ]; then
+		log "lyrion: cache $1 oltre il tetto di $3 MB, non migrata (si ricostruisce)"
+		rm -f "$1"; return 0
+	fi
+	if cp "$1" "$2.tmp.$$" 2>/dev/null && mv "$2.tmp.$$" "$2" 2>/dev/null; then
+		rm -f "$1"
+	else
+		rm -f "$2.tmp.$$"
+		log "lyrion: spostamento di $1 non riuscito, resta dov'e'"
+	fi
+}
+
+link_caches() {
+	local t pos dir motivo f old cap used
+	t=$(art_target)
+	pos=${t%%|*}; dir=${t#*|}
+	motivo=
+	if [ "$pos" = ram ]; then
+		motivo=$dir; dir=$ART_RAM
+		cap=$(art_ram_mb)
+		art_ram_mount || { log "lyrion: tmpfs delle copertine non montato, cache senza tetto"; pos=ram-senza-tetto; motivo="tmpfs non montato"; }
+	else
+		cap=$(art_disk_mb)
+	fi
+	if [ "$pos" != ram-senza-tetto ]; then
+		for f in $CACHE_DBS; do
+			# Dove stava finora: un file vero in RAM, o il collegamento di prima.
+			old=
+			if [ -L "$CACHE/$f" ]; then old=$(readlink "$CACHE/$f")
+			elif [ -f "$CACHE/$f" ]; then old=$CACHE/$f; fi
+			# Cambio di posizione: migrazione sicura.
+			[ -n "$old" ] && [ "${old%/*}" != "$dir" ] && art_move "$old" "$dir/$f" "$cap"
+			rm -f "$CACHE/$f-wal" "$CACHE/$f-shm"
+			# Un file vero non migrato o un collegamento vecchio si sostituiscono.
+			rm -f "$CACHE/$f"
+			ln -s "$dir/$f" "$CACHE/$f"
+		done
+	fi
+	used=0
+	if [ "$pos" = disco ]; then
+		used=$(art_used_mb "$dir")
+		if [ "$used" -ge "$cap" ]; then
+			log "lyrion: cache delle copertine a $used MB, oltre il tetto di $cap MB: azzerata"
+			for f in $CACHE_DBS; do rm -f "$dir/$f" "$dir/$f-wal" "$dir/$f-shm"; done
+			used=0
+		fi
+		chown -R "$LMS_USER:$LMS_USER" "$dir" 2>/dev/null
+		rm -f "$ART_FULL"
+		log "lyrion: cache delle copertine su disco ($dir, $used di $cap MB)"
+	elif [ "$pos" = ram ]; then
+		used=$(art_used_mb "$ART_RAM")
+		[ -n "$motivo" ] && log "lyrion: copertine in RAM (tetto $cap MB): $motivo"
+	fi
+	mkdir -p "$RUN" 2>/dev/null
+	printf '%s|%s|%s|%s|%s\n' "$pos" "$dir" "$cap" "$used" "$motivo" > "$ART_STATE"
+	chmod 644 "$ART_STATE" 2>/dev/null
+}
+
+# Diagnostica: posizione, tetto e MB usati adesso (non quelli dell'avvio).
+do_artwork() {
+	local pos dir cap used motivo
+	IFS='|' read -r pos dir cap used motivo < "$ART_STATE" 2>/dev/null || { echo "sconosciuta"; return 1; }
+	used=$(art_used_mb "$dir")
+	echo "posizione=$pos cartella=$dir tetto_mb=$cap usati_mb=$used${motivo:+ motivo=$motivo}"
 }
 
 do_prepare() {
@@ -332,13 +439,15 @@ case "$1" in
 	attendi) do_wait "$2" ;;
 	primo-controllo) do_first_check ;;
 	scanner) do_scanner ;;
-	aggiorna) lms_json '' rescan > /dev/null ;;
+	# aggiorna [CARTELLA]: rescan incrementale (mai wipe), anche solo di una cartella
+	aggiorna) if [ -n "$2" ]; then lms_json "" rescan "singledir:$2" > /dev/null; else lms_json "" rescan > /dev/null; fi ;;
 	ricostruisci) lms_json '' wipecache > /dev/null ;;
+	copertine) do_artwork ;;
 	# json PLAYER PAROLA...: richiesta a Lyrion con le credenziali di
 	# Sweetspot, per le pagine web (che non le conoscono); sweetspot-priv
 	# lascia passare solo i comandi che le pagine usano.
 	json) shift; lms_json_locale "$@" ;;
 	plugin) shift; do_plugin "$@" ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
-	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|plugin|riavvia" >&2; exit 1 ;;
+	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|plugin|riavvia" >&2; exit 1 ;;
 esac

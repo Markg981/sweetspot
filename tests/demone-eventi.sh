@@ -32,6 +32,14 @@ cleanup() {
 		echo "  CLI finta (nc.err):"
 		head -n 10 "$E/nc.err" | sed 's/^/    | /'
 	fi
+	if [ "$FAIL" -ne 0 ] && [ -s "$E/run/stato.debug" ]; then
+		echo "  eventi ricevuti dal demone (momento in s dall'avvio, riga):"
+		grep -v 'version 9.1.1' "$E/run/stato.debug" | head -n 40 | cut -c1-110 | sed 's/^/    | /'
+	fi
+	if [ "$FAIL" -ne 0 ] && [ -s "$E/log" ]; then
+		echo "  registro del demone (ultime righe):"
+		tail -n 15 "$E/log" | sed 's/^/    | /'
+	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/demone.out" ]; then
 		echo "  uscita (stderr) del demone:"
 		head -n 40 "$E/demone.out" | sed 's/^/    | /'
@@ -124,7 +132,7 @@ denv() {
 	env SWEETSPOT_RUN="$E/run" SWEETSPOT_PROCFS="$E/proc" SWEETSPOT_LOG="$E/log" SWEETSPOT_WGET="$E/bin/wget-finto" \
 		SWEETSPOT_PATH="$E/bin:$(dirname "$BB")" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" \
 		SWEETSPOT_LIB="$OVERLAY/usr/lib/sweetspot" SWEETSPOT_PRECARICO="$E/precarico-finto" \
-		SWEETSPOT_LMS= SWEETSPOT_NC=nc-finto SWEETSPOT_UDEVADM=udevadm-finto SWEETSPOT_INOTIFYD=inotifyd-finto SWEETSPOT_STATO_MIN=1 SWEETSPOT_STATO_SCAN=0PATH="$E/bin:$PATH" "$@"
+		SWEETSPOT_LMS= SWEETSPOT_NC=nc-finto SWEETSPOT_UDEVADM=udevadm-finto SWEETSPOT_INOTIFYD=inotifyd-finto SWEETSPOT_STATO_DEBUG=1 SWEETSPOT_STATO_MIN=1 SWEETSPOT_STATO_SCAN=0 PATH="$E/bin:$PATH" "$@"
 }
 # Aspetta che una condizione (comando) diventi vera, al massimo $1 secondi.
 attendi() {
@@ -185,11 +193,21 @@ attendi 10 passi_sono 1
 if [ "$(passi)" -ge 1 ]; then ok "precarico: un passo all'avvio"; else ko "precarico: un passo all'avvio" ">= 1" "$(passi)"; fi
 
 # A riposo il demone non lancia alcun processo, nemmeno durante un ping.
-sleep 3
+# Prima si aspetta che l'avvio si sia assestato (al massimo 20 s).
+quieto=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+	A=$(esegui); sleep 2; B=$(esegui)
+	if [ $((B - A)) -le $((NOISE / 4 + 3)) ]; then quieto=$((quieto + 1)); else quieto=0; fi
+	[ "$quieto" -ge 2 ] && break
+done
 PRIMA=$(esegui)
 sleep 8
 DOPO=$(esegui)
 expect "riposo: nessun processo lanciato dal demone in 8 s (ping CLI compreso)" "si" "$([ $((DOPO - PRIMA)) -le $((NOISE + 3)) ] && echo si || echo "no: $((DOPO - PRIMA)) contro rumore $NOISE")"
+if [ $((DOPO - PRIMA)) -gt $((NOISE + 3)) ]; then
+	# Chi li fa: classifica dei processi nati nei 10 s successivi.
+	sh "$ROOT/tests/forks-riposo.sh" --dettaglio 10 2>&1 | sed 's/^/    | /'
+fi
 case "$(grep -c 'version ?' "$E/cli.cmd")" in 1|0) ko "riposo: ping CLI" "almeno 2 version ?" "$(grep -c 'version ?' "$E/cli.cmd")" ;; *) ok "riposo: il ping di liveness passa dalla CLI" ;; esac
 expect "riposo: nessun giro del check" "1" "$(giri)"
 

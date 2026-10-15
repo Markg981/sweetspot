@@ -1,0 +1,112 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - metriche di diagnostica, una per riga (chiave=valore):
+#
+#   buffer_stream_squeezelite / buffer_output_squeezelite
+#       ultima occupazione dei buffer letta dal registro di Squeezelite
+#       (-d decode=info); "nd" se il registro non la riporta
+#   riconnessioni_lyrion, riconnessione_ultima_s, riconnessione_max_s
+#       quante volte il player ha ripreso il collegamento a Lyrion e quanto
+#       c'e' voluto (dalle righe "connecting"/"connected" del registro)
+#   restart_COMPONENTE
+#       restart per componente da quando il sistema e' acceso
+#   memoria_disponibile_kb, pressione_memoria_some_avg10/_full_avg10
+#       MemAvailable e PSI di /proc/pressure/memory
+#   xrun_eventi, xrun_recuperi
+#       conteggio XRUN (contatori persistenti piu' registro corrente)
+#   log_ram_byte, log_quota_byte
+#       occupazione dei log in RAM e quota configurata
+#
+# Entra nel bundle diagnostico (sistema/metriche.txt).
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+SQLOG=${SWEETSPOT_SQLOG:-/var/log/squeezelite.log}
+
+# Buffer: l'ultimo valore dopo "streambuf" e "outputbuf" (o "output buffer").
+metrica_buffer() {
+	local out
+	out=$(awk '
+		match($0, /streambuf[^0-9]*[0-9]+/) { v = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", v); s = v }
+		match($0, /(outputbuf|output buffer)[^0-9]*[0-9]+/) { v = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", v); o = v }
+		END { printf "%s %s", (s == "" ? "nd" : s), (o == "" ? "nd" : o) }
+	' "$SQLOG" 2>/dev/null)
+	[ -n "$out" ] || out="nd nd"
+	echo "buffer_stream_squeezelite=${out% *}"
+	echo "buffer_output_squeezelite=${out#* }"
+}
+
+# Tempi di riconnessione: dal primo "connecting to"/"unable to connect" al
+# "connected" successivo. L'orario e' il prefisso [HH:MM:SS.uuuuuu].
+metrica_riconnessione() {
+	awk '
+		function secondi(riga,   h, m, s, t) {
+			if (!match(riga, /^\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) return -1
+			t = substr(riga, 2, 8)
+			h = substr(t, 1, 2) + 0; m = substr(t, 4, 2) + 0; s = substr(t, 7, 2) + 0
+			return h * 3600 + m * 60 + s
+		}
+		/connecting to|unable to connect|connect failed/ { if (t0 < 0 || t0 == "") t0 = secondi($0) }
+		/[ :]connected$|\] *connected|slimproto:[0-9]+ connected/ {
+			t1 = secondi($0)
+			if (t0 >= 0 && t0 != "" && t1 >= 0) {
+				d = t1 - t0; if (d < 0) d += 86400
+				n++; ultima = d; if (d > max) max = d
+			}
+			t0 = -1
+		}
+		BEGIN { t0 = -1 }
+		END {
+			print "riconnessioni_lyrion=" n + 0
+			print "riconnessione_ultima_s=" (n ? ultima : "nd")
+			print "riconnessione_max_s=" (n ? max : "nd")
+		}
+	' "$SQLOG" 2>/dev/null
+}
+
+metrica_restart() {
+	local f n found=0
+	for f in "$RUN"/restart.*; do
+		[ -f "$f" ] || continue
+		n=$(cat "$f" 2>/dev/null)
+		case "$n" in ''|*[!0-9]*) n=0 ;; esac
+		echo "restart_${f##*/restart.}=$n"
+		found=1
+	done
+	[ "$found" = 1 ] || echo "restart_totale=0"
+}
+
+metrica_memoria() {
+	local av some full
+	av=$(awk '/^MemAvailable:/ { print $2; exit }' "$PROC/meminfo" 2>/dev/null)
+	echo "memoria_disponibile_kb=${av:-nd}"
+	some=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' "$PROC/pressure/memory" 2>/dev/null | head -n 1)
+	full=$(sed -n 's/^full .*avg10=\([0-9.]*\).*/\1/p' "$PROC/pressure/memory" 2>/dev/null | head -n 1)
+	echo "pressione_memoria_some_avg10=${some:-nd}"
+	echo "pressione_memoria_full_avg10=${full:-nd}"
+}
+
+metrica_xrun() {
+	local c
+	c=$(xrun_total "$SQLOG" 2>/dev/null) || c="0 0"
+	echo "xrun_eventi=${c% *}"
+	echo "xrun_recuperi=${c#* }"
+}
+
+metrica_log() {
+	local f tot=0 n
+	for f in $(log_ram_files); do
+		n=$(wc -c < "$f" | tr -d ' ')
+		tot=$((tot + ${n:-0}))
+	done
+	echo "log_ram_byte=$tot"
+	echo "log_quota_byte=$(( $(conf LOG_QUOTA_KB 4096) * 1024 ))"
+}
+
+metrica_buffer
+metrica_riconnessione
+metrica_restart
+metrica_memoria
+metrica_xrun
+metrica_log
