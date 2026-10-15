@@ -114,6 +114,30 @@ json_esc() {
 	printf '%s' "$1" | tr '\001-\037' ' ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
+# Lo stesso, con la sola shell: il risultato resta in JE. Un giro del check
+# chiama json_esc centinaia di volte, ognuna con tre processi.
+# shellcheck disable=SC2034
+json_esc_v() {
+	local s=$1 o='' r c
+	# Caratteri di controllo: uno spazio.
+	while :; do
+		case "$s" in *[[:cntrl:]]*) ;; *) break ;; esac
+		r=${s%%[[:cntrl:]]*}
+		s="$r ${s#"$r"?}"
+	done
+	# Barra e virgolette: una barra davanti.
+	while :; do
+		case "$s" in *[\\\"]*) ;; *) break ;; esac
+		r=${s%%[\\\"]*}
+		o="$o$r"
+		s=${s#"$r"}
+		c=${s%"${s#?}"}
+		s=${s#?}
+		o="$o\\$c"
+	done
+	JE="$o$s"
+}
+
 # Traffico in KB/s dall'ultimo giro: nessuno sleep, la misura e' la
 # differenza con i byte letti la volta scorsa.
 traffic_kbs() {
@@ -529,7 +553,8 @@ lv_fn_report() {
 		esac
 		lv_row "$e" "$et risponde" "$det ($stato, riavvii $nr, nella finestra $win di $(lv_num LIVENESS_RIAVVII_MAX 3))"
 		lim=false; [ "$stato" = limite ] && lim=true
-		LV_FN_JSON="$LV_FN_JSON$sep{\"componente\":\"$(json_esc "$nome")\",\"stato\":\"$stato\",\"riavvii\":$nr,\"riavvii_finestra\":$win,\"limite\":$lim}"
+		json_esc_v "$nome"
+		LV_FN_JSON="$LV_FN_JSON$sep{\"componente\":\"$JE\",\"stato\":\"$stato\",\"riavvii\":$nr,\"riavvii_finestra\":$win,\"limite\":$lim}"
 		sep=,
 	done < "$LV_FN"
 }
@@ -552,7 +577,7 @@ liveness_round() { # momento
 }
 
 do_round() {
-	local every=$1 kbs esito now listening=false rows sep='' e v d
+	local every=$1 kbs esito now listening=false rows sep='' e v d je jv
 	mkdir -p "$RUN"
 	now=$(date +%s)
 	kbs=$(traffic_kbs)
@@ -569,7 +594,8 @@ do_round() {
 		printf '{"ts":%s,"intervallo":%s,"ascolto":%s,"traffico_kbs":%s,%s,"voci":[' "$now" "$every" "$listening" "$kbs" "$LV_JSON"
 		while IFS='|' read -r e v d; do
 			[ -n "$v" ] || continue
-			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$(json_esc "$e")" "$(json_esc "$v")" "$(json_esc "$d")"
+			json_esc_v "$e"; je=$JE; json_esc_v "$v"; jv=$JE; json_esc_v "$d"
+			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$je" "$jv" "$JE"
 			sep=,
 		done < "$DATI.nuovo"
 		printf ']}\n'
@@ -598,6 +624,7 @@ UDEVADM=${SWEETSPOT_UDEVADM:-udevadm}
 INOTIFYD=${SWEETSPOT_INOTIFYD:-inotifyd}
 BATTITO=$(num_env "${SWEETSPOT_STATO_BATTITO:-900}" 900 SWEETSPOT_STATO_BATTITO)
 MIN_GAP=$(num_env "${SWEETSPOT_STATO_MIN:-5}" 5 SWEETSPOT_STATO_MIN)
+MIN_EV=$(num_env "${SWEETSPOT_STATO_MIN_EV:-${SWEETSPOT_STATO_MIN:-60}}" 60 SWEETSPOT_STATO_MIN_EV)
 PRE_GAP=5
 # Secondi dopo l'avvio di Lyrion in cui si cerca lo scanner anche senza evento.
 SCAN_WIN=$(num_env "${SWEETSPOT_STATO_SCAN:-120}" 120 SWEETSPOT_STATO_SCAN)
@@ -640,12 +667,21 @@ mac_load() {
 
 # Un giro nuovo del check completo: raccoglie gli eventi ravvicinati (1 s) e
 # rispetta MIN_GAP dal giro precedente.
-want_round() {
-	[ "$DIRTY" = 1 ] && return 0
+#
+# Un giro costa centinaia di processi (sweetspot-check): quello chiesto da chi
+# legge la pagina (R) o da un verdetto di liveness rispetta MIN_GAP (5 s);
+# quello per il solo chiacchiericcio degli eventi (udev, inotify, CLI) aspetta
+# MIN_EV (60 s), cosi' a riposo e subito dopo l'avvio non ne parte uno ogni
+# poco: chi guarda lo stato lo chiede da se' e lo ha entro 12 s.
+want_round_gap() { # distanza minima dal giro precedente
+	local t=$((NOW + 1))
+	[ "$t" -ge $((LAST_ROUND + $1)) ] || t=$((LAST_ROUND + $1))
+	if [ "$DIRTY" = 1 ] && [ "$DL_ROUND" -gt 0 ] && [ "$DL_ROUND" -le "$t" ]; then return 0; fi
 	DIRTY=1
-	DL_ROUND=$((NOW + 1))
-	[ "$DL_ROUND" -ge $((LAST_ROUND + MIN_GAP)) ] || DL_ROUND=$((LAST_ROUND + MIN_GAP))
+	DL_ROUND=$t
 }
+want_round() { want_round_gap "$MIN_GAP"; }
+want_round_ev() { want_round_gap "$MIN_EV"; }
 
 run_round() {
 	DIRTY=0; DL_ROUND=0
@@ -816,20 +852,20 @@ cli_line() {
 		version) REPLY_AT=$NOW; return 0 ;;
 		rescan)
 			case "$b" in
-				done) SCANNING=0; want_round ;;
+				done) SCANNING=0; want_round_ev ;;
 				*) SCANNING=1; DL_SCAN=$((NOW + 2)) ;;
 			esac
 			return 0 ;;
 		prefset)
 			# Lyrion scrive preferenze di continuo: solo quelle che cambiano
 			# la libreria rifanno il precarico e lo stato.
-			case "$c" in audiodir|playlistdir) pre_want; want_round ;; esac
+			case "$c" in audiodir|playlistdir) pre_want; want_round_ev ;; esac
 			return 0 ;;
 		login|subscribe|listen) return 0 ;;
 	esac
 	case "$b" in
 		client)
-			want_round
+			want_round_ev
 			if [ -z "$MAC_ENC" ] || [ "$a" = "$MAC_ENC" ]; then
 				LMS_MODE=''; DL_PLAYER=$NOW; pre_want
 			fi
@@ -858,8 +894,8 @@ cli_line() {
 # Righe di udevadm monitor: "UDEV  [123.456] add /devices/... (sound)".
 udev_line() {
 	case "$1" in
-		"UDEV  ["*"(sound)") dac_cache_purge; want_round ;;
-		"UDEV  ["*"(block)"|"UDEV  ["*"(net)") want_round ;;
+		"UDEV  ["*"(sound)") dac_cache_purge; want_round_ev ;;
+		"UDEV  ["*"(block)"|"UDEV  ["*"(net)") want_round_ev ;;
 	esac
 }
 
@@ -868,11 +904,11 @@ ino_line() {
 	local name=${1##*	}
 	name=${name##*/}
 	case "$name" in
-		sweetspot.conf) cfg_load; mac_load; want_round; pre_want ;;
+		sweetspot.conf) cfg_load; mac_load; want_round_ev; pre_want ;;
 		player.mac) mac_load; LMS_MODE=''; DL_PLAYER=$NOW; pre_want ;;
-		squeezelite.pid) PLY_SUSP=0; DL_PLAYER=$NOW; want_round ;;
-		lms.pid) scan_window; want_round ;;
-		volume.effettivo|volume.modo|correzione.filtri|correzione.attiva) want_round ;;
+		squeezelite.pid) PLY_SUSP=0; DL_PLAYER=$NOW; want_round_ev ;;
+		lms.pid) scan_window; want_round_ev ;;
+		volume.effettivo|volume.modo|correzione.filtri|correzione.attiva) want_round_ev ;;
 		precarico.stato) pre_want ;;
 	esac
 }

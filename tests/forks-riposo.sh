@@ -80,6 +80,23 @@ forks_v() {
 		[ "$k" = processes ] && { FKV=$v; return 0; }
 	done < "$PROC/stat"
 }
+# FORKS_ASSESTA=N: dopo l'attesa si aspetta, per al massimo N secondi, che il
+# sistema si assesti (due passi di 5 s di fila con pochi fork): l'avvio del
+# player appena collegato il DAC e' una raffica che non e' il riposo.
+ASSESTATO=
+if [ "${FORKS_ASSESTA:-0}" -gt 0 ]; then
+	tentativi=$((FORKS_ASSESTA / 5)); calmi=0; trascorsi=0
+	forks_v; prec=$FKV
+	while [ "$tentativi" -gt 0 ]; do
+		sleep 5
+		tentativi=$((tentativi - 1)); trascorsi=$((trascorsi + 5))
+		forks_v
+		if [ $((FKV - prec)) -le "${FORKS_CALMO:-40}" ]; then calmi=$((calmi + 1)); else calmi=0; fi
+		prec=$FKV
+		[ "$calmi" -lt 2 ] || break
+	done
+	ASSESTATO="assestamento: $trascorsi s"
+fi
 a=$(forks)
 serie=
 passi=0
@@ -99,6 +116,7 @@ tot=$((b - a - propri))
 [ "$tot" -ge 0 ] || tot=0
 al_minuto=$((tot * 60 / SECONDI))
 echo "fork in ${SECONDI}s: $tot (al minuto: $al_minuto, massimo $MASSIMO)"
+[ -z "$ASSESTATO" ] || echo "$ASSESTATO; fork ogni 5 s:$serie"
 if [ "$al_minuto" -ge "$MASSIMO" ]; then
 	echo "Fork ogni 5 s:$serie"
 	if [ -n "$PRIMA" ]; then
