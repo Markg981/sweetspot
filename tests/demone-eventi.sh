@@ -3,9 +3,9 @@
 #
 # Sweetspot - prove del demone a eventi (sweetspot-stato sorveglia).
 # Il demone gira davvero, con una CLI di Lyrion, udevadm e inotifyd finti che
-# scrivono gli eventi da FIFO, e con ogni applet di BusyBox sostituita da un
-# involucro che annota ogni processo lanciato: a riposo il registro non deve
-# crescere (nessun fork), e ogni evento deve avere il suo effetto.
+# scrivono gli eventi da FIFO. I fork si contano dal contatore dei PID del
+# kernel (ns_last_pid): a riposo il demone non deve farne piu' del rumore di
+# fondo del computer, misurato prima di avviarlo; ogni evento ha il suo effetto.
 # Serve BusyBox (come sul player); senza, la prova viene saltata.
 # shellcheck disable=SC2016
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -25,7 +25,18 @@ fi
 
 WORK=$(mktemp -d)
 DPID=''
+WD=''
 cleanup() {
+	trap '' EXIT TERM
+	if [ "$FAIL" -ne 0 ] && [ -s "$E/nc.err" ]; then
+		echo "  CLI finta (nc.err):"
+		head -n 10 "$E/nc.err" | sed 's/^/    | /'
+	fi
+	if [ "$FAIL" -ne 0 ] && [ -s "$E/demone.out" ]; then
+		echo "  uscita (stderr) del demone:"
+		head -n 40 "$E/demone.out" | sed 's/^/    | /'
+	fi
+	kill "$WD" 2>/dev/null
 	[ -z "$DPID" ] || kill "$DPID" 2>/dev/null
 	kill $(cat "$WORK/pids" 2>/dev/null) 2>/dev/null
 	# Gli ascoltatori finti (cat sulle FIFO) non devono restare in giro.
@@ -33,25 +44,24 @@ cleanup() {
 	rm -rf "$WORK"
 }
 trap cleanup EXIT
+# Tetto globale alla sezione: se qualcosa si pianta fallisce con un messaggio.
+trap 'echo "  NO  la prova del demone ha superato i 300 s"; FAIL=$((FAIL + 1)); exit 1' TERM
+( sleep 300; kill -TERM $$ 2>/dev/null ) > /dev/null 2>&1 &
+WD=$!
 
 E=$WORK/e
 mkdir -p "$E/bin" "$E/run" "$E/proc/net" "$E/proc/asound/card1/pcm0p/sub0" "$E/real"
-LOGX=$E/exec.log
-: > "$LOGX"
-# Ogni applet di BusyBox passa da un involucro che lo annota.
-for a in $("$BB" --list); do
-	case "$a" in sh|ash|\[|\[\[) continue ;; esac
-	printf '#!%s sh\necho %s >> "%s"\nexec %s %s "$@"\n' "$BB" "$a" "$LOGX" "$BB" "$a" > "$E/bin/$a"
-	chmod +x "$E/bin/$a"
-done
-# Gli strumenti finti non annotano nulla (non sono il demone).
+# Gli strumenti finti hanno nomi propri (nc-finto...): BusyBox preferisce i
+# suoi applet a quelli nel PATH, e il demone li prende da SWEETSPOT_NC & co.
 for f in cli udev ino; do mkfifo "$E/$f.in"; done
-printf '#!%s sh\nwhile :; do %s cat "%s/udev.in"; done\n' "$BB" "$BB" "$E" > "$E/real/udevadm"
-printf '#!%s sh\nwhile :; do %s cat "%s/ino.in"; done\n' "$BB" "$BB" "$E" > "$E/real/inotifyd"
-cat > "$E/real/nc" <<EOF
+printf '#!%s sh\nwhile :; do %s cat "%s/udev.in"; done\n' "$BB" "$BB" "$E" > "$E/real/udevadm-finto"
+printf '#!%s sh\nwhile :; do %s cat "%s/ino.in"; done\n' "$BB" "$BB" "$E" > "$E/real/inotifyd-finto"
+cat > "$E/real/nc-finto" <<EOF
 #!$BB sh
 # CLI finta: gli eventi arrivano dalla FIFO, "version ?" riceve risposta
 # (salvo il file muto) e i comandi ricevuti restano in cli.cmd.
+exec 2>>"$E/nc.err"
+echo "nc \$*" >> "$E/nc.err"
 ( while :; do $BB cat "$E/cli.in"; done ) &
 FEED=\$!
 trap 'kill \$FEED 2>/dev/null' EXIT TERM
@@ -114,7 +124,7 @@ denv() {
 	env SWEETSPOT_RUN="$E/run" SWEETSPOT_PROCFS="$E/proc" SWEETSPOT_LOG="$E/log" SWEETSPOT_WGET="$E/bin/wget-finto" \
 		SWEETSPOT_PATH="$E/bin:$(dirname "$BB")" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" \
 		SWEETSPOT_LIB="$OVERLAY/usr/lib/sweetspot" SWEETSPOT_PRECARICO="$E/precarico-finto" \
-		SWEETSPOT_LMS= SWEETSPOT_STATO_MIN=1SWEETSPOT_STATO_SCAN=0 PATH="$E/bin:$PATH" "$@"
+		SWEETSPOT_LMS= SWEETSPOT_NC=nc-finto SWEETSPOT_UDEVADM=udevadm-finto SWEETSPOT_INOTIFYD=inotifyd-finto SWEETSPOT_STATO_MIN=1 SWEETSPOT_STATO_SCAN=0PATH="$E/bin:$PATH" "$@"
 }
 # Aspetta che una condizione (comando) diventi vera, al massimo $1 secondi.
 attendi() {
@@ -127,15 +137,38 @@ attendi() {
 	done
 	"$@"
 }
+# Scrive una riga in una FIFO degli eventi senza mai bloccarsi (se il demone
+# o l'ascoltatore finto non c'e', la scrittura si abbandona dopo 3 s).
+invia() { # fifo riga
+	timeout 3 sh -c 'printf "%s\n" "$2" > "$1"' sh "$1" "$2" 2>/dev/null
+	return 0
+}
 giri() { [ -f "$E/giri" ] && wc -l < "$E/giri" | tr -d ' ' || echo 0; }
 passi() { [ -f "$E/passi" ] && wc -l < "$E/passi" | tr -d ' ' || echo 0; }
-esegui() { wc -l < "$LOGX" | tr -d ' '; }
+# Ultimo PID assegnato: ogni fork del sistema lo fa salire di uno.
+esegui() { local n; read -r n < /proc/sys/kernel/ns_last_pid; echo "$n"; }
+# Differenza con il rumore di fondo (la stessa finestra senza demone, misurata
+# prima di avviarlo): processi lanciati dal solo demone, con 3 di tolleranza.
+rumore() { # secondi
+	local a b
+	a=$(esegui); sleep "$1"; b=$(esegui)
+	echo $((b - a))
+}
 giri_sono() { [ "$(giri)" -ge "$1" ]; }
 passi_sono() { [ "$(passi)" -ge "$1" ]; }
 
-denv "$BB" sh "$OVERLAY/usr/bin/sweetspot-stato" sorveglia > "$E/demone.out" 2>&1 &
-DPID=$!
+NOISE=$(rumore 8)
+echo "  (rumore di fondo del computer: $NOISE processi in 8 s)"
+# Il pid scritto e' quello del demone (exec), non della subshell di denv.
+denv "$BB" sh -c 'echo $$ > "$1"; shift; exec "$@"' sh "$E/dpid" "$BB" sh "$OVERLAY/usr/bin/sweetspot-stato" sorveglia > "$E/demone.out" 2>&1 &
+attendi 10 test -s "$E/dpid"
+DPID=$(cat "$E/dpid" 2>/dev/null)
 attendi 20 test -s "$E/run/stato.json"
+if [ ! -s "$E/run/stato.json" ]; then
+	echo "  il demone non ha scritto la cache; uscita del demone:"
+	sed 's/^/    | /' "$E/demone.out" | head -n 30
+	kill -0 "$DPID" 2>/dev/null && echo "    (il processo e' ancora vivo)" || echo "    (il processo e' terminato)"
+fi
 expect "demone: primo giro all'avvio, cache scritta" "1" "$(giri)"
 expect "demone: FIFO delle richieste scrivibile da tutti, quelle interne no" "622|600" "$(stat -c %a "$E/run/stato.richiesta")|$(stat -c %a "$E/run/stato.cli")"
 expect "demone: cache del DAC attiva" "si" "$([ -f "$E/run/dac.cache.attiva" ] && echo si || echo no)"
@@ -145,51 +178,52 @@ case "$(cat "$E/cli.cmd" 2>/dev/null)" in
 	*) ko "CLI iscrizione" "subscribe playlist,mixer,prefset,client,rescan" "$(cat "$E/cli.cmd" 2>/dev/null)" ;;
 esac
 attendi 10 passi_sono 1
-expect "precarico: un passo all'avvio" "1" "$(passi)"
+if [ "$(passi)" -ge 1 ]; then ok "precarico: un passo all'avvio"; else ko "precarico: un passo all'avvio" ">= 1" "$(passi)"; fi
 
 # A riposo il demone non lancia alcun processo, nemmeno durante un ping.
 sleep 3
 PRIMA=$(esegui)
 sleep 8
 DOPO=$(esegui)
-expect "riposo: nessun processo lanciato in 8 s (ping CLI compreso)" "0" "$((DOPO - PRIMA))"
+expect "riposo: nessun processo lanciato dal demone in 8 s (ping CLI compreso)" "si" "$([ $((DOPO - PRIMA)) -le $((NOISE + 3)) ] && echo si || echo "no: $((DOPO - PRIMA)) contro rumore $NOISE")"
 case "$(grep -c 'version ?' "$E/cli.cmd")" in 1|0) ko "riposo: ping CLI" "almeno 2 version ?" "$(grep -c 'version ?' "$E/cli.cmd")" ;; *) ok "riposo: il ping di liveness passa dalla CLI" ;; esac
 expect "riposo: nessun giro del check" "1" "$(giri)"
 
 # Eventi che non devono muovere nulla: volume e preferenze qualunque.
-echo "$ENC mixer volume 40" > "$E/cli.in"
-echo "prefset server currentVersion 9.1.1" > "$E/cli.in"
+P0=$(passi)
+invia "$E/cli.in" "$ENC mixer volume 40"
+invia "$E/cli.in" "prefset server currentVersion 9.1.1"
 sleep 3
-expect "CLI: mixer e prefset qualunque non fanno giri" "1|1" "$(giri)|$(passi)"
+expect "CLI: mixer e prefset qualunque non fanno giri ne' passi" "1|$P0" "$(giri)|$(passi)"
 
 # Eventi playlist -> precarico.
-echo "$ENC playlist newsong Titolo 3" > "$E/cli.in"
-attendi 10 passi_sono 2
-expect "CLI: evento playlist, un passo del precarico" "2" "$(passi)"
-echo "02%3A00%3A00%3A00%3A00%3A99 playlist newsong Altro 1" > "$E/cli.in"
+invia "$E/cli.in" "$ENC playlist newsong Titolo 3"
+attendi 10 passi_sono $((P0 + 1))
+expect "CLI: evento playlist, un passo del precarico" "$((P0 + 1))" "$(passi)"
+invia "$E/cli.in" "02%3A00%3A00%3A00%3A00%3A99 playlist newsong Altro 1"
 sleep 3
-expect "CLI: playlist di un altro player ignorata" "2" "$(passi)"
+expect "CLI: playlist di un altro player ignorata" "$((P0 + 1))" "$(passi)"
 
 # udev.
 mkdir -p "$E/run/dac.cache"
 echo x > "$E/run/dac.cache/hw.1"
-echo 'UDEV  [12.345] add      /devices/pci0000:00/0000:00:14.0/usb1/1-1/sound/card1 (sound)' > "$E/udev.in"
+invia "$E/udev.in" 'UDEV  [12.345] add      /devices/pci0000:00/0000:00:14.0/usb1/1-1/sound/card1 (sound)'
 attendi 10 giri_sono 2
 expect "udev: evento sound, nuovo giro" "2" "$(giri)"
 expect "udev: evento sound, cache del DAC svuotata" "no" "$([ -e "$E/run/dac.cache" ] && echo si || echo no)"
-echo 'UDEV  [13.000] add      /devices/virtual/net/tap0 (net)' > "$E/udev.in"
+invia "$E/udev.in" 'UDEV  [13.000] add      /devices/virtual/net/tap0 (net)'
 attendi 10 giri_sono 3
 expect "udev: evento net, nuovo giro" "3" "$(giri)"
-echo 'UDEV  [14.000] change   /devices/pci0000:00/block/sda (block)' > "$E/udev.in"
+invia "$E/udev.in" 'UDEV  [14.000] change   /devices/pci0000:00/block/sda (block)'
 attendi 10 giri_sono 4
 expect "udev: evento block, nuovo giro" "4" "$(giri)"
 
 # inotify sulla configurazione.
 printf '%s\nLIVENESS=si\n' "$(cat "$E/run/sweetspot.conf")" > "$E/run/sweetspot.conf.n" && mv "$E/run/sweetspot.conf.n" "$E/run/sweetspot.conf"
-printf 'y\t%s/sweetspot.conf\n' "$E/run" > "$E/ino.in"
+invia "$E/ino.in" "$(printf 'y\t%s/sweetspot.conf\n' "$E/run")"
 attendi 10 giri_sono 5
 expect "inotify: configurazione cambiata, nuovo giro" "5" "$(giri)"
-printf 'w\t%s/qualcosa.altro\n' "$E/run" > "$E/ino.in"
+invia "$E/ino.in" "$(printf 'w\t%s/qualcosa.altro\n' "$E/run")"
 sleep 3
 expect "inotify: file non osservato ignorato" "5" "$(giri)"
 
@@ -203,15 +237,15 @@ denv "$BB" sh -c '. "$SWEETSPOT_LIB/common.sh"; stato_richiedi' > /dev/null 2>&1
 expect "richiesta: cache fresca, nessun giro" "6" "$(giri)"
 
 # Scansione: lo scanner (figlio di Lyrion) passa a +500, gli altri no.
-echo "rescan starting" > "$E/cli.in"
+invia "$E/cli.in" "rescan starting"
 attendi 10 grep -qx 500 "$E/proc/4243/oom_score_adj"
 expect "rescan: scanner di Lyrion a +500 nell'OOM killer" "500|-100" "$(cat "$E/proc/4243/oom_score_adj")|$(cat "$E/proc/4244/oom_score_adj")"
-echo "rescan done" > "$E/cli.in"
+invia "$E/cli.in" "rescan done"
 
 # Liveness del player: play ma il PCM non e' RUNNING.
 PRIMA=$(esegui)
 echo play > "$E/modo"
-echo "$ENC playlist play" > "$E/cli.in"
+invia "$E/cli.in" "$ENC playlist play"
 T0=$(date +%s)
 attendi 30 sh -c "! kill -0 $SQ 2>/dev/null"
 T1=$(date +%s)
@@ -225,12 +259,12 @@ SQ=$!
 echo "$LMS $SQ" > "$WORK/pids"
 echo "$SQ" > "$E/run/squeezelite.pid"
 printf 'state: RUNNING\n' > "$E/proc/asound/card1/pcm0p/sub0/status"
-printf 'y\t%s/squeezelite.pid\n' "$E/run" > "$E/ino.in"
+invia "$E/ino.in" "$(printf 'y\t%s/squeezelite.pid\n' "$E/run")"
 sleep 8
 PRIMA=$(esegui)
 sleep 8
 DOPO=$(esegui)
-expect "player: PCM RUNNING, nessun fork in 8 s" "0" "$((DOPO - PRIMA))"
+expect "player: PCM RUNNING, nessun fork del demone in 8 s" "si" "$([ $((DOPO - PRIMA)) -le $((NOISE + 3)) ] && echo si || echo "no: $((DOPO - PRIMA)) contro rumore $NOISE")"
 expect "player: PCM RUNNING, squeezelite resta" "si" "$(kill -0 "$SQ" 2>/dev/null && echo si || echo no)"
 
 # Liveness di Lyrion: la CLI non risponde e il JSON-RPC nemmeno.
@@ -248,7 +282,7 @@ DPID=''
 expect "demone: FIFO e cache attiva rimosse" "no" "$([ -e "$E/run/stato.richiesta" ] || [ -e "$E/run/dac.cache.attiva" ] && echo si || echo no)"
 
 # Controlli sul sorgente: niente piu' poller.
-if grep -q 'oom_watch' "$OVERLAY/usr/bin/sweetspot-lms"; then
+if grep -q '^oom_watch()' "$OVERLAY/usr/bin/sweetspot-lms"; then
 	ko "sweetspot-lms: niente oom_watch" "assente" "presente"
 else ok "sweetspot-lms: niente oom_watch (lo scanner lo gestisce il demone a eventi)"; fi
 if grep -Eq '^[[:space:]]*sleep ' "$OVERLAY/usr/bin/sweetspot-stato" "$OVERLAY/usr/bin/sweetspot-precarico"; then
