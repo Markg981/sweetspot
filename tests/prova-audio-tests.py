@@ -1210,6 +1210,17 @@ class RefusedRateEvidence(unittest.TestCase):
         self.assertIn("rate 96000", DRIVER.REFUSED_ASOUNDRC)
         self.assertFalse(DRIVER.REFUSED_DEVICE.startswith("hw:"))
 
+    def test_only_96k_in_aplay_dump(self):
+        for rate in ("96000", "[96000 96001)", "[96000 96000]"):
+            with self.subTest(rate=rate):
+                self.assertTrue(DRIVER.only_rate_offered("HW Params of device:\nRATE: %s\n" % rate, 96000))
+
+    def test_wider_or_other_rates_are_rejected(self):
+        for rate in ("[8000 192001)", "[88200 96001)", "[96000 96002)", "[96000 192000]", "88200", "[96001 96002)"):
+            with self.subTest(rate=rate):
+                self.assertFalse(DRIVER.only_rate_offered("RATE: %s\n" % rate, 96000))
+        self.assertFalse(DRIVER.only_rate_offered("nessuna riga", 96000))
+
     def test_case_needs_a_booted_target(self):
         with tempfile.TemporaryDirectory() as temp:
             result = DRIVER.run_refused_rate_case(None, Path(temp), DRIVER.ChrootTarget(Path(temp)))

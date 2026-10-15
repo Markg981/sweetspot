@@ -1372,6 +1372,23 @@ REFUSED_ASOUNDRC = """pcm.%s {
 """ % (REFUSED_DEVICE, REFUSED_ACCEPTED_RATE)
 
 
+def only_rate_offered(hw_params, rate):
+    """Il dump di aplay offre solo `rate`: valore singolo o intervallo di un solo intero."""
+    match = re.search(r"^RATE:\s*(.+?)\s*$", hw_params, re.M)
+    if not match:
+        return False
+    value = match.group(1)
+    if re.fullmatch(r"%d" % rate, value):
+        return True
+    interval = re.fullmatch(r"\[(\d+)\s+(\d+)([)\]])", value)
+    if not interval:
+        return False
+    low, high = int(interval.group(1)), int(interval.group(2))
+    if interval.group(3) == ")":
+        high -= 1
+    return low == rate and high == rate
+
+
 def refused_rate_evidence(log_text, source_rate=REFUSED_SOURCE_RATE, accepted_rate=REFUSED_ACCEPTED_RATE):
     """Il registro di Squeezelite prova ricampionamento e assenza di blocco."""
     resampled = re.search(r"resampl\w* from %d *(?:->|to) *%d" % (source_rate, accepted_rate), log_text) is not None
@@ -1405,11 +1422,12 @@ def run_refused_rate_case(client, output, target, *, process_factory=subprocess.
         rc_written = True
         # Premessa del caso: il DAC finto accetta solo 96 kHz (e non 88,2 kHz).
         try:
-            hw = target.run("aplay -D %s --dump-hw-params -d 1 /dev/zero 2>&1; true" % REFUSED_DEVICE).decode(errors="replace")
+            hw = target.run("aplay -D %s --dump-hw-params -f S32_LE -c 2 -r %d -d 1 /dev/zero 2>&1; true"
+                            % (REFUSED_DEVICE, REFUSED_ACCEPTED_RATE)).decode(errors="replace")
         except OSError as error:
             raise AudioError("the refusing DAC cannot be opened with aplay: %s" % error) from error
         report["fake_dac_hw_params"] = hw.splitlines()[:30]
-        if not re.search(r"^RATE:\s*96000\s*$", hw, re.M):
+        if not only_rate_offered(hw, REFUSED_ACCEPTED_RATE):
             raise AudioError("the refusing DAC does not offer only %d Hz: %s" % (REFUSED_ACCEPTED_RATE, hw.strip()[:300]))
         with target.fixtures(references) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             target.remove(engine_log)
