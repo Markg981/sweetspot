@@ -1107,15 +1107,15 @@ dsp 'CORREZIONE=si' prepara 1 > /dev/null
 expect "tornando al volume fisso il guadagno riparte da 0 dB" "0.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
 VB=$DSPE/volbin
 mkdir -p "$VB"
-printf '#!/bin/sh\nprintf "%%s\\n" "$2" >> "%s"\necho "{}"\n' "$DSPE/run/camilla.call" > "$VB/sweetspot-camilla"
+cp "$ROOT/tests/fixtures/camilla-finta.sh" "$VB/sweetspot-camilla"
 chmod +x "$VB/sweetspot-camilla"
 vol() {
-	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_VOLUME_PAUSA=0 SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
 		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume" sh "$@"
 }
 volfn() { # funzione
-	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_VOLUME_PAUSA=0 SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf SWEETSPOT_TEST=1 \
 		SWEETSPOT_WGET=$VB/wget SWEETSPOT_VOLUME_ATTESA=10 \
 		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume; $1"
@@ -1137,6 +1137,33 @@ vol applica 0 0
 expect "volume 0: sordina" "-74.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
 vol applica abc 0; rc=$?
 expect "volume non numerico: nessun cambio" "1|-74.0 1" "$rc|$(cat "$DSPE/run/camilladsp.volume")"
+# Esito dei comandi a CamillaDSP: stato richiesto e stato applicato separati.
+vol applica 50 0
+expect "volume 50 riuscito: richiesto e applicato coincidono" "50 -24.7 0|50 -24.7 0" \
+	"$(cat "$DSPE/run/volume.dsp")|$(cat "$DSPE/run/volume.applicato")"
+rm -f "$DSPE/run/camilla.call"
+echo 2 > "$DSPE/run/camilla.fail"
+vol applica 60 0; rc=$?
+expect "errore IPC sotto il limite: ritenta e va a buon fine" "0|3|60 -19.7 0|-19.7" \
+	"$rc|$(grep -c SetVolume "$DSPE/run/camilla.call")|$(cat "$DSPE/run/volume.applicato")|$(cat "$DSPE/run/camilla.vol")"
+echo 99 > "$DSPE/run/camilla.fail"
+rm -f "$DSPE/run/camilla.call"
+vol applica 80 0; rc=$?
+expect "CamillaDSP non risponde: tentativi limitati, esito errore, richiesto != applicato" "1|3|80 -9.9 0|errore|-19.7" \
+	"$rc|$(grep -c SetVolume "$DSPE/run/camilla.call")|$(cat "$DSPE/run/volume.dsp")|$(cat "$DSPE/run/volume.applicato")|$(cat "$DSPE/run/camilla.vol")"
+# Riavvio del DSP: riparte da un altro volume, il controllo periodico lo riallinea.
+echo 0 > "$DSPE/run/camilla.fail"
+echo "-74.0" > "$DSPE/run/camilla.vol"; echo true > "$DSPE/run/camilla.mute"
+volfn 'dsp_resync'
+expect "riavvio di CamillaDSP: il volume richiesto viene riapplicato" "-9.9|false|80 -9.9 0" \
+	"$(cat "$DSPE/run/camilla.vol")|$(cat "$DSPE/run/camilla.mute")|$(cat "$DSPE/run/volume.applicato")"
+rm -f "$DSPE/run/camilla.call"
+volfn 'dsp_resync'
+expect "gia' allineato: nessun comando di scrittura" "0" "$(grep -c Set "$DSPE/run/camilla.call")"
+echo 99 > "$DSPE/run/camilla.fail"; echo "-74.0" > "$DSPE/run/camilla.vol"
+volfn 'dsp_resync'; echo 0 > "$DSPE/run/camilla.fail"
+expect "DSP irraggiungibile durante il riavvio: nessun errore, nessuna modifica" "-74.0" "$(cat "$DSPE/run/camilla.vol")"
+vol applica 100 0
 # Primo allineamento: si riprova finche' Lyrion conosce il player.
 printf '#!/bin/sh\ncase "$*" in *mixer*volume*) n=$(cat "%s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "%s"; [ $n -ge 3 ] && echo "{\\"result\\":{\\"_volume\\":70}}" ;; *mixer*muting*) echo "{\\"result\\":{\\"_muting\\":0}}" ;; esac\nexit 0\n' "$DSPE/run/wget.n" "$DSPE/run/wget.n" > "$VB/wget"
 chmod +x "$VB/wget"
@@ -1921,6 +1948,51 @@ printf 'MemTotal: 262144 kB\n' > "$CC/proc/meminfo"
 art_small=$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)
 printf 'MemTotal: 33554432 kB\n' > "$CC/proc/meminfo"
 expect "tetto dell'artwork: minimo 32 MB, mai oltre 256" "32|256" "$art_small|$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)"
+# Cache delle copertine selezionabile: ram / archivio / disco, migrazione, tetto, ripiego.
+printf '#!/bin/sh\n[ "$1" = archivio ] && echo "%s"\n' "$CC/archivio" > "$CC/bin/sweetspot-dischi"
+mkdir -p "$CC/media/SSD"
+cc_stato() { cut -d'|' -f1,5 "$CC/run/lms.artwork.stato"; }
+rm -f "$CC/lms/cache/artwork.db" "$CC/lms/cache/imgproxy.db" "$CC/archivio/.sweetspot-cache"/*
+echo dati-ssd > "$CC/lms/cache/artwork.db"
+printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=SSD\n' > "$CC/run/sweetspot.conf"
+SWEETSPOT_MEDIA=$CC/media lmsfn link_caches
+expect "cache su un altro disco: collegamento verso l'SSD" "$CC/media/SSD/.sweetspot-cache/artwork.db" "$(readlink "$CC/lms/cache/artwork.db")"
+expect "migrazione dalla RAM all'SSD: contenuto conservato, stato su disco" "dati-ssd|disco|" "$(cat "$CC/media/SSD/.sweetspot-cache/artwork.db")|$(cc_stato)"
+expect "diagnostica: posizione, tetto e usati" "posizione=disco cartella=$CC/media/SSD/.sweetspot-cache tetto_mb=1024 usati_mb=0" "$(SWEETSPOT_MEDIA=$CC/media lmsfn do_artwork)"
+# Cambio di posizione dall'SSD all'archivio.
+printf 'CACHE_COPERTINE=archivio\n' > "$CC/run/sweetspot.conf"
+SWEETSPOT_MEDIA=$CC/media lmsfn link_caches
+expect "migrazione SSD -> archivio" "dati-ssd|$CC/archivio/.sweetspot-cache/artwork.db|no" \
+	"$(cat "$CC/archivio/.sweetspot-cache/artwork.db")|$(readlink "$CC/lms/cache/artwork.db")|$([ -e "$CC/media/SSD/.sweetspot-cache/artwork.db" ] && echo si || echo no)"
+# Disco che manca: ripiego in RAM dichiarato.
+printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=Assente\n' > "$CC/run/sweetspot.conf"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc SWEETSPOT_MEDIA=$CC/media lmsfn link_caches
+expect "disco assente: ripiego in RAM dichiarato" "ram|disco \"Assente\" non collegato" "$(cc_stato)"
+expect "ripiego: cache nel tmpfs a tetto" "$CC/lms/artwork-ram/artwork.db" "$(readlink "$CC/lms/cache/artwork.db")"
+expect "ripiego: la cache dell'archivio e' passata in RAM" "dati-ssd" "$(cat "$CC/lms/artwork-ram/artwork.db")"
+# Scelta esplicita della RAM, anche con l'archivio presente.
+printf 'CACHE_COPERTINE=ram\n' > "$CC/run/sweetspot.conf"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "CACHE_COPERTINE=ram con archivio: resta in RAM, tetto visibile" "ram|scelta dell'utente|256" "$(cc_stato)|$(cut -d'|' -f3 "$CC/run/lms.artwork.stato")"
+# Tetto sul disco: una cache oltre il tetto non si migra (si ricostruisce).
+printf 'CACHE_COPERTINE=archivio\nCACHE_COPERTINE_MB=1\n' > "$CC/run/sweetspot.conf"
+head -c 2097152 /dev/zero > "$CC/lms/artwork-ram/artwork.db"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "cache oltre il tetto: non migrata" "no" "$([ -s "$CC/archivio/.sweetspot-cache/artwork.db" ] && echo si || echo no)"
+# Disco non scrivibile (nome con barra rifiutato).
+printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=../x\n' > "$CC/run/sweetspot.conf"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "nome del disco con percorso: rifiutato, ripiego" "ram|disco per le copertine non indicato" "$(cc_stato)"
+rm -f "$CC/run/sweetspot.conf"
+# Il tetto della cache in RAM rientra nella quota servizi del budget RAM unificato.
+mkdir -p "$CC/q/run" "$CC/q/proc"
+printf 'MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n' > "$CC/q/proc/meminfo"
+q0=$(run "$CC/q" "ram_quote" | awk '$1 == "servizi" {print $2}')
+echo 'ram|/x|100|5|' > "$CC/q/run/lms.artwork.stato"
+q1=$(run "$CC/q" "ram_quote" | awk '$1 == "servizi" {print $2}')
+expect "budget RAM: i 100 MB di cache copertine in RAM contano nei servizi" "102400" "$((q1 - q0))"
+echo 'disco|/x|100|5|' > "$CC/q/run/lms.artwork.stato"
+expect "budget RAM: cache su disco, nessun costo" "$q0" "$(run "$CC/q" "ram_quote" | awk '$1 == "servizi" {print $2}')"
 # Tetti di memoria cgroup di Lyrion e dello scanner (cgroup finto nei file).
 CGT=$CC/cgroup
 mkdir -p "$CGT"
@@ -2757,7 +2829,19 @@ echo riserva > "$Q/run/volume.modo"
 expect "stato: volume a 64 bit non disponibile, riserva software" \
 	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, con dither TPDF di Squeezelite" \
 	"$(qcheck Volume)"
-rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp"
+echo dsp > "$Q/run/volume.modo"
+echo "70 -11.1 0" > "$Q/run/volume.dsp"
+echo "errore" > "$Q/run/volume.applicato"
+expect "stato: volume richiesto non confermato da CamillaDSP" \
+	"ATTENZIONE|Volume|a 64 bit: richiesto 70 (-11.1 dB), ma CamillaDSP non ha confermato il comando: il guadagno effettivo puo' essere diverso; si risincronizza da solo" \
+	"$(qcheck Volume)"
+echo "50 -24.7 0" > "$Q/run/volume.applicato"
+expect "stato: volume richiesto diverso dall'applicato" \
+	"ATTENZIONE|Volume|a 64 bit: richiesto 70 (-11.1 dB), applicato 50 (-24.7 dB); si risincronizza da solo" \
+	"$(qcheck Volume)"
+echo "70 -11.1 0" > "$Q/run/volume.applicato"
+expect "stato: richiesto e applicato uguali, nessun avviso" "OK" "$(qcheck Volume | cut -d'|' -f1)"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp" "$Q/run/volume.applicato"
 mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
 printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
 echo 777 > "$Q/run/squeezelite.pid"
@@ -3325,6 +3409,7 @@ sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
+sh "$ROOT/tests/quota-log.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1

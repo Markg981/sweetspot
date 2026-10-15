@@ -568,6 +568,9 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `PRECARICO_STANDBY` | `si`, `no`: dischi meccanici in standby a coda caricata | si |
 | `LYRION_MEM_MB`, `SCANNER_MEM_MB` | tetto di memoria (cgroup v2: `memory.max`, con `memory.high` all'85%) di Lyrion e del suo scanner: MB o `auto` (70% e 40% della RAM). Il tmpfs scritto da Lyrion (database della libreria) conta nel suo tetto | auto |
 | `ARTWORK_RAM_MB` | cache delle copertine in RAM, in un tmpfs a parte con `size=`, quando non c'è l'archivio musicale: MB o `auto` (4% della RAM, tra 32 e 256 MB). Piena, la pagina Stato avvisa e le nuove copertine non si salvano | auto |
+| `CACHE_COPERTINE` | dove tenere la cache delle copertine di Lyrion: `auto` (archivio musicale se c'è, altrimenti RAM), `ram` (tmpfs con tetto `ARTWORK_RAM_MB`, i dischi non si svegliano), `archivio`, `disco` (un altro disco scrivibile indicato in `CACHE_COPERTINE_DISCO`). Al cambio la cache si sposta con una copia e solo a copia riuscita si toglie l'originale; se il disco manca o non è scrivibile si ripiega in RAM e la pagina Sistema/Stato lo dichiara. Vale dal prossimo avvio; `sweetspot-lms copertine` mostra posizione, tetto e MB usati | auto |
+| `CACHE_COPERTINE_DISCO` | nome (come in `/media`) del disco per `CACHE_COPERTINE=disco` | vuoto |
+| `CACHE_COPERTINE_MB` | tetto della cache sul disco, in MB: oltre il tetto la cache si azzera e si ricostruisce | auto (1024) |
 | `DISCHI`, `ESCLUDI_DISCHI` | dischi locali, nomi da escludere | si, vuoto |
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD`, `_SMB1` | cartelle di rete (fino a 9): `//server/cartella` (SMB) o `nfs://server/cartella` (NFS); `_SMB1=si` ammette SMB1, insicuro | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |

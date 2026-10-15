@@ -170,6 +170,7 @@ static const struct chiave CHIAVI[] = {
 	{"NOME_PLAYER", 's', 0}, {"MODALITA", 'w', 0}, {"PROFILO", 'w', 0},
 	{"MODALITA_ASCOLTO", 'w', 0}, {"PRECARICO", 'w', 0}, {"OTTIMIZZAZIONI", 'w', 0},
 	{"RENDERER_UPNP", 'b', 0},
+	{"CACHE_COPERTINE", 'w', 0}, {"CACHE_COPERTINE_DISCO", 'l', 0}, {"CACHE_COPERTINE_MB", 'w', 0},
 	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
 	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
 	{"BLUETOOTH", 'b', 0}, {"BLUETOOTH_NOME", 'm', 0},

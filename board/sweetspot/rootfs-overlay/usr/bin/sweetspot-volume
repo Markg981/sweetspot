@@ -16,7 +16,7 @@
 # 25 = -37 dB), da 25 a 1 1,48 dB per passo (1 = -72,5 dB), 0 = sordina.
 # Ogni valore va nel file che il plugin cdsp legge a ogni avvio di CamillaDSP
 # (sweetspot-dsp stato) e, dal vivo, al websocket di CamillaDSP (rampa di
-# 400 ms). Il guadagno non supera mai 0 dB (volume_limit nella configurazione).
+# 400 ms; l'esito si verifica, si ritenta e ogni 10 s si risincronizza). Il guadagno non supera mai 0 dB (volume_limit nella configurazione).
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -38,6 +38,22 @@ db() { # volume 0-100
 	}'
 }
 
+# Un comando al websocket di CamillaDSP, ritentato poche volte: vale solo se
+# la risposta dice "Ok" (un errore IPC o un riavvio in corso non lo sono).
+dsp_send() { # comando
+	local i=0 r max=${SWEETSPOT_VOLUME_TENTATIVI:-3}
+	while [ $i -lt "$max" ]; do
+		r=$(sweetspot-camilla "$DSP_PORTA" "$1" 2>/dev/null)
+		case "$r" in *'"result":"Ok"'*) return 0 ;; esac
+		i=$((i + 1))
+		[ $i -lt "$max" ] && sleep "${SWEETSPOT_VOLUME_PAUSA:-1}"
+	done
+	return 1
+}
+
+# volume.dsp = stato richiesto (cio' che Lyrion ha chiesto); volume.applicato
+# = stato confermato da CamillaDSP, oppure "errore" se non ha risposto Ok.
+# La diagnostica (sweetspot-check) mostra se i due divergono.
 apply() { # volume muto
 	local v=${1%.*} m=$2 d mute=false
 	case "$v" in ''|-|*[!0-9-]*) return 1 ;; esac
@@ -48,9 +64,29 @@ apply() { # volume muto
 	d=$(db "$v")
 	[ "$m" = 1 ] && mute=true
 	if [ "$mute" = true ]; then sweetspot-dsp stato "$d" muto; else sweetspot-dsp stato "$d"; fi || return 1
-	sweetspot-camilla "$DSP_PORTA" "{\"SetVolume\":$d}" > /dev/null 2>&1
-	sweetspot-camilla "$DSP_PORTA" "{\"SetMute\":$mute}" > /dev/null 2>&1
 	echo "$v $d $m" > "$RUN/volume.dsp"
+	if dsp_send "{\"SetVolume\":$d}" && dsp_send "{\"SetMute\":$mute}"; then
+		echo "$v $d $m" > "$RUN/volume.applicato"
+	else
+		echo errore > "$RUN/volume.applicato"
+		return 1
+	fi
+}
+
+# Risincronizza CamillaDSP con il volume richiesto: dopo un riavvio riparte
+# dal file, ma un comando perso o un riavvio a meta' lo lasciano diverso.
+# Non fa nulla se non c'e' ancora un volume richiesto o CamillaDSP non risponde.
+dsp_resync() {
+	local v d m gv gm
+	[ -s "$RUN/volume.dsp" ] || return 0
+	read -r v d m < "$RUN/volume.dsp"
+	gv=$(sweetspot-camilla "$DSP_PORTA" GetVolume 2>/dev/null | sed -n 's/.*"value":\(-\{0,1\}[0-9.]*\).*/\1/p')
+	gm=$(sweetspot-camilla "$DSP_PORTA" GetMute 2>/dev/null | sed -n 's/.*"value":\(true\|false\).*/\1/p')
+	[ -n "$gv" ] && [ -n "$gm" ] || return 0
+	if [ "$gm" = true ]; then gm=1; else gm=0; fi
+	if [ "$gm" != "$m" ] || ! awk -v a="$gv" -v b="$d" 'BEGIN { x = a - b; exit !(x < 0.05 && x > -0.05) }'; then
+		apply "$v" "$m"
+	fi
 }
 
 # Volume e sordina attuali del player, letti da Lyrion. Esce con 1 se Lyrion
@@ -91,6 +127,12 @@ cli_subscribe() {
 
 follow() { # mac
 	local mac=$1 enc me=$$
+	# Controllo periodico: dopo un errore IPC o un riavvio di CamillaDSP il
+	# guadagno applicato torna quello richiesto.
+	( while kill -0 "$me" 2>/dev/null; do
+		sleep "${SWEETSPOT_VOLUME_RISINC:-10}"
+		dsp_resync
+	done ) &
 	enc=$(printf '%s' "$mac" | sed 's/:/%3A/g')
 	while kill -0 "$PPID" 2>/dev/null; do
 		sync_first "$mac"
