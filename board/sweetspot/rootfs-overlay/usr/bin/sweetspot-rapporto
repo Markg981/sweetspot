@@ -9,6 +9,11 @@
 #   sweetspot-rapporto            stampa il rapporto
 #   sweetspot-rapporto salva      lo scrive anche sulla chiavetta, nella
 #                                 cartella compatibilita
+#   sweetspot-rapporto modello    stampa il modello di rapporto in Markdown
+#                                 (docs/compatibilita.md) gia' compilato con
+#                                 DAC, firmware, piattaforma e release; le
+#                                 prove di formato, rate switching, hotplug
+#                                 e l'esito restano da riempire a mano
 #
 # Nessun dato personale: niente indirizzi, nomi di rete, password o
 # percorsi della musica; i numeri di serie non vengono letti.
@@ -77,6 +82,55 @@ report() {
 		'{formato: 1, versione: $versione, scheda: $scheda, kernel: $kernel, data: $data, modalita: $modalita,
 		  computer: $computer, rete: $rete, dac: $dac, verifiche: $verifiche,
 		  prova_durata: (if $durata == "" then null else $durata end)}'
+}
+
+# Modello di rapporto: legge il JSON su stdin. I campi che il sistema non puo'
+# conoscere (formati provati, rate switching, hotplug, esito) restano vuoti:
+# "non provato" e' il valore di partenza, mai un esito presunto.
+modello_md() {
+	jq -r '
+		def v: if . == null or . == "" then "?" else . end;
+		(.dac | if type == "object" then . else {} end) as $d
+		| "## Rapporto di compatibilita'"'"'
+
+"
+		+ "- DAC: \($d.nome | v) (USB \($d.usbid | v), \($d.usb_mbit | v) Mbit/s)
+"
+		+ "- Firmware del DAC (bcdDevice): \($d.firmware | v)
+"
+		+ "- Frequenze dichiarate: \(($d.frequenze // []) | join(" ") | v)
+"
+		+ "- DSD nativo dichiarato dal driver: \($d.dsd_nativo | v)
+"
+		+ "- Piattaforma: \(.computer.produttore | v) \(.computer.modello | v), \(.scheda | v), kernel \(.kernel | v)
+"
+		+ "- Release SweetSpot: \(.versione | v) (modalita'"'"' \(.modalita | v))
+"
+		+ "- Avvisi della pagina Stato: \([.verifiche[]? | select(.esito == "ATTENZIONE")] | length)
+"
+		+ "- Prova di durata: \(.prova_durata | v)
+
+"
+		+ "### Da compilare a mano (scrivere \"non provato\" se non lo hai fatto)
+
+"
+		+ "| Prova | Esito (OK / KO / non provato) | Note |
+| --- | --- | --- |
+"
+		+ "| PCM 44,1-48 kHz | non provato | |
+| PCM 88,2-192 kHz | non provato | |
+"
+		+ "| DSD nativo | non provato | |
+| DoP | non provato | |
+"
+		+ "| Cambio di frequenza fra brani (rate switching) | non provato | |
+"
+		+ "| Hotplug del DAC (stacco e ricollegamento) | non provato | |
+
+"
+		+ "Esito complessivo: non provato
+"
+	'
 }
 
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0

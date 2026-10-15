@@ -595,8 +595,10 @@ check_player() {
 	check_session
 	check_listening_io
 	check_zones
-	bufs=$(player_buffers)
+	ram_quote_calc
+	bufs=$RAM_STREAM:$RAM_OUTPUT
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
+		emit INFO "Budget RAM" "sistema $(( RAM_SISTEMA / 1024 )) MB, servizi (Lyrion, catalogo, immagini, snapshot) $(( RAM_SERVIZI / 1024 )) MB, ALSA $(( RAM_ALSA / 1024 )) MB, buffer del player $(( (RAM_STREAM + RAM_OUTPUT) / 1024 )) MB, precarico $(( RAM_PRECARICO / 1024 )) MB (disponibile $(( RAM_AVAIL / 1024 )) MB di $(( RAM_TOTAL / 1024 )) MB)"
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$(mode)" = player ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
@@ -833,6 +835,22 @@ check_system() {
 	done
 }
 
+# Bluetooth come sorgente: spento di serie; acceso, lo stato scritto dal
+# servizio (sweetspot-bluetooth) dice se aspetta, e' in abbinamento o suona.
+check_bluetooth() {
+	local s
+	if ! is_yes "$(conf BLUETOOTH no)"; then
+		emit INFO "Bluetooth" "spento (si attiva dalla pagina Bluetooth)"
+		return
+	fi
+	s=$(cat "$RUN/bluetooth.stato" 2>/dev/null)
+	case "$s" in
+		''|errore*|"non attivo"|nessun*) emit ATTENZIONE "Bluetooth" "${s:-servizio non ancora avviato}" ;;
+		in\ ascolto*) emit OK "Bluetooth" "$s (il DAC e' del telefono, il player riprende alla fine)" ;;
+		*) emit OK "Bluetooth" "$s" ;;
+	esac
+}
+
 check_kernel
 check_ram_system
 check_cpu
@@ -840,6 +858,7 @@ check_quiet
 check_usb
 check_dac
 check_player
+check_bluetooth
 [ "$(mode)" = completa ] && check_library
 check_listening
 [ "$(mode)" = completa ] && check_preload

@@ -154,6 +154,27 @@ diffusore sinistro e uno per il destro.
 - I filtri restano sulla chiavetta, nella cartella `correzione-ambientale`
   (testo di REW, leggibile anche dal computer).
 
+### Bluetooth come sorgente
+
+Un telefono può suonare su Sweetspot (A2DP sink). È **spento di serie**: si
+accende nella pagina *Bluetooth* (o con `BLUETOOTH=si` in `sweetspot.txt`;
+`BLUETOOTH_NOME` cambia il nome che vede il telefono). L'abbinamento si apre
+dalla pagina per 2, 5 o 9 minuti: fuori dalla finestra Sweetspot non si fa
+trovare e non accetta telefoni. La pagina elenca i dispositivi abbinati (con
+*Rimuovi*) e *Stato* mostra se il servizio aspetta, è in abbinamento o suona.
+Gli abbinamenti si conservano sulla chiavetta (`sweetspot-dati/bluetooth.tar`).
+
+Scelta di integrazione: **passaggio esclusivo**. Quando il telefono comincia a
+trasmettere, il player si ferma e `bluealsa-aplay` suona sul DAC con l'uscita
+`hw:` diretta, senza mixer né secondo clock; quando il telefono smette, il DAC
+torna al player. Non c'è un ingresso nativo in Lyrion (servirebbe un plugin) e
+un loopback ALSA aggiungerebbe un dominio di clock e un ricampionamento. Limiti:
+la musica di Lyrion si ferma mentre suona il telefono e va ripresa a mano;
+l'audio è SBC (compresso), AAC richiede fdk-aac (licenza non libera), aptX e
+LDAC non sono in Buildroot; sul PC servono un dongle USB e, per alcuni modelli,
+il suo firmware. Il Bluetooth gira solo sui core di sistema, mai su quello
+isolato dell'audio né sulle sue interruzioni.
+
 ### Archivio musicale e cartella di rete
 
 Tutti i dischi restano in sola lettura tranne uno, scelto come **archivio**
@@ -273,6 +294,42 @@ niente OpenHome (le app lo usano solo se c'e', altrimenti ripiegano su
 AVTransport); un'app alla volta controlla il renderer, e la musica avviata da
 Lyrion non viene fermata da un `Stop` UPnP.
 
+### Servizi in streaming e ingressi: stato e qualificazione
+
+"Disponibile come plugin" non significa "integrazione verificata". La pagina
+**Plugin** installa dal repository ufficiale di Lyrion i plugin del catalogo
+(`usr/share/sweetspot/plugin-consigliati.txt`); SweetSpot non li sviluppa e,
+a oggi, nessuno è stato qualificato con un account reale.
+
+| Servizio o ingresso | Plugin | Stato | Limiti noti |
+| --- | --- | --- | --- |
+| Qobuz, TIDAL | `Qobuz`, `TIDAL` | disponibile come plugin; integrazione non verificata | Serve l'abbonamento. Il formato massimo dipende dal piano e dal plugin. |
+| Spotify / Spotify Connect | `Spotty` | disponibile come plugin; non verificato | Serve Premium. Usa un programma ausiliario compilato per l'architettura. |
+| Radio (Radio Paradise, Radio Browser, radio.net) | `RadioParadise`, `RadioBrowser`, `RadioNet` | disponibile come plugin; non verificato | Dipendono dal servizio remoto. |
+| AirPlay in ingresso | `ShairTunes2W` | disponibile come plugin; non verificato | AirPlay 2 non dimostrato. |
+| UPnP/DLNA verso altri diffusori | `UPnPBridge` | disponibile come plugin; non verificato | Invia a renderer esterni: non rende SweetSpot un renderer. |
+| UPnP/DLNA in ingresso | integrato (`RENDERER_UPNP=si`, vedi sopra) | su main, di serie spento; coperto dalla CI, non provato con app reali | Un'app alla volta; l'audio passa da Lyrion. |
+| Chromecast, AirPlay verso altri diffusori, gruppi | `CastBridge`, `RaopBridge`, `Groups` | disponibile come plugin; non verificato | La sincronia fra più uscite non è dimostrata. |
+| RAAT / Roon | assente | non supportato | Roon Ready richiede l'SDK e la certificazione ufficiali di Roon Labs. |
+| WASAPI / CoreAudio | non applicabile | fuori ambito | SweetSpot è un'appliance Linux con ALSA diretto. |
+
+**Architetture.** Le immagini sono per x86_64 e aarch64 (Raspberry Pi 4/5).
+I programmi inclusi in Lyrion (`Bin`) e quelli dei plugin sono presenti per
+`x86_64-linux` e `aarch64-linux`; ARM a 32 bit (armv7) non è un target e un
+plugin con binari solo armv7 non funziona.
+
+**Checklist di qualificazione** (per ogni servizio, annotare esito e data):
+
+1. Account: il piano richiesto è attivo e il plugin lo riconosce.
+2. Autenticazione: accesso dal pannello di Lyrion e permanenza dopo un riavvio.
+3. Riconnessione: ripresa dopo scollegamento della rete e dopo la sospensione del servizio.
+4. Formati massimi: frequenza e profondità effettivamente aperte sull'uscita ALSA (pagina Audio), non quelle dichiarate dal servizio.
+5. Gapless: transizione fra due brani consecutivi dello stesso album, senza interruzioni.
+6. Volume: livello fisso senza DSP, se non richiesto.
+
+Una riga passa a "verificato" solo con questi sei esiti in un rapporto
+pubblico (vedi la [matrice](docs/compatibilita.md)).
+
 ## Cosa serve
 
 - Un PC x86 a 64 bit con almeno 2 GB di RAM (consigliati 4 GB o più).
@@ -388,7 +445,8 @@ parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
   Pi 5. Due core su quattro dedicati a riproduzione e interruzioni USB,
   frequenza fissa, nessuno stato di risparmio della CPU (`cpuidle.off=1`).
 - **Uscite spente**: jack e HDMI audio (`dtparam=audio=off`), Bluetooth
-  (`disable-bt`), Wi-Fi se non configurato.
+  Wi-Fi se non configurato. Il Bluetooth integrato non è disabilitato nel
+  firmware ma il servizio è spento di serie (vedi *Bluetooth come sorgente*).
 - **DAC USB** come sul PC. **Schede DAC I2S** (HiFiBerry, Allo, IQaudio, Raspberry
   Pi DAC+/DAC Pro, JustBoom, I-Sabre...): si sceglie la scheda in *Impostazioni
   Sweetspot → Audio*, o si scrive il nome del suo overlay; il Pi si riavvia una
@@ -578,7 +636,7 @@ annullata proprio perché il registro di prima del riavvio non c'era),
 | Underrun e picchi della correzione | pagina di stato, "Underrun di CamillaDSP" (righe "underrun" di `camilladsp.log` dall'inizio della sessione, contate dal player: CamillaDSP non li espone nel websocket) e "Picco di CamillaDSP" (massimo di sessione per canale, dal websocket) |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 | Attività elettrica superflua | pagina di stato: "LED" (spenti tranne quelli della tastiera), "USB inutilizzate", "PCI a riposo" (ogni dispositivo con il suo stato reale: a riposo o attivo), "Lavoro differito del kernel" (workqueue non legate a un core solo sui core di sistema) e "Schermo" (stato DPMS dei connettori collegati e retroilluminazione). Le applica `sweetspot-silenzio` all'avvio, se le ottimizzazioni sono attive; è una riduzione di attività, non una misura del rumore analogico |
-| Robustezza | CI (`tests/prova-robustezza-qemu.sh`, immagine x86 in QEMU): watchdog i6300ESB attivo, DAC USB emulato collegato, scollegato e ricollegato a caldo con il player che si ferma e riparte, blocco simulato (servizio del watchdog fermato) con riavvio automatico e player di nuovo attivo, file system della chiavetta integro dopo il riavvio brusco. Sull'hardware: `sweetspot-durata 24 &` con una playlist lunga in riproduzione, esito in `/run/sweetspot/durata.txt` e sulla chiavetta (nessun XRUN, nessun riavvio del player, uscita in riproduzione almeno il 95% del tempo, memoria calata meno del 10%); pagina di stato, voce "Watchdog" |
+| Robustezza | CI (`tests/prova-robustezza-qemu.sh`, immagine x86 in QEMU): watchdog i6300ESB attivo, DAC USB emulato collegato, scollegato e ricollegato a caldo con il player che si ferma e riparte, blocco simulato (servizio del watchdog fermato) con riavvio automatico e player di nuovo attivo, file system della chiavetta integro dopo il riavvio brusco. Sull'hardware: `sweetspot-durata 24 &` con una playlist lunga in riproduzione, esito in `/run/sweetspot/durata.txt` e sulla chiavetta; collaudo prolungato con guasti iniettati e benchmark di grandi librerie in [`docs/collaudo.md`](docs/collaudo.md) (nessun XRUN, nessun riavvio del player, uscita in riproduzione almeno il 95% del tempo, memoria calata meno del 10%); pagina di stato, voce "Watchdog" |
 | Conversione PCM → DSD | non disponibile, per scelta: costo di CPU continuo e modulatore di qualità mancante; motivi e condizioni per riaprirla in [docs/pcm-dsd.md](docs/pcm-dsd.md) |
 | Compatibilità | [Matrice di compatibilità](docs/compatibilita.md), generata solo dai rapporti reali: pagina di stato → *Scarica il rapporto di compatibilità* (`sweetspot-rapporto`: computer, CPU, schede di rete con driver, DAC con identificativo USB e firmware, esiti della pagina Stato e della prova di durata, senza indirizzi né dati personali), poi una segnalazione *Rapporto di compatibilità* su GitHub |
 | Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
@@ -645,6 +703,8 @@ analogiche e ascolto alla cieca quando si valutano differenze percepite.
 Con USB asincrona il clock della conversione è quello del DAC. Il programma
 alimenta i buffer tramite il driver ALSA; non può sostituire l'oscillatore del
 DAC con il clock del PC né realizzare un filtro elettrico sulle linee USB.
+Profili CPU (compreso `dinamico`), `sweetspot-banco` e la distinzione fra
+scheduling e jitter: `docs/profili-cpu.md`.
 La latenza misurata da `sweetspot-latenza` riguarda lo scheduler, non il jitter
 del clock audio. `sweetspot-alsa-misura [-c scheda] [-d dispositivo] [-t secondi]`
 campiona `/proc/asound/cardX/pcmYp/sub0/status` e `hw_params` e riassume delay
