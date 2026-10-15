@@ -23,30 +23,36 @@ forks() { awk '/^processes / { print $2 }' "$PROC/stat"; }
 # Diagnosi (solo se la soglia e' superata): per FORKS_DETTAGLIO secondi legge
 # /proc ogni 0,1 s e raggruppa i processi visti per "padre > comando".
 dettaglio() {
-	local fine u last cur p l c r pp m pc
+	local fine u last cur p l c r pp m pc me=$$
 	read -r u _ < /proc/uptime
 	fine=$(( ${u%%.*} + $1 ))
-	read -r last < /proc/sys/kernel/ns_last_pid
-	# I PID si assegnano in sequenza: ogni PID nuovo si legge subito, solo con
-	# comandi interni della shell (un ciclo senza pause, nessun fork proprio),
+	: & last=$!
+	# I PID si assegnano in sequenza: l'ultimo si ricava da un fork proprio
+	# (": &", senza programmi; ns_last_pid richiede CHECKPOINT_RESTORE nel
+	# kernel) e ogni PID nuovo si legge subito con soli comandi interni,
 	# prima che il processo di breve vita sparisca. I processi gia' spariti
-	# si contano come "? > ?".
+	# si contano come "? > ?"; quelli di questo stesso ciclo non si contano.
+	me=
 	while :; do
+		# Il ciclo e' in una subshell (a sinistra della pipe): "self" e' lei.
+		[ -n "$me" ] || read -r me _ < /proc/self/stat
 		read -r u _ < /proc/uptime
 		[ "${u%%.*}" -lt "$fine" ] || break
-		read -r cur < /proc/sys/kernel/ns_last_pid
-		while [ "$last" -lt "$cur" ]; do
+		: & cur=$!
+			while [ $((last + 1)) -lt "$cur" ]; do
 			last=$((last + 1))
 			p=$last
 			if { read -r l < "$PROC/$p/stat"; } 2>/dev/null; then
 				c=${l#*(}; c=${c%)*}
 				r=${l##*) }; r=${r#* }; pp=${r%% *}
+				[ "$pp" != "$me" ] || continue
 				if { read -r m < "$PROC/$pp/stat"; } 2>/dev/null; then pc=${m#*(}; pc=${pc%)*}; else pc='?'; fi
 				echo "$pc > $c"
 			else
 				echo "? > ?"
 			fi
-		done
+			done
+			last=$cur
 	done | sort | uniq -c | sort -rn | head -n 25 | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "  %s: %d\n", $0, n }'
 }
 
