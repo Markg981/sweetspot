@@ -793,6 +793,22 @@ dac_native_dsd() {
 	esac
 }
 
+# Margine (dB) con cui Squeezelite converte il DSD in PCM a 32 bit, chiave
+# DSD_PCM_MARGINE_DB: da -24 a 0, un decimale al massimo, predefinito -3. I
+# DSD "over" superano 0 dBFS fino a +3 dB (il 50% di modulazione oltre lo
+# standard) e senza margine la conversione li taglierebbe; 0 = nessun margine.
+dsd_margine_valido() {
+	case "$1" in
+		0|0.0|-0|-0.0|-[0-9]|-[0-9].[0-9]|-1[0-9]|-1[0-9].[0-9]|-2[0-3]|-2[0-3].[0-9]|-24|-24.0) return 0 ;;
+	esac
+	return 1
+}
+dsd_margine_db() {
+	local v
+	v=$(conf DSD_PCM_MARGINE_DB -3)
+	if dsd_margine_valido "$v"; then printf '%s\n' "$v"; else echo -3; fi
+}
+
 # Indirizzo PCI del controller USB a cui e' collegato il DAC.
 dac_controller() {
 	local p

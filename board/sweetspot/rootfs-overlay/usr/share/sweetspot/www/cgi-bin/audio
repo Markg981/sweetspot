@@ -78,6 +78,7 @@ else
 	[ -n "$rates" ] && info_row "" "Frequenze supportate" "$(printf '%s' "$rates" | tr ' ' '\n' | awk '{printf "%s%g", sep, $1/1000; sep=", "} END {print " kHz"}')"
 	[ -z "$dsd" ] && dsd_without_native_row
 fi
+[ -n "$card" ] && info_row INFO "Margine DSD → PCM" "$(dsd_margine_db) dB nella conversione del DSD in PCM (DSD_PCM_MARGINE_DB): lascia spazio ai DSD che superano 0 dBFS fino a +3 dB."
 echo '</div>'
 [ -n "$card" ] && [ -n "$(dac_usbid "$card")" ] && [ -z "$dsd" ] && dop_test_card
 
@@ -247,6 +248,10 @@ $(option nativo "Nativo forzato: per DAC che lo supportano senza dichiararlo" "$
 $(option dop "DoP: solo se il DAC lo supporta, altrimenti forte fruscio" "$(conf DSD auto)")
 $(option no "Convertito in PCM" "$(conf DSD auto)")
 </select>
+
+<label for="dsdm">Margine del DSD convertito in PCM, in dB <span>(da -24 a 0, predefinito -3)</span></label>
+<input id="dsdm" name="dsd_margine" inputmode="decimal" value="$(esc "$(dsd_margine_db)")">
+<p class="sub">I DSD "over" superano 0 dBFS fino a +3 dB (il 50% di modulazione oltre lo standard): senza margine la conversione li taglierebbe. Con -3 dB tutto il DSD convertito suona 3 dB più piano; 0 = nessun margine. Vale solo per il DSD convertito in PCM, non per il nativo né per il DoP.</p>
 
 <label for="dacp">DAC principale <span>(con più DAC collegati: quello del core isolato, della correzione e del volume a 64 bit)</span></label>
 <select id="dacp" name="dac">

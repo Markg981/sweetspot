@@ -33,6 +33,20 @@ funzione principale di prodotti come HQPlayer.
 
 - File DSD (DSF/DFF): al DAC in DSD nativo se lo dichiara, in DoP se scelto,
   oppure convertiti in PCM da Squeezelite, alla frequenza più alta che il DAC accetta (`DSD=auto`, pagina Audio).
+  Se il DAC non regge DSD/8 (352,8 kHz per DSD64) il PCM si decima per 2 una
+  o più volte (patch 0004): ogni stadio è un passa-basso a fase lineare
+  (finestra di Kaiser) piatto entro ±0,001 dB fino a 20 kHz e attenuato di
+  almeno 100 dB dalla nuova Nyquist in su, quindi nulla ripiega nella banda
+  audio. Stima del costo per canale: DSD64 verso 176,4 kHz circa 3,5 milioni di
+  moltiplicazioni al secondo; DSD512 verso 44,1 kHz circa 52 milioni (stadi di
+  31, 33, 35, 39, 55 e 307 punti, l'ultimo ripido ma al ritmo più basso), cioè
+  una frazione piccola di un core del Raspberry Pi 4. Il test di C
+  (`tests/squeezelite-dsd-decimation.py`) misura passband, stopband e costo.
+- Margine della conversione (`DSD_PCM_MARGINE_DB`, di serie -3 dB, da -24 a 0):
+  i DSD "over" superano 0 dBFS fino a +3 dB, cioè il 50% di modulazione oltre lo
+  standard, e senza margine verrebbero tagliati a 32 bit. Il prezzo è che tutto
+  il DSD convertito suona 3 dB più piano; chi sa che i suoi file non superano
+  0 dBFS può portarlo a 0. Si imposta e si legge nelle pagine Audio e Stato.
 - Prova DoP guidata dalla pagina Audio per i DAC senza DSD nativo.
 
 ## Quando riaprirlo

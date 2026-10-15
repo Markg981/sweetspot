@@ -568,6 +568,32 @@ case "$(page sistema)" in *'<option value="puro" selected'*) ok "sistema: ascolt
 case "$(page sistema 'PRECARICO=no')" in *'<option value="si" selected'*) ok "sistema: senza precarico solo lavori sospesi" ;; *) ko "sistema ascolto si" "si selezionato" "-" ;; esac
 case "$(page sistema "$(printf 'MODALITA_ASCOLTO=no\nPRECARICO=si')")" in *'<option value="no" selected'*) ok "sistema: ascolto spento" ;; *) ko "sistema ascolto no" "no selezionato" "-" ;; esac
 
+# Renderer UPnP/DLNA in entrata: spento di serie, acceso dal pannello.
+upnp_action() { # valore-del-campo [impostazione-precedente]
+	local body
+	printf '%s\n' "${2:-}" > "$WEB/run/sweetspot.conf"
+	body="t=$(cat "$WEB/run/web.token")&a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si${1:+&renderer_upnp=$1}"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
+		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione" > /dev/null
+	grep -o 'RENDERER_UPNP [a-z]*' "$WEB/run/config.call"
+	rm -f "$WEB/run/sweetspot.conf"
+}
+expect "renderer UPnP: acceso dal pannello" "RENDERER_UPNP si" "$(upnp_action si)"
+expect "renderer UPnP: spento dal pannello" "RENDERER_UPNP no" "$(upnp_action no RENDERER_UPNP=si)"
+expect "renderer UPnP: valore sconosciuto = resta com'e'" "RENDERER_UPNP si" "$(upnp_action xyz RENDERER_UPNP=si)"
+expect "renderer UPnP: campo assente = resta com'e'" "RENDERER_UPNP si" "$(upnp_action '' RENDERER_UPNP=si)"
+expect "renderer UPnP: di serie spento" "no" "$(grep '^RENDERER_UPNP=' "$OVERLAY/etc/sweetspot/defaults.conf" | cut -d= -f2)"
+expect "renderer UPnP: spento anche nel modello di sweetspot.txt" "RENDERER_UPNP=no" "$(grep '^RENDERER_UPNP=' "$ROOT/board/sweetspot/stick/sweetspot.txt")"
+expect "renderer UPnP: chiave ammessa all'helper privilegiato" "1" "$(grep -c '"RENDERER_UPNP"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
+case "$(page sistema)" in *'name="renderer_upnp"'*'<option value="no" selected'*) ok "sistema: renderer UPnP spento di serie" ;; *) ko "sistema renderer" "no selezionato" "-" ;; esac
+# La pagina Sistema (con il selettore del renderer) esce con le intestazioni di sicurezza di web.sh.
+sistema_out=$(page sistema)
+expect "sistema: intestazioni di sicurezza anche con il selettore del renderer" "DENY|nosniff" \
+	"$(printf '%s' "$sistema_out" | sed -n 's/^X-Frame-Options: *//p' | tr -d '\r')|$(printf '%s' "$sistema_out" | sed -n 's/^X-Content-Type-Options: *//p' | tr -d '\r')"
+case "$(page sistema RENDERER_UPNP=si)" in *'name="renderer_upnp"'*'<option value="si" selected'*) ok "sistema: renderer UPnP acceso" ;; *) ko "sistema renderer acceso" "si selezionato" "-" ;; esac
+
 
 echo "Password delle pagine e impostazioni iniziali"
 acc() { # impostazioni
@@ -655,6 +681,21 @@ rm -f "$WEB/run/config.call"
 out=$(web_action "a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=R26;reboot&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500")
 case "$out" in *"Location: /cgi-bin/audio?msg=%44%41%43%20%70%72%69%6e%63%69%70%61%6c%65%20%6e%6f%6e%20%76%61%6c%69%64%6f"*) ok "audio: DAC principale non valido rifiutato" ;; *) ko "audio DAC non valido" "rifiutato (DAC principale non valido)" "$out" ;; esac
 expect "audio: DAC non valido, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
+# Margine DSD -> PCM: salvato (anche con la virgola), mancante = quello in uso, non valido rifiutato.
+AUDIO_BASE="a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=auto&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500"
+rm -f "$WEB/run/config.call"
+web_action "$AUDIO_BASE&dsd_margine=-1,5" > /dev/null
+case "$(cat "$WEB/run/config.call")" in *"DSD_PCM_MARGINE_DB -1.5 "*) ok "audio: margine DSD salvato (virgola accettata)" ;; *) ko "audio margine DSD salvato" "DSD_PCM_MARGINE_DB -1.5" "$(cat "$WEB/run/config.call")" ;; esac
+rm -f "$WEB/run/config.call"
+web_action "$AUDIO_BASE" > /dev/null
+case "$(cat "$WEB/run/config.call")" in *"DSD_PCM_MARGINE_DB -3 "*) ok "audio: margine DSD mancante, resta quello in uso" ;; *) ko "audio margine DSD mancante" "DSD_PCM_MARGINE_DB -3" "$(cat "$WEB/run/config.call")" ;; esac
+for v in 2 1 -25 -3.55 abc; do
+	rm -f "$WEB/run/config.call"
+	out=$(web_action "$AUDIO_BASE&dsd_margine=$v")
+	case "$out" in *"Location: /cgi-bin/audio?msg="*) ;; *) ko "audio margine DSD $v" "torna a audio" "$out" ;; esac
+	expect "audio: margine DSD $v rifiutato, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
+done
+rm -f "$WEB/run/config.call"
 rm -f "$WEB/run/config.call"
 web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
 expect "sistema: si salva l'impronta, non la password" '1|0' \
@@ -720,6 +761,20 @@ case "$out" in *"<h2>Prova DoP</h2>"*"Avvia la prova (6 secondi)"*) ok "audio: p
 case "$out" in *"Com&#39;è andata?"*) ko "audio: esito chiesto solo dopo la prova" "nessun esito" "esito presente" ;; *) ok "audio: esito chiesto solo dopo la prova" ;; esac
 case "$(page audio 'VOLUME=software')" in *"Prova non disponibile"*"il volume software altera i campioni"*) ok "audio: prova DoP bloccata dal volume software" ;; *) ko "audio prova DoP volume" "prova non disponibile" "-" ;; esac
 case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP scelto segnalato" ;; *) ko "audio DoP scelto" "Tramite DoP" "-" ;; esac
+# Margine del DSD convertito in PCM (DSD_PCM_MARGINE_DB): -3 di serie, da -24 a 0.
+case "$out" in *"-3 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-3"'*) ok "audio: margine DSD -3 dB di serie, in campo e in riga" ;; *) ko "audio margine DSD" "-3 dB di serie" "-" ;; esac
+case "$(page audio 'DSD_PCM_MARGINE_DB=-6')" in *"-6 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-6"'*) ok "audio: margine DSD scelto mostrato" ;; *) ko "audio margine DSD scelto" "-6 dB" "-" ;; esac
+case "$(page audio 'DSD_PCM_MARGINE_DB=5')" in *"-3 dB nella conversione del DSD in PCM"*'value="-3"'*) ok "audio: margine DSD positivo ignorato" ;; *) ko "audio margine DSD positivo" "-3 dB" "-" ;; esac
+for v in 0 0.0 -0.5 -3 -12 -23.9 -24; do
+	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
+	expect "margine DSD $v valido" "$v" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
+done
+for v in 1 3 -24.1 -25 -3.55 abc -3x -; do
+	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
+	expect "margine DSD $v non valido: predefinito" "-3" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
+done
+printf '' > "$WEB/s.txt"
+grep -q 'SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: il margine DSD arriva a Squeezelite" || ko "player margine DSD" "variabile d'ambiente" "assente"
 cat > "$WEB/actionbin/sweetspot-prova-dop" <<'FINTO'
 #!/bin/sh
 printf '%s\n' "$*" > "$SWEETSPOT_RUN/prova-dop.call"
@@ -813,6 +868,7 @@ audio_params "$PCM/sub0" 48000
 printf 'state: RUNNING\n' > "$PCM/sub0/status"
 audio_params "$WEB/proc/asound/card1/pcm0p/sub0" 192000
 out=$(page audio); diag=$(check_page_diag)
+case "$diag" in *"INFO|Margine DSD → PCM|-3 dB (DSD_PCM_MARGINE_DB)"*) ok "stato: margine DSD → PCM mostrato" ;; *) ko "stato margine DSD" "Margine DSD → PCM|-3 dB" "$(printf '%s' "$diag" | head -n 8)" ;; esac
 case "$out" in *'Buffer ALSA'*'DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "audio: buffer del PCM selezionato" ;; *) ko "audio buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
 case "$diag" in *'Buffer ALSA|DEV=1/sub0: 4096 campioni, periodo 1024'*) ok "diagnostica: buffer del PCM selezionato" ;; *) ko "diagnostica buffer selezionato" "DEV=1/sub0 4096/1024" "-" ;; esac
 case "$out" in *'Uscita in corso'*'DEV=1/sub0'*'S32_LE, 48000 Hz, 2 canali'*) ok "audio: PCM selezionato, decoy ignorato" ;; *) ko "audio PCM selezionato" "DEV=1/sub0 48000" "-" ;; esac
@@ -2330,6 +2386,19 @@ printf '[12:05:00] _output_frames:123 XRUN\n[12:05:01] output_thread:123 XRUN re
 expect "stato: XRUN della sessione" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 1)" "$(livecheck 'XRUN nella sessione')"
 printf 'XRUN\n' > "$DSP/squeezelite.log"
 expect "stato: registro ricominciato, conta tutto" "ATTENZIONE|XRUN nella sessione|1 in 2 minuti (recuperi falliti: 0)" "$(livecheck 'XRUN nella sessione')"
+printf 'MODALITA=completa\n' > "$DSP/run/sweetspot.conf"
+expect "stato: renderer UPnP spento di serie" "INFO|Renderer UPnP/DLNA|spento (RENDERER_UPNP=no): acceso dalla pagina Sistema compare in BubbleUPnP, JPlay, mconnect" "$(livecheck 'Renderer UPnP/DLNA')"
+printf 'RENDERER_UPNP=si\n' > "$DSP/run/sweetspot.conf"
+expect "stato: renderer UPnP acceso ma il demone non risponde" "ATTENZIONE|Renderer UPnP/DLNA|stato non disponibile: il demone non risponde" "$(livecheck 'Renderer UPnP/DLNA')"
+printf '{"stato":"attivo","nome":"Salotto","porta":49494,"abbonati":2,"dettaglio":""}\n' > "$DSP/run/renderer.json"
+expect "stato: renderer UPnP attivo" "OK|Renderer UPnP/DLNA|acceso come \"Salotto\" (porta 49494, 2 app collegate): l'audio passa da Lyrion e dal player" "$(livecheck 'Renderer UPnP/DLNA')"
+printf '{"stato":"attesa","nome":"Salotto","porta":49494,"abbonati":0,"dettaglio":"Lyrion non risponde"}\n' > "$DSP/run/renderer.json"
+expect "stato: renderer UPnP in attesa di Lyrion" "ATTENZIONE|Renderer UPnP/DLNA|acceso ma non utilizzabile: Lyrion non risponde" "$(livecheck 'Renderer UPnP/DLNA')"
+printf '{"stato":"errore","nome":"Salotto","porta":49494,"dettaglio":"porta 49494 occupata"}\n' > "$DSP/run/renderer.json"
+expect "stato: renderer UPnP con la porta occupata" "ATTENZIONE|Renderer UPnP/DLNA|non parte: porta 49494 occupata" "$(livecheck 'Renderer UPnP/DLNA')"
+printf 'RENDERER_UPNP=si\nMODALITA=player\n' > "$DSP/run/sweetspot.conf"
+expect "stato: renderer UPnP in modalita' solo player" "ATTENZIONE|Renderer UPnP/DLNA|serve Lyrion su questo Sweetspot: non funziona in modalità solo player" "$(livecheck 'Renderer UPnP/DLNA')"
+rm -f "$DSP/run/sweetspot.conf" "$DSP/run/renderer.json"
 expect "stato: nessuna interruzione di dispositivi" "OK|Interruzioni sul core audio|nessuna da dispositivi in 2 minuti sul core 3" \
 	"$(livecheck 'Interruzioni sul core audio')"
 irqs 2 7600 12700 > "$DSP/proc/interrupts"
@@ -3001,6 +3070,26 @@ expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
 	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
 expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"
 
+echo "Renderer UPnP/DLNA"
+RPL=$OVERLAY/usr/lib/sweetspot/renderer.pl
+INIT=$OVERLAY/etc/init.d/S70sweetspot-renderer
+expect "renderer: l'audio passa da Lyrion (playlist play), non apre il DAC" "1|0" \
+	"$(grep -c "'playlist', 'play'" "$RPL")|$(grep -c 'hw:\|/dev/snd\|aplay' "$RPL")"
+expect "renderer: avviato dall'init, in coda a Lyrion e al supervisore" "si|si" \
+	"$([ -x "$INIT" ] && echo si || echo no)|$(grep -q 'renderer.pl' "$INIT" && echo si || echo no)"
+expect "renderer: l'init gira sui core di sistema con nice" "1" "$(grep -c 'taskset.*nice -n' "$INIT")"
+if command -v perl >/dev/null; then
+	if out=$(perl -c "$RPL" 2>&1); then ok "renderer: perl -c"; else ko "renderer perl -c" "Syntax OK" "$out"; fi
+	if command -v python3 >/dev/null; then
+		if out=$(python3 "$ROOT/tests/renderer-upnp.py" 2>&1); then
+			ok "renderer: SSDP, descrittore, SOAP, eventi, comandi a Lyrion"
+		else
+			ko "renderer UPnP" "tutte le prove superate" "$(printf '%s' "$out" | grep -v '^  ok' | tail -n 15)"
+		fi
+	fi
+else
+	echo "  (perl non installato, saltato)"
+fi
 echo "Cartelle di rete: SMB 2.1 o piu', hard, NFS"
 RV=$WORK/retever
 mkdir -p "$RV/bin" "$RV/run" "$RV/proc" "$RV/media" "$RV/musica"
