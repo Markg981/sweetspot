@@ -536,7 +536,9 @@ player_buffers() {
 	if [ "$(lower "$(conf CORREZIONE no)")" != no ]; then
 		riserva=$((riserva + rsv_dsp)); motivo="$motivo+DSP"
 	fi
-	budget=$(((avail - riserva) / 2))
+	# PLAYER_BUFFERS_DIV: le zone (altri DAC) si dividono il budget fra loro,
+	# cosi' piu' player non superano insieme quello di uno.
+	budget=$(((avail - riserva) / 2 / ${PLAYER_BUFFERS_DIV:-1}))
 	s=$((rate * 60))
 	o=$((rate * 120))
 	if [ "$budget" -lt $((s + o)) ]; then

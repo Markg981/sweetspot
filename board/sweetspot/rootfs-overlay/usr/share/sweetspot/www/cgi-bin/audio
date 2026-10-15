@@ -265,7 +265,7 @@ $(main_dac_options)
 <label for="altri">Altri DAC USB</label>
 <select id="altri" name="altri_dac">
 $(option no "Ignorati: suona solo il DAC principale (consigliato)" "$(conf ALTRI_DAC no)")
-$(option si "Zone: ogni altro DAC è un player separato in Lyrion, da raggruppare e sincronizzare lì" "$(conf ALTRI_DAC no)")
+$(option si "Zone: ogni altro DAC è un player separato in Lyrion, da raggruppare e sincronizzare lì (stessi buffer, frequenze e ricampionamento del principale; senza CamillaDSP, volume a 64 bit e DSD nativo: le differenze sono in Stato)" "$(conf ALTRI_DAC no)")
 </select>
 
 <label for="rs">Ricampionamento <span>(cambia il segnale: di serie è spento)</span></label>
