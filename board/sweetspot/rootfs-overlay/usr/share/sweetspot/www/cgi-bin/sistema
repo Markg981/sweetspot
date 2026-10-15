@@ -8,6 +8,17 @@
 page_start "Sistema" sistema
 
 cpu_layout
+
+# Dove sono adesso le copertine (lo scrive sweetspot-lms all'avvio).
+artwork_status() {
+	local pos dir cap used motivo
+	IFS='|' read -r pos dir cap used motivo < "$RUN/lms.artwork.stato" 2>/dev/null || { echo "Copertine: posizione non ancora nota (Lyrion non è partito)."; return; }
+	case "$pos" in
+		disco) echo "Copertine su disco ($dir): ${used:-0} MB usati su un tetto di ${cap} MB." ;;
+		ram) echo "Copertine in RAM: tetto di ${cap} MB di memoria, ${used:-0} MB usati.${motivo:+ Ripiego in RAM: $motivo.}" ;;
+		*) echo "Copertine in RAM senza tetto.${motivo:+ $motivo.}" ;;
+	esac
+}
 echo '<h2>Questo computer</h2><div class="card">'
 info_row "" "$(cpu_model)" "$(( $(mem_total_kb) / 1024 )) MB di RAM - classe $(machine_class)"
 iso=$(cat "$SYS/devices/system/cpu/isolated" 2>/dev/null)
@@ -54,6 +65,20 @@ $(option no "Spento" "$(conf RENDERER_UPNP no)")
 $(option si "Acceso: BubbleUPnP, JPlay, mconnect e le altre app UPnP/DLNA vedono Sweetspot come diffusore" "$(conf RENDERER_UPNP no)")
 </select>
 <p class="sub">L'audio passa da Lyrion e dal player, come la musica della libreria: nessun altro programma apre il DAC. Solo con la modalità completa.</p>
+
+<label for="cop">Cache delle copertine <span>(vale dal prossimo avvio)</span></label>
+<select id="cop" name="cache_copertine">
+$(option auto "Automatica: sull'archivio musicale se c'è, altrimenti in RAM" "$(conf CACHE_COPERTINE auto)")
+$(option ram "RAM: con un tetto di memoria, si perde a ogni avvio, i dischi non si svegliano" "$(conf CACHE_COPERTINE auto)")
+$(option archivio "Archivio musicale: resta tra un avvio e l'altro" "$(conf CACHE_COPERTINE auto)")
+$(option disco "Un altro disco o SSD scrivibile (scelto qui sotto)" "$(conf CACHE_COPERTINE auto)")
+</select>
+<label for="copd">Disco per le copertine <span>(solo con "Un altro disco")</span></label>
+<input id="copd" name="cache_copertine_disco" autocapitalize="off" autocorrect="off" value="$(esc "$(conf CACHE_COPERTINE_DISCO)")" list="copdl">
+<datalist id="copdl">$(awk -F'|' '{ gsub(/[&<>"]/, ""); print "<option value=\"" $1 "\">" }' "$RUN/dischi.list" 2>/dev/null)</datalist>
+<label for="copm">Tetto sul disco <span>(MB, auto = 1024; oltre il tetto la cache si azzera)</span></label>
+<input id="copm" name="cache_copertine_mb" inputmode="numeric" maxlength="6" value="$(esc "$(conf CACHE_COPERTINE_MB auto)")">
+<p class="sub">$(esc "$(artwork_status)")</p>
 
 <details>
 <summary>Opzioni per esperti</summary>
