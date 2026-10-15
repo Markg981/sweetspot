@@ -2075,8 +2075,7 @@ expect "zona stabile prima di cadere: nessun ritardo" "0" "$(cat "$DSP/run/zone-
 awk 'BEGIN { for (i = 1; i <= 20000; i++) print i }' > "$DSP/run/zona.log"
 printf 'ALTRI_DAC=si\nLOG_SQUEEZELITE_KB=1\n' > "$DSP/run/sweetspot.conf"
 dspfn 1 'zone_log_rotate $RUN/zona.log'
-echo "DEBUG $(wc -c < "$DSP/run/zona.log") $(tail -c 12 "$DSP/run/zona.log" | od -An -c | tr -s ' ')"
-expect "registro della zona: ruotato oltre la soglia, ultime righe conservate" "20000" "$(tail -n 1 "$DSP/run/zona.log")"
+expect "registro della zona: ruotato oltre la soglia, ultime righe conservate" "20000" "$(sed -n '$p' "$DSP/run/zona.log")"
 expect "registro della zona: piu' piccolo dopo la rotazione" "si" "$([ "$(wc -c < "$DSP/run/zona.log")" -le 65536 ] && [ "$(wc -c < "$DSP/run/zona.log")" -gt 60000 ] && echo si)"
 echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
 rm -f "$DSP/run/zona.log"
