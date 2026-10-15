@@ -132,10 +132,39 @@ brano, e il confronto lo ammette solo come silenzio iniziale.
 
 Questa prova copre driver, contenitore, mmap e periodi del percorso ALSA, ma
 non un clock USB/I2S/S/PDIF, la temporizzazione di un DAC reale o
-l'apertura con il formato preferito da un DAC specifico. Il cambio di
-frequenza su ALSA non è ancora coperto: Squeezelite chiude e riapre il
-dispositivo, quindi la capture va riaperta a ogni frequenza e verificata come
-sequenza di segmenti.
+l'apertura con il formato preferito da un DAC specifico.
+
+### Matrice estesa su ALSA
+
+Oltre ai casi a frequenza costante, la prova ALSA verifica:
+
+- **FLAC e ALAC.** `generate_codec_fixtures` (in `tools/audio_verification.py`)
+  produce i sorgenti `flac` e `m4a` dagli stessi WAV di riferimento con encoder
+  minimi (frame FLAC verbatim con MD5, pacchetti ALAC non compressi): il decoder
+  di Squeezelite percorre il parser vero e l'uscita deve essere identica al WAV,
+  campione per campione. Casi `flac-*` e `alac-*` a 44,1/16, 48/24, 96/24 e
+  192/24. Gli encoder non comprimono, quindi non provano il predittore né il
+  coder di Rice dei decoder: lo fa la matrice del segnale con ffmpeg.
+- **Cambi di frequenza.** Le sei coppie fra 44,1, 48 e 96 kHz: il primo brano
+  dura 4 s, la capture resta alla sua frequenza e se ne confronta l'ultimo
+  secondo campione per campione; poi ammette solo silenzio, al massimo 20 ms di
+  transitorio del ricampionatore e il tono a 1 kHz del secondo brano. La
+  riapertura è senza pausa (`rate delay` 0), quindi nessun campione del primo
+  brano può mancare né ripetersi, e una rilettura del ring fallisce.
+- **Da DoP a PCM.** `dsf-2822400-dop-pcm-44100` e `dff-2822400-dop-pcm-44100`:
+  il primo brano è DSF/DFF suonato come DoP a 176,4 kHz, il secondo un tono PCM
+  a 44,1 kHz. La coda DoP deve essere identica al riferimento e con i marcatori
+  0x05/0xFA alternati in entrambi i canali; il tono che segue deve essere pulito.
+  Il verso PCM → DoP non si verifica con questo schema: la capture resta alla
+  frequenza del primo brano e il DoP, ricampionato dal plug, perderebbe i bit.
+  Resta provato dal solo avvio con DoP (casi `dsf-*-dop` e `dff-*-dop`).
+- **Hotplug.** Non coperto: il kernel rifiuta di scaricare `snd-aloop` con il
+  flusso aperto, e non esiste un modo di "staccare" la scheda senza toglierla a
+  tutto il sistema. Resta da provare su hardware (scollegare il DAC USB durante
+  l'ascolto e verificare il recupero).
+
+Il tempo in più in CI è di pochi minuti: i casi `flac-*`/`alac-*` durano come
+quelli PCM (circa 15 s) e ogni transizione circa 25 s.
 
 ## Confronto di una capture esterna
 
@@ -465,12 +494,13 @@ non è coperta dai test se ffmpeg non è installato.
 
 Questo gate copre PCM locale, profondità PCM miste, WAV DoP e DSF/DFF→DoP,
 frequenza costante e due brani consecutivi nel backend software e sul
-percorso ALSA di snd-aloop, più sei cambi fra 44,1/48/96 kHz nel backend
-software. La [matrice del segnale](#matrice-di-verifica-del-segnale) dichiara
+percorso ALSA di snd-aloop, sorgenti FLAC e ALAC (16/24 bit, 44,1-192 kHz),
+sei cambi fra 44,1/48/96 kHz sia nel backend software sia su ALSA e il
+ritorno da DoP a PCM su ALSA. La [matrice del segnale](#matrice-di-verifica-del-segnale) dichiara
 ora anche formati, frequenze fino a 384 kHz, DSD256, cambi PCM/DSD, hotplug e
 carico, ma ogni caso resta NON ESEGUITO finché non c'è una cattura digitale
 reale. Restano aperti DSD nativo, DFF compressi DST, mono/multicanale,
-seek, cambi PCM/DSD, cambi di frequenza su ALSA e sui DAC, USB/I2S/S/PDIF
+seek, passaggio da PCM a DoP in sequenza, cambi di frequenza sui DAC, USB/I2S/S/PDIF
 reali (a partire da N550JV + R26 con registro pubblicato per release),
 hotplug, rete/NAS, carico prolungato e la matrice computer/DAC/firmware per
 release. Non misura jitter del clock, rumore elettrico

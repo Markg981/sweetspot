@@ -31,7 +31,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -54,6 +56,7 @@
 #define LOGFILE "/var/log/sweetspot.log"
 #define MAX_ARG 1024
 #define MAX_FILE (1024 * 1024)
+#define MAX_LOG 512 // lunghezza massima di una riga di @log
 #define NO_ELENCO 126
 #define CONFERMA_VALIDITA 600 // secondi
 #define CONFERMA_MAX 16
@@ -110,6 +113,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-dischi", "monta", "", "", 0},
 	{"sweetspot-dischi", "smonta", "s", "", 0},
 	{"sweetspot-dsp", "fir", "", "", 0},
+	{"sweetspot-dsp", "fir-frequenze", "", "", 0},
 	{"sweetspot-dsp", "guadagno", "", "", 0},
 	{"sweetspot-dsp", "leggi", "p", "", 0},
 	{"sweetspot-dsp", "risposta", "", "", 0},
@@ -122,6 +126,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
 	{"sweetspot-lms", "json", "", "", 0}, // controllato a parte (lms_json_ok)
+	{"sweetspot-lms", "operazione", "", "", 0}, // controllato a parte (operazione_ok)
 	{"sweetspot-lms", "plugin", "", "", 0}, // controllato a parte
 	{"sweetspot-lms", "ricostruisci", "", "", 0},
 	{"sweetspot-lms", "riavvia", "", "", 0},
@@ -301,19 +306,96 @@ static int valore_ok(const char *chiave, const char *v)
 	return 0;
 }
 
-// Apre il file in BASE_WEB senza seguire collegamenti; ritorna il percorso
-// /proc/self/fd/N da passare allo script (lo stesso file che abbiamo
-// controllato, anche se nel frattempo la cartella cambia).
+// Apre `rel` (percorso relativo) sotto la cartella `base` senza seguire
+// collegamenti simbolici in NESSUN componente (O_NOFOLLOW vale solo per
+// l'ultimo: web puo' creare web/x -> /etc). Prima openat2() con
+// RESOLVE_NO_SYMLINKS|RESOLVE_BENEATH; se il kernel non la ha (ENOSYS, o
+// bloccata da seccomp) si scende componente per componente con
+// openat(O_NOFOLLOW).
+struct apri_come { // = struct open_how del kernel (gli header di Buildroot potrebbero non averla)
+	unsigned long long flags, mode, resolve;
+};
+#define RISOLVI_NO_MAGICLINKS 0x02ULL
+#define RISOLVI_NO_SYMLINKS 0x04ULL
+#define RISOLVI_BENEATH 0x08ULL
+
+static int apri_sotto(const char *base, const char *rel)
+{
+	int dfd, fd = -1;
+	char *copia, *comp, *succ;
+
+	dfd = open(base, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NOCTTY);
+	if (dfd < 0)
+		return -1;
+#ifdef SYS_openat2
+	{
+		struct apri_come how = {O_RDONLY | O_NOFOLLOW | O_NOCTTY, 0,
+					RISOLVI_NO_SYMLINKS | RISOLVI_BENEATH | RISOLVI_NO_MAGICLINKS};
+		long r = syscall(SYS_openat2, dfd, rel, &how, sizeof how);
+		if (r >= 0) {
+			close(dfd);
+			return (int)r;
+		}
+		if (errno != ENOSYS && errno != EPERM) {
+			close(dfd);
+			return -1;
+		}
+	}
+#endif
+	copia = strdup(rel);
+	if (!copia) {
+		close(dfd);
+		return -1;
+	}
+	for (comp = copia; comp && dfd >= 0; comp = succ) {
+		int ultimo, nfd;
+		succ = strchr(comp, '/');
+		if (succ)
+			*succ++ = 0;
+		ultimo = succ == NULL;
+		if (!*comp || !strcmp(comp, ".") || !strcmp(comp, "..")) // anche "a//b" e "a/"
+			break;
+		nfd = openat(dfd, comp, O_RDONLY | O_NOFOLLOW | O_NOCTTY | (ultimo ? 0 : O_DIRECTORY));
+		close(dfd);
+		dfd = nfd;
+		if (ultimo) {
+			fd = dfd;
+			dfd = -1;
+		}
+	}
+	if (dfd >= 0)
+		close(dfd);
+	free(copia);
+	return fd;
+}
+
+// Apre il file passato dalle pagine (sotto BASE_WEB o BASE_FILTRI) senza
+// seguire collegamenti; ritorna il percorso /proc/self/fd/N da passare allo
+// script (lo stesso file che abbiamo controllato, anche se nel frattempo la
+// cartella cambia). Proprietario: sotto BASE_WEB solo web (cartella di web:
+// un file di root li' non l'ha messo web); sotto BASE_FILTRI (cartella di
+// root, non scrivibile da web) solo root.
 static char *file_web(const char *s, uid_t web)
 {
 	struct stat st;
 	char *out;
+	const char *base;
+	uid_t atteso;
 	int fd;
 
-	if ((strncmp(s, BASE_WEB, strlen(BASE_WEB)) && strncmp(s, BASE_FILTRI, strlen(BASE_FILTRI))) ||
-	    strstr(s, "..") || !testo_ok(s))
+	if (strstr(s, "..") || !testo_ok(s))
 		return NULL;
-	fd = open(s, O_RDONLY | O_NOFOLLOW | O_NOCTTY);
+	if (!strncmp(s, BASE_WEB, strlen(BASE_WEB))) {
+		base = BASE_WEB;
+		atteso = web;
+	} else if (!strncmp(s, BASE_FILTRI, strlen(BASE_FILTRI))) {
+		base = BASE_FILTRI;
+		atteso = 0;
+	} else
+		return NULL;
+	if (!s[strlen(base)] || strstr(s + strlen(base), "//") || s[strlen(s) - 1] == '/')
+		return NULL; // niente componenti vuoti (stesso esito con openat2 e col ripiego)
+	fd = apri_sotto(base, s + strlen(base));
 	if (fd < 0)
 		return NULL;
 	if (fstat(fd, &st)) {
@@ -321,15 +403,22 @@ static char *file_web(const char *s, uid_t web)
 		return NULL;
 	}
 #ifdef SWEETSPOT_PRIV_PROVA
-	web = st.st_uid; // (nei test il proprietario e' chi esegue)
+	{ // nei test "web" e' chi esegue, o l'uid di SWEETSPOT_PROVA_UID
+		const char *u = getenv("SWEETSPOT_PROVA_UID");
+		atteso = u ? (uid_t)atol(u) : getuid();
+	}
+#else
+	(void)0;
 #endif
 	if (!S_ISREG(st.st_mode) || st.st_size > MAX_FILE ||
-	    (st.st_uid != web && st.st_uid != 0) || st.st_nlink != 1) {
+	    st.st_uid != atteso || st.st_nlink != 1) {
 		close(fd);
 		return NULL;
 	}
-	if (asprintf(&out, "/proc/self/fd/%d", fd) < 0)
+	if (asprintf(&out, "/proc/self/fd/%d", fd) < 0) {
+		close(fd);
 		return NULL;
+	}
 	return out;
 }
 
@@ -338,7 +427,7 @@ static int arg_ok(char tipo, const char *s, char **sost, uid_t web)
 	*sost = NULL;
 	switch (tipo) {
 	case 's': return testo_ok(s);
-	case 'w': return parola_ok(s);
+	case 'w': return parola_ok(s) && s[0] != '-'; // niente opzioni
 	case 'n': return s[0] >= '1' && s[0] <= '9' && !s[1];
 	case 'k': return chiave_ok(s);
 	case 'p': *sost = file_web(s, web); return *sost != NULL;
@@ -391,6 +480,24 @@ static int plugin_ok(int argc, char **argv)
 	return i > 0 && i <= 64;
 }
 
+// Operazioni lunghe in background (sweetspot-lms operazione): solo "avvia",
+// con un tipo dell'elenco. Lo stato lo legge la pagina direttamente.
+static int operazione_ok(int argc, char **argv)
+{
+	// argv: avvia plugin-installa|plugin-rimuovi NOME | avvia aggiorna|ricostruisci
+	size_t i;
+	if (argc < 2 || strcmp(argv[0], "avvia"))
+		return 0;
+	if (argc == 2)
+		return !strcmp(argv[1], "aggiorna") || !strcmp(argv[1], "ricostruisci");
+	if (argc != 3 || (strcmp(argv[1], "plugin-installa") && strcmp(argv[1], "plugin-rimuovi")))
+		return 0;
+	for (i = 0; argv[2][i]; i++)
+		if (!isalnum((unsigned char)argv[2][i]) && argv[2][i] != '_')
+			return 0;
+	return i > 0 && i <= 64;
+}
+
 static void ambiente(void)
 {
 	static char *env[] = {
@@ -403,10 +510,24 @@ static void ambiente(void)
 	environ = env;
 }
 
+// Chiude tutti i descrittori ereditati (3 e oltre). Va chiamata PRIMA di
+// aprire i file di file_web(): quelli si ereditano di proposito (lo script
+// li legge da /proc/self/fd).
 static void chiudi_descrittori(void)
 {
+	struct rlimit rl;
+	long max = sysconf(_SC_OPEN_MAX);
 	int fd;
-	for (fd = 3; fd < 64; fd++)
+
+#ifdef SYS_close_range
+	if (syscall(SYS_close_range, 3U, ~0U, 0U) == 0)
+		return;
+#endif
+	if (!getrlimit(RLIMIT_NOFILE, &rl) && rl.rlim_max != RLIM_INFINITY && (long)rl.rlim_max > max)
+		max = (long)rl.rlim_max;
+	if (max < 64 || max > 1048576)
+		max = 65536;
+	for (fd = 3; fd < max; fd++)
 		close(fd);
 }
 
@@ -574,7 +695,8 @@ static int azione_interna(const char *nome, int argc, char **argv)
 		char *a[] = {"/usr/bin/sweetspot-autotune", "--applica", NULL};
 		differito(2, a);
 	}
-	if (!strcmp(nome, "@log") && argc == 1 && testo_ok(argv[0])) {
+	if (!strcmp(nome, "@log") && argc == 1 && testo_ok(argv[0]) &&
+	    strlen(argv[0]) <= MAX_LOG) {
 		char ora[32];
 		time_t t = time(NULL);
 		FILE *f = fopen(LOGFILE, "a");
@@ -678,10 +800,17 @@ int main(int argc, char **argv)
 			av[2 + i] = argv[i];
 		esegui(av);
 	}
+	if (!strcmp(r->sub, "operazione") && !strcmp(r->script, "sweetspot-lms")) {
+		if (!operazione_ok(argc, argv))
+			return NO_ELENCO;
+		for (i = 0; i < (size_t)argc; i++)
+			av[2 + i] = argv[i];
+		av[2 + argc] = NULL;
+		esegui(av);
+	}
 	if (!strcmp(r->sub, "plugin") && !strcmp(r->script, "sweetspot-lms")) {
 		if (!plugin_ok(argc, argv))
 			return NO_ELENCO;
-		av = realloc(av, ((size_t)argc + 4) * sizeof *av);
 		for (i = 0; i < (size_t)argc; i++)
 			av[2 + i] = argv[i];
 		av[2 + argc] = NULL;
@@ -699,6 +828,12 @@ int main(int argc, char **argv)
 		char tipo = i < nfissi ? r->fissi[i] : r->ripeti[(i - nfissi) % nrip];
 		char *sost;
 		if (!arg_ok(tipo, argv[i], &sost, web))
+			return NO_ELENCO;
+		// Un testo che inizia con '-' sarebbe preso per un'opzione dallo
+		// script di root: lo ammettono solo config (valori), accesso
+		// (password) e cd (nomi), che non lo usano come opzione.
+		if (tipo == 's' && argv[i][0] == '-' && strcmp(r->script, "sweetspot-config") &&
+		    strcmp(r->script, "sweetspot-accesso") && strcmp(r->script, "sweetspot-cd"))
 			return NO_ELENCO;
 		// Valore di una chiave: deve andare bene per quella chiave.
 		if (!strcmp(r->script, "sweetspot-config") && !strcmp(r->sub, "imposta") &&

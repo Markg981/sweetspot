@@ -204,6 +204,174 @@ def generate_fixtures(directory: Path, rate: int, bits: int,
     return paths
 
 
+# --- Sorgenti compresse (FLAC, ALAC) generate dagli stessi WAV di riferimento ---
+# Encoder minimi e deterministici, senza dipendenze: solo frame "verbatim" (FLAC)
+# e pacchetti non compressi (ALAC). Non comprimono, ma il decoder del player
+# percorre lo stesso demux/parser del contenitore e deve restituire gli stessi
+# campioni del WAV.
+CODECS = ("flac", "alac")
+CODEC_EXTENSIONS = {"flac": "flac", "alac": "m4a"}
+CODEC_BLOCK_FRAMES = 4096
+
+
+def _crc(data, polynomial, width):
+    top = 1 << (width - 1)
+    mask = (1 << width) - 1
+    value = 0
+    for byte in data:
+        value ^= byte << (width - 8)
+        for _ in range(8):
+            value = ((value << 1) ^ polynomial) & mask if value & top else (value << 1) & mask
+    return value
+
+
+def _wav_pcm(path):
+    """Rate, bits and raw little-endian interleaved stereo PCM of a WAV."""
+    with wave.open(str(path), "rb") as stream:
+        if stream.getnchannels() != 2:
+            raise ValueError("codec fixtures need a stereo WAV")
+        return stream.getframerate(), stream.getsampwidth() * 8, stream.readframes(stream.getnframes())
+
+
+def _utf8_number(value):
+    if value < 0x80:
+        return bytes([value])
+    for count in range(2, 7):
+        if value < 1 << (5 * count + 1):
+            tail = [0x80 | ((value >> (6 * index)) & 0x3F) for index in range(count - 2, -1, -1)]
+            return bytes([((0xFF00 >> count) & 0xFF) | (value >> (6 * (count - 1)))] + tail)
+    raise ValueError("frame number too large")
+
+
+def encode_flac(wav: Path, destination: Path) -> Path:
+    """Write a FLAC made only of verbatim subframes (STREAMINFO with MD5)."""
+    rate, bits, pcm = _wav_pcm(wav)
+    if bits not in (16, 24):
+        raise ValueError("FLAC fixtures are 16 or 24 bit")
+    width = bits // 8
+    total = len(pcm) // (2 * width)
+    frames = []
+    for number, start in enumerate(range(0, total, CODEC_BLOCK_FRAMES)):
+        count = min(CODEC_BLOCK_FRAMES, total - start)
+        # Sync, fixed block size, size on 16 bit after the number, rate and
+        # depth from STREAMINFO, two independent channels.
+        header = b"\xff\xf8" + bytes([0x70, 0x10]) + _utf8_number(number) + (count - 1).to_bytes(2, "big")
+        header += bytes([_crc(header, 0x07, 8)])
+        left = bytearray()
+        right = bytearray()
+        for index in range(start, start + count):
+            offset = index * 2 * width
+            left += pcm[offset:offset + width][::-1]
+            right += pcm[offset + width:offset + 2 * width][::-1]
+        frame = header + b"\x02" + bytes(left) + b"\x02" + bytes(right)  # 0x02: verbatim subframe
+        frames.append(frame + _crc(frame, 0x8005, 16).to_bytes(2, "big"))
+    sizes = [len(frame) for frame in frames] or [0]
+    info = (CODEC_BLOCK_FRAMES.to_bytes(2, "big") + CODEC_BLOCK_FRAMES.to_bytes(2, "big")
+            + min(sizes).to_bytes(3, "big") + max(sizes).to_bytes(3, "big")
+            + ((rate << 44) | (1 << 41) | ((bits - 1) << 36) | total).to_bytes(8, "big")
+            + hashlib.md5(pcm).digest())
+    destination = Path(destination)
+    destination.write_bytes(b"fLaC" + bytes([0x80, 0, 0, 34]) + info + b"".join(frames))
+    return destination
+
+
+def _box(kind, payload=b""):
+    return struct.pack(">I4s", 8 + len(payload), kind) + payload
+
+
+def _full_box(kind, payload=b"", version_flags=0):
+    return _box(kind, struct.pack(">I", version_flags) + payload)
+
+
+def _alac_packet(pcm, start, count, bits, width):
+    """One uncompressed ALAC packet: stereo element, explicit count, raw samples."""
+    out = bytearray()
+    state = [0, 0]  # bit accumulator, bits in use
+
+    def put(value, size):
+        state[0] = (state[0] << size) | (value & ((1 << size) - 1))
+        state[1] += size
+        while state[1] >= 8:
+            state[1] -= 8
+            out.append((state[0] >> state[1]) & 0xFF)
+        state[0] &= (1 << state[1]) - 1
+
+    put(1, 3)    # CPE (coppia stereo)
+    put(0, 4)    # instance tag
+    put(0, 12)   # non usati
+    put(1, 1)    # il pacchetto porta il numero di campioni
+    put(0, 2)    # nessun bit extra
+    put(1, 1)    # non compresso
+    put(count, 32)
+    for index in range(start, start + count):
+        offset = index * 2 * width
+        for channel in (0, 1):
+            put(int.from_bytes(pcm[offset + channel * width:offset + (channel + 1) * width],
+                               "little", signed=True), bits)
+    put(7, 3)    # fine del pacchetto
+    if state[1]:
+        put(0, 8 - state[1])
+    return bytes(out)
+
+
+def encode_alac(wav: Path, destination: Path) -> Path:
+    """Write an ALAC in an M4A with uncompressed packets (one chunk)."""
+    rate, bits, pcm = _wav_pcm(wav)
+    if bits not in (16, 24):
+        raise ValueError("ALAC fixtures are 16 or 24 bit")
+    width = bits // 8
+    total = len(pcm) // (2 * width)
+    packets = [_alac_packet(pcm, start, min(CODEC_BLOCK_FRAMES, total - start), bits, width)
+               for start in range(0, total, CODEC_BLOCK_FRAMES)]
+    sizes = [len(packet) for packet in packets]
+    cookie = _full_box(b"alac", struct.pack(">IBBBBBBHIII", CODEC_BLOCK_FRAMES, 0, bits, 40, 10, 14, 2, 255,
+                                            max(sizes), rate * bits * 2, rate))
+    entry = (b"\0" * 6 + struct.pack(">HHHIHHHHI", 1, 0, 0, 0, 2, bits, 0, 0, (rate << 16) & 0xFFFFFFFF)
+             + cookie)
+    last = total - CODEC_BLOCK_FRAMES * (len(packets) - 1)
+    durations = [(len(packets) - 1, CODEC_BLOCK_FRAMES)] if len(packets) > 1 else []
+    durations.append((1, last))
+    ftyp = _box(b"ftyp", b"M4A \0\0\0\0M4A mp42isom")
+    matrix = struct.pack(">9I", 0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000)
+
+    def moov(offset):
+        stbl = (_full_box(b"stsd", struct.pack(">I", 1) + _box(b"alac", entry))
+                + _full_box(b"stts", struct.pack(">I", len(durations))
+                            + b"".join(struct.pack(">II", n, d) for n, d in durations))
+                + _full_box(b"stsc", struct.pack(">IIII", 1, 1, len(packets), 1))
+                + _full_box(b"stsz", struct.pack(">II", 0, len(packets))
+                            + b"".join(struct.pack(">I", size) for size in sizes))
+                + _full_box(b"stco", struct.pack(">II", 1, offset)))
+        minf = (_full_box(b"smhd", b"\0\0\0\0")
+                + _box(b"dinf", _full_box(b"dref", struct.pack(">I", 1) + _full_box(b"url ", b"", 1)))
+                + _box(b"stbl", stbl))
+        mdia = (_full_box(b"mdhd", struct.pack(">IIIIHH", 0, 0, rate, total, 0x55C4, 0))
+                + _full_box(b"hdlr", struct.pack(">I4s12s", 0, b"soun", b"") + b"\0")
+                + _box(b"minf", minf))
+        tkhd = _full_box(b"tkhd", struct.pack(">IIIII8xhhhh", 0, 0, 1, 0, total, 0, 0, 0x100, 0)
+                         + matrix + struct.pack(">II", 0, 0), 3)
+        mvhd = _full_box(b"mvhd", struct.pack(">IIII", 0, 0, rate, total) + struct.pack(">iH10x", 0x10000, 0x100)
+                         + matrix + b"\0" * 24 + struct.pack(">I", 2))
+        return _box(b"moov", mvhd + _box(b"trak", tkhd + _box(b"mdia", mdia)))
+
+    offset = len(ftyp) + len(moov(0)) + 8
+    destination = Path(destination)
+    destination.write_bytes(ftyp + moov(offset) + _box(b"mdat", b"".join(packets)))
+    return destination
+
+
+def generate_codec_fixtures(directory: Path, rate: int, bits: int, codec: str,
+                            frames: int | None = None) -> tuple[list[Path], list[Path]]:
+    """FLAC or ALAC sources of the same two WAV references the PCM matrix uses."""
+    if codec not in CODECS:
+        raise ValueError("codec must be flac or alac")
+    references = generate_fixtures(directory, rate, bits, frames)
+    encode = encode_flac if codec == "flac" else encode_alac
+    sources = [encode(reference, Path(directory) / f"{reference.stem}.{CODEC_EXTENSIONS[codec]}")
+               for reference in references]
+    return sources, references
+
+
 def generate_dop_fixtures(directory: Path, rate: int,
                           frames: int | None = None) -> list[Path]:
     """Emit two deterministic WAV24 DoP diagnostic tracks, not listening audio."""

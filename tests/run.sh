@@ -231,7 +231,7 @@ run "$OOM" oom_adj_cmd 500 scanner.pl
 expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
 expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
 grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
-grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && set -- "\$@" -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
+grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && printf .%s\\n. -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
 grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
 grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-stato" && ok "stato: scanner a +500 (evento rescan)" || ko "stato: scanner a +500" "presente" "assente"
@@ -386,7 +386,7 @@ page() { # pagina [impostazioni]
 	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$WEB/bin:$SWEETSPOT_PATH" \
 		SWEETSPOT_PLUGIN_CATALOG=$OVERLAY/usr/share/sweetspot/plugin-consigliati.txt \
-		SWEETSPOT_WGET=$WEB/bin/wget REQUEST_METHOD=GET QUERY_STRING="" HTTP_HOST=sweetspot.local \
+		LMS_CACHE_TTL=0 SWEETSPOT_WGET=$WEB/bin/wget REQUEST_METHOD=GET QUERY_STRING="" HTTP_HOST=sweetspot.local \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; . $OVERLAY/usr/share/sweetspot/www/cgi-bin/$1" 2>&1
 }
 for p in audio musica archivio plugin rete sistema; do
@@ -879,7 +879,7 @@ case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita
 
 # Stallo da frequenza (-H) e ricampionamento "solo se serve" (flag E).
 diag_freq() { SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati; }
-grep -q 'set -- "\$@" -R "vLE"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
+grep -q "printf '%s\\\\n' -R vLE" "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
 grep -q '^FREQUENZA_NON_SUPPORTATA=ricampiona' "$OVERLAY/etc/sweetspot/defaults.conf" && ok "default: FREQUENZA_NON_SUPPORTATA=ricampiona" || ko "default FREQUENZA_NON_SUPPORTATA" "ricampiona" "assente"
 printf '[12:00:00] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n[12:00:05] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
@@ -1080,7 +1080,13 @@ fi
 expect "correzione: volume principale a 0 dB per ogni processo" "0.0 0|1" \
 	"$(cat "$DSPE/run/camilladsp.volume")|$(grep -c "vol_file \"$DSPE/run/camilladsp.volume\"" "$DSPE/asound.conf")"
 expect "volume a 64 bit: CamillaDSP serve anche senza correzione" "0|1" "$(dsp 'VOLUME=dsp' attiva; echo $?)|$(dsp 'VOLUME=dsp' correzione; echo $?)"
-expect "volume a 64 bit: solo nella modalita' completa" "1" "$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player')" attiva; echo $?)"
+expect "volume a 64 bit in modalita' player senza SERVER: non disponibile" "1" "$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player')" attiva; echo $?)"
+expect "volume a 64 bit in modalita' player con SERVER: disponibile" "0|0" \
+	"$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player\nSERVER=192.168.1.5')" attiva; echo $?)|$(dsp "$(printf 'VOLUME=dsp\nMODALITA=player\nSERVER=192.168.1.5')" volume; echo $?)"
+expect "volume a 64 bit in modalita' player: il sorvegliante legge il Lyrion indicato" "192.168.1.5|127.0.0.1" \
+	"$(printf 'MODALITA=player\nSERVER=192.168.1.5:3483\n' > "$DSPE/s.txt"; SWEETSPOT_RUN=$DSPE/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LOG=$DSPE/log SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; echo \$LMS_HOST")|$(printf 'MODALITA=completa\nSERVER=192.168.1.5\n' > "$DSPE/s.txt"; SWEETSPOT_RUN=$DSPE/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LOG=$DSPE/log SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; echo \$LMS_HOST")"
+lmshost() { printf 'MODALITA=player\nSERVER=%s\n' "$1" > "$DSPE/s.txt"; SWEETSPOT_RUN=$DSPE/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LOG=$DSPE/log SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-volume; echo \$LMS_HOST"; }
+expect "volume: SERVER IPv6 con porta, IPv6 senza porta, host:porta, host" "fe80::1|fe80::1|lyrion.lan|10.0.0.2" 	"$(lmshost '[fe80::1]:3483')|$(lmshost 'fe80::1')|$(lmshost 'lyrion.lan:3483')|$(lmshost '10.0.0.2')"
 rm -f "$DSPE/run/camilladsp.volume"
 mv "$DSPE/run/correzione/sinistro.txt" "$DSPE/sinistro.bak"
 dsp 'VOLUME=dsp' prepara 1 > /dev/null
@@ -1156,6 +1162,12 @@ expect "riavvio di CamillaDSP: il volume richiesto viene riapplicato" "-9.9|fals
 rm -f "$DSPE/run/camilla.call"
 volfn 'dsp_resync'
 expect "gia' allineato: nessun comando di scrittura" "0" "$(grep -c Set "$DSPE/run/camilla.call")"
+# Istanza di sessione riavviata dal player: risincronizza riapplica sempre il
+# volume richiesto e volume.applicato torna quello confermato.
+echo errore > "$DSPE/run/volume.applicato"
+vol risincronizza
+expect "riavvio dell'istanza di sessione: volume.applicato riallineato" "80 -9.9 0" "$(cat "$DSPE/run/volume.applicato")"
+expect "player: dopo il riavvio dell'istanza chiama sweetspot-volume risincronizza" "1" "$(grep -c 'sweetspot-volume risincronizza' "$OVERLAY/usr/bin/sweetspot-player")"
 echo 99 > "$DSPE/run/camilla.fail"; echo "-74.0" > "$DSPE/run/camilla.vol"
 volfn 'dsp_resync'; echo 0 > "$DSPE/run/camilla.fail"
 expect "DSP irraggiungibile durante il riavvio: nessun errore, nessuna modifica" "-74.0" "$(cat "$DSPE/run/camilla.vol")"
@@ -1239,6 +1251,85 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 	expect "salvare i filtri di REW non cancella i FIR sulla chiavetta" "si" \
 		"$([ -s "$DSPE/chiavetta/correzione-ambientale/fir-sinistro.wav" ] && echo si || echo no)"
 	rm -f "$DSPE/run/correzione/fir-sinistro.wav" "$DSPE/run/correzione/fir-destro.wav"
+
+	# FIR per frequenza: un file per ogni frequenza di campionamento (nome con
+	# la frequenza), CamillaDSP resta alla frequenza del brano.
+	FR=$DSPE/run/correzione
+	plan() { sed 's/ *$//' "$DSPE/run/correzione.frequenze" | tr '\n' '|' | sed 's/|$//'; }
+	mkwav 44100 1 > "$FR/fir-44100.wav"
+	mkwav 96000 2 > "$FR/fir-96000.wav"
+	expect "FIR per frequenza: elenco delle frequenze" "44100|96000" "$(dsp 'CORREZIONE=si' fir-frequenze | tr '\n' '|' | sed 's/|$//')"
+	expect "FIR per frequenza: nessun problema" "" "$(dsp 'CORREZIONE=si' problema)"
+	expect "FIR per frequenza: primo FIR" "44100 1 sinistro 3" "$(dsp 'CORREZIONE=si' fir)"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	expect "FIR per frequenza, politica blocca: 48 kHz non offerto" "44100 fir 44100|48000 escluso -|96000 fir 96000" "$(plan)"
+	expect "FIR per frequenza: squeezelite vede solo le frequenze con FIR" "rates = [ 44100 96000 ]" "$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
+	expect "FIR per frequenza: una configurazione per frequenza" "samplerate: 44100|samplerate: 96000|0" \
+		"$(grep -o 'samplerate: [0-9]*' "$DSPE/run/camilladsp-44100.yml")|$(grep -o 'samplerate: [0-9]*' "$DSPE/run/camilladsp-96000.yml")|$(ls "$DSPE"/run/camilladsp-48000.yml 2> /dev/null | wc -l | tr -d ' ')"
+	expect "FIR per frequenza: ognuna col suo file e il suo canale" "fir-44100.wav 0 0|fir-96000.wav 0 1" \
+		"$(grep -o 'fir-[0-9]*.wav' "$DSPE/run/camilladsp-44100.yml" | head -n 1) $(grep -o 'channel: [01]' "$DSPE/run/camilladsp-44100.yml" | cut -d' ' -f2 | tr '\n' ' ' | sed 's/ $//')|$(grep -o 'fir-[0-9]*.wav' "$DSPE/run/camilladsp-96000.yml" | head -n 1) $(grep -o 'channel: [01]' "$DSPE/run/camilladsp-96000.yml" | cut -d' ' -f2 | tr '\n' ' ' | sed 's/ $//')"
+	expect "FIR per frequenza: nessun ricampionamento (niente capture_samplerate)" "0|0" \
+		"$(grep -c capture_samplerate "$DSPE/run/camilladsp-44100.yml")|$(grep -c capture_samplerate "$DSPE/run/camilladsp-96000.yml")"
+	expect "FIR per frequenza: configurazione di partenza = prima frequenza offerta" "samplerate: 44100" "$(grep -o 'samplerate: [0-9]*' "$DSPE/run/camilladsp.yml")"
+	expect "FIR per frequenza: coda col FIR di quella frequenza" "extra_samples: 8704" "$(grep -o 'extra_samples: [0-9]*' "$DSPE/run/camilladsp-96000.yml")"
+	expect "FIR per frequenza: avviso visibile con la politica blocca" \
+		"nessun FIR a 48000 Hz: i brani a queste frequenze non vengono riprodotti (CORREZIONE_SE_ASSENTE=blocca)" "$(cat "$DSPE/run/correzione.avviso")"
+	expect "il plugin lavora sulla pipe e sul websocket, una configurazione per frequenza" \
+		"fifo \"$DSPE/run/camilladsp.fifo\"|ws_port 1234|config_rate_prefix \"$DSPE/run/camilladsp-\"" \
+		"$(grep -o 'fifo ".*"' "$DSPE/asound.conf")|$(grep -o 'ws_port [0-9]*' "$DSPE/asound.conf")|$(grep -o 'config_rate_prefix ".*"' "$DSPE/asound.conf")"
+	expect "avvio unico di CamillaDSP: argomenti con registro, websocket locale, volume e prima configurazione" \
+		"-l warn -o /var/log/camilladsp.log -p 1234 -a 127.0.0.1 -g0.0 $DSPE/run/camilladsp-44100.yml" "$(dsp 'CORREZIONE=si' avvio)"
+	dsp 'CORREZIONE=si' stato -12.5 muto
+	expect "avvio unico: volume e sordina di partenza dal file" "-l warn -o /var/log/camilladsp.log -p 1234 -a 127.0.0.1 -g-12.5 -m $DSPE/run/camilladsp-44100.yml" "$(dsp 'CORREZIONE=si' avvio)"
+	dsp 'CORREZIONE=si' stato 0.0
+	dsp "$(printf 'CORREZIONE=si\nCORREZIONE_SE_ASSENTE=diretto')" prepara 1 > /dev/null
+	expect "FIR per frequenza, politica diretto: 48 kHz senza FIR" "44100 fir 44100|48000 senza -|96000 fir 96000" "$(plan)"
+	expect "FIR per frequenza, diretto: tutte le frequenze offerte" "rates = [ 44100 48000 96000 ]" "$(grep -o 'rates = \[.*\]' "$DSPE/asound.conf")"
+	expect "FIR per frequenza, diretto: 48 kHz senza convoluzione e senza margine dei FIR" "samplerate: 48000|0|-4.5" \
+		"$(grep -o 'samplerate: [0-9]*' "$DSPE/run/camilladsp-48000.yml")|$(grep -c 'type: Conv' "$DSPE/run/camilladsp-48000.yml")|$(sed -n 's/^      gain: //p' "$DSPE/run/camilladsp-48000.yml" | head -n 1)"
+	expect "FIR per frequenza, diretto: avviso" "nessun FIR a 48000 Hz: suonano senza FIR (CORREZIONE_SE_ASSENTE=diretto)" "$(cat "$DSPE/run/correzione.avviso")"
+	dsp "$(printf 'CORREZIONE=si\nFIR_RICAMPIONA=si')" prepara 1 > /dev/null
+	expect "FIR per frequenza, ricampionamento scelto: 48 kHz al FIR della stessa famiglia" "44100 fir 44100|48000 ricampiona 96000|96000 fir 96000" "$(plan)"
+	expect "FIR ricampionato: CamillaDSP a 96 kHz, ingresso a 48 kHz" "samplerate: 96000|capture_samplerate: 48000|type: Synchronous" \
+		"$(grep -o 'samplerate: 96000' "$DSPE/run/camilladsp-48000.yml")|$(grep -o 'capture_samplerate: 48000' "$DSPE/run/camilladsp-48000.yml")|$(grep -o 'type: Synchronous' "$DSPE/run/camilladsp-48000.yml")"
+	expect "FIR ricampionato: avviso" "nessun FIR, brani ricampionati alla frequenza del FIR piu' vicino (FIR_RICAMPIONA=si): 48000>96000" "$(cat "$DSPE/run/correzione.avviso")"
+	mkwav 48000 1 > "$FR/fir-48000.wav"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	expect "frequenze con FIR tutte coperte: nessun avviso" "no|44100 fir 44100|48000 fir 48000|96000 fir 96000" "$([ -s "$DSPE/run/correzione.avviso" ] && echo si || echo no)|$(plan)"
+	rm -f "$FR/fir-48000.wav"
+	# Sinistro e destro per frequenza.
+	rm -f "$FR/fir-44100.wav" "$FR/fir-96000.wav"
+	mkwav 44100 1 > "$FR/fir-sinistro-44100.wav"
+	mkwav 44100 1 > "$FR/fir-destro-44100.wav"
+	mkwav 48000 1 > "$FR/fir-sinistro-48000.wav"
+	expect "FIR per canale e frequenza: nessun problema" "" "$(dsp 'CORREZIONE=si' problema)"
+	dsp 'CORREZIONE=si' prepara 1 > /dev/null
+	expect "FIR per canale e frequenza: il destro ha il suo file a 44,1 kHz, usa il sinistro a 48 kHz" "1|1|2" \
+		"$(grep -c "fir-destro-44100.wav" "$DSPE/run/camilladsp-44100.yml")|$(grep -c "fir-sinistro-44100.wav" "$DSPE/run/camilladsp-44100.yml")|$(grep -c "fir-sinistro-48000.wav" "$DSPE/run/camilladsp-48000.yml")"
+	# Validazione per frequenza.
+	rm -f "$FR"/fir-*.wav
+	mkwav 48000 1 > "$FR/fir-44100.wav"
+	expect "FIR: la frequenza del file deve essere quella del nome" "fir-44100.wav ha frequenza 48000 Hz, non 44100 Hz come nel nome" "$(dsp 'CORREZIONE=si' problema)"
+	expect "FIR con frequenza sbagliata nel nome: non usati" "1" "$(dsp 'CORREZIONE=si' fir-frequenze > /dev/null; echo $?)"
+	rm -f "$FR"/fir-*.wav
+	mkwav 44100 1 > "$FR/fir-44100x.wav"
+	expect "FIR: la frequenza nel nome e' un numero" "fir-44100x.wav: la frequenza nel nome deve essere un numero (per esempio fir-44100.wav)" "$(dsp 'CORREZIONE=si' problema)"
+	rm -f "$FR"/fir-*.wav
+	mkwav 48000 1 > "$FR/fir-destro-48000.wav"
+	expect "FIR: solo il destro a una frequenza" "a 48000 Hz c'e' il FIR del destro ma manca quello del sinistro (fir-sinistro-48000.wav o fir-48000.wav)" "$(dsp 'CORREZIONE=si' problema)"
+	mkwav 48000 1 > "$FR/fir-sinistro-48000.wav"
+	mkwav 48000 2 > "$FR/fir-destro-48000.wav"
+	expect "FIR: canali diversi alla stessa frequenza" "i FIR a 48000 Hz hanno canali diversi (sinistro 1, destro 2)" "$(dsp 'CORREZIONE=si' problema)"
+	mkwav 48000 1 > "$FR/fir-destro-48000.wav"
+	mkwav 44100 1 > "$FR/fir-44100.wav"
+	: > "$FR/fir-96000.wav"
+	expect "FIR: un file vuoto a una frequenza" "fir-96000.wav vuoto" "$(dsp 'CORREZIONE=si' problema)"
+	rm -f "$FR"/fir-*.wav
+	mkwav 192000 1 > "$FR/fir-192000.wav"
+	expect "FIR solo a frequenze che il DAC non accetta: correzione non applicata" "1" "$(dsp 'CORREZIONE=si' prepara 1 > /dev/null; echo $?)"
+	expect "FIR solo a frequenze che il DAC non accetta: il motivo le elenca" "il DAC non accetta nessuna delle frequenze dei filtri FIR (192000 Hz)" "$(cat "$DSPE/run/correzione.motivo")"
+	rm -f "$FR"/fir-*.wav
+	rm -f "$DSPE"/run/camilladsp-[0-9]*.yml "$DSPE/run/correzione.motivo" "$DSPE/run/correzione.avviso" "$DSPE/run/correzione.frequenze"
 fi
 # Correzione chiesta con file mancanti, illeggibili o malformati: il problema
 # e' esplicito (con blocca il player non suona, vedi correzione_non_applicabile).
@@ -2122,13 +2213,18 @@ dspstat 4245 80 1 > "$DSP/proc/4242/task/4245/stat"; printf 'Cpus_allowed_list:\
 dspstat 4246 0 0 > "$DSP/proc/4242/task/4246/stat"; printf 'Cpus_allowed_list:\t0,1\n' > "$DSP/proc/4242/task/4246/status"
 rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
 dspfn 1 "HK=0,1; pin_dsp"
-expect "thread audio: in real-time sul core audio, solo chi non lo e' gia'" \
-	"-f -p 70 4244|-f -p 70 4245|-p -c 3 4245" \
+# Per ruolo: riproduzione 70 (PRIORITA_DSP), elaborazione 69, cattura 68.
+expect "thread audio: in real-time per ruolo sul core audio, solo chi non lo e' gia'" \
+	"-f -p 69 4243|-f -p 68 4244|-f -p 70 4245|-p -c 3 4245" \
 	"$(grep -- '424[345]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[345]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
 expect "thread non audio: sui core di sistema con la priorita' normale, solo chi non lo e' gia'" \
 	"-o -p 0 4242|-p -c 0,1 4242" \
 	"$(grep -- '424[26]' "$DSP/run/chrt.call" | tr '\n' '|' | sed 's/|$//')|$(grep -- '424[26]' "$DSP/run/taskset.call" | tr '\n' '|' | sed 's/|$//')"
 rm -f "$DSP/run/chrt.call" "$DSP/run/taskset.call"
+expect "priorita' per ruolo: riproduzione >= elaborazione >= cattura" "70 69 68|70 70" \
+	"$(dspfn 1 'echo "$(dsp_thread_priority AlsaPlayback 1) $(dsp_thread_priority Processing 1) $(dsp_thread_priority FileCapture 1)"')|$(dspfn 1 'echo "$(dsp_thread_priority AlsaPlaybackInner 1) $(dsp_thread_priority Processing 0)"')"
+echo PRIORITA_DSP=2 > "$DSP/run/sweetspot.conf"
+expect "priorita' per ruolo: mai sotto 1" "2 1 1" "$(dspfn 1 'echo "$(dsp_thread_priority AlsaPlayback 1) $(dsp_thread_priority Processing 1) $(dsp_thread_priority FileCapture 1)"')"
 echo PRIORITA_DSP=99 > "$DSP/run/sweetspot.conf"
 expect "priorita' DSP limitata a 98" "98" "$(dspfn 1 dsp_priority)"
 echo PRIORITA_DSP=alta > "$DSP/run/sweetspot.conf"
@@ -2163,8 +2259,98 @@ expect "verifica senza la patch: un thread non real-time e' un avviso" \
 	"ATTENZIONE|CamillaDSP in real-time|1 di 2 thread audio in real-time: la correzione puo' interrompersi sotto carico" "$(dspcheck)"
 dspstat 4242 70 1 > "$DSP/proc/4242/task/4242/stat"
 expect "verifica senza la patch: tutti i thread real-time sul core audio" "OK|CamillaDSP in real-time|2 thread audio a priorita' 70 sul core 3" "$(dspcheck)"
-expect "verifica: CamillaDSP parte con il primo brano" \
-	"INFO|CamillaDSP in real-time|non in esecuzione: parte con il primo brano" "$(DSP_PID= dspcheck)"
+expect "verifica: CamillaDSP assente, lo riavvia il player" \
+	"INFO|CamillaDSP in real-time|non in esecuzione: il player la riavvia" "$(DSP_PID= dspcheck)"
+
+echo "CamillaDSP: una sola istanza per sessione"
+mkdir -p "$DSP/bin-sessione"
+printf '#!/bin/sh\nexec sleep 30\n' > "$DSP/camilladsp-finto"
+printf '#!/bin/sh\necho "-l warn"\n' > "$DSP/bin-sessione/sweetspot-dsp"
+printf '#!/bin/sh\nexit 0\n' > "$DSP/bin-sessione/sweetspot-camilla"
+chmod +x "$DSP/camilladsp-finto" "$DSP/bin-sessione/sweetspot-dsp" "$DSP/bin-sessione/sweetspot-camilla"
+cat > "$DSP/sessione.sh" <<'SESSIONE'
+# Funzioni al posto dei comandi (BusyBox preferisce le sue applet).
+taskset() { shift 2; "$@"; }
+PATH=$DSP_T/bin-sessione:$PATH
+DSP_FIFO=$DSP_T/run/dsp.fifo
+CAMILLADSP=$DSP_T/camilladsp-finto
+HK=0
+start_dsp || echo avvio-fallito
+a=$DSPPROC
+[ -p "$DSP_FIFO" ] && echo fifo
+dsp_alive && echo vivo
+b=$a
+# Un cambio di frequenza non passa di qui: l'istanza resta la stessa finche'
+# il supervisore non la ferma o non muore.
+# correzione.attiva esiste gia' (creato dai test di pin_dsp) e deve restare.
+touch "$RUN/correzione.attiva"
+dsp_session_check
+[ "$DSPPROC" = "$a" ] && echo stesso-pid
+# Morte improvvisa: il supervisore la riavvia.
+kill "$a"; wait "$a" 2>/dev/null
+DSP_RIPROVA=0
+dsp_session_check
+dsp_alive && echo riavviato
+[ "$DSPPROC" != "$a" ] && echo pid-nuovo
+b=$DSPPROC
+stop_dsp
+[ -e "$DSP_FIFO" ] || echo fifo-rimossa
+kill -0 "$b" 2>/dev/null || echo fermo
+SESSIONE
+export DSP_T=$DSP
+expect "sessione: avvio unico dal supervisore, riavvio solo se muore, arresto pulito" \
+	"fifo|vivo|stesso-pid|riavviato|pid-nuovo|fifo-rimossa|fermo" \
+	"$(dspfn 1 ". $DSP/sessione.sh" 2>&1 | tr '\n' '|' | sed 's/|$//')"
+rm -f "$DSP/run/dsp.fifo"
+expect "CamillaDSP non e' piu' avviato dal plugin con un fork dal thread real-time" "1|1" \
+	"$(grep -c '^start_dsp()' "$OVERLAY/usr/bin/sweetspot-player")|$(grep -c 'taskset -c "\$HK" "\$CAMILLADSP"' "$OVERLAY/usr/bin/sweetspot-player")"
+expect "init: ferma anche l'istanza di CamillaDSP" "1" "$(grep -c 'killall camilladsp' "$OVERLAY/etc/init.d/S60sweetspot-player")"
+
+echo "Misura della latenza in ascolto sotto il player"
+LATFN=$(sed -n '/^listen_priority()/,/^}/p' "$OVERLAY/usr/bin/sweetspot-latenza")
+latprio() { $TEST_SH -c "conf() { echo '$1'; }; $LATFN; listen_priority"; }
+expect "cyclictest in ascolto: un gradino sotto il player (80 -> 79)" "79" "$(latprio 80)"
+expect "cyclictest in ascolto: segue PRIORITA_AUDIO, mai sotto 2" "89|2" "$(latprio 90)|$(latprio 1)"
+expect "cyclictest in ascolto: valore non numerico, 79" "79" "$(latprio alta)"
+expect "cyclictest in ascolto: sopra CamillaDSP (70) e sotto il player (80)" "1" "$([ "$(latprio 80)" -gt 70 ] && [ "$(latprio 80)" -lt 80 ] && echo 1 || echo 0)"
+expect "cyclictest in ascolto non e' piu' a 85" "0" "$(grep -c -e '-p 85 -i 10000' "$OVERLAY/usr/bin/sweetspot-latenza")"
+
+echo "CamillaDSP di sessione: analisi dell'audio registrato nella prova ALSA"
+if command -v python3 > /dev/null; then
+	cat > "$WORK/analisi.py" <<'PY'
+import importlib.util, sys, tempfile, wave, os
+spec = importlib.util.spec_from_file_location("cs", sys.argv[1])
+cs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cs)
+d = tempfile.mkdtemp()
+res = []
+for rate in (44100, 96000):
+    f = os.path.join(d, "t.wav")
+    cs.tono(f, rate)
+    with wave.open(f) as w:
+        raw = w.readframes(rate * 3)
+    # Silenzio iniziale (blocco dopo il cambio di configurazione) + tono: valido.
+    res.append(cs.analizza(b"\0" * 8 * 5000 + raw, rate)["status"])
+    # Stesso audio letto a un'altra frequenza (cambio non avvenuto): rifiutato.
+    res.append(cs.analizza(raw, 96000 if rate == 44100 else 44100)["status"])
+    # Buco nell'audio: rifiutato.
+    buco = bytearray(raw)
+    buco[8 * rate:8 * rate + 1600] = b"\0" * 1600
+    res.append(cs.analizza(bytes(buco), rate)["status"])
+# Nessun segnale: rifiutato.
+res.append(cs.analizza(b"\0" * 8 * 44100, 44100)["status"])
+print("|".join(res))
+PY
+	expect "prova ALSA CamillaDSP: tono corretto accettato, frequenza sbagliata, buchi e silenzio rifiutati" \
+		"pass|fail|fail|pass|fail|fail|fail" "$(python3 "$WORK/analisi.py" "$ROOT/tests/camilladsp-sessione.py")"
+fi
+expect "la prova ALSA in QEMU include il caso CamillaDSP di sessione (stesso PID, 44,1 -> 96 kHz)" "1|1" \
+	"$(grep -c 'camilladsp-sessione.py' "$ROOT/tests/prova-alsa-qemu.sh")|$(grep -c 'RATES = (44100, 96000)' "$ROOT/tests/camilladsp-sessione.py")"
+expect "pacchetto alsa-cdsp: il conteggio dei frame riparte con una FIFO nuova, timeout websocket brevi" "1|1|1" 	"$(grep -c 'session_frames = 0;' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'ps.st_ino != st.st_ino' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'ws_timeout_ms > 0 ? pcm->ws_timeout_ms : 500' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")"
+expect "pacchetto alsa-cdsp: patch della modalita' sessione (pipe, websocket, coda)" "1|1|1" \
+	"$(grep -c 'strcmp(id, "fifo")' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'snprintf(cmd, sizeof(cmd), "{.*SetConfigFilePath' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")|$(grep -c 'static void end_session' "$ROOT/package/alsa-cdsp/0002-session-mode.patch")"
+expect "plugin in modalita' sessione: nessun fork, nessun waitpid" "0" \
+	"$(awk '/^\+static int start_session/,/^\+}/' "$ROOT/package/alsa-cdsp/0002-session-mode.patch" | grep -c 'fork()\|waitpid\|execv')"
 
 echo "Altri DAC (zone)"
 # DAC principale (scheda 1), un secondo DAC (2) e un microfono USB (3, solo ingresso).
@@ -2189,8 +2375,69 @@ case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "s
 expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
 expect "zona: MAC stabile e locale" "1|02" \
 	"$([ "$(dspfn 1 'zone_mac 2')" = "$(dspfn 1 'zone_mac 2')" ] && echo 1)|$(dspfn 1 'zone_mac 2' | cut -c1-2)"
+# Parita' con il DAC principale: le zone usano gli stessi argomenti comuni
+# (common_args), con registro e priorita' propri.
+case "$zcall" in *"-b "*":"*" -C 30 "*"-d output=info"*"-f /var/log/squeezelite-Zona.log"*) ok "zona: buffer di ingresso/uscita, -C e registro come il principale" ;; *) ko "zona: argomenti comuni" "-b ... -C 30 ... -f squeezelite-Zona.log" "$zcall" ;; esac
+case "$zcall" in *" -r :400 "*) ok "zona: frequenza massima e pausa fra frequenze come il principale" ;; *) ko "zona: -r" "-r :400" "$zcall" ;; esac
+case "$zcall" in *"-R vLE"*) ok "zona: ricampiona solo se il DAC non regge la frequenza (come il principale)" ;; *) ko "zona: -R vLE" "presente" "$zcall" ;; esac
+case "$zcall" in *"-a 400:4:"*) ok "zona: buffer e periodi ALSA come il principale" ;; *) ko "zona: -a" "-a 400:4:" "$zcall" ;; esac
+expect "zona: gli argomenti comuni coincidono con quelli del principale" \
+	"$(dspfn 1 'common_args 1 /a 80 400 "" | grep -v "^80$" | grep -v "^/a$"')" \
+	"$(dspfn 1 'common_args 2 /b 75 400 "" | grep -v "^75$" | grep -v "^/b$"')"
+printf 'ALTRI_DAC=si\nFREQUENZA_MAX=96000\n' > "$DSP/run/sweetspot.conf"
+expect "FREQUENZA_MAX vale anche per le zone" "-r|96000:400" "$(dspfn 1 'common_args 2 /b 75 400 "" | grep -A1 "^-r$" | tr "\n" "|" | sed "s/|$//"')"
+echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
+expect "buffer delle zone: il budget si divide fra loro" "yes" \
+	"$([ "$(dspfn 1 'PLAYER_BUFFERS_DIV=4 player_buffers | cut -d: -f1')" -le "$(dspfn 1 'player_buffers | cut -d: -f1')" ] && echo yes)"
+# Capacita' per zona e diagnostica: dove la parita' non c'e', lo dice il file.
+expect "capacita' della zona: DSD in PCM, volume software, niente correzione" "zona|pcm|software|no|no" \
+	"$(for k in tipo dsd volume correzione volume_64bit; do sed -n "s/^$k=//p" "$DSP/run/capacita/zona-Zona"; done | tr '\n' '|' | sed 's/|$//')"
+expect "capacita' della zona: MAC e priorita' coincidono con il player" "$(dspfn 1 'zone_mac 2')|75" \
+	"$(sed -n 's/^mac=//p' "$DSP/run/capacita/zona-Zona")|$(sed -n 's/^priorita=//p' "$DSP/run/capacita/zona-Zona")"
+case "$(cat "$DSP/run/capacita/zona-Zona.args" 2>/dev/null)" in "-o hw:CARD=Zona,DEV=0 "*"-H "*) ok "zona: argomenti di Squeezelite salvati per la diagnostica" ;; *) ko "zona: argomenti salvati" "-o hw:CARD=Zona,DEV=0 ... -H" "$(cat "$DSP/run/capacita/zona-Zona.args" 2>/dev/null)" ;; esac
+# Supervisione: una zona che cade subito si riavvia con ritardo crescente.
+dspfn 1 'mkdir -p $ZONE_RIAVVIO; echo "$(date +%s) 0" > $ZONE_RIAVVIO/9.avvio; zone_note_exit 9'
+expect "zona caduta subito: ritardo di 2 s prima del riavvio" "2" "$(cat "$DSP/run/zone-riavvio/9.ritardo")"
+echo 99999999999 > "$DSP/run/zone-riavvio/9.fino"
+expect "zona: finche' dura il ritardo non si riavvia" "attesa" "$(dspfn 1 'zone_ready 9 && echo pronta || echo attesa')"
+echo 1 > "$DSP/run/zone-riavvio/9.fino"
+expect "zona: passato il ritardo si riavvia" "pronta" "$(dspfn 1 'zone_ready 9 && echo pronta || echo attesa')"
+dspfn 1 'echo "$(( $(date +%s) - 100 )) 8" > $ZONE_RIAVVIO/9.avvio; zone_note_exit 9'
+expect "zona stabile prima di cadere: nessun ritardo" "0" "$(cat "$DSP/run/zone-riavvio/9.ritardo")"
+expect "zona caduta: il riavvio e' contato fra quelli del player (restart_conta)" "si" "$([ "$(cat "$DSP/run/restart.player" 2>/dev/null || echo 0)" -ge 1 ] && echo si)"
+# Il registro della zona (squeezelite-ID.log) ha il tetto di log_quota (#100).
+# Sincronizzazione multiroom: gruppo ricordato e ripristinato dopo il riavvio.
+LMSSTUB='mode() { echo completa; }
+lms_get() { case "$3" in connected) echo 1 ;; sync) cat $RUN/lms.sync ;; esac; }
+lms_json() { echo "$*" >> $RUN/lms.call; }
+mkdir -p $SYNC_DIR; k=$(mac_key 02:aa)'
+rm -f "$DSP/run/lms.call"; rm -rf "$DSP/run/sync"
+echo "02:aa,02:bb,02:cc" > "$DSP/run/lms.sync"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: a regime ricorda il gruppo (senza se stesso)" "02:bb 02:cc " "$(cat "$DSP/run/sync/02_aa.gruppo")"
+echo "-" > "$DSP/run/lms.sync"
+dspfn 1 "$LMSSTUB; : > \$SYNC_DIR/\$k.pendente; sync_poll 02:aa; sync_poll 02:aa"
+expect "sincronizzazione: dopo il riavvio aspetta qualche secondo prima di intervenire" "" "$(cat "$DSP/run/lms.call" 2>/dev/null)"
+echo 1 > "$DSP/run/sync/02_aa.visto"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: la zona torna nel gruppo ricordato" "02:aa sync 02:bb|no" \
+	"$(tr '\n' '|' < "$DSP/run/lms.call" | sed 's/|$//')|$([ -f "$DSP/run/sync/02_aa.pendente" ] && echo si || echo no)"
+rm -f "$DSP/run/lms.call"
+dspfn 1 "$LMSSTUB; : > \$SYNC_DIR/\$k.pendente; echo 1 > \$SYNC_DIR/\$k.visto"
+echo "02:bb" > "$DSP/run/lms.sync"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: se Lyrion ha gia' ripristinato il gruppo non si interviene" "" "$(cat "$DSP/run/lms.call" 2>/dev/null)"
+echo "-" > "$DSP/run/lms.sync"
+rm -f "$DSP/run/sync/02_aa.t"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: un gruppo sciolto da Lyrion si dimentica" "no" "$([ -f "$DSP/run/sync/02_aa.gruppo" ] && echo si || echo no)"
 sleep 300 & zpid=$!
 echo "$zpid Zona" > "$DSP/run/zone/2"
+expect "stato: zona con le capacita'" "INFO|Capacita' zona Zona|DSD: convertito in PCM (volume software di Lyrion); volume: software di Lyrion, mixer del DAC a 0 dB; correzione ambientale e volume a 64 bit: solo sul DAC principale; frequenza massima annunciata:  Hz; priorita' real-time 75 sui core di sistema 0; buffer ALSA 400 ms" \
+	"$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep "^[A-Z]*|Capacita' zona")"
 expect "stato: zona attiva" "OK|Altri DAC (zone)|un player in Lyrion per Zona; si raggruppano da Lyrion" \
 	"$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
@@ -3229,6 +3476,7 @@ sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
+sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1

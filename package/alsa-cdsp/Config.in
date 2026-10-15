@@ -3,7 +3,9 @@ config BR2_PACKAGE_ALSA_CDSP
 	select BR2_PACKAGE_ALSA_LIB
 	select BR2_PACKAGE_ALSA_LIB_PCM
 	help
-	  Plugin ALSA che avvia CamillaDSP con la frequenza, il formato e
-	  i canali di ogni brano e gli passa l'audio.
+	  Plugin ALSA che passa l'audio a CamillaDSP. Con la patch di
+	  Sweetspot lavora su un'unica istanza della sessione (pipe) e a
+	  ogni cambio di frequenza le fa caricare la configurazione
+	  giusta dal websocket, senza riavviarla.
 
 	  https://github.com/scripple/alsa_cdsp

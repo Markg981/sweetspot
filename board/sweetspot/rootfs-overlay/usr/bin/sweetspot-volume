@@ -22,6 +22,18 @@
 
 LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
 
+# Modalita' player: il volume si legge dal Lyrion indicato in SERVER (la
+# porta eventuale e' quella di Squeezelite: qui serve solo l'indirizzo).
+if [ "$(mode)" != completa ] && [ -n "$(conf SERVER)" ]; then
+	LMS_HOST=$(conf SERVER)
+	# "[v6]:porta", v6 senza porta (piu' di un ':'), host:porta o solo host.
+	case "$LMS_HOST" in
+		\[*\]*) LMS_HOST=${LMS_HOST#\[}; LMS_HOST=${LMS_HOST%%\]*} ;;
+		*:*:*) ;;
+		*) LMS_HOST=${LMS_HOST%%:*} ;;
+	esac
+fi
+
 db() { # volume 0-100
 	awk -v v="$1" 'BEGIN {
 		if (v >= 100) { printf "0.0"; exit }
@@ -80,6 +92,16 @@ dsp_resync() {
 	if [ "$gm" != "$m" ] || ! awk -v a="$gv" -v b="$d" 'BEGIN { x = a - b; exit !(x < 0.05 && x > -0.05) }'; then
 		apply "$v" "$m"
 	fi
+}
+
+# Riapplica sempre il volume richiesto, senza confronti: dopo che il player ha
+# riavviato l'istanza di sessione di CamillaDSP (riparte dal file di volume)
+# volume.applicato torna quello confermato dalla nuova istanza.
+dsp_reapply() {
+	local v d m
+	[ -s "$RUN/volume.dsp" ] || return 0
+	read -r v d m < "$RUN/volume.dsp"
+	apply "$v" "$m"
 }
 
 # Volume e sordina attuali del player, letti da Lyrion. Esce con 1 se Lyrion
@@ -146,6 +168,7 @@ follow() { # mac
 case "$1" in
 	segui) follow "${2:?mac}" ;;
 	applica) apply "${2:?volume}" "${3:-0}" ;;
+	risincronizza) dsp_reapply ;;
 	db) db "${2:?volume}"; echo ;;
-	*) echo "uso: $0 segui MAC | applica VOLUME MUTO | db VOLUME" >&2; exit 1 ;;
+	*) echo "uso: $0 segui MAC | applica VOLUME MUTO | risincronizza | db VOLUME" >&2; exit 1 ;;
 esac
