@@ -619,8 +619,8 @@ check_library_saving() {
 		emit ATTENZIONE "Salvataggio della libreria" "chiavetta piena: ${free:-?} MB liberi, ne servono ${need:-?}; libreria e impostazioni non vengono salvate (libera spazio sulla chiavetta)"
 	fi
 	# Dove stanno le copertine; se la scelta non si e' potuta rispettare, si dice.
-	local apos adir acap aused amot
-	IFS='|' read -r apos adir acap aused amot < "$RUN/lms.artwork.stato" 2>/dev/null
+	local apos acap amot
+	IFS='|' read -r apos _ acap _ amot < "$RUN/lms.artwork.stato" 2>/dev/null
 	if [ -n "$amot" ] && [ "$apos" != "" ]; then
 		case "$(lower "$(conf CACHE_COPERTINE auto)")" in
 			ram) ;;
