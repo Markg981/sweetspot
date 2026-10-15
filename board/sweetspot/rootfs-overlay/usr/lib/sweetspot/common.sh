@@ -510,53 +510,110 @@ bg_self() {
 	return 0
 }
 
-# Buffer di squeezelite in KB: "stream:output".
-# Lo stream contiene il file compresso (il brano intero, se ci sta), l'output
-# i campioni gia' decodificati: con un output grande la decodifica finisce
-# molto prima dell'ascolto e durante la riproduzione la CPU resta ferma.
-# La misura e' l'autonomia in secondi del caso peggiore del formato
-# (384 kHz / 32 bit / 2 canali = 3000 KB/s; DSD512 in DoP ha lo stesso ordine
-# di grandezza): stream 60 s, output 120 s. Il tetto viene dalla memoria
-# DISPONIBILE (MemAvailable, non il totale), tolta una riserva che dipende
-# dalla modalita': 512 MB di base, +512 MB con Lyrion locale (libreria,
-# scansione, cache), +256 MB con la correzione DSP. I buffer non superano
-# meta' di quello che resta. Minimi e massimi fissi: squeezelite accetta al
-# massimo ~2 GB per buffer. Con PLAYER_BUFFERS_LOG=1 scrive nel log i valori
-# e il motivo (lo fa il player all'avvio, non chi li interroga soltanto).
-player_buffers() {
-	local total avail rate=3000 s o riserva budget motivo
-	local rsv_base=524288 rsv_lms=524288 rsv_dsp=262144
-	total=$(mem_total_kb)
+# Budget RAM unico (KB). Un solo posto decide come si divide la memoria fra
+# chi la usa, cosi' il player e il precarico leggono le stesse quote:
+#   sistema   256 MB sempre liberi per il resto del sistema (mai toccati);
+#   servizi   Lyrion/catalogo/immagini/snapshot e processi di contorno: 256 MB
+#             di base, +512 MB con Lyrion locale, +256 MB con la correzione DSP;
+#   alsa      buffer del driver ALSA e del DAC (16 MB);
+#   stream    buffer di rete di Squeezelite (il file compresso), 60 s del caso
+#             peggiore (384 kHz / 32 bit / 2 canali = 3000 KB/s) ma al massimo
+#             64 MB;
+#   output    campioni decodificati in anticipo, 120 s ma al massimo 128 MB;
+#   precarico quello che resta, per la coda in RAM (sweetspot-precarico).
+# Il capitale e' la memoria DISPONIBILE (MemAvailable, non il totale) piu' cio'
+# che il player (VmRSS di Squeezelite, fino ai suoi tetti) e il precarico
+# (file bloccati) occupano gia': cosi' le quote non si riducono perche' le
+# hanno riempite loro. Stream e output non superano meta' di quello che resta
+# dopo sistema, servizi e ALSA, in proporzione 1:2; minimi 32 MB e 64 MB
+# (squeezelite accetta al massimo ~2 GB per buffer).
+# ram_quote_calc imposta RAM_POOL, RAM_SISTEMA, RAM_SERVIZI, RAM_ALSA,
+# RAM_STREAM, RAM_OUTPUT, RAM_PRECARICO (KB), RAM_AVAIL, RAM_TOTAL, RAM_RISERVA
+# e RAM_MOTIVO. Senza stampare: le funzioni che la usano non aprono sottoshell.
+RAM_SISTEMA_KB=262144
+RAM_ALSA_KB=16384
+RAM_STREAM_MAX_KB=65536
+RAM_OUTPUT_MAX_KB=131072
+
+# KB dei file che il precarico tiene gia' bloccati in RAM (piano e demone).
+precarico_tenuto_kb() {
+	local pid
+	pid=$(cat "$RUN/precarico.tieni.pid" 2>/dev/null)
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -f "$RUN/precarico.piano" ] || { echo 0; return; }
+	awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$RUN/precarico.piano"
+}
+
+ram_quote_calc() {
+	local avail held rss=0 pid cap smax omax rest budget
+	RAM_TOTAL=$(mem_total_kb)
 	avail=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo")
 	# Senza MemAvailable (kernel vecchi): il totale meno 768 MB.
-	[ -n "$avail" ] || avail=$((total - 786432))
-	[ "$avail" -gt "$total" ] && avail=$total
-	riserva=$rsv_base
-	motivo="base"
+	[ -n "$avail" ] || avail=$((RAM_TOTAL - 786432))
+	[ "$avail" -gt "$RAM_TOTAL" ] && avail=$RAM_TOTAL
+	[ "$avail" -gt 0 ] || avail=0
+	RAM_AVAIL=$avail
+	held=$(precarico_tenuto_kb)
+	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
+	[ -n "$pid" ] && rss=$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/$pid/status" 2>/dev/null)
+	[ -n "$rss" ] || rss=0
+	cap=$((RAM_STREAM_MAX_KB + RAM_OUTPUT_MAX_KB))
+	[ "$rss" -gt "$cap" ] && rss=$cap
+	RAM_POOL=$((avail + held + rss))
+	RAM_SISTEMA=$RAM_SISTEMA_KB
+	RAM_ALSA=$RAM_ALSA_KB
+	RAM_SERVIZI=262144
+	RAM_MOTIVO="servizi base"
 	if [ "$(mode)" = completa ]; then
-		riserva=$((riserva + rsv_lms)); motivo="$motivo+Lyrion locale"
+		RAM_SERVIZI=$((RAM_SERVIZI + 524288)); RAM_MOTIVO="$RAM_MOTIVO+Lyrion locale"
 	fi
 	if [ "$(lower "$(conf CORREZIONE no)")" != no ]; then
-		riserva=$((riserva + rsv_dsp)); motivo="$motivo+DSP"
+		RAM_SERVIZI=$((RAM_SERVIZI + 262144)); RAM_MOTIVO="$RAM_MOTIVO+DSP"
 	fi
-	budget=$(((avail - riserva) / 2))
-	s=$((rate * 60))
-	o=$((rate * 120))
-	if [ "$budget" -lt $((s + o)) ]; then
+	RAM_RISERVA=$((RAM_SISTEMA + RAM_SERVIZI + RAM_ALSA))
+	rest=$((RAM_POOL - RAM_RISERVA))
+	[ "$rest" -gt 0 ] || rest=0
+	budget=$((rest / 2))
+	smax=$RAM_STREAM_MAX_KB
+	omax=$RAM_OUTPUT_MAX_KB
+	if [ "$budget" -lt $((smax + omax)) ]; then
 		# Stesse proporzioni (1:2) dentro il budget.
-		s=$((budget / 3))
-		o=$((budget * 2 / 3))
-		motivo="$motivo, limitati dalla memoria disponibile"
+		RAM_STREAM=$((budget / 3))
+		RAM_OUTPUT=$((budget * 2 / 3))
+		RAM_MOTIVO="$RAM_MOTIVO, limitati dalla memoria disponibile"
 	else
-		motivo="$motivo, autonomia piena (60 s stream, 120 s output)"
+		RAM_STREAM=$smax
+		RAM_OUTPUT=$omax
+		RAM_MOTIVO="$RAM_MOTIVO, tetti pieni (stream $((smax / 1024)) MB, output $((omax / 1024)) MB)"
 	fi
-	[ "$s" -lt 32768 ] && s=32768 && motivo="$motivo, stream al minimo"
-	[ "$o" -lt 65536 ] && o=65536 && motivo="$motivo, output al minimo"
-	[ "$s" -gt 1048576 ] && s=1048576
-	[ "$o" -gt 2000000 ] && o=2000000
-	[ "$(uname -m 2>/dev/null)" = "i686" ] && [ "$o" -gt 524288 ] && o=524288 && motivo="$motivo, output limitato a 512 MB (32 bit)"
-	[ -n "${PLAYER_BUFFERS_LOG:-}" ] && log "player: buffer stream ${s} KB, output ${o} KB (memoria disponibile ${avail} KB di ${total} KB, riserva ${riserva} KB: $motivo)"
-	echo "$s:$o"
+	[ "$RAM_STREAM" -lt 32768 ] && RAM_STREAM=32768 && RAM_MOTIVO="$RAM_MOTIVO, stream al minimo"
+	[ "$RAM_OUTPUT" -lt 65536 ] && RAM_OUTPUT=65536 && RAM_MOTIVO="$RAM_MOTIVO, output al minimo"
+	RAM_PRECARICO=$((rest - RAM_STREAM - RAM_OUTPUT))
+	[ "$RAM_PRECARICO" -gt 0 ] || RAM_PRECARICO=0
+}
+
+# Le quote, una per riga "nome KB" (per la diagnostica e i test).
+ram_quote() {
+	ram_quote_calc
+	printf '%s %s\n' totale "$RAM_TOTAL" disponibile "$RAM_AVAIL" capitale "$RAM_POOL" \
+		sistema "$RAM_SISTEMA" servizi "$RAM_SERVIZI" alsa "$RAM_ALSA" \
+		stream "$RAM_STREAM" output "$RAM_OUTPUT" precarico "$RAM_PRECARICO"
+}
+
+# Le quote in MB come oggetto JSON (pagina Stato, diagnostica).
+ram_quote_json() {
+	ram_quote_calc
+	printf '{"totale":%d,"disponibile":%d,"sistema":%d,"servizi":%d,"alsa":%d,"stream":%d,"output":%d,"precarico":%d}\n' \
+		$((RAM_TOTAL / 1024)) $((RAM_AVAIL / 1024)) $((RAM_SISTEMA / 1024)) $((RAM_SERVIZI / 1024)) \
+		$((RAM_ALSA / 1024)) $((RAM_STREAM / 1024)) $((RAM_OUTPUT / 1024)) $((RAM_PRECARICO / 1024))
+}
+
+# Buffer di squeezelite in KB: "stream:output", dalle quote di ram_quote_calc.
+# Con PLAYER_BUFFERS_LOG=1 scrive nel log i valori e il motivo (lo fa il
+# player all'avvio, non chi li interroga soltanto).
+player_buffers() {
+	ram_quote_calc
+	[ -n "${PLAYER_BUFFERS_LOG:-}" ] && log "player: buffer stream ${RAM_STREAM} KB, output ${RAM_OUTPUT} KB (memoria disponibile ${RAM_AVAIL} KB di ${RAM_TOTAL} KB, riserva ${RAM_RISERVA} KB, precarico ${RAM_PRECARICO} KB: $RAM_MOTIVO)"
+	echo "$RAM_STREAM:$RAM_OUTPUT"
 }
 
 # --- DAC -------------------------------------------------------------------
@@ -954,6 +1011,19 @@ correction_running() {
 }
 
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
+# Il DAC e' del Bluetooth (sweetspot-bluetooth)? Il segnale $RUN/dac.bluetooth
+# contiene il PID di chi tiene il DAC: se non esiste piu' il segnale e' orfano,
+# si rimuove (con una riga nel registro) e il DAC torna al player.
+bt_dac_busy() {
+	local f=$RUN/dac.bluetooth pid
+	[ -e "$f" ] || return 1
+	pid=$(cat "$f" 2>/dev/null)
+	case "$pid" in ''|*[!0-9]*) ;; *) [ -d "$PROC/$pid" ] && return 0 ;; esac
+	rm -f "$f"
+	log "bluetooth: segnale dac.bluetooth orfano (processo $pid assente), il DAC torna al player"
+	return 1
+}
+
 dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
 # Osservazione /proc del solo PCM scelto dal player, non certificazione del DAC.
@@ -1039,6 +1109,28 @@ alsa_bits() {
 		DSD*) echo 1 ;;
 		*) echo 0 ;;
 	esac
+}
+
+# Verdetto della catena del segnale. Ogni stadio e' "inv" (invariato e
+# verificato), "mod" (modifica i campioni) o "nv" (non verificabile).
+# "bit-perfect" solo se tutti gli stadi sono inv; basta uno stadio che
+# modifica per dire "modificato"; altrimenti "non-verificabile".
+# Senza stadi il verdetto e' non-verificabile.
+chain_verdict() {
+	local s any_mod=0 any_nv=0 n=0
+	for s in "$@"; do
+		n=$((n + 1))
+		case "$s" in
+			inv) ;;
+			mod) any_mod=1 ;;
+			*) any_nv=1 ;;
+		esac
+	done
+	if [ "$n" = 0 ]; then echo non-verificabile
+	elif [ "$any_mod" = 1 ]; then echo modificato
+	elif [ "$any_nv" = 1 ]; then echo non-verificabile
+	else echo bit-perfect
+	fi
 }
 
 # Brano in riproduzione sul player indicato (MAC), in JSON: tipo, frequenza,

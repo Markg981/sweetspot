@@ -455,21 +455,82 @@ check_zones() {
 # Frequenza rifiutata dal DAC (stallo con -H) o ricampionata perche' non
 # supportata: guarda solo le ultime righe del registro di Squeezelite.
 check_frequenza() {
+	local f id
+	check_frequenza_log "$SQLOG" Frequenza
+	# Le zone (ALTRI_DAC) hanno il loro registro, con le stesse righe.
+	for f in "${SQLOG%/*}"/squeezelite-*.log; do
+		[ -r "$f" ] || continue
+		id=${f##*/squeezelite-}; id=${id%.log}
+		check_frequenza_log "$f" "Frequenza (zona $id)"
+	done
+}
+
+check_frequenza_log() { # registro voce
 	local tl rate n
-	[ -r "$SQLOG" ] || return 0
-	tl=$(tail -n 60 "$SQLOG" 2>/dev/null)
+	[ -r "$1" ] || return 0
+	tl=$(tail -n 60 "$1" 2>/dev/null)
 	rate=$(printf '%s\n' "$tl" | sed -n 's/.*refuses \([0-9][0-9]*\) Hz.*/\1/p' | tail -n 1)
 	if [ -n "$rate" ]; then
 		n=$(printf '%s\n' "$tl" | grep -c "refuses $rate Hz")
 		if [ "$n" -ge 2 ]; then
-			emit ATTENZIONE "Frequenza" "bloccato: frequenza $rate Hz non accettata dal DAC (Squeezelite riprova ogni 5 s): imposta FREQUENZA_NON_SUPPORTATA=ricampiona o correggi FREQUENZA_MAX"
+			emit ATTENZIONE "$2" "bloccato: frequenza $rate Hz non accettata dal DAC (Squeezelite riprova ogni 5 s): imposta FREQUENZA_NON_SUPPORTATA=ricampiona o correggi FREQUENZA_MAX"
 			return 0
 		fi
 	fi
 	rate=$(printf '%s\n' "$tl" | sed -n 's/.*[Rr]esampl[a-z]* from \([0-9][0-9]*\) *\(->\|to\) *\([0-9][0-9]*\).*/\1 -> \3 Hz/p' | tail -n 1)
 	if [ -n "$rate" ] && [ "$(lower "$(conf RICAMPIONAMENTO no)")" = no ]; then
-		emit ATTENZIONE "Frequenza" "ricampionata ($rate): il DAC non supporta la frequenza originale"
+		emit ATTENZIONE "$2" "ricampionata ($rate): il DAC non supporta la frequenza originale; il ricampionatore abbassa il segnale di 1 dB"
 	fi
+}
+
+# Con VOLUME=dac, il controllo hardware indicato con -V non si apre e
+# Squeezelite ripiega sul volume software (ma il resto lo chiama "hardware").
+volume_dac_ripiego() {
+	[ "$(volume_effettivo)" = hardware ] || return 1
+	[ -r "$SQLOG" ] || return 1
+	tail -n 60 "$SQLOG" 2>/dev/null | grep -q "Initialization of mixer failed, reverting to software volume"
+}
+
+# Il DAC riceve solo 16 bit: i brani a 24 bit sono troncati.
+dac_solo_16() {
+	local card f
+	card=$(dac_find) || return 1
+	[ -n "$card" ] || return 1
+	f=" $(dac_formats "$card") "
+	case "$f" in *" S24_LE "*|*" S24_3LE "*|*" S32_LE "*) return 1 ;; *" S16_LE "*) return 0 ;; esac
+	return 1
+}
+
+# Lyrion ricampiona lato server (sox) i brani sopra MaxSampleRate del player.
+check_lyrion_sox() {
+	local mac rate top conv n=""
+	[ "$(mode)" = completa ] || return 0
+	mac=$(cat "$RUN/player.mac" 2>/dev/null)
+	[ -n "$mac" ] || return 0
+	# La massima del player (HELO MaxSampleRate) e' quella del probe del DAC
+	# o di FREQUENZA_MAX, annotata dal player; Lyrion ricampiona con sox (regola
+	# con capacita' D, TranscodingHelper) i brani che la superano. Si confronta
+	# il brano in riproduzione.
+	top=$(cat "$RUN/frequenza.max" 2>/dev/null)
+	rate=$(LMS_TIMEOUT=5 lms_get 'if .mode == "play" then .playlist_loop[0].samplerate else empty end' "$mac" status - 1 tags:T | tr -dc '0-9')
+	if [ -n "$rate" ] && [ -n "$top" ] && [ "$rate" -gt "$top" ]; then
+		emit ATTENZIONE "Lyrion ricampiona" "il brano in riproduzione ($rate Hz) supera la massima dichiarata dal player ($top Hz): Lyrion lo ricampiona lato server con sox prima di Squeezelite; alza FREQUENZA_MAX se il DAC lo permette"
+	fi
+	for conv in ${SWEETSPOT_LMS_CONVERT:-/opt/lms/convert.conf /var/lib/lms/custom-convert.conf}; do
+		[ -r "$conv" ] || continue
+		grep -v '^[[:space:]]*#' "$conv" 2>/dev/null | grep -q '\[sox\].*-r[[:space:]]' && n="$n $conv"
+	done
+	[ -n "$n" ] && emit INFO "Lyrion e sox" "convert.conf ha regole sox con cambio di frequenza (${n# }): ricampionano solo i formati o le frequenze che il player non accetta"
+	return 0
+}
+
+# Alterazioni del segnale che non sono una scelta esplicita di volume o
+# ricampionamento: ogni troncamento o conversione va dichiarato.
+check_alterazioni() {
+	if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" != dsp ] && { [ "$(conf FORMATO_USCITA auto)" = 16 ] || dac_solo_16; }; then
+		emit INFO "Uscita a 16 bit" "i brani a 24 bit si riducono a 16 bit con dither TPDF (rumore di +-1 LSB, patch 0006 di Squeezelite) invece di troncarli: il percorso non e' bit-perfect"
+	fi
+	check_lyrion_sox
 }
 
 check_player() {
@@ -506,27 +567,33 @@ check_player() {
 	check_session
 	check_listening_io
 	check_zones
-	bufs=$(player_buffers)
+	ram_quote_calc
+	bufs=$RAM_STREAM:$RAM_OUTPUT
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
+		emit INFO "Budget RAM" "sistema $(( RAM_SISTEMA / 1024 )) MB, servizi (Lyrion, catalogo, immagini, snapshot) $(( RAM_SERVIZI / 1024 )) MB, ALSA $(( RAM_ALSA / 1024 )) MB, buffer del player $(( (RAM_STREAM + RAM_OUTPUT) / 1024 )) MB, precarico $(( RAM_PRECARICO / 1024 )) MB (disponibile $(( RAM_AVAIL / 1024 )) MB di $(( RAM_TOTAL / 1024 )) MB)"
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = riserva ]; then
-		emit ATTENZIONE "Volume" "a 64 bit non disponibile ($(grep . "$RUN/volume.motivo" 2>/dev/null || echo "CamillaDSP non avviato o modalita' player")): in uso il volume software, senza dither"
+		emit ATTENZIONE "Volume" "a 64 bit non disponibile ($(grep . "$RUN/volume.motivo" 2>/dev/null || echo "CamillaDSP non avviato o modalita' player")): in uso il volume software, con dither TPDF di Squeezelite"
 	elif [ "$(mode)" = player ] && [ "$vol" != dsp ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
 	elif [ "$vol" = fisso ]; then
 		emit OK "Volume" "fisso al 100%, si regola dall'amplificatore (percorso bit-perfect)"
 	elif [ "$vol" = software ]; then
-		emit ATTENZIONE "Volume" "dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC"
+		emit ATTENZIONE "Volume" "dal software: sotto il 100% non e' bit-perfect; Squeezelite arrotonda con dither TPDF a 16 e 24 bit senza troncare, ma il volume fisso o del DAC resta preferibile"
+		emit INFO "DSD e volume" "con il volume software i file DSD si convertono in PCM: il volume non agisce sul DSD nativo e un DSF suonerebbe al 100% dopo un brano attenuato"
+	elif [ "$vol" = dac ] && [ "$(volume_effettivo)" = fisso ]; then
+		emit ATTENZIONE "Volume" "richiesto del DAC, ma il DAC non ha un controllo del volume: in uso il volume fisso al 100%, regola dall'amplificatore"
+	elif [ "$vol" = dac ] && volume_dac_ripiego; then
+		emit ATTENZIONE "Volume" "richiesto del DAC, ma il controllo hardware non risponde: Squeezelite ripiega sul volume software (con dither TPDF, il DSD si converte in PCM)"
 	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
 		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati$(volume_dsp_now); non e' bit-perfect, ma senza troncamenti"
-	elif [ "$vol" = dsp ] && [ -f "$RUN/volume.modo" ]; then
-		emit ATTENZIONE "Volume" "a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither"
 	else
 		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
 	fi
 	if [ -n "$(conf RICAMPIONAMENTO)" ] && [ "$(lower "$(conf RICAMPIONAMENTO)")" != no ]; then
-		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta"
+		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta; il ricampionatore abbassa il segnale di 1 dB"
 	fi
+	check_alterazioni
 	if correction_running; then
 		if [ "$(lower "$(conf CORREZIONE no)")" = confronto ]; then
 			emit INFO "Correzione ambientale" "esclusa a pari volume: CamillaDSP applica solo l'attenuazione"
@@ -751,6 +818,22 @@ check_system() {
 	done
 }
 
+# Bluetooth come sorgente: spento di serie; acceso, lo stato scritto dal
+# servizio (sweetspot-bluetooth) dice se aspetta, e' in abbinamento o suona.
+check_bluetooth() {
+	local s
+	if ! is_yes "$(conf BLUETOOTH no)"; then
+		emit INFO "Bluetooth" "spento (si attiva dalla pagina Bluetooth)"
+		return
+	fi
+	s=$(cat "$RUN/bluetooth.stato" 2>/dev/null)
+	case "$s" in
+		''|errore*|"non attivo"|nessun*) emit ATTENZIONE "Bluetooth" "${s:-servizio non ancora avviato}" ;;
+		in\ ascolto*) emit OK "Bluetooth" "$s (il DAC e' del telefono, il player riprende alla fine)" ;;
+		*) emit OK "Bluetooth" "$s" ;;
+	esac
+}
+
 check_kernel
 check_ram_system
 check_cpu
@@ -758,6 +841,7 @@ check_quiet
 check_usb
 check_dac
 check_player
+check_bluetooth
 [ "$(mode)" = completa ] && check_library
 check_listening
 [ "$(mode)" = completa ] && check_preload

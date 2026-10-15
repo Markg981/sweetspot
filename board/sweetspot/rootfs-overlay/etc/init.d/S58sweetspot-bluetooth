@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - Bluetooth come sorgente (A2DP sink), solo se attivato
+# (BLUETOOTH=si in sweetspot.txt o dalla pagina Bluetooth).
+
+case "$1" in
+	start) /usr/bin/sweetspot-bluetooth avvia ;;
+	stop) /usr/bin/sweetspot-bluetooth ferma ;;
+	restart) /usr/bin/sweetspot-bluetooth applica ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac

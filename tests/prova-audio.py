@@ -732,37 +732,65 @@ def write_tone_wav(path, rate, hz, peak, seconds=1):
     return path
 
 
-def check_tone_after_tail(frames, rate, hz, peak, *, window=2205, min_windows=12, max_prefix=None):
-    """Require, after the first track's tail, the second track's tone.
+def check_tone_after_tail(frames, rate, hz, peak, *, before=(), window=882, min_windows=30, probe=32):
+    """Require, after the first track's tail, only silence and then the second track's tone.
 
     The reopen is in plug mode, so the second track reaches the capture
-    resampled and cannot be compared sample by sample. What follows the tail
-    must be (a) any frames before the tone (silence, or the first frames of the
-    new track that Squeezelite writes at the old rate before it notices the
-    change), at most max_prefix, then (b) consecutive windows whose RMS is
-    within 15 percent of the expected tone and whose frequency (zero
-    crossings) is within 5 percent. Noise, silence or the first track fail.
+    resampled and cannot be compared sample by sample. What follows the tail:
+    (a) any number of zero frames (the silence the patch appends), then
+    (b) at most one analysis window plus a quarter of it of non-tone frames
+    (the resampler's start-up transient, a few ms), then
+    (c) at least min_windows consecutive 20 ms windows whose RMS is within 15
+    percent of the expected tone and whose frequency (zero crossings) is within
+    5 percent.
+    Noise, the first track, a replay of the ring (frames already present in
+    `before`, i.e. stale mmap data read again after the valid data) or a wrong
+    tone fail.
     """
-    max_prefix = rate // 2 if max_prefix is None else max_prefix
+    step = window // 4
+    first_nonzero = next((index for index, frame in enumerate(frames) if frame != (0, 0)), None)
+    result = {"status": "fail", "zero_frames_after_tail": first_nonzero, "transition_frames": None,
+              "tone_windows": 0, "window_frames": window, "expected_hz": hz,
+              "max_transition_frames": window + step, "replayed_ring": False}
+    if first_nonzero is None:
+        return result
+    wanted = tuple(frames[first_nonzero:first_nonzero + probe])
+    if len(wanted) == probe and probe_in(before, wanted):
+        result["replayed_ring"] = True
+        return result
     expected_rms = peak * 256 / math.sqrt(2)  # WAV24 -> signed32 normalization
     good = []
-    for start in range(0, len(frames) - window + 1, window):
+    for start in range(first_nonzero, len(frames) - window + 1, step):
         left = [frame[0] for frame in frames[start:start + window]]
         rms = math.sqrt(sum(value * value for value in left) / window)
-        crossings = sum(1 for a, b in zip(left, left[1:]) if (a < 0) != (b < 0) and a != 0 and b != 0)
-        measured = crossings / 2 * rate / window
+        crossings = [index for index, (a, b) in enumerate(zip(left, left[1:]))
+                     if (a < 0) != (b < 0)]
+        # frequenza dal tratto fra il primo e l'ultimo passaggio per zero (non quantizzata dalla finestra)
+        measured = ((len(crossings) - 1) / 2 * rate / (crossings[-1] - crossings[0])
+                    if len(crossings) > 2 and crossings[-1] > crossings[0] else 0)
         good.append(abs(rms - expected_rms) <= .15 * expected_rms and abs(measured - hz) <= .05 * hz)
     first = next((index for index, ok in enumerate(good) if ok), None)
+    if first is None:
+        return result
     run = 0
-    if first is not None:
-        while first + run < len(good) and good[first + run]:
-            run += 1
-    result = {"status": "fail", "prefix_frames": None if first is None else first * window,
-              "tone_windows": run, "window_frames": window, "expected_hz": hz,
-              "max_prefix_frames": max_prefix}
-    if first is not None and first * window <= max_prefix and run >= min_windows:
+    while first + run < len(good) and good[first + run]:
+        run += 1
+    result["transition_frames"] = first * step
+    result["tone_windows"] = (run * step) // window
+    if first * step <= window + step and run * step >= min_windows * window:
         result["status"] = "pass"
     return result
+
+
+def probe_in(frames, wanted):
+    """True if the run of frames `wanted` appears inside `frames`."""
+    first = wanted[0]
+    size = len(wanted)
+    frames = list(frames)
+    for index in range(len(frames) - size + 1):
+        if frames[index] == first and tuple(frames[index:index + size]) == wanted:
+            return True
+    return False
 
 
 def drain_evidence(log):
@@ -868,11 +896,12 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
         (directory / "capture-tail.raw").write_bytes(raw[start * capture.frame_bytes:tail_end])
         comparison = compare_capture([tail], directory / "capture-tail.raw", capture_format=capture.format,
                                      capture_rate=rate, max_lead_frames=0)
-        # Dopo la coda: il secondo brano ricampionato (tono riconosciuto), poi silenzio.
+        # Dopo la coda: solo silenzio, poi il secondo brano ricampionato (tono); mai la rilettura del ring.
         (directory / "capture-after.raw").write_bytes(raw[tail_end:])
         after = list(_frames(_raw_info(directory / "capture-after.raw", capture.format, rate)))
+        before = list(_frames(_raw_info(directory / "capture-tail.raw", capture.format, rate)))
         report["after_tail"] = check_tone_after_tail(after, rate, ALSA_TRANSITION_TONE_HZ,
-                                                     ALSA_TRANSITION_TONE_PEAK)
+                                                     ALSA_TRANSITION_TONE_PEAK, before=before)
         report["after_tail"]["frames"] = len(after)
         if report["after_tail"]["status"] != "pass":
             comparison["sequence_match"] = False
@@ -1355,6 +1384,161 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
     return report
 
 
+# DAC finto che accetta solo 96 kHz (come un DAC che rifiuta 88,2 k): un
+# PCM hw su snd-aloop con la frequenza vincolata (il plugin hw ammette rate).
+# Il nome non inizia con "hw:", quindi la politica -H non c'entra: conta solo
+# -R vLE. L'accesso resta mmap, come negli altri casi ALSA.
+REFUSED_DEVICE = "dacfinto96"
+REFUSED_ACCEPTED_RATE = 96000
+REFUSED_SOURCE_RATE = 88200
+REFUSED_BUFFER = "400:4::1"
+REFUSED_ASOUNDRC = """pcm.%s {
+    type hw
+    card Loopback
+    device 0
+    rate %d
+}
+""" % (REFUSED_DEVICE, REFUSED_ACCEPTED_RATE)
+
+
+def only_rate_offered(hw_params, rate):
+    """Il dump di aplay offre solo `rate`: valore singolo o intervallo di un solo intero."""
+    match = re.search(r"^RATE:\s*(.+?)\s*$", hw_params, re.M)
+    if not match:
+        return False
+    value = match.group(1)
+    if re.fullmatch(r"%d" % rate, value):
+        return True
+    interval = re.fullmatch(r"\[(\d+)\s+(\d+)([)\]])", value)
+    if not interval:
+        return False
+    low, high = int(interval.group(1)), int(interval.group(2))
+    if interval.group(3) == ")":
+        high -= 1
+    return low == rate and high == rate
+
+
+def refused_rate_evidence(log_text, source_rate=REFUSED_SOURCE_RATE, accepted_rate=REFUSED_ACCEPTED_RATE):
+    """Il registro di Squeezelite prova ricampionamento e assenza di blocco."""
+    resampled = re.search(r"resampl\w* from %d *(?:->|to) *%d" % (source_rate, accepted_rate), log_text) is not None
+    stalled = re.search(r"refuses %d Hz" % source_rate, log_text) is not None
+    return {"resampled": resampled, "stalled": stalled,
+            "status": "pass" if resampled and not stalled else "fail"}
+
+
+def run_refused_rate_case(client, output, target, *, process_factory=subprocess.Popen):
+    """Brano a 88,2 k su un DAC che accetta solo 96 k con -R vLE (PR #77).
+
+    Squeezelite deve ricampionare a 96 kHz e suonare (frame catturati sul
+    loopback, nessun blocco), non fermarsi con "refuses 88200 Hz".
+    """
+    directory = output / "rate-refused-88200"
+    directory.mkdir(parents=True, exist_ok=True)
+    report = {"id": "rate-refused-88200", "kind": "pcm_rate_refused", "rate": REFUSED_SOURCE_RATE,
+              "accepted_rate": REFUSED_ACCEPTED_RATE, "scope": "alsa_loopback", "status": "fail"}
+    mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
+    engine_log = "/tmp/audio-refused.log"
+    local_log = directory / "squeezelite.log"
+    process = None
+    capture = None
+    rc_written = False
+    try:
+        if not hasattr(target, "run"):
+            raise AudioError("the refused-rate case needs a booted target (ssh)")
+        from tools.audio_verification import generate_fixtures
+        references = generate_fixtures(directory / "references", REFUSED_SOURCE_RATE, 24)
+        target.run("cat > /root/.asoundrc", REFUSED_ASOUNDRC.encode("ascii"))
+        rc_written = True
+        # Premessa del caso: il DAC finto accetta solo 96 kHz (e non 88,2 kHz).
+        try:
+            hw = target.run("aplay -D %s --dump-hw-params -f S32_LE -c 2 -r %d -d 1 /dev/zero 2>&1; true"
+                            % (REFUSED_DEVICE, REFUSED_ACCEPTED_RATE)).decode(errors="replace")
+        except OSError as error:
+            raise AudioError("the refusing DAC cannot be opened with aplay: %s" % error) from error
+        report["fake_dac_hw_params"] = hw.splitlines()[:30]
+        if not only_rate_offered(hw, REFUSED_ACCEPTED_RATE):
+            raise AudioError("the refusing DAC does not offer only %d Hz: %s" % (REFUSED_ACCEPTED_RATE, hw.strip()[:300]))
+        with target.fixtures(references) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
+            target.remove(engine_log)
+            engine = ["/usr/bin/squeezelite", "-o", REFUSED_DEVICE, "-a", REFUSED_BUFFER, "-R", "vLE",
+                      "-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log,
+                      "-d", "decode=info", "-d", "output=info"]
+            command = target.command(engine)
+            report["command"] = command
+            try:
+                for stream in ("p", "c"):
+                    if loopback_state(target, stream) is not None:
+                        raise AudioError("Loopback %s substream is already open by another process" % stream)
+                process = process_factory(command, stdout=subprocess.DEVNULL, stderr=stderr,
+                                          start_new_session=os.name == "posix")
+                wait_connected(client, mac, process)
+                deadline = time.monotonic() + WALL_SECONDS
+                report["settings"] = configure_player(client, mac, deadline=deadline)
+                client.request(mac, ["playlist", "play", fixtures.player_path], deadline=deadline)
+                params = None
+                until = time.monotonic() + 10
+                while time.monotonic() < until:
+                    if process.poll() is not None:
+                        raise AudioError("Squeezelite exited with status %s" % process.returncode)
+                    params = loopback_state(target, "p")
+                    if params is not None:
+                        break
+                    time.sleep(.05)
+                if params is None:
+                    raise AudioError("Squeezelite did not open the refusing DAC: it stalled instead of resampling")
+                if params["rate"] != REFUSED_ACCEPTED_RATE or params["format"] not in ALSA_FORMATS:
+                    raise AudioError("Loopback playback is %s Hz %s, wanted %d Hz" % (
+                        params["rate"], params["format"], REFUSED_ACCEPTED_RATE))
+                report["alsa"] = {"playback": params}
+                capture_stderr = (directory / "capture-stderr.log").open("wb")
+                try:
+                    capture = LoopbackCapture(target, directory / "capture.raw", params=params, seconds=3,
+                                              wall_seconds=WALL_SECONDS, process_factory=process_factory,
+                                              stderr=capture_stderr)
+                    capture.start()
+                finally:
+                    capture_stderr.close()
+                while not capture.finished.wait(.05):
+                    if time.monotonic() >= capture.deadline:
+                        raise AudioError("capture exceeded wall time limit")
+                    if process.poll() is not None:
+                        raise AudioError("Squeezelite exited with status %s during capture" % process.returncode)
+                if capture.error or capture.reason != "byte_limit":
+                    raise AudioError("capture ended early: %s (%s)" % (capture.reason, capture.error))
+                if not any((directory / "capture.raw").read_bytes()):
+                    raise AudioError("the resampled output is silent")
+            finally:
+                if capture is not None:
+                    capture.stop()
+                if process is not None:
+                    stop_process(process, owned_group=os.name == "posix")
+                if capture is not None:
+                    capture.join()
+                target.stop_engine()
+                # diagnosi: il registro del motore anche quando il caso fallisce
+                try:
+                    if target.fetch(engine_log, local_log):
+                        report["engine_log_tail"] = local_log.read_text(errors="replace").splitlines()[-25:]
+                except OSError as error:
+                    report["log_error"] = str(error)
+        text = local_log.read_text(errors="replace") if local_log.exists() else ""
+        report["evidence"] = refused_rate_evidence(text)
+        report["status"] = report["evidence"]["status"]
+        if report["status"] != "pass":
+            raise AudioError("log does not show resampling to %d Hz without a stall" % REFUSED_ACCEPTED_RATE)
+    except Exception as error:
+        report["status"] = "fail"
+        report["error"] = str(error)
+    finally:
+        if rc_written:
+            try:
+                target.remove("/root/.asoundrc")
+            except OSError as error:
+                report["cleanup_error"] = str(error)
+        write_json(directory / "report.json", report)
+    return report
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     where = parser.add_mutually_exclusive_group(required=True)
@@ -1406,6 +1590,14 @@ def main(argv=None):
             print("%s: %s" % (case["id"], result["status"]), flush=True)
             if result.get("error"):
                 print("  %s" % result["error"], flush=True)
+        # Solo sul sistema avviato (QEMU): serve scrivere ~/.asoundrc del DAC finto.
+        if args.backend == "alsa_loopback" and hasattr(target, "run"):
+            refused = run_refused_rate_case(client, output, target)
+            report["rate_refused"] = refused
+            write_json(output / "report.json", report)
+            print("%s: %s" % (refused["id"], refused["status"]), flush=True)
+            if refused.get("error"):
+                print("  %s" % refused["error"], flush=True)
     except Exception as error:
         report["error"] = str(error)
     finally:
@@ -1420,7 +1612,9 @@ def main(argv=None):
         expected = {case["id"] for case in cases}
         mixed_rates = {case["id"]: [case["rate"], case["second_rate"]]
                        for case in cases if case["kind"] == "pcm_rate_transition"}
-        if ("error" not in report and len(report["cases"]) == len(expected) and completed == expected
+        refused_ok = (args.backend != "alsa_loopback" or not hasattr(target, "run")
+                      or report.get("rate_refused", {}).get("status") == "pass")
+        if ("error" not in report and refused_ok and len(report["cases"]) == len(expected) and completed == expected
                 and all(case.get("status") == "pass" and "error" not in case
                         and (case["id"] not in mixed_rates or mixed_case_passes(case, mixed_rates[case["id"]]))
                         for case in report["cases"])):
