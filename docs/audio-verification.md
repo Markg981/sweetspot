@@ -62,7 +62,19 @@ il job Lyrion; una verifica fallita blocca la pubblicazione delle release.
 ## Percorso ALSA con snd-aloop
 
 La prova ripete i 18 casi passando dal driver ALSA del kernel invece che
-dallo stdout, sulla scheda virtuale `hw:Loopback` di snd-aloop.
+dallo stdout, sulla scheda virtuale `hw:Loopback` di snd-aloop. Aggiunge due
+casi di DSD convertito in PCM verso un DAC finto che accetta al massimo
+192 kHz (snd-aloop non va oltre, e Squeezelite dichiara solo 176,4 kHz):
+`dsf-2822400-pcm` (DSD64, una decimazione per 2) e `dff-5644800-pcm` (DSD128,
+due). Le sorgenti sono tracce DSF/DFF generate con un tono per canale
+(1008 e 2016 Hz in DSD64) più un tono ultrasonico a 117,6 kHz che, se il filtro
+non lo eliminasse, ripiegherebbe a 58,8 kHz. Squeezelite parte con
+`SWEETSPOT_DSD_MARGINE_DB=-6` (non il predefinito, per provare che la chiave
+arrivi). La prova richiede: nel registro la conversione, la decimazione attesa
+e il margine; il PCM a 176,4 kHz sul `hw:Loopback`; il tono entro 0,5 dB del
+livello atteso con il margine; rapporto segnale/rumore in banda di almeno 60 dB;
+nessun picco a 58,8 kHz (60 dB sotto il tono e non sopra il rumore); il tono
+dell'altro canale assente; nessun clipping.
 
 **Nel kernel di Sweetspot (CI x86).** Il kernel x86 dell'immagine include
 snd-aloop come modulo, che non si carica da solo. `tests/prova-alsa-qemu.sh`
