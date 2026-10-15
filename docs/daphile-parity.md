@@ -34,7 +34,7 @@ su hardware: la matrice non contiene ancora rapporti.
 | --- | --- | --- | --- |
 | Riproduzione dalla RAM | Implementata: `sweetspot-precarico` (`S68sweetspot-precarico`) carica in RAM la coda di ascolto con budget (`PRECARICO_MB`, `PRECARICO_FILE_MAX_MB`), esclude i file troppo grandi, stato in `precarico.json` e sulla pagina Stato; i buffer del player restano (`player_buffers`). Solo in modalità completa. | CI (`tests/run.sh`, `tests/precarica.py`); non verificato su hardware | Prova su dischi/NAS reali e con musica in alta risoluzione; lo streaming resta fuori dal precarico. |
 | Gapless e integrità PCM/DSD | Motore e configurazione presenti; prove di campioni e confini fra brani su Squeezelite stdout e su `snd-aloop` (vedi sotto). | CI per PCM, DoP, DSF/DFF e sei cambi di frequenza WAV24; non verificato sui DAC | DSD nativo, DAC reali, cambi PCM/DSD, hotplug, carico prolungato. |
-| Convoluzione FIR/DRC | Implementata in `sweetspot-dsp`: `fir-sinistro.wav` e facoltativo `fir-destro.wav`, validazione (`fir_ok`, dimensione massima, frequenza), margine di ampiezza `FIR_MARGINE_DB` (3 dB), latenza dichiarata; si somma ai biquad REW tramite CamillaDSP. | CI (generazione della configurazione, guadagno, `extra_samples`); non verificato su hardware | Misura della risposta a valle e confronto a pari volume; FIR per frequenza e CamillaDSP di sessione sono nella PR #90, non ancora su main. |
+| Convoluzione FIR/DRC | Implementata in `sweetspot-dsp`: un FIR per frequenza (`fir-FREQ.wav`, oppure `fir-sinistro-FREQ.wav` e `fir-destro-FREQ.wav`; i vecchi `fir-sinistro.wav`/`fir-destro.wav` valgono per la frequenza scritta nel file), validazione per frequenza (`fir_ok`, dimensione massima, frequenza nel nome uguale a quella nel file, canali coerenti), frequenza senza FIR: `blocca`, `diretto` o ricampionamento esplicito (`FIR_RICAMPIONA=si`); un'unica istanza di CamillaDSP per sessione avviata dal player sui core di sistema, con cambio di configurazione a ogni frequenza senza riavvio (#90), priorità per ruolo (riproduzione >= elaborazione >= cattura), margine di ampiezza `FIR_MARGINE_DB` (3 dB), latenza dichiarata; si somma ai biquad REW tramite CamillaDSP. | CI (generazione della configurazione, guadagno, `extra_samples`); non verificato su hardware | Misura della risposta a valle e confronto a pari volume; comportamento di CamillaDSP ai ricaricamenti con dispositivi diversi, compilazione del plugin e prova QEMU (`tests/camilladsp-sessione.py`) verificati solo dalla CI. |
 | Più DAC locali | Implementati come zone con `ALTRI_DAC=si`: un Squeezelite per ogni altro DAC USB, MAC stabile da identificativo USB e numero di serie, avvio e arresto con il collegamento, il principale resta fisso per tutto l'avvio. | CI (scelta e conservazione del DAC principale); non verificato su hardware | Due DAC reali in contemporanea; sincronizzazione fra zone, delegata ai gruppi di Lyrion, non provata. |
 | Renderer UPnP/DLNA in ingresso | `RENDERER_UPNP=si` (`S70sweetspot-renderer`, `renderer.pl`): SweetSpot compare come MediaRenderer; l'audio passa da Lyrion e dal player. Di serie spento. | CI (`tests/renderer-upnp.py`, prova Lyrion); non verificato con le app reali | Prova con BubbleUPnP, JPlay, mconnect; gapless e formati da app. |
 | PCM→DSD | `-R` configura ricampionamento PCM; le opzioni DSD gestiscono sorgenti già DSD. Non c'è conversione PCM→DSD. | non implementato | Conversione opzionale, backend e modulatore, limiti di CPU e DAC. |
@@ -46,9 +46,9 @@ su hardware: la matrice non contiene ancora rapporti.
 Streaming e ingressi hanno una tabella di stato dedicata nel
 [README](../README.md#servizi-in-streaming-e-ingressi-stato-e-qualificazione).
 
-Funzioni in PR aperte (#82, #84, #87, #89, #90) non sono su `main` e non sono
+Funzioni in PR aperte (#82, #84, #87, #89) non sono su `main` e non sono
 descritte qui: questa tabella va rivista dopo il loro merge, in particolare
-FIR per frequenza e CamillaDSP di sessione (#90), Bluetooth come sorgente
+Bluetooth come sorgente
 (#87), alterazioni del segnale e volume (#82), demone a eventi dello stato
 (#84) e drain al cambio di frequenza (#89).
 
