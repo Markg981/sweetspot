@@ -730,6 +730,12 @@ apply_player_prefs() {
 player_loop() {
 	BACKOFF=0
 	while true; do
+		# DAC in uso dal Bluetooth: nessuno riapre Squeezelite finche' non lo restituisce.
+		if bt_dac_busy; then
+			[ "$(cat "$STATE" 2>/dev/null)" = "DAC in uso dal Bluetooth" ] || say "DAC in uso dal Bluetooth"
+			sleep 2
+			continue
+		fi
 		card=$(dac_find)
 		if [ -z "$card" ]; then
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"

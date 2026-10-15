@@ -807,6 +807,22 @@ check_system() {
 	done
 }
 
+# Bluetooth come sorgente: spento di serie; acceso, lo stato scritto dal
+# servizio (sweetspot-bluetooth) dice se aspetta, e' in abbinamento o suona.
+check_bluetooth() {
+	local s
+	if ! is_yes "$(conf BLUETOOTH no)"; then
+		emit INFO "Bluetooth" "spento (si attiva dalla pagina Bluetooth)"
+		return
+	fi
+	s=$(cat "$RUN/bluetooth.stato" 2>/dev/null)
+	case "$s" in
+		''|errore*|"non attivo"|nessun*) emit ATTENZIONE "Bluetooth" "${s:-servizio non ancora avviato}" ;;
+		in\ ascolto*) emit OK "Bluetooth" "$s (il DAC e' del telefono, il player riprende alla fine)" ;;
+		*) emit OK "Bluetooth" "$s" ;;
+	esac
+}
+
 check_kernel
 check_ram_system
 check_cpu
@@ -814,6 +830,7 @@ check_quiet
 check_usb
 check_dac
 check_player
+check_bluetooth
 [ "$(mode)" = completa ] && check_library
 check_listening
 [ "$(mode)" = completa ] && check_preload

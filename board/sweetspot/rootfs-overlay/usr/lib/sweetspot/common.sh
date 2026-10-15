@@ -1008,6 +1008,19 @@ correction_running() {
 }
 
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
+# Il DAC e' del Bluetooth (sweetspot-bluetooth)? Il segnale $RUN/dac.bluetooth
+# contiene il PID di chi tiene il DAC: se non esiste piu' il segnale e' orfano,
+# si rimuove (con una riga nel registro) e il DAC torna al player.
+bt_dac_busy() {
+	local f=$RUN/dac.bluetooth pid
+	[ -e "$f" ] || return 1
+	pid=$(cat "$f" 2>/dev/null)
+	case "$pid" in ''|*[!0-9]*) ;; *) [ -d "$PROC/$pid" ] && return 0 ;; esac
+	rm -f "$f"
+	log "bluetooth: segnale dac.bluetooth orfano (processo $pid assente), il DAC torna al player"
+	return 1
+}
+
 dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
 # Osservazione /proc del solo PCM scelto dal player, non certificazione del DAC.

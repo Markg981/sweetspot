@@ -91,6 +91,11 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-cd", "leggi", "", "", 0},
 	{"sweetspot-cd", "lettore", "", "", 0},
 	{"sweetspot-cd", "stato", "", "", 0},
+	{"sweetspot-bluetooth", "abbina", "n", "", 0},
+	{"sweetspot-bluetooth", "applica", "", "", 0},
+	{"sweetspot-bluetooth", "chiudi", "", "", 0},
+	{"sweetspot-bluetooth", "elenco", "", "", 0},
+	{"sweetspot-bluetooth", "rimuovi", "w", "", 0},
 	{"sweetspot-check", "--dati", "", "", 0},
 	{"sweetspot-config", "imposta", "", "ks", 0},
 	{"sweetspot-config", "rimuovi", "", "k", 0},
@@ -144,6 +149,7 @@ static const struct regola REGOLE[] = {
 //  q  identita' di un disco (UUID=..., PARTUUID=...)
 //  l  elenco di nomi di dischi separati da virgole
 //  b  si oppure no
+//  m  nome di dispositivo: lettere, cifre, spazio, . _ - (al massimo 40)
 //  g  guadagno in dB (margine): da -24 a 0, al massimo un decimale (0, -3, -1.5)
 struct chiave {
 	const char *nome;
@@ -165,6 +171,7 @@ static const struct chiave CHIAVI[] = {
 	{"RENDERER_UPNP", 'b', 0},
 	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
 	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
+	{"BLUETOOTH", 'b', 0}, {"BLUETOOTH_NOME", 'm', 0},
 	// Aprono root (login SSH come root o come utente di assistenza): solo con @conferma.
 	{"SSH", 'w', 1}, {"SSH_PASSWORD", 's', 1}, {"SSH_UTENTE", 'w', 1},
 	{NULL, 0, 0},
@@ -241,6 +248,7 @@ static int c_indirizzo(unsigned char c) { return isdigit(c) || c == '.' || c == 
 static int c_host(unsigned char c) { return isalnum(c) || strchr(".:_-", c) != NULL; }
 static int c_disco(unsigned char c) { return isalnum(c) || strchr("=_.:-", c) != NULL; }
 static int c_elenco(unsigned char c) { return isalnum(c) || strchr(" ._,-", c) != NULL; }
+static int c_nome(unsigned char c) { return isalnum(c) || strchr(" ._-", c) != NULL; }
 
 // Margine in dB (DSD_PCM_MARGINE_DB): 0 oppure da -24 a 0, con al massimo un
 // decimale ("-3", "-1.5", "0", "-24.0"); niente "+", spazi, esponenti o altro.
@@ -286,6 +294,7 @@ static int valore_ok(const char *chiave, const char *v)
 	case 'q': return solo(v, 100, c_disco);
 	case 'l': return solo(v, 400, c_elenco);
 	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
+	case 'm': return solo(v, 40, c_nome);
 	case 'g': return margine_ok(v);
 	}
 	return 0;
