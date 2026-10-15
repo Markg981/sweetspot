@@ -1765,6 +1765,42 @@ printf 'MemTotal: 262144 kB\n' > "$CC/proc/meminfo"
 art_small=$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)
 printf 'MemTotal: 33554432 kB\n' > "$CC/proc/meminfo"
 expect "tetto dell'artwork: minimo 32 MB, mai oltre 256" "32|256" "$art_small|$(SWEETSPOT_PROCFS=$CC/proc lmsfn art_ram_mb)"
+# Cache delle copertine selezionabile: ram / archivio / disco, migrazione, tetto, ripiego.
+printf '#!/bin/sh\n[ "$1" = archivio ] && echo "%s"\n' "$CC/archivio" > "$CC/bin/sweetspot-dischi"
+mkdir -p "$CC/media/SSD"
+cc_stato() { cut -d'|' -f1,5 "$CC/run/lms.artwork.stato"; }
+rm -f "$CC/lms/cache/artwork.db" "$CC/lms/cache/imgproxy.db" "$CC/archivio/.sweetspot-cache"/*
+echo dati-ssd > "$CC/lms/cache/artwork.db"
+printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=SSD\n' > "$CC/run/sweetspot.conf"
+SWEETSPOT_MEDIA=$CC/media lmsfn link_caches
+expect "cache su un altro disco: collegamento verso l'SSD" "$CC/media/SSD/.sweetspot-cache/artwork.db" "$(readlink "$CC/lms/cache/artwork.db")"
+expect "migrazione dalla RAM all'SSD: contenuto conservato, stato su disco" "dati-ssd|disco|" "$(cat "$CC/media/SSD/.sweetspot-cache/artwork.db")|$(cc_stato)"
+expect "diagnostica: posizione, tetto e usati" "posizione=disco cartella=$CC/media/SSD/.sweetspot-cache tetto_mb=1024 usati_mb=0" "$(SWEETSPOT_MEDIA=$CC/media lmsfn do_artwork)"
+# Cambio di posizione dall'SSD all'archivio.
+printf 'CACHE_COPERTINE=archivio\n' > "$CC/run/sweetspot.conf"
+SWEETSPOT_MEDIA=$CC/media lmsfn link_caches
+expect "migrazione SSD -> archivio" "dati-ssd|$CC/archivio/.sweetspot-cache/artwork.db|no" \
+	"$(cat "$CC/archivio/.sweetspot-cache/artwork.db")|$(readlink "$CC/lms/cache/artwork.db")|$([ -e "$CC/media/SSD/.sweetspot-cache/artwork.db" ] && echo si || echo no)"
+# Disco che manca: ripiego in RAM dichiarato.
+printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=Assente\n' > "$CC/run/sweetspot.conf"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc SWEETSPOT_MEDIA=$CC/media lmsfn link_caches
+expect "disco assente: ripiego in RAM dichiarato" "ram|disco \"Assente\" non collegato" "$(cc_stato)"
+expect "ripiego: cache nel tmpfs a tetto" "$CC/lms/artwork-ram/artwork.db" "$(readlink "$CC/lms/cache/artwork.db")"
+expect "ripiego: la cache dell'archivio e' passata in RAM" "dati-ssd" "$(cat "$CC/lms/artwork-ram/artwork.db")"
+# Scelta esplicita della RAM, anche con l'archivio presente.
+printf 'CACHE_COPERTINE=ram\n' > "$CC/run/sweetspot.conf"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "CACHE_COPERTINE=ram con archivio: resta in RAM, tetto visibile" "ram|scelta dell'utente|256" "$(cc_stato)|$(cut -d'|' -f3 "$CC/run/lms.artwork.stato")"
+# Tetto sul disco: una cache oltre il tetto non si migra (si ricostruisce).
+printf 'CACHE_COPERTINE=archivio\nCACHE_COPERTINE_MB=1\n' > "$CC/run/sweetspot.conf"
+head -c 2097152 /dev/zero > "$CC/lms/artwork-ram/artwork.db"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "cache oltre il tetto: non migrata" "no" "$([ -s "$CC/archivio/.sweetspot-cache/artwork.db" ] && echo si || echo no)"
+# Disco non scrivibile (nome con barra rifiutato).
+printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=../x\n' > "$CC/run/sweetspot.conf"
+CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
+expect "nome del disco con percorso: rifiutato, ripiego" "ram|disco per le copertine non indicato" "$(cc_stato)"
+rm -f "$CC/run/sweetspot.conf"
 # Tetti di memoria cgroup di Lyrion e dello scanner (cgroup finto nei file).
 CGT=$CC/cgroup
 mkdir -p "$CGT"

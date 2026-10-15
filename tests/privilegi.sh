@@ -226,6 +226,9 @@ nameserver 6.6.6.6')"
 		expect "RENDERER_UPNP: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta RENDERER_UPNP 'si;id')|$(priv sweetspot-config imposta RENDERER_UPNP forse)"
 		expect "RENDERER_UPNP: non e' una chiave protetta (si cambia senza conferma forte)" "sweetspot-config|imposta|RENDERER_UPNP|si|OTTIMIZZAZIONI|si" \
 			"$(priv sweetspot-config imposta RENDERER_UPNP si OTTIMIZZAZIONI si)"
+		expect "CACHE_COPERTINE: chiavi ammesse dalle pagine" "sweetspot-config|imposta|CACHE_COPERTINE|disco|CACHE_COPERTINE_DISCO|SSD veloce|CACHE_COPERTINE_MB|2048" \
+			"$(priv sweetspot-config imposta CACHE_COPERTINE disco CACHE_COPERTINE_DISCO 'SSD veloce' CACHE_COPERTINE_MB 2048)"
+		expect "CACHE_COPERTINE: valori con metacaratteri rifiutati" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta CACHE_COPERTINE 'ram;id')|$(priv sweetspot-config imposta CACHE_COPERTINE_MB '1;id')"
 		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
 		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"
 	fi
