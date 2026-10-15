@@ -2935,6 +2935,9 @@ rm -f "$RT/ok" "$RT/umount.log"
 expect "stale: il montaggio che non risponde viene contato" "1" "$(rete_env "$RT/bin" env SWEETSPOT_STAT=$RT/bin/stat SWEETSPOT_UMOUNT=$RT/bin/umount $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" controlla 2>/dev/null)"
 expect "stale: smontato in lazy" "-l $RT/media/rete-1" "$(cat "$RT/umount.log" 2>/dev/null)"
 expect "stale: segnato in errore da rimontare" "1|errore|errore: montaggio non risponde (stale), da rimontare||0" "$(cat "$RT/run/rete.stato" 2>/dev/null)"
+HOOK=$OVERLAY/usr/share/udhcpc/default.script.d/50sweetspot-rete
+expect "sveglia: hook DHCP nella cartella di default.script (\$0.d), eseguibile" "si|no" \
+	"$([ -x "$HOOK" ] && echo si || echo no)|$([ -e "$OVERLAY/etc/udhcpc.d/50sweetspot-rete" ] && echo si || echo no)"
 rm -f "$RT/bin/stat" "$RT/bin/umount"
 rm -f "$RT/musica"/* 2>/dev/null
 expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
