@@ -52,6 +52,19 @@ evento() { # sorgente evento [dettagli]
 	case "$2" in
 		spegnimento|riavvio*|aggiornamento*|rollback*|errore*|panic*) : > "$DIARIO_FLAG" 2>/dev/null ;;
 	esac
+	case "$2" in riavvio-*) restart_conta "$1" ;; esac
+	return 0
+}
+
+# Restart per componente: un contatore in RAM per sorgente (lyrion, player,
+# liveness...), che non si perde quando la timeline viene troncata dalla quota.
+restart_conta() { # sorgente
+	local f n
+	case "$1" in ''|*[!a-z0-9_-]*) return 0 ;; esac
+	f=$RUN/restart.$1
+	n=$(cat "$f" 2>/dev/null)
+	case "$n" in ''|*[!0-9]*) n=0 ;; esac
+	echo $((n + 1)) > "$f" 2>/dev/null
 	return 0
 }
 
@@ -1589,6 +1602,75 @@ xrun_total() { # FILE
 	local cur
 	cur=$(xrun_counts "$1" 2>/dev/null) || return 1
 	xrun_sum "$(xrun_saved "$RUN/xrun.totale")" "$cur"
+}
+
+# --- Quota dei log in RAM -------------------------------------------------------
+# Tutti i log vivono in RAM (/var/log, /run, /tmp): nessuno deve crescere senza
+# limite. Ogni file ha un tetto (LOG_FILE_KB) e l'insieme una quota
+# (LOG_QUOTA_KB): superata, si tronca il file meno recente. Si tronca in place
+# (il processo che scrive tiene il file aperto) tenendo la coda.
+LOGDIR=${SWEETSPOT_LOGDIR:-/var/log}
+TMPDIR_LOG=${SWEETSPOT_TMPLOG:-/tmp}
+
+# Un file per riga: registro di sistema, timeline, log di Squeezelite (anche
+# delle zone), di CamillaDSP, di Lyrion (anche di avvio), file .log in RUN e /tmp.
+log_ram_files() {
+	local f
+	for f in "$LOGFILE" "$LOGFILE.1" "$TIMELINE" "$LOGDIR"/*.log "$LOGDIR"/lms/*.log \
+		"$RUN"/*.log "$TMPDIR_LOG"/sweetspot*.log; do
+		[ -f "$f" ] && echo "$f"
+	done | awk '!v[$0]++'
+}
+
+# Tiene gli ultimi KEEP byte di FILE, sullo stesso inode.
+log_tronca() { # file keep
+	local f=$1 tmp="$RUN/log.tronca.$$"
+	mkdir -p "$RUN" 2>/dev/null
+	if [ "$2" -le 0 ]; then : > "$f"; return 0; fi
+	tail -c "$2" "$f" > "$tmp" 2>/dev/null && cat "$tmp" > "$f"
+	rm -f "$tmp"
+}
+
+# Applica tetto per file e quota complessiva. Il registro principale di
+# Squeezelite passa da sqlog_rotate (conserva i contatori XRUN).
+log_quota() {
+	local fkb qkb f files total sq i oldest
+	fkb=$(conf LOG_FILE_KB 512); qkb=$(conf LOG_QUOTA_KB 4096)
+	case "$fkb" in ''|*[!0-9]*|0) fkb=512 ;; esac
+	case "$qkb" in ''|*[!0-9]*|0) qkb=4096 ;; esac
+	sq=${SQLOG:-$LOGDIR/squeezelite.log}
+	files=$(log_ram_files)
+	[ -n "$files" ] || return 0
+	# Una sola lettura delle dimensioni (wc -c) per volta: pochi processi.
+	for f in $(wc -c $files 2>/dev/null | awk -v max=$((fkb * 1024)) '$2 != "total" && $1 > max { print $2 }'); do
+		[ "$f" = "$sq" ] && continue
+		log_tronca "$f" $((fkb * 512))
+	done
+	i=0
+	while [ $i -lt 30 ]; do
+		i=$((i + 1))
+		total=$(wc -c $files 2>/dev/null | awk '$2 != "total" { t += $1 } END { print t + 0 }')
+		[ "$total" -gt $((qkb * 1024)) ] || return 0
+		oldest=""
+		# I percorsi sono nostri e senza spazi: ls -tr li ordina dal piu' vecchio.
+		# shellcheck disable=SC2045
+		for f in $(ls -tr $files 2>/dev/null); do
+			[ "$f" = "$sq" ] && continue
+			[ -s "$f" ] && { oldest=$f; break; }
+		done
+		[ -n "$oldest" ] || return 0
+		log_tronca "$oldest" $(( $(wc -c < "$oldest") / 2 ))
+	done
+}
+
+# Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (30).
+log_quota_tick() {
+	local now last
+	now=$(date +%s); last=$(cat "$RUN/log.quota.ts" 2>/dev/null)
+	case "$last" in ''|*[!0-9]*) last=0 ;; esac
+	[ $((now - last)) -ge "$(conf LOG_QUOTA_SECONDI 30)" ] || return 0
+	echo "$now" > "$RUN/log.quota.ts" 2>/dev/null
+	log_quota
 }
 
 # --- Controllo dell'header Host delle pagine web ------------------------------------
