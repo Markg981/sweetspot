@@ -1038,6 +1038,28 @@ alsa_bits() {
 	esac
 }
 
+# Verdetto della catena del segnale. Ogni stadio e' "inv" (invariato e
+# verificato), "mod" (modifica i campioni) o "nv" (non verificabile).
+# "bit-perfect" solo se tutti gli stadi sono inv; basta uno stadio che
+# modifica per dire "modificato"; altrimenti "non-verificabile".
+# Senza stadi il verdetto e' non-verificabile.
+chain_verdict() {
+	local s any_mod=0 any_nv=0 n=0
+	for s in "$@"; do
+		n=$((n + 1))
+		case "$s" in
+			inv) ;;
+			mod) any_mod=1 ;;
+			*) any_nv=1 ;;
+		esac
+	done
+	if [ "$n" = 0 ]; then echo non-verificabile
+	elif [ "$any_mod" = 1 ]; then echo modificato
+	elif [ "$any_nv" = 1 ]; then echo non-verificabile
+	else echo bit-perfect
+	fi
+}
+
 # Brano in riproduzione sul player indicato (MAC), in JSON: tipo, frequenza,
 # bit, titolo, artista e album, piu' lo stato del player (mode).
 lms_now_playing() {

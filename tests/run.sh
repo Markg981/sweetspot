@@ -490,6 +490,22 @@ out=$(page audio 'VOLUME=software')
 case "$out" in *"Non bit-perfect"*"abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, dither TPDF" "-" ;; esac
 case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
 case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
+# Catena del segnale: verdetto puro e pagina
+expect "catena: tutti invariati = bit-perfect" "bit-perfect" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv inv inv")"
+expect "catena: uno che modifica = modificato" "modificato" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv mod nv inv")"
+expect "catena: uno non verificabile = non-verificabile" "non-verificabile" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv nv inv")"
+expect "catena: nessuno stadio = non-verificabile" "non-verificabile" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict")"
+rm -f "$WEB/run/frequenza.max"
+case "$(page audio)" in *"2. Lyrion - non verificabile"*"Verdetto: non verificabile"*) ok "catena: senza frequenza massima non c'è verdetto bit-perfect" ;; *) ko "catena senza frequenza.max" "Verdetto: non verificabile" "-" ;; esac
+echo 192000 > "$WEB/run/frequenza.max"
+out=$(page audio)
+case "$out" in *"6. DAC - invariato"*"Verdetto: bit-perfect"*) ok "catena: tutti gli stadi invariati, verdetto bit-perfect" ;; *) ko "catena bit-perfect" "Verdetto: bit-perfect" "$out" ;; esac
+case "$out" in *"Alta precisione, non bit-perfect"*) ko "catena: nessuna nota alta precisione se bit-perfect" "assente" "presente" ;; *) ok "catena: nessuna nota alta precisione se bit-perfect" ;; esac
+out=$(page audio 'VOLUME=software')
+case "$out" in *"4. Guadagno - modifica i campioni"*"Verdetto: non bit-perfect"*"Alta precisione, non bit-perfect"*"float64, headroom, dither"*) ok "catena: volume digitale modifica i campioni, alta precisione distinta dal bit-perfect" ;; *) ko "catena volume software" "Guadagno modifica + nota alta precisione" "$out" ;; esac
+echo 48000 > "$WEB/run/frequenza.max"
+case "$(page audio)" in *"2. Lyrion - modifica i campioni"*"sox"*"Verdetto: non bit-perfect"*) ok "catena: sox lato Lyrion segnalato" ;; *) ko "catena sox" "Lyrion modifica" "-" ;; esac
+rm -f "$WEB/run/frequenza.max"
 volcheck() { # impostazioni
 	printf '%s\n' "$1" > "$WEB/s.txt"
 	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \

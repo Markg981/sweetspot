@@ -178,6 +178,104 @@ fi
 
 echo '</div>'
 
+# --- Catena del segnale ---------------------------------------------------------------
+# Stadio per stadio, dal file al DAC. Ogni stadio e' "invariato" (verificato),
+# "modifica i campioni" o "non verificabile"; il verdetto "bit-perfect" c'e'
+# solo se tutti sono invariati e verificati. L'elaborazione ad alta precisione
+# (float64, headroom, dither) e' un'altra cosa: e' accurata, ma cambia i campioni.
+chain_states=""
+chain_row() { # stato(inv|mod|nv) nome descrizione
+	local sev lab
+	case "$1" in
+		inv) sev=OK; lab="invariato" ;;
+		mod) sev=ATTENZIONE; lab="modifica i campioni" ;;
+		*) sev=INFO; lab="non verificabile" ;;
+	esac
+	chain_states="$chain_states $1"
+	info_row "$sev" "$2 - $lab" "$3"
+}
+
+echo '<h2>Catena del segnale</h2><div class="card">'
+if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$channels" ]; then
+	# 1. Sorgente: e' il riferimento, ma serve conoscerla.
+	if [ -n "$src_rate" ] && [ -n "$src_type" ]; then
+		chain_row inv "1. Sorgente" "File $src_type${src_bits:+ a $src_bits bit}, $src_rate Hz: formato originale."
+	else
+		chain_row nv "1. Sorgente" "Formato del brano sconosciuto (nessun brano riportato da Lyrion)."
+	fi
+	# 2. Lyrion: ricampionamento/transcodifica lato server.
+	top=$(cat "$RUN/frequenza.max" 2>/dev/null)
+	case "$src_type" in flc|wav|aif|aiff|pcm|alc|dsf|dff) lossless=1 ;; *) lossless="" ;; esac
+	if [ -z "$src_rate" ]; then
+		chain_row nv "2. Lyrion" "Senza il brano non si può dire se il server lo ricampioni o lo transcodifichi."
+	elif [ -n "$top" ] && [ "$src_rate" -gt "$top" ] 2>/dev/null; then
+		chain_row mod "2. Lyrion" "Il brano ($src_rate Hz) supera la frequenza massima del player ($top Hz): il server lo ricampiona con sox."
+	elif [ -z "$lossless" ]; then
+		chain_row nv "2. Lyrion" "Il tipo $src_type potrebbe essere transcodificato dal server (regole di convert.conf non leggibili da qui)."
+	elif [ -z "$top" ]; then
+		chain_row nv "2. Lyrion" "La frequenza massima del player non è nota: non si esclude il ricampionamento sox del server."
+	else
+		chain_row inv "2. Lyrion" "Brano entro la frequenza massima del player ($top Hz), formato senza perdita: nessun ricampionamento rilevato."
+	fi
+	# 3. Squeezelite: formato decodificato rispetto al brano.
+	why=""
+	case "$fmt" in
+		DSD*) chain_row nv "3. Squeezelite" "DSD nativo ($fmt): i campioni passano senza conversione, ma i marcatori non sono verificabili." ;;
+		*)
+			case "$src_type" in
+				dsf|dff)
+					if [ "$src_rate" = "$((rate * 16))" ]; then
+						chain_row nv "3. Squeezelite" "PCM a $rate Hz compatibile con il DoP: marcatori DoP e integrità non verificati."
+					else
+						chain_row mod "3. Squeezelite" "Il DSD è convertito in PCM ($fmt, $rate Hz, margine $(dsd_margine_db) dB)."
+					fi ;;
+				*)
+					if [ -n "$src_rate" ] && [ "$src_rate" != "$rate" ]; then why="frequenza cambiata da $src_rate a $rate Hz"
+					elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$fmt")" ] 2>/dev/null; then why="$src_bits bit ridotti a $(alsa_bits "$fmt")"
+					elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then why="ricampionamento attivo (cala il segnale di 1 dB)"
+					fi
+					if [ -n "$why" ]; then chain_row mod "3. Squeezelite" "Formato decodificato diverso dal brano: $why."
+					elif [ -z "$src_rate" ]; then chain_row nv "3. Squeezelite" "Formato decodificato $fmt, $rate Hz; senza il brano non si confronta."
+					else chain_row inv "3. Squeezelite" "Decodificato come $fmt, $rate Hz: stessa frequenza, bit non ridotti."
+					fi ;;
+			esac ;;
+	esac
+	# 4. Guadagno effettivo.
+	case "$(volume_effettivo)" in
+		fisso) chain_row inv "4. Guadagno" "Unitario: volume fisso al 100%." ;;
+		hardware) chain_row inv "4. Guadagno" "Unitario sui campioni: il volume agisce nel DAC (hardware), non nel flusso digitale." ;;
+		*) chain_row mod "4. Guadagno" "Non unitario: volume digitale ($(lower "$(conf VOLUME fisso)")), con arrotondamento e dither." ;;
+	esac
+	# 5. DSP.
+	dsp_what=""
+	[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && dsp_what="volume digitale a 64 bit"
+	[ -f "$RUN/correzione.filtri" ] && dsp_what="${dsp_what:+$dsp_what, }filtri FIR della stanza"
+	if [ -n "$dsp_what" ] || correction_running; then
+		chain_row mod "5. DSP" "CamillaDSP attivo: ${dsp_what:-correzione ambientale}, calcolo in virgola mobile a 64 bit con dither all'uscita."
+	elif [ -f "$RUN/correzione.attiva" ]; then
+		chain_row nv "5. DSP" "Correzione accesa ma CamillaDSP non risulta in esecuzione."
+	else
+		chain_row inv "5. DSP" "Assente: i campioni non passano per CamillaDSP."
+	fi
+	# 6. Formato aperto sul DAC.
+	chain_row inv "6. DAC" "Aperto da hw_params: $fmt, $rate Hz, $channels canali (ALSA hw:, nessuna conversione dopo questo punto)."
+else
+	info_row INFO "Catena non valutabile" "Nessuna riproduzione in corso: la catena si legge mentre suona un brano."
+fi
+if [ -n "$chain_states" ]; then
+	# shellcheck disable=SC2086
+	cv=$(chain_verdict $chain_states)
+	case "$cv" in
+		bit-perfect) info_row OK "Verdetto: bit-perfect" "Tutti gli stadi sono invariati e verificati." ;;
+		modificato) info_row ATTENZIONE "Verdetto: non bit-perfect" "Almeno uno stadio modifica i campioni (vedi sopra)." ;;
+		*) info_row INFO "Verdetto: non verificabile" "Nessuno stadio modifica i campioni, ma almeno uno non è verificabile: il bit-perfect non è dimostrato." ;;
+	esac
+	case "$chain_states" in
+		*mod*) info_row INFO "Alta precisione, non bit-perfect" "L'elaborazione ad alta precisione (float64, headroom, dither) è accurata e non tronca, ma cambia i campioni: è un'altra cosa dal bit-perfect, che chiede campioni identici al file." ;;
+	esac
+fi
+echo '</div>'
+
 # --- Correzione ambientale ------------------------------------------------------------
 echo '<h2>Correzione ambientale</h2><div class="card">'
 case "$(lower "$(conf CORREZIONE no)")" in
