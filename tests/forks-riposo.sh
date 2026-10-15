@@ -67,6 +67,7 @@ fi
 # nati (come --dettaglio) e li stampa solo se la soglia e' superata: mostra
 # le raffiche dell'assestamento che la misura successiva conta.
 PRIMA=
+CATTURA=
 ATT=${FORKS_ATTESA:-20}
 if [ "${FORKS_PRIMA:-0}" -gt 0 ]; then
 	PRIMA=$(dettaglio "$FORKS_PRIMA")
@@ -80,6 +81,31 @@ forks_v() {
 		[ "$k" = processes ] && { FKV=$v; return 0; }
 	done < "$PROC/stat"
 }
+# FORKS_QUIETO=N: la misura parte solo quando il demone di stato non fa un
+# giro da almeno N secondi (il momento dell'ultimo giro e' in $RUN/stato.ts,
+# scritto dal demone a ogni giro, completo o di sola liveness). Un giro dopo
+# un cambio vero (DAC collegato, Lyrion che diventa sano) non e' riposo; un
+# giro chiesto da un evento aspetta al piu' STATO_MIN_EV (60 s) dal
+# precedente, quindi N > 60 esclude anche quelli rimandati. Senza assestarsi
+# entro FORKS_QUIETO_TIMEOUT s la prova fallisce, con un messaggio.
+if [ "${FORKS_QUIETO:-0}" -gt 0 ]; then
+	TS=${SWEETSPOT_RUN:-/run/sweetspot}/stato.ts
+	trascorsi=0
+	while :; do
+		ult=''
+		read -r ult _ < "$TS" 2>/dev/null
+		case "$ult" in ''|*[!0-9]*) ult=0 ;; esac
+		adesso=$(date +%s)
+		[ "$ult" -gt 0 ] && [ $((adesso - ult)) -ge "$FORKS_QUIETO" ] && break
+		if [ "$trascorsi" -ge "${FORKS_QUIETO_TIMEOUT:-180}" ]; then
+			echo "NON a riposo: il demone di stato ha fatto l'ultimo giro $((adesso - ult)) s fa; dopo ${FORKS_QUIETO_TIMEOUT:-180} s non sono passati $FORKS_QUIETO s senza giri"
+			exit 1
+		fi
+		sleep 5
+		trascorsi=$((trascorsi + 5))
+	done
+	QUIETO="a riposo da $((adesso - ult)) s (attesa $trascorsi s)"
+fi
 a=$(forks)
 serie=
 passi=0
@@ -87,7 +113,22 @@ resto=$SECONDI
 forks_v; prec=$FKV
 while [ "$resto" -gt 0 ]; do
 	p=5; [ "$resto" -ge 5 ] || p=$resto
-	sleep "$p"
+	if [ "${FORKS_CACCIA:-0}" = 1 ]; then
+		# Diagnosi: attesa attiva con soli comandi interni; al primo picco
+		# (piu' di 60 fork dall'ultima lettura) classifica per 4 s i processi.
+		read -r u _ < /proc/uptime; fine=$(( ${u%%.*} + p ))
+		forks_v; pc=$FKV
+		while :; do
+			read -r u _ < /proc/uptime
+			[ "${u%%.*}" -lt "$fine" ] || break
+			forks_v
+			if [ -z "$CATTURA" ] && [ $((FKV - prec)) -gt 60 ]; then
+				CATTURA=$(dettaglio 4)
+			fi
+		done
+	else
+		sleep "$p"
+	fi
 	resto=$((resto - p)); passi=$((passi + 1))
 	forks_v; serie="$serie $((FKV - prec))"; prec=$FKV
 done
@@ -99,8 +140,13 @@ tot=$((b - a - propri))
 [ "$tot" -ge 0 ] || tot=0
 al_minuto=$((tot * 60 / SECONDI))
 echo "fork in ${SECONDI}s: $tot (al minuto: $al_minuto, massimo $MASSIMO)"
+[ -z "${QUIETO:-}" ] || echo "$QUIETO; fork ogni 5 s:$serie"
 if [ "$al_minuto" -ge "$MASSIMO" ]; then
 	echo "Fork ogni 5 s:$serie"
+	if [ -n "${CATTURA:-}" ]; then
+		echo "Classifica durante il picco (4 s):"
+		echo "$CATTURA"
+	fi
 	if [ -n "$PRIMA" ]; then
 		echo "Classifica dei primi ${FORKS_PRIMA} s (padre > comando: numero):"
 		echo "$PRIMA"

@@ -48,14 +48,14 @@ DIRTY_SINCE=$RUN/dati.sporco
 SPACE_FLAG=$RUN/dati.spazio
 
 fingerprint() {
+	# Un solo stat per gruppo di file (find -exec ... +), non uno per file: la
+	# prova a ogni minuto costava un processo per ogni file di Lyrion (centinaia).
 	{
-		for d in $KEEP; do find "$LMS_DATA/$d" -type f 2>/dev/null; done
+		for d in $KEEP; do find "$LMS_DATA/$d" -type f -exec stat -c '%n %s %Y' {} + 2>/dev/null; done
 		for f in $DBS; do
-			ls "$CACHE/$f" "$CACHE/$f-wal" 2>/dev/null
+			stat -c '%n %s %Y' "$CACHE/$f" "$CACHE/$f-wal" 2>/dev/null
 		done
-	} | sort | while IFS= read -r f; do
-		stat -c '%n %s %Y' "$f" 2>/dev/null
-	done | md5sum | cut -d' ' -f1
+	} | sort | md5sum | cut -d' ' -f1
 }
 
 do_restore() {

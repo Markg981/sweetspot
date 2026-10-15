@@ -1063,6 +1063,23 @@ lms_server_ip() {
 # Stringa JSON (i valori arrivano gia' privi di caratteri di controllo).
 json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
+# Come json_str senza processi: il testo con barra e virgolette protette (senza
+# le virgolette esterne) resta in JQV. Una richiesta a Lyrion ne fa una decina.
+# shellcheck disable=SC2034
+json_q_v() {
+	local s=$1 o='' r c
+	while :; do
+		case "$s" in *[\\\"]*) ;; *) break ;; esac
+		r=${s%%[\\\"]*}
+		o="$o$r"
+		s=${s#"$r"}
+		c=${s%"${s#?}"}
+		s=${s#?}
+		o="$o\\$c"
+	done
+	JQV="$o$s"
+}
+
 # lms_json PLAYER PAROLA...: invia un comando a Lyrion (PLAYER vuoto per i
 # comandi del server) e stampa la risposta JSON. Fallisce se non risponde.
 # Lyrion protetto da utente e password (Impostazioni > Avanzate > Sicurezza
@@ -1181,18 +1198,23 @@ lms_posto_prendi() {
 lms_json_diretto() {
 	local tmo=$1 player=$2 args="" w out auth rc posto="" t0 t1
 	shift 2
-	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
-	auth=$(lms_auth_header)
+	for w in "$@"; do json_q_v "$w"; args="$args${args:+,}\"$JQV\""; done
+	json_q_v "$player"
+	# Senza utente di Lyrion (il caso normale) niente intestazione: nessun processo.
+	confv LYRION_UTENTE
+	auth=''
+	[ -z "$CONFV" ] || auth=$(lms_auth_header)
 	if [ "${LMS_WEB:-0}" = 1 ]; then
 		posto=$(lms_posto_prendi) || return 6
 	fi
-	t0=$(date +%s)
+	# Secondi dall'avvio (solo per misurare la durata), senza date.
+	read -r t0 _ < /proc/uptime; t0=${t0%%.*}
 	out=$("${SWEETSPOT_WGET:-wget}" -q -T "$tmo" -O - --header 'Content-Type: application/json' \
 		${auth:+--header "$auth"} \
-		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
+		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[\"$JQV\",[$args]]}" \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null)
 	rc=$?
-	t1=$(date +%s)
+	read -r t1 _ < /proc/uptime; t1=${t1%%.*}
 	[ -z "$posto" ] || rm -rf "$RUN/lms-posti/$posto"
 	if [ "$rc" -ne 0 ]; then
 		# wget non distingue i motivi: li deduciamo dal tempo impiegato (tempo

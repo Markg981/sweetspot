@@ -85,6 +85,30 @@ json_esc() {
 	printf '%s' "$1" | tr '\001-\037' ' ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
+# Lo stesso, con la sola shell: il risultato resta in JE. Un giro del check
+# chiama json_esc centinaia di volte, ognuna con tre processi.
+# shellcheck disable=SC2034
+json_esc_v() {
+	local s=$1 o='' r c
+	# Caratteri di controllo: uno spazio.
+	while :; do
+		case "$s" in *[[:cntrl:]]*) ;; *) break ;; esac
+		r=${s%%[[:cntrl:]]*}
+		s="$r ${s#"$r"?}"
+	done
+	# Barra e virgolette: una barra davanti.
+	while :; do
+		case "$s" in *[\\\"]*) ;; *) break ;; esac
+		r=${s%%[\\\"]*}
+		o="$o$r"
+		s=${s#"$r"}
+		c=${s%"${s#?}"}
+		s=${s#?}
+		o="$o\\$c"
+	done
+	JE="$o$s"
+}
+
 # Traffico in KB/s dall'ultimo giro: nessuno sleep, la misura e' la
 # differenza con i byte letti la volta scorsa.
 traffic_kbs() {
@@ -243,7 +267,7 @@ liveness_round() { # momento
 }
 
 do_round() {
-	local every=$1 kbs esito now listening=false rows sep='' e v d
+	local every=$1 kbs esito now listening=false rows sep='' e v d je jv
 	mkdir -p "$RUN"
 	now=$(date +%s)
 	kbs=$(traffic_kbs)
@@ -260,7 +284,8 @@ do_round() {
 		printf '{"ts":%s,"intervallo":%s,"ascolto":%s,"traffico_kbs":%s,%s,"voci":[' "$now" "$every" "$listening" "$kbs" "$LV_JSON"
 		while IFS='|' read -r e v d; do
 			[ -n "$v" ] || continue
-			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$(json_esc "$e")" "$(json_esc "$v")" "$(json_esc "$d")"
+			json_esc_v "$e"; je=$JE; json_esc_v "$v"; jv=$JE; json_esc_v "$d"
+			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$je" "$jv" "$JE"
 			sep=,
 		done < "$DATI.nuovo"
 		printf ']}\n'
