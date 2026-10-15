@@ -59,13 +59,29 @@
 #     (sweetspot-player) lo riavvia.
 #   - Controlli funzionali (uno ogni LIVENESS_FUNZ_PERIODO s, 120, senza
 #     processi permanenti): il player principale e ogni zona risultano
-#     connessi a Lyrion (JSON-RPC "connected ?") e, se Lyrion dice "play", il
-#     tempo di riproduzione ("time ?") avanza da un controllo al successivo;
-#     CamillaDSP, se e' nel percorso, risponde sul websocket (GetState). Dopo
-#     LIVENESS_FUNZ_FALLIMENTI (3) controlli falliti di fila si ferma il solo
-#     componente (squeezelite lo riparte sweetspot-player, che riavvia anche le
-#     zone; CamillaDSP riparte con la riapertura del dispositivo). Se Lyrion
-#     non risponde non si giudica il player: ci pensa il controllo di Lyrion.
+#     connessi a Lyrion (JSON-RPC "connected ?") e, se Lyrion dice "play",
+#     suonano davvero; CamillaDSP, se e' nel percorso, risponde sul websocket
+#     (GetState). Il "time ?" di Lyrion NON si usa: Lyrion lo estrapola dal
+#     momento dell'ultimo stato ricevuto dal player (songElapsedSeconds), quindi
+#     con Squeezelite bloccato continua ad avanzare e non prova nulla. Il
+#     criterio e' lato player, non estrapolato: nel PCM ALSA del player
+#     (/proc/asound/cardN/pcmXp/sub*/status; per il principale le schede che
+#     non sono zone, per una zona la sua scheda in $RUN/zone/<scheda>) lo
+#     stato e' RUNNING e hw_ptr e' cambiato dal controllo precedente (lo legge
+#     il kernel dal DAC, non il player). Esiti, con Lyrion in "play":
+#       - RUNNING e hw_ptr che avanza: ok;
+#       - RUNNING ma hw_ptr fermo: fallimento (il DAC non consuma);
+#       - PCM non RUNNING e processo squeezelite fermo (utime+stime di
+#         /proc/<pid>/stat invariati): fallimento, il player e' bloccato;
+#       - PCM non RUNNING ma il processo lavora (buffer di stream vuoto per
+#         rete lenta, Squeezelite che attende i dati): stato "attesa", niente
+#         riavvio ne' fallimento; se dura LIVENESS_FUNZ_ATTESA (5) controlli
+#         di fila (il processo potrebbe girare a vuoto) conta come fallimento.
+#     Dopo LIVENESS_FUNZ_FALLIMENTI (3) controlli falliti di fila si ferma il
+#     solo componente (squeezelite lo riparte sweetspot-player, che riavvia
+#     anche le zone; CamillaDSP riparte con la riapertura del dispositivo). Se
+#     Lyrion non risponde non si giudica il player: ci pensa il controllo di
+#     Lyrion. Con il DAC al Bluetooth il PCM non si giudica.
 # I riavvii hanno un backoff (LIVENESS_BACKOFF_MIN, raddoppia fino a
 # LIVENESS_BACKOFF_MAX) e un limite: al piu' LIVENESS_RIAVVII_MAX (3) riavvii
 # per componente in LIVENESS_RIAVVII_FINESTRA s (1800), poi stato "limite" e
@@ -311,11 +327,13 @@ LV_FN_BAD=0
 # Esito di un controllo funzionale: dopo LIVENESS_FUNZ_FALLIMENTI esiti
 # negativi di fila si ferma il solo componente (lo riavvia chi lo
 # supervisiona), se il limite di riavvii nella finestra lo consente.
-lv_fn_esito() { # nome etichetta momento pid esito(0 ok) dettaglio
+lv_fn_esito() { # nome etichetta momento pid esito(0 ok, 1 fallito, 2 in attesa) dettaglio
 	local nome=$1 et=$2 now=$3 pid=$4 ko=$5 det=$6 k stato=ok f
 	k=$(lv_num LIVENESS_FUNZ_FALLIMENTI 3)
 	lv_cread "$nome"
-	if [ "$ko" = 0 ]; then
+	if [ "$ko" = 2 ]; then
+		stato=attesa   # in attesa di dati: ne' ok ne' fallito, i contatori restano
+	elif [ "$ko" = 0 ]; then
 		if [ "$LV_C_FAILS" -gt 0 ]; then
 			log "liveness: $et risponde di nuovo dopo $LV_C_FAILS controlli falliti"
 			lv_set_fails "$nome" 0
@@ -344,11 +362,51 @@ lv_fn_esito() { # nome etichetta momento pid esito(0 ok) dettaglio
 "
 }
 
+# PCM ALSA del player: LV_PCM_ST (stato del primo substream RUNNING, altrimenti
+# l'ultimo letto, vuoto se non c'e') e LV_PCM_HW (hw_ptr del RUNNING).
+# Scheda vuota = principale: tutte le schede che non sono zone.
+lv_pcm_leggi() { # scheda
+	local f c l st h want=$1
+	LV_PCM_ST=''; LV_PCM_HW=''
+	for f in "$PROC"/asound/card*/pcm*p/sub*/status; do
+		[ -r "$f" ] || continue
+		c=${f#"$PROC"/asound/card}; c=${c%%/*}
+		if [ -n "$want" ]; then
+			[ "$c" = "$want" ] || continue
+		else
+			[ -e "$RUN/zone/$c" ] && continue
+		fi
+		st=''; h=''
+		while IFS= read -r l; do
+			case "$l" in
+				"state:"*) set -- ${l#*:}; st=$1 ;;
+				"hw_ptr"*) set -- ${l#*:}; h=$1 ;;
+			esac
+		done < "$f"
+		[ -n "$st" ] || continue
+		LV_PCM_ST=$st
+		if [ "$st" = RUNNING ]; then LV_PCM_HW=$h; return 0; fi
+	done
+	return 0
+}
+
+# Tick di CPU (utime+stime) del processo: cambiano se il processo lavora.
+lv_cpu() { # pid
+	local l
+	[ -r "$PROC/$1/stat" ] || return 0
+	read -r l < "$PROC/$1/stat" || return 0
+	l=${l##*) }
+	set -- $l
+	[ -n "${12:-}" ] && echo "$(( ${12} + ${13:-0} ))"
+	return 0
+}
+
 # Un player (principale o zona): risulta connesso a Lyrion e, se Lyrion dice
-# "play", il tempo di riproduzione avanza da un controllo all'altro.
+# "play", il PCM ALSA avanza (criterio in testa al file).
 # Lyrion che non risponde non e' colpa del player: nessun giudizio.
-lv_fn_player() { # nome etichetta momento pid mac
-	local nome=$1 et=$2 now=$3 pid=$4 mac=$5 tmo conn mode t prev det ko=0 tf
+lv_fn_player() { # nome etichetta momento pid mac [scheda]
+	local nome=$1 et=$2 now=$3 pid=$4 mac=$5 card=$6 tmo conn mode det ko=0 tf
+	local hw cpu phw pcpu att=0 amax
 	tmo=$(lv_num LIVENESS_LYRION_TIMEOUT 8)
 	tf="$RUN/liveness.t.$nome"
 	conn=$(LMS_TIMEOUT=$tmo lms_get '._connected' "$mac" connected '?' 2>/dev/null)
@@ -362,19 +420,41 @@ lv_fn_player() { # nome etichetta momento pid mac
 		rm -f "$tf"
 	else
 		mode=$(LMS_TIMEOUT=$tmo lms_get '._mode' "$mac" mode '?' 2>/dev/null)
-		if [ "$mode" = play ]; then
-			t=$(LMS_TIMEOUT=$tmo lms_get '._time' "$mac" time '?' 2>/dev/null)
-			prev=''
-			[ -r "$tf" ] && read -r prev < "$tf"
-			if [ -n "$t" ] && [ "$t" = "$prev" ]; then
-				ko=1; det="in play ma il tempo di riproduzione e' fermo a $t s"
-			else
-				det="connesso a Lyrion, in play, il tempo avanza"
-			fi
-			[ -z "$t" ] || { echo "$t" > "$tf.n" && mv "$tf.n" "$tf"; }
-		else
+		if [ "$mode" != play ]; then
 			rm -f "$tf"
 			det="connesso a Lyrion"
+		elif [ -z "$card" ] && bt_dac_busy; then
+			rm -f "$tf"
+			det="connesso a Lyrion, DAC in uso dal Bluetooth"
+		else
+			lv_pcm_leggi "$card"
+			hw=$LV_PCM_HW
+			cpu=$(lv_cpu "$pid")
+			phw=''; pcpu=''
+			[ -r "$tf" ] && read -r phw pcpu att < "$tf"
+			[ "$phw" = - ] && phw=''
+			[ "$pcpu" = - ] && pcpu=''
+			case "$att" in ''|*[!0-9]*) att=0 ;; esac
+			amax=$(lv_num LIVENESS_FUNZ_ATTESA 5)
+			if [ "$LV_PCM_ST" = RUNNING ]; then
+				att=0
+				if [ -z "$phw" ] || [ -z "$hw" ] || [ "$hw" != "$phw" ]; then
+					det="connesso a Lyrion, in play, il PCM ALSA avanza"
+				else
+					ko=1; det="in play, PCM RUNNING ma hw_ptr fermo a $hw"
+				fi
+			elif [ -n "$cpu" ] && [ -n "$pcpu" ] && [ "$cpu" = "$pcpu" ]; then
+				att=0
+				ko=1; det="in play ma PCM ${LV_PCM_ST:-assente} e processo player fermo"
+			else
+				att=$(( att + 1 ))
+				if [ "$att" -ge "$amax" ]; then
+					ko=1; det="in play, PCM ${LV_PCM_ST:-assente} da $att controlli (il processo lavora ma non suona)"
+				else
+					ko=2; det="in attesa di dati: in play, PCM ${LV_PCM_ST:-assente} ma il processo lavora (ribuffering, controllo $att di $amax)"
+				fi
+			fi
+			echo "${hw:--} ${cpu:--} $att" > "$tf.n" && mv "$tf.n" "$tf"
 		fi
 	fi
 	lv_fn_esito "$nome" "$et" "$now" "$pid" "$ko" "$det"
@@ -401,7 +481,7 @@ lv_func() { # momento
 			mac=''
 			read -r mac < "$RUN/zone.mac/$card" 2>/dev/null
 			[ -n "$pid" ] && [ -n "$mac" ] && kill -0 "$pid" 2>/dev/null || continue
-			lv_fn_player "zona-$id" "Zona $id" "$now" "$pid" "$mac"
+			lv_fn_player "zona-$id" "Zona $id" "$now" "$pid" "$mac" "$card"
 		done
 	fi
 	# CamillaDSP, solo se e' nel percorso: deve rispondere sul websocket.
@@ -433,7 +513,7 @@ lv_fn_report() {
 		[ -n "$nome" ] || continue
 		case "$stato" in
 			ok) e=OK ;;
-			n/d) e=INFO ;;
+			n/d|attesa) e=INFO ;;
 			sospetto) e=ATTENZIONE ;;
 			*) e=ERRORE ;;
 		esac
