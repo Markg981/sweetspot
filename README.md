@@ -273,6 +273,42 @@ niente OpenHome (le app lo usano solo se c'e', altrimenti ripiegano su
 AVTransport); un'app alla volta controlla il renderer, e la musica avviata da
 Lyrion non viene fermata da un `Stop` UPnP.
 
+### Servizi in streaming e ingressi: stato e qualificazione
+
+"Disponibile come plugin" non significa "integrazione verificata". La pagina
+**Plugin** installa dal repository ufficiale di Lyrion i plugin del catalogo
+(`usr/share/sweetspot/plugin-consigliati.txt`); SweetSpot non li sviluppa e,
+a oggi, nessuno è stato qualificato con un account reale.
+
+| Servizio o ingresso | Plugin | Stato | Limiti noti |
+| --- | --- | --- | --- |
+| Qobuz, TIDAL | `Qobuz`, `TIDAL` | disponibile come plugin; integrazione non verificata | Serve l'abbonamento. Il formato massimo dipende dal piano e dal plugin. |
+| Spotify / Spotify Connect | `Spotty` | disponibile come plugin; non verificato | Serve Premium. Usa un programma ausiliario compilato per l'architettura. |
+| Radio (Radio Paradise, Radio Browser, radio.net) | `RadioParadise`, `RadioBrowser`, `RadioNet` | disponibile come plugin; non verificato | Dipendono dal servizio remoto. |
+| AirPlay in ingresso | `ShairTunes2W` | disponibile come plugin; non verificato | AirPlay 2 non dimostrato. |
+| UPnP/DLNA verso altri diffusori | `UPnPBridge` | disponibile come plugin; non verificato | Invia a renderer esterni: non rende SweetSpot un renderer. |
+| UPnP/DLNA in ingresso | integrato (`RENDERER_UPNP=si`, vedi sopra) | su main, di serie spento; coperto dalla CI, non provato con app reali | Un'app alla volta; l'audio passa da Lyrion. |
+| Chromecast, AirPlay verso altri diffusori, gruppi | `CastBridge`, `RaopBridge`, `Groups` | disponibile come plugin; non verificato | La sincronia fra più uscite non è dimostrata. |
+| RAAT / Roon | assente | non supportato | Roon Ready richiede l'SDK e la certificazione ufficiali di Roon Labs. |
+| WASAPI / CoreAudio | non applicabile | fuori ambito | SweetSpot è un'appliance Linux con ALSA diretto. |
+
+**Architetture.** Le immagini sono per x86_64 e aarch64 (Raspberry Pi 4/5).
+I programmi inclusi in Lyrion (`Bin`) e quelli dei plugin sono presenti per
+`x86_64-linux` e `aarch64-linux`; ARM a 32 bit (armv7) non è un target e un
+plugin con binari solo armv7 non funziona.
+
+**Checklist di qualificazione** (per ogni servizio, annotare esito e data):
+
+1. Account: il piano richiesto è attivo e il plugin lo riconosce.
+2. Autenticazione: accesso dal pannello di Lyrion e permanenza dopo un riavvio.
+3. Riconnessione: ripresa dopo scollegamento della rete e dopo la sospensione del servizio.
+4. Formati massimi: frequenza e profondità effettivamente aperte sull'uscita ALSA (pagina Audio), non quelle dichiarate dal servizio.
+5. Gapless: transizione fra due brani consecutivi dello stesso album, senza interruzioni.
+6. Volume: livello fisso senza DSP, se non richiesto.
+
+Una riga passa a "verificato" solo con questi sei esiti in un rapporto
+pubblico (vedi la [matrice](docs/compatibilita.md)).
+
 ## Cosa serve
 
 - Un PC x86 a 64 bit con almeno 2 GB di RAM (consigliati 4 GB o più).
