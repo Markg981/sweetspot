@@ -204,6 +204,10 @@ PRIMA=$(esegui)
 sleep 8
 DOPO=$(esegui)
 expect "riposo: nessun processo lanciato dal demone in 8 s (ping CLI compreso)" "si" "$([ $((DOPO - PRIMA)) -le $((NOISE + 3)) ] && echo si || echo "no: $((DOPO - PRIMA)) contro rumore $NOISE")"
+if [ $((DOPO - PRIMA)) -gt $((NOISE + 3)) ]; then
+	# Chi li fa: classifica dei processi nati nei 10 s successivi.
+	sh "$ROOT/tests/forks-riposo.sh" --dettaglio 10 2>&1 | sed 's/^/    | /'
+fi
 case "$(grep -c 'version ?' "$E/cli.cmd")" in 1|0) ko "riposo: ping CLI" "almeno 2 version ?" "$(grep -c 'version ?' "$E/cli.cmd")" ;; *) ok "riposo: il ping di liveness passa dalla CLI" ;; esac
 expect "riposo: nessun giro del check" "1" "$(giri)"
 

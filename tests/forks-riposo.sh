@@ -56,6 +56,13 @@ dettaglio() {
 	done | sort | uniq -c | sort -rn | head -n 25 | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "  %s: %d\n", $0, n }'
 }
 
+# Solo la classifica: sh forks-riposo.sh --dettaglio [secondi]
+if [ "$1" = --dettaglio ]; then
+	echo "Classifica dei processi nati in ${2:-10} s (padre > comando: numero):"
+	dettaglio "${2:-10}"
+	exit 0
+fi
+
 sleep "${FORKS_ATTESA:-20}"
 a=$(forks)
 sleep "$SECONDI"
