@@ -604,8 +604,10 @@ start_feeders() {
 		while :; do
 			# shellcheck disable=SC3045
 			if read -r -t "$w" a <&8; then
+				[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "allarme: comando [$a] (era $w)" >> "$RUN/stato.debug"
 				case "$a" in ''|*[!0-9]*) ;; *) w=$a ;; esac
 			else
+				[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "allarme: T dopo $w s" >> "$RUN/stato.debug"
 				echo T >&3
 				w=3600
 			fi
@@ -689,6 +691,7 @@ arm_alarm() {
 	[ "$w" -ge 1 ] || w=1
 	if [ "$ALARM_FIRE" -le "$NOW" ] || [ $((NOW + w)) -lt "$ALARM_FIRE" ]; then
 		ALARM_FIRE=$((NOW + w))
+		[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "$NOW arma $w (fire $ALARM_FIRE)" >> "$RUN/stato.debug"
 		echo "$w" >&8
 	fi
 }
