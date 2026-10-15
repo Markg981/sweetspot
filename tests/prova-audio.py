@@ -49,6 +49,18 @@ CASES += [{"id": "pcm-rate-%s-%s-24-24" % (first, second),
            "source_bits": [24, 24]}
           for first, second in ((44100, 48000), (48000, 44100), (44100, 96000),
                                 (96000, 44100), (48000, 96000), (96000, 48000))]
+# FLAC e ALAC generati dagli stessi WAV di riferimento: il player li decodifica e
+# l'uscita deve coincidere campione per campione con il WAV. Le frequenze coprono
+# 44,1-192 kHz (192 kHz e' il limite di snd-aloop), 16 e 24 bit.
+CODEC_FORMATS = ((44100, 16), (48000, 24), (96000, 24), (192000, 24))
+CASES += [{"id": "%s-%s-%s" % (codec, rate, bits), "kind": "pcm_codec", "codec": codec,
+           "rate": rate, "source_bits": [bits, bits]}
+          for codec in ("flac", "alac") for rate, bits in CODEC_FORMATS]
+# Da DSF/DFF (DoP) al PCM: solo su ALSA, dove la coda del DoP e il brano PCM che
+# segue si leggono dalla stessa scheda (vedi run_alsa_rate_transition).
+DOP_PCM_TRANSITIONS = [{"id": "%s-%s-dop-pcm-%s" % (container, rate * 16, second), "kind": "dop_pcm_transition",
+                        "rate": rate, "second_rate": second, "source_bits": [1, 24], "source_format": container}
+                       for container in ("dsf", "dff") for rate, second in ((176400, 44100),)]
 # DSD convertito in PCM da Squeezelite verso un DAC che non regge DSD/8:
 # snd-aloop accetta al massimo 192 kHz e il test dichiara 176,4 kHz soltanto,
 # quindi DSD64 (352,8 kHz) passa da una decimazione per 2 e DSD128 (705,6 kHz)
@@ -62,7 +74,8 @@ DSD_PCM_CASES = [{"id": "dsf-2822400-pcm", "kind": "dsd_to_pcm", "rate": 176400,
 PCM_PACING_RATE = 44100
 # Cambi di frequenza provati su ALSA: il primo brano e' lungo (la testa puo'
 # perdersi mentre il capture si aggancia) e se ne verifica la coda intera.
-ALSA_TRANSITIONS = ((44100, 96000),)
+ALSA_TRANSITIONS = ((44100, 48000), (48000, 44100), (44100, 96000),
+                    (96000, 44100), (48000, 96000), (96000, 48000))
 ALSA_TRANSITION_FIRST_SECONDS = 4
 ALSA_TRANSITION_TAIL_SECONDS = 1
 # Secondo brano della transizione: un tono noto (non rumore), cosi' dopo il
@@ -804,7 +817,21 @@ def drain_evidence(log):
             "xrun_recover_failures": text.count("XRUN recover failed")}
 
 
-def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, process_factory, target):
+def dop_marker_evidence(frames):
+    """Coda DoP catturata: marcatori 0x05/0xFA alternati in entrambi i canali.
+
+    I campioni arrivano normalizzati a 32 bit con segno: il byte alto e' il
+    marcatore del DoP a 24 bit.
+    """
+    markers = [tuple((value >> 24) & 0xFF for value in frame) for frame in frames]
+    bad = sum(1 for index, pair in enumerate(markers)
+              if pair[0] != pair[1] or pair[0] not in (0x05, 0xFA)
+              or (index and pair[0] == markers[index - 1][0]))
+    return {"frames": len(frames), "bad_markers": bad, "status": "pass" if frames and not bad else "fail"}
+
+
+def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, process_factory, target,
+                             dsd_container=None):
     """Play a long track at `rate` then one at `second_rate` on hw:Loopback.
 
     Squeezelite reopens the device for the new rate with no pause between
@@ -812,13 +839,20 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
     the ring: the capture of the first rate must hold the last second of the
     first track, sample by sample; what follows must be the second track's tone.
     """
-    from tools.audio_verification import _frames, _raw_info, compare_capture, generate_fixtures
+    from tools.audio_verification import (_frames, _raw_info, compare_capture, generate_dsd_fixtures,
+                                          generate_fixtures)
     identity = case_id or "pcm-rate-%s-%s-24-24" % (rate, second_rate)
     directory = output / identity
     directory.mkdir(parents=True, exist_ok=True)
-    report = {"id": identity, "kind": "pcm_rate_transition", "rate": rate, "bits": 24,
-              "source_bits": [24, 24], "source_rates": [rate, second_rate], "status": "fail",
-              "scope": "alsa_loopback", "tail_seconds": ALSA_TRANSITION_TAIL_SECONDS}
+    # Con dsd_container il primo brano e' DSF/DFF suonato come DoP (rate e' la
+    # frequenza portante): la coda attesa e' il riferimento DoP e il secondo
+    # brano PCM, ricampionato, deve ripartire pulito, senza marcatori DoP.
+    report = {"id": identity, "kind": "dop_pcm_transition" if dsd_container else "pcm_rate_transition",
+              "rate": rate, "bits": 24,
+              "source_bits": [1, 24] if dsd_container else [24, 24], "source_rates": [rate, second_rate],
+              "status": "fail", "scope": "alsa_loopback", "tail_seconds": ALSA_TRANSITION_TAIL_SECONDS}
+    if dsd_container:
+        report.update(source_format=dsd_container, dsd_rate=rate * 16, carrier_bits=24)
     mac = "02:" + ":".join("%02x" % value for value in secrets.token_bytes(5))
     report["player_mac"] = mac
     process = capture = None
@@ -829,12 +863,18 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
     journal_start = len(client.journal)
     try:
         local_log.unlink(missing_ok=True)
-        first = generate_fixtures(directory / ("references-%s" % rate), rate, 24,
-                                  frames=rate * ALSA_TRANSITION_FIRST_SECONDS)[0]
+        if dsd_container:
+            sources, references = generate_dsd_fixtures(directory / ("references-%s" % rate), rate,
+                                                        container=dsd_container,
+                                                        frames=rate * ALSA_TRANSITION_FIRST_SECONDS)
+            first, first_reference = sources[0], references[0]
+        else:
+            first = first_reference = generate_fixtures(directory / ("references-%s" % rate), rate, 24,
+                                                        frames=rate * ALSA_TRANSITION_FIRST_SECONDS)[0]
         (directory / ("references-%s" % second_rate)).mkdir(parents=True, exist_ok=True)
         second = write_tone_wav(directory / ("references-%s" % second_rate) / ("tone-%s.wav" % second_rate),
                                 second_rate, ALSA_TRANSITION_TONE_HZ, ALSA_TRANSITION_TONE_PEAK)
-        tail = write_wav_tail(first, directory / ("tail-%s.wav" % rate), rate * ALSA_TRANSITION_TAIL_SECONDS)
+        tail = write_wav_tail(first_reference, directory / ("tail-%s.wav" % rate), rate * ALSA_TRANSITION_TAIL_SECONDS)
         report["limits"] = {"wall_seconds": 60, "rate_delay_ms": 0}
         with target.fixtures([first, second]) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             target.remove(engine_log)
@@ -843,6 +883,8 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
                       "-r", "%s,%s:0" % (rate, second_rate),
                       "-s", "127.0.0.1", "-m", mac, "-n", "Audio-test", "-f", engine_log,
                       "-d", "output=info"]
+            if dsd_container:
+                engine += ["-D", "0:dop", "-d", "decode=info", "-d", "stream=info"]
             command = target.command(engine)
             report["command"] = command
             try:
@@ -901,8 +943,16 @@ def run_alsa_rate_transition(client, output, rate, second_rate, *, case_id, proc
         after = list(_frames(_raw_info(directory / "capture-after.raw", capture.format, rate)))
         before = list(_frames(_raw_info(directory / "capture-tail.raw", capture.format, rate)))
         report["after_tail"] = check_tone_after_tail(after, rate, ALSA_TRANSITION_TONE_HZ,
-                                                     ALSA_TRANSITION_TONE_PEAK, before=before)
+                                                     ALSA_TRANSITION_TONE_PEAK, before=before,
+                                                     window=max(882, rate // 50))
         report["after_tail"]["frames"] = len(after)
+        if dsd_container:
+            # La coda e' DoP (bit-identica al riferimento, gia' confrontata sopra): i
+            # marcatori devono alternarsi; dopo, il PCM non deve portarne traccia.
+            report["dop_markers"] = dop_marker_evidence(before)
+            if report["dop_markers"]["status"] != "pass":
+                comparison["sequence_match"] = False
+                comparison["status"] = "fail"
         if report["after_tail"]["status"] != "pass":
             comparison["sequence_match"] = False
             comparison["status"] = "fail"
@@ -1180,7 +1230,7 @@ def run_dsd_pcm_case(client, output, case, *, process_factory=subprocess.Popen, 
 
 def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rate=None, dop=False,
              source_format=None, case_id=None, process_factory=subprocess.Popen,
-             backend="software_stdout", asound=Path("/proc/asound"), target=None):
+             backend="software_stdout", asound=Path("/proc/asound"), target=None, codec=None):
     from tools.audio_verification import compare_capture, compare_pcm_sequence, generate_fixtures
     target = target or ChrootTarget(rootfs, asound)
     if backend not in BACKENDS:
@@ -1188,20 +1238,27 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
     alsa = backend == "alsa_loopback"
     second_bits = bits if second_bits is None else second_bits
     mixed_rate = second_rate is not None
+    if alsa and mixed_rate and source_format and (rate, second_rate) in [(case["rate"], case["second_rate"])
+                                                                         for case in DOP_PCM_TRANSITIONS]:
+        return run_alsa_rate_transition(client, output, rate, second_rate, case_id=case_id,
+                                        process_factory=process_factory, target=target,
+                                        dsd_container=source_format)
     if alsa and mixed_rate and (rate, second_rate) in ALSA_TRANSITIONS:
         return run_alsa_rate_transition(client, output, rate, second_rate, case_id=case_id,
                                         process_factory=process_factory, target=target)
-    identity = case_id or ("%s-%s-dop" % (source_format, rate * 16) if source_format else
+    identity = case_id or ("%s-%s-%s" % (codec, rate, bits) if codec else"%s-%s-dop" % (source_format, rate * 16) if source_format else
                            "%s-%s-%s-%s" % ("dop" if dop else "pcm", rate, bits, second_bits))
     if mixed_rate and case_id is None:
         identity = "pcm-rate-%s-%s-%s-%s" % (rate, second_rate, bits, second_bits)
     # Existing callers without an ID keep their original homogeneous PCM path.
-    directory_name = "%s-%s" % (rate, bits) if case_id is None and not mixed_rate and not dop and not source_format and bits == second_bits else identity
+    directory_name = "%s-%s" % (rate, bits) if case_id is None and not mixed_rate and not dop and not source_format and not codec and bits == second_bits else identity
     directory = output / directory_name
     directory.mkdir(parents=True, exist_ok=True)
     report = {"id": identity, "kind": "dsd_to_dop" if source_format else "dop_pcm_passthrough" if dop else "pcm",
               "rate": rate, "bits": bits, "source_bits": [bits, second_bits],
               "status": "fail", "scope": backend}
+    if codec:
+        report.update(kind="pcm_codec", codec=codec)
     if mixed_rate:
         report.update(kind="pcm_rate_transition", source_rates=[rate, second_rate])
     if dop or source_format:
@@ -1257,6 +1314,15 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
                 raise AudioError("DoP passthrough requires two WAV24 sources")
             references = generate_dop_fixtures(directory / "references", rate)
             compare = compare_dop_capture
+        elif codec:
+            from tools.audio_verification import generate_codec_fixtures
+            if bits != second_bits or dop or mixed_rate:
+                raise AudioError("codec sources are two same-format PCM tracks")
+            sources, references = generate_codec_fixtures(directory / "references", rate, bits, codec)
+            report["sources"] = [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                                  "format": codec, "bits": bits, "rate": rate, "channels": 2}
+                                 for source in sources]
+            compare = compare_capture
         elif bits != second_bits:
             references = [generate_fixtures(directory / "references", rate, bits)[0],
                           generate_fixtures(directory / "references", rate, second_bits)[1]]
@@ -1264,7 +1330,7 @@ def run_case(rootfs, client, output, rate, bits, *, second_bits=None, second_rat
         else:
             references = generate_fixtures(directory / "references", rate, bits)
             compare = compare_capture
-        if not source_format:
+        if not source_format and not codec:
             sources = references
         with target.fixtures(sources) as fixtures, (directory / "squeezelite-stderr.log").open("wb") as stderr:
             target.remove(engine_log)
@@ -1415,7 +1481,7 @@ def main(argv=None):
              or (case["rate"], case["second_rate"]) in ALSA_TRANSITIONS]
     if args.backend == "alsa_loopback":
         # DSD to PCM needs the real ALSA device: the 192 kHz limit is the kernel's.
-        cases += DSD_PCM_CASES
+        cases += DSD_PCM_CASES + DOP_PCM_TRANSITIONS
     report = {"scope": args.backend, "version": args.version, "rootfs": target.description,
               "server": args.server, "status": "fail", "cases": []}
     try:
@@ -1429,7 +1495,8 @@ def main(argv=None):
                 result = run_case(rootfs, client, output, case["rate"], first, second_bits=second,
                                   second_rate=case.get("second_rate"),
                                   dop=case["kind"] == "dop_pcm_passthrough", source_format=case.get("source_format"),
-                                  case_id=case["id"], backend=args.backend, target=target)
+                                  case_id=case["id"], backend=args.backend, target=target,
+                                  codec=case.get("codec"))
             report["cases"].append(result)
             write_json(output / "report.json", report)
             print("%s: %s" % (case["id"], result["status"]), flush=True)

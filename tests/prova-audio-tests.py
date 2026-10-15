@@ -1031,14 +1031,14 @@ class DriverTests(unittest.TestCase):
             report = json.loads((output / "report.json").read_text())
         self.assertEqual(rc, 0)
         self.assertEqual(report["scope"], "alsa_loopback")
-        # Su ALSA restano i 18 casi a frequenza costante piu' il cambio 44,1 k -> 96 k,
-        # poi i casi DSD -> PCM verso un DAC limitato a 192 kHz.
+        # Su ALSA girano tutti i casi (anche FLAC/ALAC e le sei transizioni di frequenza),
+        # poi i casi DSD -> PCM verso un DAC limitato a 192 kHz e i ritorni DoP -> PCM.
         self.assertEqual([case["id"] for case in report["cases"]],
-                         [case["id"] for case in DRIVER.CASES
-                          if case["kind"] != "pcm_rate_transition" or case["id"] == "pcm-rate-44100-96000-24-24"]
-                         + ["dsf-2822400-pcm", "dff-5644800-pcm"])
-        self.assertEqual(len(report["cases"]), 21)
-        self.assertEqual(backends, ["alsa_loopback"] * 19)
+                         [case["id"] for case in DRIVER.CASES]
+                         + ["dsf-2822400-pcm", "dff-5644800-pcm",
+                            "dsf-2822400-dop-pcm-44100", "dff-2822400-dop-pcm-44100"])
+        self.assertEqual(len(report["cases"]), 36)
+        self.assertEqual(backends, ["alsa_loopback"] * 34)
         self.assertEqual(dsd_pcm, ["dsf-2822400-pcm", "dff-5644800-pcm"])
 
     def test_dsd_pcm_cases_are_only_on_the_alsa_backend(self):
@@ -1088,7 +1088,7 @@ class DriverTests(unittest.TestCase):
             rootfs = Path(temp) / "rootfs"
             (rootfs / "tmp").mkdir(parents=True)
             result = DRIVER.run_case(rootfs, DRIVER.LmsClient("http://127.0.0.1:9"), Path(temp) / "out",
-                                     44100, 24, second_bits=24, second_rate=48000, case_id="alsa-rate",
+                                     44100, 24, second_bits=24, second_rate=192000, case_id="alsa-rate",
                                      backend="alsa_loopback", asound=Path(temp) / "asound",
                                      process_factory=lambda *args, **kwargs: launched.append(args))
         self.assertEqual(launched, [])
@@ -1103,8 +1103,8 @@ class DriverTests(unittest.TestCase):
             self.assertNotEqual(rc, 0)
             self.assertEqual(report["scope"], "software_stdout")
             self.assertEqual(report["version"], "fixture-version")
-            self.assertEqual(len(report["cases"]), 24)
-            self.assertEqual(len({case["id"] for case in report["cases"]}), 24)
+            self.assertEqual(len(report["cases"]), 32)
+            self.assertEqual(len({case["id"] for case in report["cases"]}), 32)
             self.assertTrue(all(case["status"] == "fail" for case in report["cases"]))
 
 
@@ -1400,6 +1400,38 @@ class AlsaTransitionTailTests(unittest.TestCase):
             evidence = DRIVER.drain_evidence(log)
         self.assertEqual((evidence["opens"], evidence["drained"], evidence["dropped"], evidence["xruns"]),
                          (2, 1, 0, 0))
+
+    def test_marcatori_dop_alternati_nella_coda(self):
+        def dop(markers):
+            return [((marker << 24) | 0x123400, (marker << 24) | 0x56700) for marker in markers]
+
+        good = dop([0x05, 0xFA] * 50)
+        self.assertEqual(DRIVER.dop_marker_evidence(good)["status"], "pass")
+        # marcatore ripetuto, canali discordi, valore estraneo, coda vuota
+        bad = {"ripetuto": dop([0x05, 0x05, 0xFA]), "canali": [(0x05 << 24, 0xFA << 24)] + good,
+               "estraneo": dop([0x05, 0xFA, 0x69]), "vuota": []}
+        for name, frames in bad.items():
+            with self.subTest(difetto=name):
+                self.assertEqual(DRIVER.dop_marker_evidence(frames)["status"], "fail")
+
+    def test_la_matrice_estesa_copre_codec_transizioni_e_ritorno_dal_dop(self):
+        codecs = [case for case in DRIVER.CASES if case["kind"] == "pcm_codec"]
+        self.assertEqual({case["codec"] for case in codecs}, {"flac", "alac"})
+        self.assertEqual({(case["rate"], case["source_bits"][0]) for case in codecs},
+                         set(DRIVER.CODEC_FORMATS))
+        self.assertTrue(all(case["rate"] <= 192000 for case in codecs))
+        pairs = {(case["rate"], case["second_rate"]) for case in DRIVER.CASES if case["kind"] == "pcm_rate_transition"}
+        self.assertEqual(pairs, set(DRIVER.ALSA_TRANSITIONS))
+        self.assertEqual([(case["rate"], case["second_rate"]) for case in DRIVER.DOP_PCM_TRANSITIONS],
+                         [(176400, 44100)] * 2)
+
+    def test_run_case_genera_sorgenti_flac_e_alac_dai_wav(self):
+        from tools.audio_verification import generate_codec_fixtures
+        for codec, suffix in (("flac", ".flac"), ("alac", ".m4a")):
+            with self.subTest(codec=codec), tempfile.TemporaryDirectory() as temp:
+                sources, references = generate_codec_fixtures(Path(temp), 48000, 16, codec, frames=300)
+                self.assertEqual([path.suffix for path in sources], [suffix] * 2)
+                self.assertEqual([path.suffix for path in references], [".wav"] * 2)
 
 
 if __name__ == "__main__":
