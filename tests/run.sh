@@ -1103,15 +1103,15 @@ dsp 'CORREZIONE=si' prepara 1 > /dev/null
 expect "tornando al volume fisso il guadagno riparte da 0 dB" "0.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
 VB=$DSPE/volbin
 mkdir -p "$VB"
-printf '#!/bin/sh\nprintf "%%s\\n" "$2" >> "%s"\necho "{}"\n' "$DSPE/run/camilla.call" > "$VB/sweetspot-camilla"
+cp "$ROOT/tests/fixtures/camilla-finta.sh" "$VB/sweetspot-camilla"
 chmod +x "$VB/sweetspot-camilla"
 vol() {
-	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_VOLUME_PAUSA=0 SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
 		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume" sh "$@"
 }
 volfn() { # funzione
-	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_VOLUME_PAUSA=0 SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf SWEETSPOT_TEST=1 \
 		SWEETSPOT_WGET=$VB/wget SWEETSPOT_VOLUME_ATTESA=10 \
 		$TEST_SH -c "PATH=$VB:$OVERLAY/usr/bin:\$PATH; . $OVERLAY/usr/bin/sweetspot-volume; $1"
@@ -1133,6 +1133,33 @@ vol applica 0 0
 expect "volume 0: sordina" "-74.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
 vol applica abc 0; rc=$?
 expect "volume non numerico: nessun cambio" "1|-74.0 1" "$rc|$(cat "$DSPE/run/camilladsp.volume")"
+# Esito dei comandi a CamillaDSP: stato richiesto e stato applicato separati.
+vol applica 50 0
+expect "volume 50 riuscito: richiesto e applicato coincidono" "50 -24.7 0|50 -24.7 0" \
+	"$(cat "$DSPE/run/volume.dsp")|$(cat "$DSPE/run/volume.applicato")"
+rm -f "$DSPE/run/camilla.call"
+echo 2 > "$DSPE/run/camilla.fail"
+vol applica 60 0; rc=$?
+expect "errore IPC sotto il limite: ritenta e va a buon fine" "0|3|60 -19.7 0|-19.7" \
+	"$rc|$(grep -c SetVolume "$DSPE/run/camilla.call")|$(cat "$DSPE/run/volume.applicato")|$(cat "$DSPE/run/camilla.vol")"
+echo 99 > "$DSPE/run/camilla.fail"
+rm -f "$DSPE/run/camilla.call"
+vol applica 80 0; rc=$?
+expect "CamillaDSP non risponde: tentativi limitati, esito errore, richiesto != applicato" "1|3|80 -9.9 0|errore|-19.7" \
+	"$rc|$(grep -c SetVolume "$DSPE/run/camilla.call")|$(cat "$DSPE/run/volume.dsp")|$(cat "$DSPE/run/volume.applicato")|$(cat "$DSPE/run/camilla.vol")"
+# Riavvio del DSP: riparte da un altro volume, il controllo periodico lo riallinea.
+echo 0 > "$DSPE/run/camilla.fail"
+echo "-74.0" > "$DSPE/run/camilla.vol"; echo true > "$DSPE/run/camilla.mute"
+volfn 'dsp_resync'
+expect "riavvio di CamillaDSP: il volume richiesto viene riapplicato" "-9.9|false|80 -9.9 0" \
+	"$(cat "$DSPE/run/camilla.vol")|$(cat "$DSPE/run/camilla.mute")|$(cat "$DSPE/run/volume.applicato")"
+rm -f "$DSPE/run/camilla.call"
+volfn 'dsp_resync'
+expect "gia' allineato: nessun comando di scrittura" "0" "$(grep -c Set "$DSPE/run/camilla.call")"
+echo 99 > "$DSPE/run/camilla.fail"; echo "-74.0" > "$DSPE/run/camilla.vol"
+volfn 'dsp_resync'; echo 0 > "$DSPE/run/camilla.fail"
+expect "DSP irraggiungibile durante il riavvio: nessun errore, nessuna modifica" "-74.0" "$(cat "$DSPE/run/camilla.vol")"
+vol applica 100 0
 # Primo allineamento: si riprova finche' Lyrion conosce il player.
 printf '#!/bin/sh\ncase "$*" in *mixer*volume*) n=$(cat "%s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "%s"; [ $n -ge 3 ] && echo "{\\"result\\":{\\"_volume\\":70}}" ;; *mixer*muting*) echo "{\\"result\\":{\\"_muting\\":0}}" ;; esac\nexit 0\n' "$DSPE/run/wget.n" "$DSPE/run/wget.n" > "$VB/wget"
 chmod +x "$VB/wget"
@@ -2580,7 +2607,19 @@ echo riserva > "$Q/run/volume.modo"
 expect "stato: volume a 64 bit non disponibile, riserva software" \
 	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, con dither TPDF di Squeezelite" \
 	"$(qcheck Volume)"
-rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp"
+echo dsp > "$Q/run/volume.modo"
+echo "70 -11.1 0" > "$Q/run/volume.dsp"
+echo "errore" > "$Q/run/volume.applicato"
+expect "stato: volume richiesto non confermato da CamillaDSP" \
+	"ATTENZIONE|Volume|a 64 bit: richiesto 70 (-11.1 dB), ma CamillaDSP non ha confermato il comando: il guadagno effettivo puo' essere diverso; si risincronizza da solo" \
+	"$(qcheck Volume)"
+echo "50 -24.7 0" > "$Q/run/volume.applicato"
+expect "stato: volume richiesto diverso dall'applicato" \
+	"ATTENZIONE|Volume|a 64 bit: richiesto 70 (-11.1 dB), applicato 50 (-24.7 dB); si risincronizza da solo" \
+	"$(qcheck Volume)"
+echo "70 -11.1 0" > "$Q/run/volume.applicato"
+expect "stato: richiesto e applicato uguali, nessun avviso" "OK" "$(qcheck Volume | cut -d'|' -f1)"
+rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp" "$Q/run/volume.applicato"
 mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
 printf 'state: RUNNING\n' > "$Q/proc/asound/card1/pcm0p/sub0/status"
 echo 777 > "$Q/run/squeezelite.pid"

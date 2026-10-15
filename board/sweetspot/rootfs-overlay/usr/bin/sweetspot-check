@@ -434,6 +434,21 @@ volume_dsp_now() {
 	if [ "$m" = 1 ]; then printf ' (ora in sordina)'; else printf ' (ora %s, %s dB)' "$v" "$d"; fi
 }
 
+# Il volume richiesto non coincide con quello che CamillaDSP ha confermato:
+# stampa la differenza (nulla se coincidono o non c'e' ancora una conferma).
+volume_dsp_diverso() {
+	local v d m av ad am
+	[ -s "$RUN/volume.dsp" ] && [ -s "$RUN/volume.applicato" ] || return 0
+	read -r v d m < "$RUN/volume.dsp"
+	read -r av ad am < "$RUN/volume.applicato"
+	[ "$v $d $m" = "$av $ad $am" ] && return 0
+	if [ "$av" = errore ]; then
+		printf "richiesto %s (%s dB%s), ma CamillaDSP non ha confermato il comando: il guadagno effettivo puo' essere diverso" "$v" "$d" "$([ "$m" = 1 ] && echo ', sordina')"
+	else
+		printf 'richiesto %s (%s dB%s), applicato %s (%s dB%s)' "$v" "$d" "$([ "$m" = 1 ] && echo ', sordina')" "$av" "$ad" "$([ "$am" = 1 ] && echo ', sordina')"
+	fi
+}
+
 # Altri DAC come zone (ALTRI_DAC=si, sweetspot-player).
 check_zones() {
 	local f pid id list="" down=""
@@ -586,6 +601,8 @@ check_player() {
 		emit ATTENZIONE "Volume" "richiesto del DAC, ma il DAC non ha un controllo del volume: in uso il volume fisso al 100%, regola dall'amplificatore"
 	elif [ "$vol" = dac ] && volume_dac_ripiego; then
 		emit ATTENZIONE "Volume" "richiesto del DAC, ma il controllo hardware non risponde: Squeezelite ripiega sul volume software (con dither TPDF, il DSD si converte in PCM)"
+	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && [ -n "$(volume_dsp_diverso)" ]; then
+		emit ATTENZIONE "Volume" "a 64 bit: $(volume_dsp_diverso); si risincronizza da solo"
 	elif [ "$vol" = dsp ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
 		emit OK "Volume" "a 64 bit in CamillaDSP con dither all'uscita (anche al 100%), Squeezelite lascia i campioni invariati$(volume_dsp_now); non e' bit-perfect, ma senza troncamenti"
 	elif [ "$vol" = dsp ] && [ -f "$RUN/volume.modo" ]; then
