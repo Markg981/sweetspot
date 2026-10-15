@@ -4,6 +4,12 @@
 # NOME è quello del repository dei plugin di Lyrion. Si installano dal
 # repository ufficiale; tutti gli altri restano disponibili nelle
 # impostazioni di Lyrion.
+# STATO: "disponibile come plugin" non e' "integrazione verificata": nessuna
+# voce e' stata ancora qualificata con un account reale (tabella e checklist
+# nel README, "Servizi in streaming e ingressi"). Binari dei plugin: solo
+# x86_64 e aarch64. AirPlay 2 non e' dimostrato. UPnPBridge invia a renderer
+# esterni e non rende SweetSpot un renderer: per quello c'e' RENDERER_UPNP.
+# Non esistono RAAT/Roon (Roon Ready richiede SDK e certificazione ufficiali).
 Qobuz|Streaming|Qobuz|Il catalogo Qobuz fino a 24 bit e 192 kHz. Serve un abbonamento Qobuz.
 TIDAL|Streaming|TIDAL|Il catalogo TIDAL in qualità CD e alta risoluzione. Serve un abbonamento TIDAL.
 Spotty|Streaming|Spotify|Spotify dalla libreria di Sweetspot, e Sweetspot visibile come altoparlante nell'app Spotify (Spotify Connect). Serve un account Premium.

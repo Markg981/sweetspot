@@ -2681,6 +2681,9 @@ expect "rapporto: JSON con computer e rete" "1|ASUSTeK|N550JV|r8169 ethernet tru
 	"$(printf '%s' "$rap" | jq -r '[.formato, .computer.produttore, .computer.modello, (.rete[0] | "\(.driver) \(.tipo) \(.collegata)")] | join("|")' 2>/dev/null)"
 expect "rapporto: senza indirizzi ne' voci di rete" "XRUN nella sessione|Turbo|attivo, vedi [indirizzo]" \
 	"$(printf '%s' "$rap" | jq -r '[.verifiche[].voce] + [.verifiche[-1].dettaglio] | join("|")' 2>/dev/null)"
+mod=$(printf '%s' "$rap" | SWEETSPOT_TEST=1 SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log 	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot 	$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-rapporto; modello_md" 2>/dev/null)
+expect "rapporto: modello con piattaforma e avvisi precompilati" "1|1|1|1" 	"$(printf '%s' "$mod" | grep -c '^## Rapporto di compatibilita')|$(printf '%s' "$mod" | grep -c 'Piattaforma: ASUSTeK N550JV')|$(printf '%s' "$mod" | grep -c 'Avvisi della pagina Stato: 1')|$(printf '%s' "$mod" | grep -c '^Esito complessivo: non provato')"
+expect "rapporto: modello, sei prove di formato da compilare" "6" "$(printf '%s' "$mod" | grep -c '| non provato |')"
 expect "rapporto: nessun 192.168 nel testo" "0" "$(printf '%s' "$rap" | grep -c '192\.168')"
 if command -v python3 > /dev/null; then
 	mkdir -p "$Q/matrice"
