@@ -23,20 +23,31 @@ forks() { awk '/^processes / { print $2 }' "$PROC/stat"; }
 # Diagnosi (solo se la soglia e' superata): per FORKS_DETTAGLIO secondi legge
 # /proc ogni 0,1 s e raggruppa i processi visti per "padre > comando".
 dettaglio() {
-	local fine
-	fine=$(( $(date +%s) + $1 ))
-	while [ "$(date +%s)" -lt "$fine" ]; do
-		for d in /proc/[0-9]*; do
-			read -r l < "$d/stat" 2>/dev/null && echo "$l"
+	local fine u last cur p l c r pp m pc
+	read -r u _ < /proc/uptime
+	fine=$(( ${u%%.*} + $1 ))
+	read -r last < /proc/sys/kernel/ns_last_pid
+	# I PID si assegnano in sequenza: ogni PID nuovo si legge subito, solo con
+	# comandi interni della shell (un ciclo senza pause, nessun fork proprio),
+	# prima che il processo di breve vita sparisca. I processi gia' spariti
+	# si contano come "? > ?".
+	while :; do
+		read -r u _ < /proc/uptime
+		[ "${u%%.*}" -lt "$fine" ] || break
+		read -r cur < /proc/sys/kernel/ns_last_pid
+		while [ "$last" -lt "$cur" ]; do
+			last=$((last + 1))
+			p=$last
+			if { read -r l < "$PROC/$p/stat"; } 2>/dev/null; then
+				c=${l#*(}; c=${c%)*}
+				r=${l##*) }; r=${r#* }; pp=${r%% *}
+				if { read -r m < "$PROC/$pp/stat"; } 2>/dev/null; then pc=${m#*(}; pc=${pc%)*}; else pc='?'; fi
+				echo "$pc > $c"
+			else
+				echo "? > ?"
+			fi
 		done
-		usleep 100000
-	done | awk '
-		{ pid = $1; s = $0
-		  c = s; sub(/^[^(]*\(/, "", c); sub(/\).*$/, "", c)
-		  r = s; sub(/^.*\) /, "", r); split(r, f, " ")
-		  comm[pid] = c; ppid[pid] = f[2]; start[pid] = f[20] }
-		END { for (p in comm) if (start[p] > 0) n[comm[ppid[p]] " > " comm[p]]++
-		      for (k in n) printf "%6d %s\n", n[k], k }' | sort -rn | head -n 15
+	done | sort | uniq -c | sort -rn | head -n 25 | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "  %s: %d\n", $0, n }'
 }
 
 sleep "${FORKS_ATTESA:-20}"
@@ -50,7 +61,7 @@ tot=$((b - a - propri))
 al_minuto=$((tot * 60 / SECONDI))
 echo "fork in ${SECONDI}s: $tot (al minuto: $al_minuto, massimo $MASSIMO)"
 if [ "$al_minuto" -ge "$MASSIMO" ]; then
-	echo "Troppi fork. Chi li fa (processi visti in ${FORKS_DETTAGLIO:-30} s, per padre > comando):"
+	echo "Troppi fork. Classifica dei processi nati in ${FORKS_DETTAGLIO:-30} s (padre > comando: numero):"
 	dettaglio "${FORKS_DETTAGLIO:-30}"
 	exit 1
 fi

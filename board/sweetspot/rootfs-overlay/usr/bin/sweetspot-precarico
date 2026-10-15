@@ -8,8 +8,10 @@
 # la contengono vanno in standby. Lo streaming non si precarica.
 #
 #   PRECARICO=si|no              (predefinito si)
-#   PRECARICO_MB=auto|N          memoria massima; auto: meta' di quella libera
-#                                (tolti i buffer del player ancora da riempire)
+#   PRECARICO_MB=auto|N          memoria massima; auto: la quota di precarico del
+#                                budget RAM unico (common.sh, ram_quote_calc:
+#                                memoria libera meno sistema, servizi, ALSA e
+#                                buffer del player); sempre 256 MB al sistema
 #   PRECARICO_FILE_MAX_MB=N      file piu' grandi esclusi (predefinito 1024)
 #   PRECARICO_STANDBY=si|no      dischi in standby a coda caricata
 #
@@ -42,42 +44,40 @@ file_max_kb() {
 
 # KB che il precarico tiene gia' in RAM (non piu' contati come liberi).
 held_kb() {
-	holder_running && [ -f "$PLAN" ] || { echo 0; return; }
-	awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$PLAN"
+	precarico_tenuto_kb
 }
 
-# KB che i buffer di Squeezelite (-b, player_buffers) occuperanno ma non
-# occupano ancora: li alloca a poco a poco mentre si riempiono, e la
-# memoria libera di adesso li conterebbe due volte. Senza il player in
-# esecuzione contano per intero.
-player_reserve_kb() {
-	local b s o rss=0 pid
-	b=$(player_buffers)
-	s=${b%:*} o=${b#*:}
-	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
-	[ -n "$pid" ] && rss=$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/$pid/status" 2>/dev/null)
-	[ -n "$rss" ] || rss=0
-	[ $((s + o - rss)) -gt 0 ] && echo $((s + o - rss)) || echo 0
-}
-
-# Memoria per il precarico in KB: PRECARICO_MB, mai oltre la memoria libera
-# meno i buffer del player ancora da riempire e 256 MB per il sistema; auto
-# vale meta' di quella memoria. La memoria gia' bloccata dal precarico conta
-# come libera, altrimenti il budget si ridurrebbe dopo ogni caricamento.
+# Memoria per il precarico in KB, dal budget RAM unico (common.sh): la quota
+# che resta dopo sistema (256 MB sempre liberi), servizi, ALSA e buffer del
+# player. La memoria gia' bloccata dal precarico e quella gia' occupata dal
+# player contano nel capitale, altrimenti il budget si ridurrebbe dopo ogni
+# caricamento. PRECARICO_MB puo' solo abbassare la quota, mai superarla; in
+# auto si usa l'intera quota. Si rivaluta a ogni giro.
 preload_budget_kb() {
-	local avail mb max
-	avail=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' "$PROC/meminfo")
-	[ -n "$avail" ] || avail=0
-	avail=$((avail + $(held_kb) - $(player_reserve_kb)))
-	[ "$avail" -gt 0 ] || avail=0
-	max=$((avail - 262144))
-	[ "$max" -gt 0 ] || max=0
+	local mb
+	ram_quote_calc
 	mb=$(conf PRECARICO_MB auto)
 	case "$mb" in
-		''|auto) echo $((avail / 2)) ;;
-		*[!0-9]*) echo $((avail / 2)) ;;
-		*) [ $((mb * 1024)) -lt "$max" ] && echo $((mb * 1024)) || echo "$max" ;;
+		''|auto|*[!0-9]*) echo "$RAM_PRECARICO" ;;
+		*) [ $((mb * 1024)) -lt "$RAM_PRECARICO" ] && echo $((mb * 1024)) || echo "$RAM_PRECARICO" ;;
 	esac
+}
+
+# Pressione di memoria del kernel (PSI): media a 10 s di "some", in centesimi
+# di punto percentuale (0 se /proc/pressure/memory manca).
+psi_memoria() {
+	awk '$1 == "some" { for (i = 2; i <= NF; i++) if ($i ~ /^avg10=/) { split($i, a, "="); printf "%d", a[2] * 100; exit } }' \
+		"$PROC/pressure/memory" 2>/dev/null
+}
+
+# PSI oltre la soglia (PRECARICO_PSI_MAX, % predefinita 10): il sistema fa
+# fatica a trovare memoria, il precarico deve cedere.
+psi_alta() {
+	local max v
+	max=$(conf PRECARICO_PSI_MAX 10)
+	case "$max" in ''|*[!0-9]*) max=10 ;; esac
+	v=$(psi_memoria)
+	[ -n "$v" ] && [ "$v" -ge $((max * 100)) ]
 }
 
 # Percorso locale di un URL file:// di Lyrion (%XX decodificati); fallisce
@@ -176,6 +176,29 @@ plan_held() { # piano
 	! printf '%s\n' "$1" | grep -q -E '^(GRANDE|OLTRE|MANCA) '
 }
 
+# Rilascia (munlock/munmap nel demone) l'ultimo brano del piano, il piu'
+# lontano nella coda, se il tenuto supera il budget o c'e' pressione di
+# memoria. Riesce (0) solo se ne ha rilasciato uno.
+shed_farthest() {
+	local held budget last kb path pid
+	held=$(held_kb)
+	[ "$held" -gt 0 ] || return 1
+	budget=$(preload_budget_kb)
+	if [ "$held" -le "$budget" ] && ! psi_alta; then
+		return 1
+	fi
+	last=$(grep -n '^SI ' "$PLAN" | tail -n 1)
+	[ -n "$last" ] || return 1
+	kb=${last#*:SI }; kb=${kb%% *}
+	path=${last#*:SI $kb }
+	awk -v n="${last%%:*}" -v kb="$kb" 'NR == n { sub(/^SI /, "OLTRE ") } { print }' "$PLAN" > "$PLAN.tmp" && mv "$PLAN.tmp" "$PLAN"
+	sed -n 's/^SI [0-9]* //p' "$PLAN" > "$LIST"
+	pid=$(cat "$HOLDER_PID" 2>/dev/null)
+	[ -n "$pid" ] && kill -USR1 "$pid" 2>/dev/null
+	log "precarico: memoria sotto la riserva (tenuti $((held / 1024)) MB, budget $((budget / 1024)) MB), rilasciato $path"
+	return 0
+}
+
 release() {
 	local pid
 	pid=$(cat "$HOLDER_PID" 2>/dev/null)
@@ -254,11 +277,12 @@ write_summary() { # stato
 		--argjson caricati "$(planned_with ok)" \
 		--argjson errori "$(planned_with errore)" --argjson mb $((kb / 1024)) \
 		--argjson budget_mb $(( $(preload_budget_kb) / 1024 )) \
+		--argjson ram "$(ram_quote_json)" \
 		--argjson streaming "$(count 'STREAM ' "$PLAN")" --argjson grandi "$(count 'GRANDE ' "$PLAN")" \
 		--argjson oltre "$(count 'OLTRE ' "$PLAN")" --argjson mancanti "$(count 'MANCA ' "$PLAN")" \
 		--arg standby "$sleeping" \
 		'{stato: $stato, brani: $brani, caricati: $caricati, errori: $errori, mb: $mb,
-		  budget_mb: $budget_mb, streaming: $streaming, grandi: $grandi, oltre: $oltre,
+		  budget_mb: $budget_mb, ram_mb: $ram, streaming: $streaming, grandi: $grandi, oltre: $oltre,
 		  mancanti: $mancanti, standby: $standby}' > "$SUMMARY.tmp" && mv "$SUMMARY.tmp" "$SUMMARY"
 }
 
@@ -273,6 +297,13 @@ step() {
 	if [ -z "$urls" ]; then
 		release
 		write_summary attesa
+		return
+	fi
+	# Il budget si rivaluta a ogni giro: se la memoria scende sotto la riserva
+	# (o il kernel segnala pressione) si rilascia un brano per giro, il piu'
+	# lontano, finche' il tenuto rientra nel budget.
+	if holder_running && [ -f "$PLAN" ] && shed_farthest; then
+		write_summary caricamento
 		return
 	fi
 	# Con la coda uguale e il caricamento in corso o finito il piano resta:

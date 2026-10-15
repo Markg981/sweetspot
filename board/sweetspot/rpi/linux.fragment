@@ -20,9 +20,9 @@ CONFIG_SND_SOC=m
 CONFIG_SND_BCM2835_SOC_I2S=m
 CONFIG_SND_DESIGNWARE_I2S=m
 
-# Niente fotocamere, codec video e Bluetooth: un player non li usa.
+# Niente fotocamere e codec video: un player non li usa. Il Bluetooth e' nel
+# frammento comune (moduli, spento di serie).
 # CONFIG_MEDIA_SUPPORT is not set
-# CONFIG_BT is not set
 
 # Watchdog del SoC (Pi 4 e Pi 5).
 CONFIG_BCM2835_WDT=y

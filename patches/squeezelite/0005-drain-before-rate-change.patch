@@ -13,16 +13,22 @@ player is stopped or switched off while waiting, or the drain does not
 complete in time, fall back to the immediate snd_pcm_drop(). User stop and
 pause paths are unchanged. Nothing changes when the format is the same.
 
-The tail is padded with one period of silence before draining: some drivers
-(snd-aloop) move the pointer by whole periods and would never play the last
-partial period.
+After the valid data the ring gets two periods of silence, and the PCM is
+dropped as soon as only that silence is left in it. Waiting for the ring to
+empty completely lets the device re-read stale mmap data (about 80 ms heard
+again) until the close; some drivers (snd-aloop) also move the pointer by
+whole periods.
+
+The PCM is also opened with ALSA auto-silence (silence_threshold 0,
+silence_size boundary): a ring that runs dry plays silence instead of the old
+mmap data (about 85 ms heard again before the next stream opened).
 
 Source: local change
 Upstream: Not submitted (local option)
 
 --- a/output_alsa.c
 +++ b/output_alsa.c
-@@ -265,6 +265,58 @@
+@@ -265,6 +265,66 @@
  	return NULL;
  }
  
@@ -34,19 +40,25 @@ Upstream: Not submitted (local option)
 +// finisce in tempo, si ripiega sul drop immediato.
 +static void alsa_drain_before_close(void) {
 +	unsigned limit_ms, waited_ms = 0;
-+	snd_pcm_uframes_t pad_left = alsa.period_size;
++	snd_pcm_uframes_t pad_total, pad_left;
 +	size_t frame_bytes;
 +	u8_t *silence = NULL;
 +	if (!pcmp || !alsa.rate) return;
 +	limit_ms = (unsigned)((unsigned long long)alsa.buffer_size * 1000 / alsa.rate) + 300;
 +	if (limit_ms > 1000) limit_ms = 1000;
-+	// Il puntatore di molti driver (snd-aloop compreso) avanza a periodi interi:
-+	// l'ultimo periodo parziale della coda non esce mai e il drain non finisce.
-+	// Si completa con un periodo di silenzio, cosi' la coda esce per intero.
++	// Dopo i dati validi si accoda silenzio (due periodi): il puntatore di molti
++	// driver (snd-aloop compreso) avanza a periodi interi e, a ring vuoto, il
++	// DAC rilegge i dati vecchi dell'area mmap finche' il PCM non e' chiuso.
++	// Si chiude (drop) appena i dati validi sono usciti, cioe' quando nel ring
++	// resta al piu' il silenzio accodato, senza attendere che il ring si
++	// svuoti del tutto.
++	pad_total = alsa.period_size * 2;
++	if (pad_total > alsa.buffer_size / 2) pad_total = alsa.buffer_size / 2;
++	pad_left = pad_total;
 +	frame_bytes = snd_pcm_frames_to_bytes(pcmp, 1);
-+	if (alsa.period_size && frame_bytes) silence = malloc(alsa.period_size * frame_bytes);
-+	if (silence) snd_pcm_format_set_silence(alsa.format, silence, alsa.period_size * 2);
-+	else pad_left = 0;
++	if (pad_total && frame_bytes) silence = malloc(pad_total * frame_bytes);
++	if (silence) snd_pcm_format_set_silence(alsa.format, silence, pad_total * 2);
++	else pad_left = pad_total = 0;
 +	snd_pcm_nonblock(pcmp, 1);
 +	while (running) {
 +		bool stopped;
@@ -55,23 +67,25 @@ Upstream: Not submitted (local option)
 +		UNLOCK;
 +		if (stopped) break;
 +		if (pad_left) {
-+			snd_pcm_sframes_t w = snd_pcm_writei(pcmp, silence + (alsa.period_size - pad_left) * frame_bytes, pad_left);
++			snd_pcm_sframes_t w = snd_pcm_writei(pcmp, silence + (pad_total - pad_left) * frame_bytes, pad_left);
 +			if (w > 0) pad_left -= w;
-+			else if (w != -EAGAIN) pad_left = 0;
++			else if (w != -EAGAIN) pad_left = pad_total = 0;
 +		}
-+		if (!pad_left) {
-+			// ring vuoto = tutto riprodotto, compreso il silenzio di chiusura
++		{
 +			snd_pcm_sframes_t avail = snd_pcm_avail_update(pcmp);
 +			snd_pcm_state_t st = snd_pcm_state(pcmp);
-+			if (avail < 0 || avail >= (snd_pcm_sframes_t)alsa.buffer_size || st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP) {
-+				LOG_INFO("drained %u ms before closing (silence written: %lu of %lu frames)", waited_ms, (unsigned long)(alsa.period_size - pad_left), (unsigned long)alsa.period_size);
++			snd_pcm_uframes_t written = pad_total - pad_left;
++			bool real_data_out = !pad_left && written && avail >= 0 && (snd_pcm_uframes_t)avail + written >= alsa.buffer_size;
++			if (real_data_out || avail < 0 || avail >= (snd_pcm_sframes_t)alsa.buffer_size || st == SND_PCM_STATE_XRUN || st == SND_PCM_STATE_SETUP) {
++				LOG_INFO("drained %u ms before closing (silence written: %lu of %lu frames)", waited_ms, (unsigned long)written, (unsigned long)pad_total);
 +				free(silence);
++				snd_pcm_drop(pcmp);
 +				return;
 +			}
 +		}
 +		if (waited_ms >= limit_ms) break;
-+		usleep(5000);
-+		waited_ms += 5;
++		usleep(2000);
++		waited_ms += 2;
 +	}
 +	LOG_INFO("drain skipped or timed out after %u ms (state %d, avail %ld, pad left %lu): dropping", waited_ms, (int)snd_pcm_state(pcmp), (long)snd_pcm_avail_update(pcmp), (unsigned long)pad_left);
 +	free(silence);
@@ -81,7 +95,30 @@ Upstream: Not submitted (local option)
  static void alsa_close(void) {
  	int err;
  	if ((err = snd_pcm_close(pcmp)) < 0) {
-@@ -689,6 +741,8 @@
+@@ -541,6 +601,22 @@
+ 		return err;
+ 	}
+ 
++	// auto-silence: ALSA zeroes every area already played, so a ring that runs
++	// dry (end of a track, wait for the next stream) plays silence and never
++	// the old data of the mmap area again. Not fatal if the driver refuses.
++	{
++		snd_pcm_sw_params_t *sw_params;
++		snd_pcm_uframes_t boundary;
++		snd_pcm_sw_params_alloca(&sw_params);
++		if ((err = snd_pcm_sw_params_current(pcmp, sw_params)) < 0 ||
++			(err = snd_pcm_sw_params_get_boundary(sw_params, &boundary)) < 0 ||
++			(err = snd_pcm_sw_params_set_silence_threshold(pcmp, sw_params, 0)) < 0 ||
++			(err = snd_pcm_sw_params_set_silence_size(pcmp, sw_params, boundary)) < 0 ||
++			(err = snd_pcm_sw_params(pcmp, sw_params)) < 0) {
++			LOG_WARN("unable to set auto-silence: %s", snd_strerror(err));
++		}
++	}
++
+ 	// dump info
+ 	if (loglevel == lSDEBUG) {
+ 		static snd_output_t *debug_output;
+@@ -689,6 +765,8 @@
  				relay_script(1);
  			}
  #endif

@@ -4,7 +4,7 @@
 # Sweetspot - prove del demone a eventi (sweetspot-stato sorveglia).
 # Il demone gira davvero, con una CLI di Lyrion, udevadm e inotifyd finti che
 # scrivono gli eventi da FIFO. I fork si contano dal contatore dei PID del
-# kernel (ns_last_pid): a riposo il demone non deve farne piu' del rumore di
+# kernel (/proc/stat): a riposo il demone non deve farne piu' del rumore di
 # fondo del computer, misurato prima di avviarlo; ogni evento ha il suo effetto.
 # Serve BusyBox (come sul player); senza, la prova viene saltata.
 # shellcheck disable=SC2016
@@ -145,8 +145,12 @@ invia() { # fifo riga
 }
 giri() { [ -f "$E/giri" ] && wc -l < "$E/giri" | tr -d ' ' || echo 0; }
 passi() { [ -f "$E/passi" ] && wc -l < "$E/passi" | tr -d ' ' || echo 0; }
-# Ultimo PID assegnato: ogni fork del sistema lo fa salire di uno.
-esegui() { local n; read -r n < /proc/sys/kernel/ns_last_pid; echo "$n"; }
+# Processi creati dall'avvio ("processes" di /proc/stat): ogni fork lo alza.
+esegui() {
+	local k v n=0
+	while read -r k v _; do [ "$k" = processes ] && n=$v; done < /proc/stat
+	echo "$n"
+}
 # Differenza con il rumore di fondo (la stessa finestra senza demone, misurata
 # prima di avviarlo): processi lanciati dal solo demone, con 3 di tolleranza.
 rumore() { # secondi
