@@ -506,8 +506,10 @@ check_player() {
 	check_session
 	check_listening_io
 	check_zones
-	bufs=$(player_buffers)
+	ram_quote_calc
+	bufs=$RAM_STREAM:$RAM_OUTPUT
 	emit INFO "Memoria per i brani" "$(( ${bufs%:*} / 1024 )) MB per il file + $(( ${bufs#*:} / 1024 )) MB di campioni decodificati in anticipo"
+		emit INFO "Budget RAM" "sistema $(( RAM_SISTEMA / 1024 )) MB, servizi (Lyrion, catalogo, immagini, snapshot) $(( RAM_SERVIZI / 1024 )) MB, ALSA $(( RAM_ALSA / 1024 )) MB, buffer del player $(( (RAM_STREAM + RAM_OUTPUT) / 1024 )) MB, precarico $(( RAM_PRECARICO / 1024 )) MB (disponibile $(( RAM_AVAIL / 1024 )) MB di $(( RAM_TOTAL / 1024 )) MB)"
 	vol=$(lower "$(conf VOLUME fisso)")
 	if [ "$(mode)" = player ]; then
 		emit INFO "Volume" "per un percorso bit-perfect, in Lyrion imposta il volume del player come fisso al 100%"
