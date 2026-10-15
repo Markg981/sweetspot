@@ -1,0 +1,3 @@
+# Sweetspot - rete: link su o cambio di stato, riprova i montaggi di rete mancanti
+# (la verifica non fa nulla se e' tutto montato).
+SUBSYSTEM=="net", ACTION=="add|change|online", ENV{INTERFACE}!="lo", RUN+="/usr/bin/sweetspot-rete sveglia"
