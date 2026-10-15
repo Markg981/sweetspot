@@ -2072,11 +2072,11 @@ expect "zona: passato il ritardo si riavvia" "pronta" "$(dspfn 1 'zone_ready 9 &
 dspfn 1 'echo "$(( $(date +%s) - 100 )) 8" > $ZONE_RIAVVIO/9.avvio; zone_note_exit 9'
 expect "zona stabile prima di cadere: nessun ritardo" "0" "$(cat "$DSP/run/zone-riavvio/9.ritardo")"
 # Registro della zona: rotazione per dimensione, tenendo le ultime righe.
-seq 1 20000 > "$DSP/run/zona.log"
+awk 'BEGIN { for (i = 1; i <= 20000; i++) print i }' > "$DSP/run/zona.log"
 printf 'ALTRI_DAC=si\nLOG_SQUEEZELITE_KB=1\n' > "$DSP/run/sweetspot.conf"
 dspfn 1 'zone_log_rotate $RUN/zona.log'
 expect "registro della zona: ruotato oltre la soglia, ultime righe conservate" "20000" "$(tail -n 1 "$DSP/run/zona.log")"
-expect "registro della zona: piu' piccolo dopo la rotazione" "si" "$([ "$(wc -c < "$DSP/run/zona.log")" -le 65536 ] && echo si)"
+expect "registro della zona: piu' piccolo dopo la rotazione" "si" "$([ "$(wc -c < "$DSP/run/zona.log")" -le 65536 ] && [ "$(wc -c < "$DSP/run/zona.log")" -gt 60000 ] && echo si)"
 echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
 rm -f "$DSP/run/zona.log"
 # Sincronizzazione multiroom: gruppo ricordato e ripristinato dopo il riavvio.
