@@ -5,14 +5,19 @@ for DSD64, 705.6 kHz for DSD128. A DAC that stops at 192 kHz or less
 refuses that rate and the track does not play, or plays at the wrong
 pitch when something downstream (CamillaDSP) expects the real rate.
 
-Add halving stages (63 tap Blackman windowed sinc low pass, cut-off at a
-quarter of the input rate, unity gain at DC) after dsd2pcm and pick the
-smallest number of halvings that gives a rate in the device's supported
-list: 176.4 kHz for DSD64 and DSD128 on a 192 kHz DAC. A device that
-accepts DSD rate / 8 keeps it unchanged (no extra stage).
+Add halving stages after dsd2pcm and pick the smallest number of halvings
+that gives a rate in the device's supported list: 176.4 kHz for DSD64 and
+DSD128 on a 192 kHz DAC. A device that accepts DSD rate / 8 keeps it
+unchanged (no extra stage). Each stage is a Kaiser windowed sinc low pass
+designed for the rate it receives: flat to 20 kHz (well under 0.001 dB) and
+at least 100 dB down from the new Nyquist frequency up, so the cascade (up
+to DSD512 down to 44.1 kHz) does not fold anything into the audio band.
+The cost is about 52 million multiply-adds per second and channel for
+DSD512 down to 44.1 kHz.
 
-Also scale the 32 bit conversion by -3 dB: DSD masters may peak above
-digital full scale ("over") and the plain conversion clipped them.
+The 32 bit conversion is scaled by a margin in dB, -3 by default and never
+above 0, taken from SWEETSPOT_DSD_MARGINE_DB: DSD masters may peak above
+digital full scale ("over", up to +3 dB) and without margin they clip.
 
 Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
 Upstream: Not submitted (local change)
@@ -86,7 +91,7 @@ Upstream: Not submitted (local change)
  				if (scaledl >  2147483647.0) scaledl =  2147483647.0;
  				if (scaledl < -2147483648.0) scaledl = -2147483648.0;
  				if (scaledr >  2147483647.0) scaledr =  2147483647.0;
-@@ -815,8 +824,11 @@
+@@ -815,8 +824,12 @@
  		}
  		
  		if (outfmt == PCM) {
@@ -94,15 +99,16 @@ Upstream: Not submitted (local change)
 -			output.next_sample_rate = decode_newstream(d->sample_rate / 8, output.supported_rates);
 +			unsigned pcm_rate = d->sample_rate / 8;
 +			unsigned stages = dsd_decim_stages_for(pcm_rate, output.supported_rates);
-+			dsd_decim_reset(&pcm_decim, stages);
-+			LOG_INFO("DSD to PCM output, %u Hz decimated %u time(s) by 2 for the device", pcm_rate, stages);
++			dsd_pcm_set_margin(getenv("SWEETSPOT_DSD_MARGINE_DB"));
++			dsd_decim_reset(&pcm_decim, pcm_rate, stages);
++			LOG_INFO("DSD to PCM output, %u Hz decimated %u time(s) by 2 for the device, margin %.1f dB", pcm_rate, stages, dsd_pcm_margin_db);
 +			output.next_sample_rate = decode_newstream(pcm_rate >> stages, output.supported_rates);
  			if (output.fade_mode) _checkfade(true);
  		} else {
  			LOG_INFO("DSD%u stream, format: %s, rate: %uHz\n", d->sample_rate / 44100, fmtstr, output.next_sample_rate);
 --- /dev/null
 +++ b/dsd_decim.h
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,171 @@
 +/*
 + *  Squeezelite - lightweight headless squeezebox emulator
 + *
@@ -110,9 +116,23 @@ Upstream: Not submitted (local change)
 + *
 + *  dsd2pcm always produces one PCM sample per 8 DSD bits, i.e. DSD rate / 8
 + *  (352.8 kHz for DSD64). DACs that stop at 192 kHz or less refuse that rate.
-+ *  Each stage here halves the rate with a 63 tap Blackman windowed sinc low
-+ *  pass (cut-off at a quarter of the input rate), so the PCM rate can be
-+ *  brought down to one the device accepts: 176.4 kHz for DSD64 and DSD128.
++ *  Each stage here halves the rate, so the PCM rate can be brought down to one
++ *  the device accepts: 176.4 kHz for DSD64 and DSD128, down to 44.1 kHz.
++ *
++ *  Every stage is a linear phase low pass (Kaiser windowed sinc) designed for
++ *  the rate it receives: flat (well under 0.001 dB) up to 20 kHz, and at least
++ *  100 dB down from the new Nyquist frequency (a quarter of the input rate) to
++ *  the old one, so nothing folds back into the audio band however many stages
++ *  are cascaded. The first stages run at the highest rates and have a wide
++ *  transition band (about 30 taps); only the last one towards 44.1 kHz is
++ *  steep (about 300 taps) and runs at the lowest rate. Costs, per channel, for
++ *  DSD512 down to 44.1 kHz: about 52 million multiply-adds per second.
++ *
++ *  Headroom: DSD masters may peak above digital full scale ("over", up to
++ *  +3 dB, i.e. 50% of modulation beyond the standard). The conversion to
++ *  32 bit is scaled by a margin in dB (0 or negative, -3 by default, key
++ *  DSD_PCM_MARGINE_DB passed in SWEETSPOT_DSD_MARGINE_DB) so they are not
++ *  clipped.
 + *
 + *  This program is free software: you can redistribute it and/or modify
 + *  it under the terms of the GNU General Public License as published by
@@ -124,48 +144,84 @@ Upstream: Not submitted (local change)
 +#define DSD_DECIM_H
 +
 +#include <math.h>
++#include <stdlib.h>
 +#include <string.h>
 +
-+#define DSD_DECIM_TAPS 63
++#define DSD_DECIM_MAX_TAPS 511
 +#define DSD_DECIM_MAX_STAGES 8
++#define DSD_DECIM_PASS_HZ 20000.0 // flat up to here
++#define DSD_DECIM_STOP_DB 110.0   // design attenuation (>= 100 dB measured)
 +
-+// -3 dB: DSD streams may peak above digital full scale ("over" masters);
-+// without headroom the 32 bit conversion clips them.
-+#define DSD_PCM_HEADROOM 0.70794578438413791
-+#define DSD_PCM_FULLSCALE (2147483647.0 * DSD_PCM_HEADROOM)
++#define DSD_PCM_MARGIN_DEFAULT_DB (-3.0)
++#define DSD_PCM_MARGIN_MIN_DB (-24.0)
++
++static double dsd_pcm_margin_db = DSD_PCM_MARGIN_DEFAULT_DB;
++static double dsd_pcm_fullscale = 2147483647.0 * 0.70794578438413791;
++#define DSD_PCM_FULLSCALE dsd_pcm_fullscale
++
++// Margin in dB from text (NULL, empty or not a number: default). Above 0 dB
++// it would amplify and clip: 0. Below the minimum: the minimum.
++static void dsd_pcm_set_margin(const char *text) {
++	double db = DSD_PCM_MARGIN_DEFAULT_DB;
++	char *end = NULL;
++
++	if (text && *text) {
++		double v = strtod(text, &end);
++		if (end != text && *end == '\0' && v == v) db = v;
++	}
++	if (db > 0) db = 0;
++	if (db < DSD_PCM_MARGIN_MIN_DB) db = DSD_PCM_MARGIN_MIN_DB;
++	dsd_pcm_margin_db = db;
++	dsd_pcm_fullscale = 2147483647.0 * pow(10.0, db / 20.0);
++}
 +
 +typedef struct {
-+	float ring[2 * DSD_DECIM_TAPS]; // every sample is stored twice: contiguous window
++	float ring[2 * DSD_DECIM_MAX_TAPS]; // every sample is stored twice: contiguous window
 +	unsigned pos;
 +	unsigned phase;
 +} dsd_decim_stage;
 +
 +typedef struct {
 +	unsigned stages;
-+	dsd_decim_stage st[2][DSD_DECIM_MAX_STAGES]; // [channel][stage]
++	unsigned taps[DSD_DECIM_MAX_STAGES];                           // length of each (odd) filter
++	float coef[DSD_DECIM_MAX_STAGES][(DSD_DECIM_MAX_TAPS + 1) / 2]; // first half + centre (symmetric)
++	dsd_decim_stage st[2][DSD_DECIM_MAX_STAGES];                   // [channel][stage]
 +} dsd_decim;
 +
-+static float dsd_decim_taps[DSD_DECIM_TAPS];
-+static int dsd_decim_designed;
-+
-+static void dsd_decim_design(void) {
-+	const double pi = 3.14159265358979323846;
-+	const int m = (DSD_DECIM_TAPS - 1) / 2;
-+	double sum = 0, h[DSD_DECIM_TAPS];
++static double dsd_decim_i0(double x) { // modified Bessel function of order 0
++	double sum = 1, term = 1;
 +	int k;
 +
-+	for (k = 0; k < DSD_DECIM_TAPS; k++) {
-+		double x = (k - m) / 2.0; // sinc of half the sample distance: cut-off fs/4
-+		double s = (k == m) ? 1.0 : sin(pi * x) / (pi * x);
-+		double w = 0.42 - 0.5 * cos(2 * pi * k / (DSD_DECIM_TAPS - 1))
-+		                + 0.08 * cos(4 * pi * k / (DSD_DECIM_TAPS - 1));
-+		h[k] = 0.5 * s * w;
++	for (k = 1; k < 200; k++) {
++		term *= (x / (2.0 * k)) * (x / (2.0 * k));
++		sum += term;
++		if (term < 1e-17 * sum) break;
++	}
++	return sum;
++}
++
++// Low pass for a stage that receives rate_in and gives rate_in / 2.
++static void dsd_decim_design(dsd_decim *c, unsigned s, double rate_in) {
++	const double pi = 3.14159265358979323846;
++	double stop = rate_in / 4, pass = DSD_DECIM_PASS_HZ, cut, beta, sum = 0;
++	double h[DSD_DECIM_MAX_TAPS];
++	unsigned n, m, k;
++
++	if (pass > 0.907 * stop) pass = 0.907 * stop; // rates below 88.2 kHz: keep a transition band
++	n = (unsigned)ceil((DSD_DECIM_STOP_DB - 7.95) / (2.285 * 2 * pi * (stop - pass) / rate_in)) + 1;
++	if (!(n & 1)) n++;
++	if (n > DSD_DECIM_MAX_TAPS) n = DSD_DECIM_MAX_TAPS;
++	m = (n - 1) / 2;
++	cut = (pass + stop) / 2 / rate_in; // cycles per sample, middle of the transition
++	beta = 0.1102 * (DSD_DECIM_STOP_DB - 8.7);
++	for (k = 0; k < n; k++) {
++		double x = (double)k - m, r = m ? x / m : 0;
++		double sinc = (k == m) ? 2 * cut : sin(2 * pi * cut * x) / (pi * x);
++		h[k] = sinc * dsd_decim_i0(beta * sqrt(1 - r * r)) / dsd_decim_i0(beta);
 +		sum += h[k];
 +	}
-+	for (k = 0; k < DSD_DECIM_TAPS; k++) {
-+		dsd_decim_taps[k] = (float)(h[k] / sum); // unity gain at DC
-+	}
-+	dsd_decim_designed = 1;
++	c->taps[s] = n;
++	for (k = 0; k <= m; k++) c->coef[s][k] = (float)(h[k] / sum); // unity gain at DC
 +}
 +
 +// Number of halvings (0 = none) bringing base_rate to a rate in rates[]
@@ -183,10 +239,13 @@ Upstream: Not submitted (local change)
 +	return 0;
 +}
 +
-+static void dsd_decim_reset(dsd_decim *c, unsigned stages) {
++static void dsd_decim_reset(dsd_decim *c, unsigned base_rate, unsigned stages) {
++	unsigned s;
++
 +	memset(c, 0, sizeof(*c));
++	if (stages > DSD_DECIM_MAX_STAGES) stages = DSD_DECIM_MAX_STAGES;
 +	c->stages = stages;
-+	if (!dsd_decim_designed) dsd_decim_design();
++	for (s = 0; s < stages; s++) dsd_decim_design(c, s, (double)(base_rate >> s));
 +}
 +
 +// In place; returns the number of samples left in buf.
@@ -195,15 +254,18 @@ Upstream: Not submitted (local change)
 +
 +	for (s = 0; s < c->stages; s++) {
 +		dsd_decim_stage *t = &c->st[ch][s];
++		const float *h = c->coef[s];
++		const unsigned taps = c->taps[s], mid = (taps - 1) / 2;
 +		m = 0;
 +		for (i = 0; i < n; i++) {
 +			const float *w;
-+			float acc = 0;
-+			t->ring[t->pos] = t->ring[t->pos + DSD_DECIM_TAPS] = buf[i];
-+			if (++t->pos == DSD_DECIM_TAPS) t->pos = 0;
++			float acc;
++			t->ring[t->pos] = t->ring[t->pos + taps] = buf[i];
++			if (++t->pos == taps) t->pos = 0;
 +			if (t->phase++ & 1) continue;
 +			w = &t->ring[t->pos]; // oldest sample first; the taps are symmetric
-+			for (k = 0; k < DSD_DECIM_TAPS; k++) acc += w[k] * dsd_decim_taps[k];
++			acc = h[mid] * w[mid];
++			for (k = 0; k < mid; k++) acc += h[k] * (w[k] + w[taps - 1 - k]);
 +			buf[m++] = acc;
 +		}
 +		n = m;

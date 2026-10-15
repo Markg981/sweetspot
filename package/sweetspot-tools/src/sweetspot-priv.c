@@ -150,6 +150,7 @@ static const struct regola REGOLE[] = {
 //  l  elenco di nomi di dischi separati da virgole
 //  b  si oppure no
 //  m  nome di dispositivo: lettere, cifre, spazio, . _ - (al massimo 40)
+//  g  guadagno in dB (margine): da -24 a 0, al massimo un decimale (0, -3, -1.5)
 struct chiave {
 	const char *nome;
 	char valore;
@@ -157,7 +158,7 @@ struct chiave {
 };
 
 static const struct chiave CHIAVI[] = {
-	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
+	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"DSD_PCM_MARGINE_DB", 'g', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
 	{"FREQUENZA_MAX", 'd', 0}, {"BUFFER_ALSA_MS", 'd', 0}, {"PERIODI_ALSA", 'd', 0},
 	{"PAUSA_FREQUENZA_MS", 'd', 0}, {"PAUSA_DSD_MS", 'd', 0}, {"ALTRI_DAC", 'w', 0},
 	{"DAC", 'w', 0}, {"ESCLUDI_DISCHI", 'l', 0}, {"ARCHIVIO", 'q', 0},
@@ -167,6 +168,7 @@ static const struct chiave CHIAVI[] = {
 	{"SCHEDA_I2S", 'i', 0}, // finisce nella riga di comando del kernel
 	{"NOME_PLAYER", 's', 0}, {"MODALITA", 'w', 0}, {"PROFILO", 'w', 0},
 	{"MODALITA_ASCOLTO", 'w', 0}, {"PRECARICO", 'w', 0}, {"OTTIMIZZAZIONI", 'w', 0},
+	{"RENDERER_UPNP", 'b', 0},
 	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
 	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
 	{"BLUETOOTH", 'b', 0}, {"BLUETOOTH_NOME", 'm', 0},
@@ -248,6 +250,32 @@ static int c_disco(unsigned char c) { return isalnum(c) || strchr("=_.:-", c) !=
 static int c_elenco(unsigned char c) { return isalnum(c) || strchr(" ._,-", c) != NULL; }
 static int c_nome(unsigned char c) { return isalnum(c) || strchr(" ._-", c) != NULL; }
 
+// Margine in dB (DSD_PCM_MARGINE_DB): 0 oppure da -24 a 0, con al massimo un
+// decimale ("-3", "-1.5", "0", "-24.0"); niente "+", spazi, esponenti o altro.
+static int margine_ok(const char *v)
+{
+	int neg = 0, intero = 0, cifre = 0, dec = 0;
+	if (*v == '-') {
+		neg = 1;
+		v++;
+	}
+	for (; isdigit((unsigned char)*v) && cifre < 3; v++, cifre++)
+		intero = intero * 10 + (*v - '0');
+	if (cifre == 0 || cifre > 2)
+		return 0;
+	if (*v == '.') {
+		v++;
+		if (!isdigit((unsigned char)*v))
+			return 0;
+		dec = *v++ - '0';
+	}
+	if (*v)
+		return 0;
+	if (!neg)
+		return intero == 0 && dec == 0; // "0" e "0.0": niente guadagno
+	return intero < 24 || (intero == 24 && dec == 0);
+}
+
 // Il valore va bene per la chiave? (vuoto: sempre, e' "nessun valore")
 static int valore_ok(const char *chiave, const char *v)
 {
@@ -267,6 +295,7 @@ static int valore_ok(const char *chiave, const char *v)
 	case 'l': return solo(v, 400, c_elenco);
 	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
 	case 'm': return solo(v, 40, c_nome);
+	case 'g': return margine_ok(v);
 	}
 	return 0;
 }

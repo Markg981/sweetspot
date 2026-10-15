@@ -73,6 +73,12 @@ else
 			if [ -f "$WORK/chiamata" ]; then cat "$WORK/chiamata"; else echo "NIENTE($rc)"; fi
 		}
 		expect "config imposta ammesso" "sweetspot-config|imposta|VOLUME|fisso|DSD|dop" "$(priv sweetspot-config imposta VOLUME fisso DSD dop)"
+		for m in 0 0.0 -0 -3 -1.5 -12 -23.9 -24 -24.0; do
+			expect "config margine DSD $m ammesso" "sweetspot-config|imposta|DSD_PCM_MARGINE_DB|$m" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
+		done
+		for m in 1 +1 3 -24.1 -25 -100 -3.55 -3. .5 -.5 -3x 1e1 "-3 " "- 3" abc "-3;reboot" '$(id)' --3 0x1; do
+			expect "config margine DSD '$m' rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
+		done
 		expect "config chiave minuscola non ammessa" "NIENTE(126)" "$(priv sweetspot-config imposta volume fisso)"
 		expect "config valore vuoto ammesso" "sweetspot-config|imposta|DNS|" "$(priv sweetspot-config imposta DNS '')"
 		expect "config condivisione 3 con utente e password" "sweetspot-config|imposta|CONDIVISIONE_3_UTENTE|u|CONDIVISIONE_3_PASSWORD|p" \
@@ -215,6 +221,11 @@ nameserver 6.6.6.6')"
 		expect "ESCLUDI_DISCHI: caratteri di shell rifiutati" "NIENTE(126)" "$(priv sweetspot-config imposta ESCLUDI_DISCHI 'sda;id')"
 		expect "CONDIVISIONE_n_SMB1: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 'si;id')|$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 forse)"
 		expect "HTTPS: ammesso dalle pagine" "sweetspot-config|imposta|HTTPS|si|HTTPS_REINDIRIZZA|no" "$(priv sweetspot-config imposta HTTPS si HTTPS_REINDIRIZZA no)"
+		expect "RENDERER_UPNP: ammesso dalle pagine (si/no)" "sweetspot-config|imposta|RENDERER_UPNP|si|sweetspot-config|imposta|RENDERER_UPNP|no" \
+			"$(priv sweetspot-config imposta RENDERER_UPNP si)|$(priv sweetspot-config imposta RENDERER_UPNP no)"
+		expect "RENDERER_UPNP: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta RENDERER_UPNP 'si;id')|$(priv sweetspot-config imposta RENDERER_UPNP forse)"
+		expect "RENDERER_UPNP: non e' una chiave protetta (si cambia senza conferma forte)" "sweetspot-config|imposta|RENDERER_UPNP|si|OTTIMIZZAZIONI|si" \
+			"$(priv sweetspot-config imposta RENDERER_UPNP si OTTIMIZZAZIONI si)"
 		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
 		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"
 		expect "BLUETOOTH: solo si/no" "sweetspot-config|imposta|BLUETOOTH|si NIENTE(126) NIENTE(126)" "$(priv sweetspot-config imposta BLUETOOTH si) $(priv sweetspot-config imposta BLUETOOTH 'si;id') $(priv sweetspot-config imposta BLUETOOTH forse)"
