@@ -43,6 +43,8 @@ CHECKPOINT_MIN=${SWEETSPOT_DATI_CHECKPOINT:-900}
 SPACE_RETRY=${SWEETSPOT_DATI_RITENTA:-1800}
 SPACE_MARGIN_KB=${SWEETSPOT_DATI_MARGINE_KB:-8192}
 CHECKPOINT_STAMP=$RUN/dati.checkpoint
+# Da quando ci sono modifiche non ancora sulla chiavetta (secondi epoch).
+DIRTY_SINCE=$RUN/dati.sporco
 SPACE_FLAG=$RUN/dati.spazio
 
 fingerprint() {
@@ -139,9 +141,17 @@ do_save() {
 	before=$(fingerprint)
 	save_generation; rc=$?
 	if [ "$rc" -eq 0 ]; then
+		# Si registra l'impronta della copia scritta, mai quella dello stato
+		# live dopo la scrittura. Se nel frattempo e' cambiato qualcosa lo
+		# stato "da salvare" resta (e l'eta' dei dati non salvati non riparte).
 		echo "$before" > "$STAMP"
 		after=$(fingerprint)
-		[ "$after" = "$before" ] || log "dati: modifiche durante il salvataggio, verranno salvate al prossimo controllo"
+		if [ "$after" = "$before" ]; then
+			rm -f "$DIRTY_SINCE"
+		else
+			date +%s > "$DIRTY_SINCE"
+			log "dati: modifiche durante il salvataggio, verranno salvate al prossimo controllo"
+		fi
 	fi
 	flock -u 8
 	exec 8>&-
@@ -307,17 +317,57 @@ checkpoint_due() {
 	[ $(( $(date +%s) - t )) -ge "$CHECKPOINT_MIN" ]
 }
 
+# Eta' massima (minuti) dei dati non persistiti durante ascolto o scansione;
+# 0 = nessun limite. Oltre questa eta' si salva comunque, a bassa priorita'.
+eta_max_s() {
+	local m
+	m=$(conf DATI_ETA_MAX_MIN 30)
+	case "$m" in ''|*[!0-9]*) m=30 ;; esac
+	echo $((m * 60))
+}
+
+# Registra da quando i dati sono da salvare (solo la prima volta).
+mark_dirty() {
+	[ -s "$DIRTY_SINCE" ] || date +%s > "$DIRTY_SINCE"
+}
+
+# Vero se i dati non persistiti sono piu' vecchi del limite.
+dirty_too_old() {
+	local t lim
+	lim=$(eta_max_s)
+	[ "$lim" -gt 0 ] || return 1
+	t=$(cat "$DIRTY_SINCE" 2>/dev/null)
+	case "$t" in ''|*[!0-9]*) return 1 ;; esac
+	[ $(( $(date +%s) - t )) -ge "$lim" ]
+}
+
+# Salvataggio completo forzato durante l'ascolto: subshell a bassa priorita'
+# (I/O idle, nice 19, core di sistema) per non disturbare l'audio.
+do_save_low() {
+	( bg_self sweetspot-dati; do_save )
+}
+
 do_watch() {
 	[ -f "$STAMP" ] || fingerprint > "$STAMP"
 	while true; do
 		sleep 60
 		[ -n "$(stick_device)" ] || continue
-		[ "$(fingerprint)" = "$(cat "$STAMP" 2>/dev/null)" ] && continue
+		if [ "$(fingerprint)" = "$(cat "$STAMP" 2>/dev/null)" ]; then
+			rm -f "$DIRTY_SINCE"
+			continue
+		fi
+		mark_dirty
 		space_wait && continue
 		# Ascolto o lettura della libreria in corso: il salvataggio completo
-		# aspetta, ma i database non restano senza copia fino a fine ascolto.
+		# aspetta, ma i database non restano senza copia fino a fine ascolto
+		# e oltre l'eta' massima si salva comunque tutto, a bassa priorita'.
 		if dac_playing || lms_scanning; then
-			checkpoint_due && do_checkpoint
+			if dirty_too_old; then
+				log "dati: dati non salvati da oltre il limite, salvataggio a bassa priorita'"
+				do_save_low
+			else
+				checkpoint_due && do_checkpoint
+			fi
 			continue
 		fi
 		do_save

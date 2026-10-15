@@ -12,10 +12,10 @@ initramfs rootfs.cpio.zst followkernel
 [pi4]
 start_file=start4.elf
 fixup_file=fixup4.dat
-dtoverlay=disable-bt
 [pi5]
-dtoverlay=disable-bt-pi5
 [all]
+# Il Bluetooth integrato resta acceso nel firmware ma il servizio e' spento
+# di serie (BLUETOOTH=no): senza servizio nessun processo lo usa.
 
 # Regione di memoria riservata per ramoops/pstore: il log del panic e la
 # console sopravvivono al riavvio (sweetspot-diario li copia sulla chiavetta).

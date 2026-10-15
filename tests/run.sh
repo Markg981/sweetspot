@@ -162,7 +162,7 @@ echo "Memoria"
 expect "classe 16 GB" "completa" "$(run "$N550" machine_class)"
 expect "classe 2 GB" "essenziale" "$(run "$DUAL" machine_class)"
 expect "classe 1 GB" "leggera" "$(run "$ONE" machine_class)"
-expect "buffer 16 GB (senza MemAvailable: totale meno 768 MB)" "180000:360000" "$(run "$N550" player_buffers)"
+expect "buffer 16 GB (senza MemAvailable: totale meno 768 MB)" "65536:131072" "$(run "$N550" player_buffers)"
 expect "buffer 2 GB senza MemAvailable: minimi" "32768:65536" "$(run "$DUAL" player_buffers)"
 expect "buffer 1 GB: minimi" "32768:65536" "$(run "$ONE" player_buffers)"
 # Buffer dal carico reale: MemAvailable, autonomia in secondi, riserva per modalita'.
@@ -170,23 +170,50 @@ BUF=$WORK/buffer
 mkdir -p "$BUF/proc" "$BUF/run" "$BUF/sys"
 bufmem() { printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' "$1" "$2" > "$BUF/proc/meminfo"; }
 bufmem 2097152 1572864
-expect "buffer 2 GiB, Lyrion locale: limitati dalla memoria" "87381:174762" "$(run "$BUF" player_buffers)"
+expect "buffer 2 GiB, Lyrion locale: tetti pieni (64 MB stream, 128 MB output)" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 4194304 3670016
-expect "buffer 4 GiB: autonomia piena (60 s stream, 120 s output a 3000 KB/s)" "180000:360000" "$(run "$BUF" player_buffers)"
+expect "buffer 4 GiB: tetti pieni" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 8388608 7864320
-expect "buffer 8 GiB: come 4 GiB, non cresce con la memoria" "180000:360000" "$(run "$BUF" player_buffers)"
+expect "buffer 8 GiB: come 4 GiB, non crescono con la memoria (non piu' 3 GiB)" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 8388608 600000
 expect "buffer 8 GiB ma disponibile bassa: minimi" "32768:65536" "$(run "$BUF" player_buffers)"
 bufmem 8388608 9999999
-expect "MemAvailable oltre il totale: si usa il totale" "180000:360000" "$(run "$BUF" player_buffers)"
+expect "MemAvailable oltre il totale: si usa il totale" "65536:131072" "$(run "$BUF" player_buffers)"
 bufmem 2097152 1572864
 printf 'MODALITA=player\n' > "$BUF/run/sweetspot.conf"
-expect "buffer 2 GiB, solo player: riserva minore" "174762:349525" "$(run "$BUF" player_buffers)"
+expect "buffer 2 GiB, solo player: tetti pieni" "65536:131072" "$(run "$BUF" player_buffers)"
 printf 'MODALITA=completa\nCORREZIONE=si\n' > "$BUF/run/sweetspot.conf"
-expect "buffer 2 GiB con Lyrion e DSP: riserva maggiore" "43690:87381" "$(run "$BUF" player_buffers)"
+expect "buffer 2 GiB con Lyrion e DSP: riserva maggiore" "40960:81920" "$(run "$BUF" player_buffers)"
+# Budget RAM unico: le quote (sistema, servizi, ALSA, stream, output, precarico).
+quote() { run "$BUF" ram_quote | awk '{ printf "%s%s=%s", (NR > 1 ? " " : ""), $1, $2 }'; }
+rm -f "$BUF/run/sweetspot.conf"
+bufmem 2097152 1572864
+expect "quote 2 GiB con Lyrion locale: il precarico prende il resto" \
+	"totale=2097152 disponibile=1572864 capitale=1572864 sistema=262144 servizi=786432 alsa=16384 stream=65536 output=131072 precarico=311296" "$(quote)"
+printf 'MODALITA=completa\nCORREZIONE=si\n' > "$BUF/run/sweetspot.conf"
+expect "quote 2 GiB con Lyrion e DSP: buffer limitati, precarico del resto" \
+	"totale=2097152 disponibile=1572864 capitale=1572864 sistema=262144 servizi=1048576 alsa=16384 stream=40960 output=81920 precarico=122880" "$(quote)"
+rm -f "$BUF/run/sweetspot.conf"
+bufmem 8388608 7864320
+expect "quote 8 GiB: i buffer del player non salgono a 3 GiB, il resto va al precarico" \
+	"totale=8388608 disponibile=7864320 capitale=7864320 sistema=262144 servizi=786432 alsa=16384 stream=65536 output=131072 precarico=6602752" "$(quote)"
+# 300 MiB disponibili: meno della riserva, nessun precarico (prima ne bloccava 150).
+bufmem 2097152 307200
+expect "quote con 300 MiB disponibili: buffer al minimo, precarico zero" \
+	"totale=2097152 disponibile=307200 capitale=307200 sistema=262144 servizi=786432 alsa=16384 stream=32768 output=65536 precarico=0" "$(quote)"
+# Qualunque sia la memoria disponibile, con un precarico non vuoto resta
+# almeno la riserva (sistema+servizi+ALSA) fuori da buffer e precarico.
+ok=si
+for a in 1200000 1500000 2000000 3000000 5000000 8000000; do
+	bufmem 8388608 $a
+	q=$(run "$BUF" ram_quote | awk '{ v[$1] = $2 } END { print v["capitale"] - v["sistema"] - v["servizi"] - v["alsa"] - v["stream"] - v["output"] - v["precarico"] }')
+	[ "$q" -ge 0 ] || ok="no ($a: $q)"
+done
+expect "quote: mai oltre il capitale (sistema+servizi+ALSA restano liberi)" "si" "$ok"
 rm -f "$BUF/run/sweetspot.conf" "$BUF/log"
+bufmem 2097152 1572864
 run "$BUF" 'PLAYER_BUFFERS_LOG=1 player_buffers' > /dev/null
-expect "buffer registrati nel log con il motivo" "1" "$(grep -c 'player: buffer stream 87381 KB, output 174762 KB.*Lyrion locale.*limitati dalla memoria' "$BUF/log")"
+expect "buffer registrati nel log con il motivo" "1" "$(grep -c 'player: buffer stream 65536 KB, output 131072 KB.*precarico 311296 KB.*Lyrion locale.*tetti pieni' "$BUF/log")"
 run "$BUF" player_buffers > /dev/null
 expect "senza PLAYER_BUFFERS_LOG il log non cresce" "1" "$(wc -l < "$BUF/log" | tr -d ' ')"
 
@@ -487,9 +514,25 @@ printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nr
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 out=$(page audio 'VOLUME=software')
-case "$out" in *"Non bit-perfect"*"abbassato dal software, che tronca i bit bassi senza dither"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, senza dither" "-" ;; esac
-case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni troncando i bit bassi, senza dither'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota senza dither" "-" ;; esac
+case "$out" in *"Non bit-perfect"*"abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, dither TPDF" "-" ;; esac
+case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
 case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
+# Catena del segnale: verdetto puro e pagina
+expect "catena: tutti invariati = bit-perfect" "bit-perfect" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv inv inv")"
+expect "catena: uno che modifica = modificato" "modificato" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv mod nv inv")"
+expect "catena: uno non verificabile = non-verificabile" "non-verificabile" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv nv inv")"
+expect "catena: nessuno stadio = non-verificabile" "non-verificabile" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict")"
+rm -f "$WEB/run/frequenza.max"
+case "$(page audio)" in *"2. Lyrion - non verificabile"*"Verdetto: non verificabile"*) ok "catena: senza frequenza massima non c'è verdetto bit-perfect" ;; *) ko "catena senza frequenza.max" "Verdetto: non verificabile" "-" ;; esac
+echo 192000 > "$WEB/run/frequenza.max"
+out=$(page audio)
+case "$out" in *"6. DAC - invariato"*"Verdetto: bit-perfect"*) ok "catena: tutti gli stadi invariati, verdetto bit-perfect" ;; *) ko "catena bit-perfect" "Verdetto: bit-perfect" "$out" ;; esac
+case "$out" in *"Alta precisione, non bit-perfect"*) ko "catena: nessuna nota alta precisione se bit-perfect" "assente" "presente" ;; *) ok "catena: nessuna nota alta precisione se bit-perfect" ;; esac
+out=$(page audio 'VOLUME=software')
+case "$out" in *"4. Guadagno - modifica i campioni"*"Verdetto: non bit-perfect"*"Alta precisione, non bit-perfect"*"float64, headroom, dither"*) ok "catena: volume digitale modifica i campioni, alta precisione distinta dal bit-perfect" ;; *) ko "catena volume software" "Guadagno modifica + nota alta precisione" "$out" ;; esac
+echo 48000 > "$WEB/run/frequenza.max"
+case "$(page audio)" in *"2. Lyrion - modifica i campioni"*"sox"*"Verdetto: non bit-perfect"*) ok "catena: sox lato Lyrion segnalato" ;; *) ko "catena sox" "Lyrion modifica" "-" ;; esac
+rm -f "$WEB/run/frequenza.max"
 volcheck() { # impostazioni
 	printf '%s\n' "$1" > "$WEB/s.txt"
 	SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log \
@@ -497,7 +540,7 @@ volcheck() { # impostazioni
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep '^[A-Z]*|Volume|'
 }
 expect "stato: volume software e' un avviso" \
-	"ATTENZIONE|Volume|dal software: sotto il 100% Squeezelite tronca i bit bassi senza dither, peggio del volume fisso o del DAC" \
+	"ATTENZIONE|Volume|dal software: sotto il 100% non e' bit-perfect; Squeezelite arrotonda con dither TPDF a 16 e 24 bit senza troncare, ma il volume fisso o del DAC resta preferibile" \
 	"$(volcheck VOLUME=software)"
 expect "stato: volume del DAC resta informativo" \
 	"INFO|Volume|regolabile (dac): sotto il 100% il segnale non e' piu' bit-perfect" "$(volcheck VOLUME=dac)"
@@ -847,6 +890,36 @@ case "$diag" in *"|Frequenza|"*) ko "stato: un solo rifiuto non e' uno stallo" "
 printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
 case "$diag" in *"ATTENZIONE|Frequenza|ricampionata (88200 -> 96000 Hz)"*) ok "stato: avviso di ricampionamento" ;; *) ko "stato: avviso di ricampionamento" "ricampionata (88200 -> 96000 Hz)" "-" ;; esac
+case "$diag" in *"abbassa il segnale di 1 dB"*) ok "stato: il ricampionamento dichiara i -1 dB" ;; *) ko "stato: -1 dB" "1 dB" "-" ;; esac
+# Il registro di una zona (squeezelite-<id>.log) si legge come quello principale.
+rm -f "$WEB/squeezelite.log"
+printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite-Zona.log"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Frequenza (zona Zona)|ricampionata (88200 -> 96000 Hz)"*) ok "stato: ricampionamento di una zona dal suo registro" ;; *) ko "stato: registro della zona" "Frequenza (zona Zona)" "$diag" ;; esac
+rm -f "$WEB/squeezelite-Zona.log"
+# Uscita forzata a 16 bit: riduzione con dither TPDF dichiarata.
+printf 'FORMATO_USCITA=16\n' > "$WEB/run/sweetspot.conf"
+diag=$(diag_freq)
+case "$diag" in *"INFO|Uscita a 16 bit|"*"dither TPDF"*) ok "stato: uscita a 16 bit con dither TPDF dichiarata" ;; *) ko "stato: uscita a 16 bit" "voce Uscita a 16 bit" "$diag" ;; esac
+rm -f "$WEB/run/sweetspot.conf"
+# Volume del DAC senza controllo, e ripiego sul volume software.
+printf 'VOLUME=dac\n' > "$WEB/run/sweetspot.conf"
+printf 'fisso\n' > "$WEB/run/volume.effettivo"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Volume|richiesto del DAC, ma il DAC non ha un controllo del volume"*) ok "stato: VOLUME=dac senza controllo riportato come fisso" ;; *) ko "stato: dac senza controllo" "volume fisso" "$diag" ;; esac
+printf 'hardware\n' > "$WEB/run/volume.effettivo"
+printf '[12:00:00] output:1 Initialization of mixer failed, reverting to software volume\n' > "$WEB/squeezelite.log"
+diag=$(diag_freq)
+case "$diag" in *"ATTENZIONE|Volume|richiesto del DAC, ma il controllo hardware non risponde"*) ok "stato: ripiego sul volume software non piu' detto hardware" ;; *) ko "stato: ripiego del volume" "volume software" "$diag" ;; esac
+rm -f "$WEB/run/sweetspot.conf" "$WEB/run/volume.effettivo" "$WEB/squeezelite.log"
+# Lyrion ricampiona con sox i brani sopra la massima del player (HELO MaxSampleRate).
+echo '# [sox] -r commento' > "$WEB/convert.conf"
+printf 'flc pcm * *\n\t[flac] -dcs -- $FILE$ | [sox] -q -t wav - -t raw -r $RATE$ -\n' >> "$WEB/convert.conf"
+diag=$(SWEETSPOT_LMS_CONVERT=$WEB/convert.conf diag_freq)
+case "$diag" in *"INFO|Lyrion e sox|"*) ok "stato: regole sox di convert.conf dichiarate" ;; *) ko "stato: convert.conf" "voce Lyrion e sox" "$diag" ;; esac
+! grep -q 'playerpref maxSampleRate' "$OVERLAY/usr/bin/sweetspot-player" && grep -q 'frequenza.max' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: niente maxSampleRate (non e' una preferenza di Lyrion), massima annotata per Stato" || ko "player: frequenza massima" "frequenza.max senza playerpref" "-"
+grep -q 'tags:T' "$OVERLAY/usr/bin/sweetspot-check" && ok "stato: Lyrion ricampiona se il brano supera la massima del player" || ko "stato: brano oltre la massima" "confronto con la frequenza del brano" "assente"
+grep -q 'echo pcm > "\$RUN/dsd.volume"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: con il volume software il DSD si converte in PCM" || ko "player: DSD con volume software" "presente" "assente"
 
 # Stato e parametri devono provenire dal medesimo PCM selezionato.
 check_page_diag() {
@@ -1796,28 +1869,60 @@ prefn() {
 U=file://$PRE/musica/Album%20%C3%A8
 expect "URL di Lyrion: spazi e lettere accentate" "$PRE/musica/Album è/b c.flac" "$(prefn "url_path '$U/b%20c.flac'")"
 expect "streaming escluso dal precarico" "no" "$(prefn "url_path 'http://radio.example/stream' && echo si || echo no")"
-# I buffer di Squeezelite (8 GB: 180 MB + 360 MB circa, player_buffers) si riempiono
-# a poco a poco: senza il player in esecuzione contano per intero.
-expect "buffer del player da riempire: contano per intero senza il player" "540000" "$(prefn player_reserve_kb)"
-expect "budget automatico: meta' della memoria libera, tolti i buffer del player" "1827152" "$(prefn preload_budget_kb)"
+# Budget unico (common.sh): sistema 256 MB, servizi 768 MB (Lyrion locale), ALSA
+# 16 MB, buffer del player 192 MB; il resto e' del precarico, sempre con la
+# riserva per il sistema anche in auto.
+expect "budget automatico: la quota di precarico, con la riserva del sistema" "2932736" "$(prefn preload_budget_kb)"
 mkdir -p "$PRE/proc/4321"
 printf 'VmRSS:\t 1048576 kB\n' > "$PRE/proc/4321/status"
 echo 4321 > "$PRE/run/squeezelite.pid"
-expect "buffer del player in parte gia' occupati: conta solo il resto" "0|2097152" "$(prefn player_reserve_kb)|$(prefn preload_budget_kb)"
+expect "buffer del player gia' occupati: contano nel capitale, non due volte" "3129344" "$(prefn preload_budget_kb)"
 rm -f "$PRE/run/squeezelite.pid"
 echo PRECARICO_MB=100 > "$PRE/run/sweetspot.conf"
 expect "budget indicato in MB" "102400" "$(prefn preload_budget_kb)"
 echo PRECARICO_MB=99999 > "$PRE/run/sweetspot.conf"
-expect "budget mai oltre la memoria libera meno i buffer del player e 256 MB" "3392160" "$(prefn preload_budget_kb)"
+expect "budget mai oltre la quota (riserva di sistema compresa)" "2932736" "$(prefn preload_budget_kb)"
 printf 'PRECARICO_FILE_MAX_MB=1 2\n' > "$PRE/run/sweetspot.conf"
 expect "limite dei file non numerico: predefinito, senza errori" "1048576" "$(prefn file_max_kb 2>&1)"
 rm -f "$PRE/run/sweetspot.conf"
+# 300 MiB disponibili: prima il ramo auto ne bloccava 150 senza riserva.
+printf 'MemTotal:        8388608 kB\nMemAvailable:     307200 kB\n' > "$PRE/proc/meminfo"
+expect "300 MiB disponibili: niente precarico, la riserva resta al sistema" "0" "$(prefn preload_budget_kb)"
+printf 'MODALITA=player\n' > "$PRE/run/sweetspot.conf"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    1048576 kB\n' > "$PRE/proc/meminfo"
+expect "1 GiB disponibili, solo player: dopo il precarico restano almeno 256 MB" "si" \
+	"$(prefn 'ram_quote_calc; [ $((RAM_AVAIL - RAM_PRECARICO - RAM_STREAM - RAM_OUTPUT)) -ge 262144 ] && echo si || echo no')"
+rm -f "$PRE/run/sweetspot.conf"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
 sleep 30 &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
-expect "budget stabile: la memoria gia' bloccata conta come libera" "1827652" "$(prefn preload_budget_kb)"
+expect "budget stabile: la memoria gia' bloccata conta come libera" "2933736" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
 rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+# Pressione di memoria (PSI) e rilascio progressivo dei brani piu' lontani.
+mkdir -p "$PRE/proc/pressure"
+printf 'some avg10=25.00 avg60=3.00 avg300=1.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$PRE/proc/pressure/memory"
+expect "PSI 25%: pressione alta" "si" "$(prefn 'psi_alta && echo si || echo no')"
+printf 'some avg10=2.00 avg60=3.00 avg300=1.00 total=1\n' > "$PRE/proc/pressure/memory"
+expect "PSI 2%: pressione normale" "no" "$(prefn 'psi_alta && echo si || echo no')"
+rm -f "$PRE/proc/pressure/memory"
+expect "senza /proc/pressure/memory: nessuna pressione" "no" "$(prefn 'psi_alta && echo si || echo no')"
+sh -c 'trap : USR1; while :; do sleep 1; done' &
+echo $! > "$PRE/run/precarico.tieni.pid"
+printf 'SI 1000 %s\nSI 2000 %s\nSTREAM http://radio.example/stream\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+expect "memoria sufficiente: nessun rilascio" "1" "$(prefn 'shed_farthest; echo $?')"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    1100000 kB\n' > "$PRE/proc/meminfo"
+prefn shed_farthest
+expect "memoria sotto la riserva: via il brano piu' lontano, il piu' vicino resta" \
+	"SI 1000 $PRE/musica/Album è/a.flac|OLTRE 2000 $PRE/musica/Album è/b c.flac|STREAM http://radio.example/stream|$PRE/musica/Album è/a.flac" \
+	"$(tr '\n' '|' < "$PRE/run/precarico.piano")$(cat "$PRE/run/precarico.elenco")"
+prefn shed_farthest
+expect "ancora sotto la riserva: rilascia anche l'ultimo, poi non c'e' altro" "OLTRE 1000|1" \
+	"$(sed -n 1p "$PRE/run/precarico.piano" | cut -d' ' -f1,2)|$(prefn 'shed_farthest; echo $?')"
+kill "$(cat "$PRE/run/precarico.tieni.pid")" 2>/dev/null
+rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano" "$PRE/run/precarico.elenco"
+printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
 # Brani CUE (URL#inizio-fine): il file e' quello intero, caricato una volta sola.
 expect "URL di un brano CUE: il frammento si scarta" "$PRE/musica/Album è/a.flac" "$(prefn "url_path '$U/a.flac#12.5-100.25'")"
 expect "nome con # (%23): resta nel percorso" "$PRE/musica/Album è/x#y.flac" "$(prefn "url_path '$U/x%23y.flac#1-2'")"
@@ -2006,6 +2111,8 @@ dspfn 1 "HK=0; zones_sync 1"
 zcall=$(calls taskset)
 case "$zcall" in "-c 0 squeezelite -o hw:CARD=Zona,DEV=0 "*"-n Sweetspot - Zona DAC -M Sweetspot -m 02:"*"-p 75 "*"-s 127.0.0.1"*) ok "zona: Squeezelite sul secondo DAC, sui core di sistema" ;; *) ko "zona avviata" "squeezelite su Zona" "$zcall" ;; esac
 case "$zcall" in *" -H"*) ok "zona: niente ripiego su plughw: (-H)" ;; *) ko "zona: -H" "presente" "$zcall" ;; esac
+case "$zcall" in *"-d decode=info"*) ok "zona: -d decode=info (avviso di ricampionamento nel suo registro)" ;; *) ko "zona: decode=info" "presente" "$zcall" ;; esac
+case "$zcall" in *" -D "*) ko "zona: niente DSD nativo (volume software di Lyrion)" "nessun -D" "$zcall" ;; *) ok "zona: niente DSD nativo (volume software di Lyrion)" ;; esac
 case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "solo Zona" "$zcall" ;; *) ok "zona: niente microfono ne' DAC principale" ;; esac
 expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
 expect "zona: MAC stabile e locale" "1|02" \
@@ -2471,7 +2578,7 @@ expect "stato: volume a 64 bit in uso" \
 	"$(qcheck Volume)"
 echo riserva > "$Q/run/volume.modo"
 expect "stato: volume a 64 bit non disponibile, riserva software" \
-	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, senza dither" \
+	"ATTENZIONE|Volume|a 64 bit non disponibile (CamillaDSP non avviato o modalita' player): in uso il volume software, con dither TPDF di Squeezelite" \
 	"$(qcheck Volume)"
 rm -f "$Q/run/sweetspot.conf" "$Q/run/volume.modo" "$Q/run/volume.dsp"
 mkdir -p "$Q/proc/asound/card1/pcm0p/sub0" "$Q/chiavetta"
@@ -2633,6 +2740,9 @@ expect "rapporto: JSON con computer e rete" "1|ASUSTeK|N550JV|r8169 ethernet tru
 	"$(printf '%s' "$rap" | jq -r '[.formato, .computer.produttore, .computer.modello, (.rete[0] | "\(.driver) \(.tipo) \(.collegata)")] | join("|")' 2>/dev/null)"
 expect "rapporto: senza indirizzi ne' voci di rete" "XRUN nella sessione|Turbo|attivo, vedi [indirizzo]" \
 	"$(printf '%s' "$rap" | jq -r '[.verifiche[].voce] + [.verifiche[-1].dettaglio] | join("|")' 2>/dev/null)"
+mod=$(printf '%s' "$rap" | SWEETSPOT_TEST=1 SWEETSPOT_SYSFS=$Q/sys SWEETSPOT_PROCFS=$Q/proc SWEETSPOT_RUN=$Q/run SWEETSPOT_LOG=$Q/log 	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot 	$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-rapporto; modello_md" 2>/dev/null)
+expect "rapporto: modello con piattaforma e avvisi precompilati" "1|1|1|1" 	"$(printf '%s' "$mod" | grep -c '^## Rapporto di compatibilita')|$(printf '%s' "$mod" | grep -c 'Piattaforma: ASUSTeK N550JV')|$(printf '%s' "$mod" | grep -c 'Avvisi della pagina Stato: 1')|$(printf '%s' "$mod" | grep -c '^Esito complessivo: non provato')"
+expect "rapporto: modello, sei prove di formato da compilare" "6" "$(printf '%s' "$mod" | grep -c '| non provato |')"
 expect "rapporto: nessun 192.168 nel testo" "0" "$(printf '%s' "$rap" | grep -c '192\.168')"
 if command -v python3 > /dev/null; then
 	mkdir -p "$Q/matrice"
@@ -2981,9 +3091,11 @@ echo "Superati: $PASS  Falliti: $FAIL"
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
+sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
@@ -2991,6 +3103,8 @@ python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
+python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
+python3 "$ROOT/tests/squeezelite-mixer-dsd.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
