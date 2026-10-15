@@ -115,7 +115,7 @@ mcopy -o -i "$W/disco.img@@1M" ::/boot/grub/grub.cfg "$W/grub.cfg"
 sed -i 's/quiet loglevel=3 /console=tty0 console=ttyS0,115200 /' "$W/grub.cfg"
 mcopy -o -i "$W/disco.img@@1M" "$W/grub.cfg" ::/boot/grub/grub.cfg
 mcopy -o -i "$W/disco.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
-printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\n' "$SSHPASS" >> "$W/sweetspot.txt"
+printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nBLUETOOTH=si\n' "$SSHPASS" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/disco.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
 
 ACCEL=tcg
@@ -194,6 +194,15 @@ if wait_player "attivo su" 90 && pid2=$(squeezelite_pid) && [ -n "$pid2" ] && [ 
 	esito OK "DAC ricollegato: player ripartito (processo $pid1 -> $pid2)"
 else
 	esito NO "DAC ricollegato: stato '$STATO'"
+fi
+
+echo "== 4b. Bluetooth acceso senza adattatore"
+guest 'pidof bluetoothd; pidof bluealsa; cat /run/sweetspot/bluetooth.stato; pidof squeezelite' > "$OUT/bluetooth.txt" 2>&1 || true
+if [ "$(guest 'pidof bluetoothd bluealsa | wc -w')" -ge 2 ] && grep -q 'nessun adattatore' "$OUT/bluetooth.txt" && [ -n "$(squeezelite_pid)" ]; then
+	esito OK "Bluetooth: servizi avviati senza hardware, stato 'nessun adattatore', player intatto"
+else
+	esito NO "Bluetooth: $(tr '\n' ' ' < "$OUT/bluetooth.txt")"
+	guest 'tail -n 20 /var/log/sweetspot.log' >> "$OUT/bluetooth.txt" 2>&1 || true
 fi
 
 echo "== 5. Blocco simulato: il watchdog deve far ripartire il computer"

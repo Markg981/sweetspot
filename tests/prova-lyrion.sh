@@ -202,6 +202,11 @@ if printf '%s' "$ans" | grep -q '"version"'; then
 	else
 		echo "== Verifica ALSA non eseguita (SWEETSPOT_AUDIO_ALSA=$alsa; serve la scheda di 'modprobe snd-aloop')"
 	fi
+	# Renderer UPnP/DLNA con il Perl del sistema e Lyrion vero: SSDP,
+	# descrittore, servizi e un SetAVTransportURI su un file di prova che
+	# Squeezelite deve suonare (uscita PCM con il segnale del file).
+	echo "== Renderer UPnP/DLNA (SSDP, descrittore, SetAVTransportURI)"
+	python3 "$TEST_DIR/renderer-upnp.py" --rootfs "$R" --server "http://127.0.0.1:$PORT" || audio_rc=1
 	[ "$audio_rc" -eq 0 ] || { echo "== Verifica audio non riuscita"; exit 1; }
 	echo "== Lyrion e verifica PCM/DoP riusciti"
 	exit 0

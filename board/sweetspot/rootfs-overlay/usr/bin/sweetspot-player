@@ -334,7 +334,7 @@ zone_mac() { # scheda
 }
 
 zone_start() { # scheda
-	local card=$1 id dev name server fmt prio
+	local card=$1 id dev name server prio
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	name="$(conf NOME_PLAYER Sweetspot) - $(dac_name "$card")"
@@ -342,16 +342,17 @@ zone_start() { # scheda
 	prio=$(( $(num_conf PRIORITA_AUDIO 80) - 5 ))
 	set -- -o "hw:CARD=$id,DEV=$dev" -a "$(num_conf BUFFER_ALSA_MS 400):$(num_conf PERIODI_ALSA 4)::1" \
 		-n "$name" -M Sweetspot -m "$(zone_mac "$card")" -C 30 -p "$prio" \
-		-d output=info -f "/var/log/squeezelite-$id.log"
+		-d output=info -d decode=info -f "/var/log/squeezelite-$id.log"
 	[ -n "$server" ] && set -- "$@" -s "$server"
-	fmt=$(dac_native_dsd "$card")
-	[ -n "$fmt" ] && set -- "$@" -D "$(num_conf PAUSA_DSD_MS 500):$fmt"
+	# Niente DSD nativo ne' DoP sulle zone: il volume della zona e' software
+	# (Lyrion) e Squeezelite non lo applica al DSD, che suonerebbe al 100%
+	# dopo un brano PCM attenuato. Il DSD si converte in PCM, attenuabile.
 	# Le zone non ricampionano mai: niente ripiego su plughw: (vedi run_player).
 	set -- "$@" -H
 	mkdir -p "$ZONE_DIR"
 	# Il volume della zona lo fa Lyrion (software): il mixer del DAC a 0 dB.
 	dac_unity_gain "$card"
-	taskset -c "$HK" squeezelite "$@" &
+	SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset -c "$HK" squeezelite "$@" &
 	echo "$! $id" > "$ZONE_DIR/$card"
 	# MAC della zona per i controlli funzionali di sweetspot-stato (connessa a
 	# Lyrion, tempo che avanza). In una cartella a parte: ZONE_DIR ha un file
@@ -483,7 +484,7 @@ correzione_non_applicabile() { # motivo
 }
 
 run_player() {
-	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp
+	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp top
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	name=$(conf NOME_PLAYER Sweetspot)
@@ -577,6 +578,14 @@ run_player() {
 	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
 	[ -z "$rs" ] && [ -z "$dsp" ] && set -- "$@" -H
 
+	# Frequenza massima che il player dichiara a Lyrion (HELO MaxSampleRate,
+	# dal -r di Squeezelite o dal probe del DAC): sopra, Lyrion ricampiona lato
+	# server con sox. Annotata per la pagina Stato (check_lyrion_sox);
+	# MaxSampleRate non e' una preferenza di Lyrion, non si imposta da qui.
+	top=$(dac_rates "$card" 2>/dev/null | tr ' ' '\n' | grep . | sort -n | tail -n 1)
+	if [ "$maxrate" -gt 0 ] && { [ -z "$top" ] || [ "$maxrate" -lt "$top" ]; }; then top=$maxrate; fi
+	rm -f "$RUN/frequenza.max"
+	[ -n "$top" ] && echo "$top" > "$RUN/frequenza.max"
 	# Modalita' effettiva del volume, calcolata una volta (hardware, fisso,
 	# digitale) e condivisa con Lyrion e con l'interfaccia web.
 	vol=$(lower "$(conf VOLUME fisso)")
@@ -603,6 +612,16 @@ run_player() {
 	fmt=$(dac_native_dsd "$card")
 	# Con la correzione il DSD si converte in PCM (i filtri lavorano sul PCM).
 	[ -n "$dsp" ] && dsd=pcm
+	# Volume software: Squeezelite non lo applica al DSD nativo o DoP (output.c),
+	# quindi dopo un brano PCM attenuato un DSF suonerebbe al 100% (+30 dB).
+	# Per orecchie e diffusori il DSD si converte sempre in PCM, che il volume
+	# attenua; il DSD nativo resta con volume fisso, del DAC o a 64 bit.
+	rm -f "$RUN/dsd.volume"
+	if [ "$(volume_effettivo)" = digitale ] && [ "$(cat "$RUN/volume.modo" 2>/dev/null)" != dsp ] && [ "$dsd" != pcm ]; then
+		dsd=pcm
+		echo pcm > "$RUN/dsd.volume"
+		log "player: volume software: il DSD si converte in PCM (il volume non agisce sul DSD nativo)"
+	fi
 	# Squeezelite non esclude mai il DSD: Lyrion non sa convertire DSF/DFF in
 	# PCM (non ha regole dsf/dff -> pcm), quindi i file arrivano interi e li
 	# decodifica Squeezelite. Nativo o DoP solo con -D; altrimenti (e quando
@@ -716,6 +735,12 @@ apply_player_prefs() {
 player_loop() {
 	BACKOFF=0
 	while true; do
+		# DAC in uso dal Bluetooth: nessuno riapre Squeezelite finche' non lo restituisce.
+		if bt_dac_busy; then
+			[ "$(cat "$STATE" 2>/dev/null)" = "DAC in uso dal Bluetooth" ] || say "DAC in uso dal Bluetooth"
+			sleep 2
+			continue
+		fi
 		card=$(dac_find)
 		if [ -z "$card" ]; then
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"

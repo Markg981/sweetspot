@@ -81,7 +81,15 @@ TS=$RUN/stato.ts
 NET=$RUN/stato.rete
 # Tolleranza scritta in stato.ts: chi legge ne chiede un giro nuovo se il dato
 # ha piu' di 10 s, quindi oltre 3 volte questo valore il demone e' fermo.
-EVERY=${SWEETSPOT_STATO_TOLLERANZA:-20}
+# Numero dalle variabili SWEETSPOT_STATO_*: se non e' un numero si usa il
+# predefinito e si scrive una riga nel log, senza spegnere il demone.
+num_env() { # valore predefinito nome
+	case "$1" in
+		''|*[!0-9]*) log "stato: $3='$1' non e' un numero, uso $2"; printf '%s' "$2" ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+EVERY=$(num_env "${SWEETSPOT_STATO_TOLLERANZA:-20}" 20 SWEETSPOT_STATO_TOLLERANZA)
 
 net_bytes() { awk 'NR>2 && $1 !~ /^lo:/ {sub(/^[^:]*:/, ""); split($0, a, " "); t += a[1] + a[9]} END {print t+0}' "$PROC/net/dev"; }
 
@@ -196,6 +204,13 @@ lv_lyrion() { # momento
 lv_player() { # momento
 	local now=$1 since=0 last=0 bo=0 nrest=0 pid mac mode_now T
 	LV_PLY_STATO=n/d
+	# Il DAC e' del Bluetooth (sweetspot-bluetooth): non e' un blocco.
+	if bt_dac_busy; then
+		LV_PLY_STATO=bluetooth
+		lv_row INFO "Player" "DAC in uso dal Bluetooth"
+		rm -f "$LV_PLY"
+		return 0
+	fi
 	pid=$(cat "$RUN/squeezelite.pid" 2>/dev/null)
 	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
 		rm -f "$LV_PLY"
@@ -484,11 +499,17 @@ CLIF=$RUN/stato.cli          # FIFO verso la connessione CLI di Lyrion (nc)
 REQ=$RUN/stato.richiesta     # FIFO scrivibile da tutti: chiede un giro
 SOSTA=$RUN/stato.sosta       # FIFO mai scritta: serve a "dormire" senza fork
 ATTIVA=$RUN/dac.cache.attiva # esiste finche' il demone gira (cache del DAC)
-BATTITO=${SWEETSPOT_STATO_BATTITO:-900}
-MIN_GAP=${SWEETSPOT_STATO_MIN:-5}
+# Porta CLI di Lyrion (la stessa di sweetspot-volume) e strumenti di ascolto
+# (sostituibili nelle prove: BusyBox preferisce i suoi applet al PATH).
+LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
+NC=${SWEETSPOT_NC:-nc}
+UDEVADM=${SWEETSPOT_UDEVADM:-udevadm}
+INOTIFYD=${SWEETSPOT_INOTIFYD:-inotifyd}
+BATTITO=$(num_env "${SWEETSPOT_STATO_BATTITO:-900}" 900 SWEETSPOT_STATO_BATTITO)
+MIN_GAP=$(num_env "${SWEETSPOT_STATO_MIN:-5}" 5 SWEETSPOT_STATO_MIN)
 PRE_GAP=5
 # Secondi dopo l'avvio di Lyrion in cui si cerca lo scanner anche senza evento.
-SCAN_WIN=${SWEETSPOT_STATO_SCAN:-120}
+SCAN_WIN=$(num_env "${SWEETSPOT_STATO_SCAN:-120}" 120 SWEETSPOT_STATO_SCAN)
 
 # Secondi dall'avvio del computer, senza lanciare date (non salta con NTP).
 up_now() {
@@ -811,27 +832,27 @@ start_feeders() {
 		while IFS= read -r _; do echo R; done <&6 >&3
 	) &
 	FEEDERS="$FEEDERS $!"
-	if command -v udevadm >/dev/null 2>&1; then
+	if command -v "$UDEVADM" >/dev/null 2>&1; then
 		(
 			while :; do
-				udevadm monitor --udev -s sound -s block -s net 2>/dev/null |
+				"$UDEVADM" monitor --udev -s sound -s block -s net 2>/dev/null |
 					while IFS= read -r l; do echo "U $l"; done >&3
 				nap 30
 			done
 		) &
 		FEEDERS="$FEEDERS $!"
 	fi
-	if command -v inotifyd >/dev/null 2>&1; then
+	if command -v "$INOTIFYD" >/dev/null 2>&1; then
 		(
 			while :; do
-				inotifyd - "$RUN:wyn" 2>/dev/null |
+				"$INOTIFYD" -"$RUN:wyn" 2>/dev/null |
 					while IFS= read -r l; do echo "I $l"; done >&3
 				nap 30
 			done
 		) &
 		FEEDERS="$FEEDERS $!"
 	fi
-	if [ "$CFG_COMPLETA" = 1 ] && command -v nc >/dev/null 2>&1; then
+	if [ "$CFG_COMPLETA" = 1 ] && command -v "$NC" >/dev/null 2>&1; then
 		(
 			wait_s=5
 			while :; do
@@ -840,7 +861,7 @@ start_feeders() {
 				if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then nap 15; continue; fi
 				t0=$(read -r u _ < /proc/uptime && echo "${u%%.*}")
 				echo "C su" >&3
-				nc "$LMS_HOST" "$LMS_CLI_PORT" < "$CLIF" 2>/dev/null |
+				"$NC" "$LMS_HOST" "$LMS_CLI_PORT" < "$CLIF" 2>/dev/null |
 					while IFS= read -r l; do echo "L $l"; done >&3
 				echo "C giu" >&3
 				read -r u _ < /proc/uptime

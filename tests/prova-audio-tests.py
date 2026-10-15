@@ -1001,6 +1001,7 @@ class DriverTests(unittest.TestCase):
 
     def test_alsa_backend_runs_the_same_eighteen_cases_with_its_own_scope(self):
         backends = []
+        dsd_pcm = []
 
         def complete_case(_rootfs, _client, destination, rate, bits, **kwargs):
             backends.append(kwargs.get("backend"))
@@ -1014,23 +1015,72 @@ class DriverTests(unittest.TestCase):
                                           "observed_rate_sequence": rates})
             return result
 
+        def complete_dsd_pcm(_client, _output, case, **_kwargs):
+            dsd_pcm.append(case["id"])
+            return {"id": case["id"], "status": "pass"}
+
         with tempfile.TemporaryDirectory() as temp:
             rootfs = Path(temp) / "rootfs"
             (rootfs / "usr/bin").mkdir(parents=True)
             (rootfs / "usr/bin/squeezelite").write_bytes(b"offline engine boundary")
             output = Path(temp) / "out"
-            with patch.object(DRIVER, "run_case", side_effect=complete_case), patch("builtins.print"):
+            with patch.object(DRIVER, "run_case", side_effect=complete_case), \
+                    patch.object(DRIVER, "run_dsd_pcm_case", side_effect=complete_dsd_pcm), patch("builtins.print"):
                 rc = DRIVER.main(["--rootfs", str(rootfs), "--server", "http://127.0.0.1:9000",
                                   "--output", str(output), "--version", "v", "--backend", "alsa_loopback"])
             report = json.loads((output / "report.json").read_text())
         self.assertEqual(rc, 0)
         self.assertEqual(report["scope"], "alsa_loopback")
-        # Su ALSA restano i 18 casi a frequenza costante piu' il cambio 44,1 k -> 96 k.
+        # Su ALSA restano i 18 casi a frequenza costante piu' il cambio 44,1 k -> 96 k,
+        # poi i casi DSD -> PCM verso un DAC limitato a 192 kHz.
         self.assertEqual([case["id"] for case in report["cases"]],
                          [case["id"] for case in DRIVER.CASES
-                          if case["kind"] != "pcm_rate_transition" or case["id"] == "pcm-rate-44100-96000-24-24"])
-        self.assertEqual(len(report["cases"]), 19)
+                          if case["kind"] != "pcm_rate_transition" or case["id"] == "pcm-rate-44100-96000-24-24"]
+                         + ["dsf-2822400-pcm", "dff-5644800-pcm"])
+        self.assertEqual(len(report["cases"]), 21)
         self.assertEqual(backends, ["alsa_loopback"] * 19)
+        self.assertEqual(dsd_pcm, ["dsf-2822400-pcm", "dff-5644800-pcm"])
+
+    def test_dsd_pcm_cases_are_only_on_the_alsa_backend(self):
+        launched = []
+        with tempfile.TemporaryDirectory() as temp:
+            rootfs = Path(temp) / "rootfs"
+            (rootfs / "usr/bin").mkdir(parents=True)
+            (rootfs / "usr/bin/squeezelite").write_bytes(b"offline engine boundary")
+            with patch.object(DRIVER, "run_case", side_effect=lambda *a, **k: {"id": k["case_id"], "status": "pass"}), \
+                    patch.object(DRIVER, "run_dsd_pcm_case", side_effect=lambda *a, **k: launched.append(a)), \
+                    patch("builtins.print"):
+                DRIVER.main(["--rootfs", str(rootfs), "--server", "http://127.0.0.1:9000",
+                             "--output", str(Path(temp) / "out"), "--version", "v"])
+        self.assertEqual(launched, [])
+        self.assertEqual([case["kind"] for case in DRIVER.DSD_PCM_CASES], ["dsd_to_pcm"] * 2)
+        # 352,8 e 705,6 kHz non entrano in un DAC da 192 kHz: una e due decimazioni per 2.
+        self.assertEqual([(case["dsd_rate"] // 8 >> case["decimations"], case["rate"]) for case in DRIVER.DSD_PCM_CASES],
+                         [(176400, 176400)] * 2)
+
+    def test_dsd_pcm_log_evidence_requires_conversion_decimation_and_margin(self):
+        case = DRIVER.DSD_PCM_CASES[0]
+        prefix = "[12:00:00.000001] "
+        good = (prefix + "decode_thread:1 codec open: 'd'\n"
+                + prefix + "codec:1 DSD to PCM output, 352800 Hz decimated 1 time(s) by 2 for the device, margin -6.0 dB\n"
+                + prefix + "_output_frames:1 track start sample rate: 176400 replay_gain: 0\n")
+        defects = {"no conversion": good.replace("DSD to PCM output", "other"),
+                   "default margin": good.replace("margin -6.0", "margin -3.0"),
+                   "no decimation": good.replace("1 time(s)", "0 time(s)"),
+                   "dop": good + prefix + "DSD64 stream, format: DOP, rate: 176400Hz\n",
+                   "native": good + prefix + "DSD64 stream, format: U32_BE, rate: 2822400Hz\n",
+                   "rate": good.replace("176400 replay", "352800 replay"),
+                   "no codec": good.replace("codec open: 'd'", "codec open: 'f'")}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "engine.log"
+            path.write_text(good)
+            self.assertEqual(DRIVER.dsd_pcm_log_evidence(path, path, case, DRIVER.DSD_PCM_MARGIN_DB)["status"], "pass")
+            for name, text in defects.items():
+                with self.subTest(defect=name):
+                    path.write_text(text)
+                    self.assertEqual(DRIVER.dsd_pcm_log_evidence(path, path, case, DRIVER.DSD_PCM_MARGIN_DB)["status"], "fail")
+            self.assertEqual(DRIVER.dsd_pcm_log_evidence(Path(temp) / "absent.log", path, case,
+                                                         DRIVER.DSD_PCM_MARGIN_DB)["status"], "fail")
 
     def test_alsa_backend_rejects_rate_transition_cases(self):
         launched = []
@@ -1141,6 +1191,158 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(result["comparison"]["status"], "pass")
             self.assertEqual(result["status"], "fail")
 
+class RefusedRateEvidence(unittest.TestCase):
+    """DAC finto che rifiuta 88,2 k: la prova richiede ricampionamento, non stallo."""
+
+    def test_resampled_without_stall_passes(self):
+        log = "[12:00:00] process:1 resampling from 88200 -> 96000\n"
+        self.assertEqual(DRIVER.refused_rate_evidence(log)["status"], "pass")
+
+    def test_stall_or_missing_resampling_fails(self):
+        stalled = ("[12:00:00] output:1 device dacfinto96 refuses 88200 Hz and strict hw mode (-H) "
+                   "forbids the plughw: fallback: not resampling, output stopped\n")
+        for log in (stalled, "", "resampling from 88200 -> 48000\n",
+                    "resampling from 88200 -> 96000\n" + stalled):
+            with self.subTest(log=log):
+                self.assertEqual(DRIVER.refused_rate_evidence(log)["status"], "fail")
+
+    def test_device_accepts_only_96k_and_is_not_hw(self):
+        self.assertIn("rate 96000", DRIVER.REFUSED_ASOUNDRC)
+        self.assertFalse(DRIVER.REFUSED_DEVICE.startswith("hw:"))
+
+    def test_only_96k_in_aplay_dump(self):
+        for rate in ("96000", "[96000 96001)", "[96000 96000]"):
+            with self.subTest(rate=rate):
+                self.assertTrue(DRIVER.only_rate_offered("HW Params of device:\nRATE: %s\n" % rate, 96000))
+
+    def test_wider_or_other_rates_are_rejected(self):
+        for rate in ("[8000 192001)", "[88200 96001)", "[96000 96002)", "[96000 192000]", "88200", "[96001 96002)"):
+            with self.subTest(rate=rate):
+                self.assertFalse(DRIVER.only_rate_offered("RATE: %s\n" % rate, 96000))
+        self.assertFalse(DRIVER.only_rate_offered("nessuna riga", 96000))
+
+    def test_case_needs_a_booted_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = DRIVER.run_refused_rate_case(None, Path(temp), DRIVER.ChrootTarget(Path(temp)))
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("booted target", result["error"])
+
+class DsdPcmContentTests(unittest.TestCase):
+    """Generated DSD tones and the check of a PCM capture of them (no engine involved)."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from tools import audio_verification
+        cls.av = audio_verification
+
+    def capture(self, directory, spec, *, margin_db, alias=0.0, ultrasonic_gain=1.0, noise=5e-5,
+                fmt="<ii", frames=120000, lead=20000, clip=False):
+        import math
+        import random
+        random.seed(7)
+        scale = 10 ** (margin_db / 20) * 2 ** 31 * (8.0 if clip else 1.0)
+        left_hz, right_hz = spec["tone_hz"]
+        rate = spec["pcm_rate"]
+        data = bytearray(struct.pack(fmt, 0, 0) * lead)
+        for index in range(frames):
+            values = []
+            for hz in (left_hz, right_hz):
+                level = spec["level"] * math.sin(2 * math.pi * hz * index / rate) + random.gauss(0, noise)
+                level += alias * math.sin(2 * math.pi * spec["alias_hz"] * index / rate + 1)
+                values.append(max(-2 ** 31, min(2 ** 31 - 1, int(level * scale))))
+            data += struct.pack(fmt, *values)
+        path = Path(directory) / "capture.raw"
+        path.write_bytes(bytes(data))
+        return path
+
+    def test_generated_dsf_and_dff_carry_both_tones_in_the_bitstream(self):
+        import math
+        for container, rate in (("dsf", 2822400), ("dff", 5644800)):
+            with self.subTest(container=container), tempfile.TemporaryDirectory() as temp:
+                sources, spec = self.av.generate_dsd_tone_fixtures(Path(temp), rate, container=container,
+                                                                   pcm_rate=176400, seconds=0.05)
+                self.assertEqual(len(sources), 2)
+                self.assertEqual(sources[0].read_bytes(), sources[1].read_bytes())
+                self.assertNotEqual(sources[0].name, sources[1].name)
+                data = sources[0].read_bytes()
+                self.assertEqual(data[:4], b"DSD " if container == "dsf" else b"FRM8")
+                if container == "dsf":
+                    header, payload = data[:92], data[92:]
+                    self.assertEqual(struct.unpack_from("<I", header, 56)[0], rate)
+                    self.assertEqual(len(payload) % 8192, 0)
+                    left = payload[:4096]
+                    bits = [(byte >> bit) & 1 for byte in left for bit in range(8)]     # LSB first
+                else:
+                    payload = data[-2 * (int(rate * 0.05) // 8):]
+                    left = payload[0::2]
+                    bits = [(byte >> bit) & 1 for byte in left for bit in range(7, -1, -1)]  # MSB first
+                count = min(len(bits), int(rate * 0.05))
+                bits = bits[:count]
+                for hz, expected in ((spec["tone_hz"][0], 0.35), (spec["ultrasonic_hz"], 0.10)):
+                    re = sum((2 * bit - 1) * math.cos(2 * math.pi * hz * i / rate) for i, bit in enumerate(bits))
+                    im = sum((2 * bit - 1) * math.sin(2 * math.pi * hz * i / rate) for i, bit in enumerate(bits))
+                    self.assertAlmostEqual(2 * math.hypot(re, im) / count, expected, delta=0.02, msg=(container, hz))
+                self.assertAlmostEqual(sum(bits) / count, 0.5, delta=0.02)
+
+    def test_tone_spec_names_where_the_ultrasonic_tone_would_fold(self):
+        for dsd_rate in (2822400, 5644800):
+            spec = self.av.dsd_tone_spec(dsd_rate, 176400)
+            self.assertEqual(spec["ultrasonic_hz"], 117600)
+            self.assertEqual(spec["alias_hz"], 58800)
+            self.assertEqual(len(set(spec["tone_hz"])), 2)
+        with self.assertRaises(ValueError):
+            self.av.dsd_tone_spec(2822401, 176400)
+
+    def test_clean_capture_with_the_margin_passes_in_every_container_format(self):
+        for fmt, name in (("<ii", "s32_le"), ):
+            with self.subTest(fmt=name), tempfile.TemporaryDirectory() as temp:
+                spec = self.av.dsd_tone_spec(2822400, 176400)
+                path = self.capture(temp, spec, margin_db=-6, fmt=fmt)
+                result = self.av.analyze_dsd_pcm_capture(path, capture_format=name, rate=176400, spec=spec, margin_db=-6)
+                self.assertEqual(result["status"], "pass", result.get("problems"))
+                for channel in result["channels"]:
+                    self.assertLess(abs(channel["level_db"]), 0.05)
+                    self.assertGreater(channel["snr_db"], 60)
+
+    def test_wrong_margin_is_caught(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec = self.av.dsd_tone_spec(2822400, 176400)
+            path = self.capture(temp, spec, margin_db=-3)           # engine used the default
+            result = self.av.analyze_dsd_pcm_capture(path, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
+            self.assertEqual(result["status"], "fail")
+            self.assertTrue(any("tone level" in problem for problem in result["problems"]))
+
+    def test_folded_ultrasonic_tone_is_caught(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec = self.av.dsd_tone_spec(5644800, 176400)
+            path = self.capture(temp, spec, margin_db=-6, alias=spec["ultrasonic_level"])
+            result = self.av.analyze_dsd_pcm_capture(path, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
+            self.assertEqual(result["status"], "fail")
+            self.assertTrue(any("folded ultrasonic" in problem for problem in result["problems"]))
+
+    def test_noise_clipping_and_silence_are_caught(self):
+        spec = self.av.dsd_tone_spec(2822400, 176400)
+        with tempfile.TemporaryDirectory() as temp:
+            noisy = self.capture(temp, spec, margin_db=-6, noise=3e-3)
+            result = self.av.analyze_dsd_pcm_capture(noisy, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
+            self.assertTrue(any("SNR" in problem for problem in result["problems"]), result["problems"])
+            clipped = self.capture(temp, spec, margin_db=-6, clip=True)
+            result = self.av.analyze_dsd_pcm_capture(clipped, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
+            self.assertTrue(any("clipping" in problem for problem in result["problems"]), result["problems"])
+            silent = Path(temp) / "silent.raw"
+            silent.write_bytes(bytes(8 * 200000))
+            result = self.av.analyze_dsd_pcm_capture(silent, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
+            self.assertEqual(result["status"], "fail")
+            self.assertIn("does not hold", result["reason"])
+
+    def test_swapped_channels_are_caught(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec = self.av.dsd_tone_spec(2822400, 176400)
+            swapped = dict(spec, tone_hz=list(reversed(spec["tone_hz"])))
+            path = self.capture(temp, swapped, margin_db=-6)
+            result = self.av.analyze_dsd_pcm_capture(path, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
+            self.assertEqual(result["status"], "fail")
 
 class AlsaTransitionTailTests(unittest.TestCase):
     """Parti pure della prova 44,1 k -> 96 k: coda del brano, ricerca, evidenze."""
@@ -1202,9 +1404,22 @@ class AlsaTransitionTailTests(unittest.TestCase):
         for frames in (noise, [(0, 0)] * 44100, self.tono(2177, 44100), self.tono(1000, 44100, peak=1 << 19)):
             self.assertEqual(DRIVER.check_tone_after_tail(frames, 44100, 1000, 1 << 21)["status"], "fail")
 
-    def test_prefisso_troppo_lungo_prima_del_tono_fallisce(self):
-        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=30000), 44100, 1000, 1 << 21)
+    def test_rilettura_del_ring_o_rumore_prima_del_tono_falliscono(self):
+        import random
+        generator = random.Random(2)
+        noise = [(generator.randint(-3 * 10 ** 7, 3 * 10 ** 7),) * 2 for _ in range(3528)]
+        # 80 ms di rumore a pieno livello subito dopo la coda, poi il tono (il difetto reale)
+        replay = noise + self.tono(1000, 44100)
+        self.assertEqual(DRIVER.check_tone_after_tail(replay, 44100, 1000, 1 << 21)["status"], "fail")
+        # contenuto identico a un tratto gia' catturato, anche se breve
+        short = noise[:300] + self.tono(1000, 44100)
+        result = DRIVER.check_tone_after_tail(short, 44100, 1000, 1 << 21, before=noise)
+        self.assertTrue(result["replayed_ring"])
         self.assertEqual(result["status"], "fail")
+
+    def test_silenzio_lungo_prima_del_tono_e_ammesso(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=8820), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "pass", result)
 
     def test_coda_assente_non_viene_localizzata(self):
         with tempfile.TemporaryDirectory() as temp:

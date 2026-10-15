@@ -35,9 +35,10 @@ $(option player "Solo player: per un Lyrion Music Server su un altro computer" "
 
 <label for="prof">Funzionamento del processore</label>
 <select id="prof" name="profilo">
-$(option bilanciato "Bilanciato: frequenza fissa intermedia (consigliato)" "$(conf PROFILO bilanciato)")
+$(option bilanciato "Bilanciato: frequenza fissa intermedia, non dinamica (consigliato)" "$(conf PROFILO bilanciato)")
 $(option silenzio "Silenzio: frequenza fissa al minimo, meno consumo e calore" "$(conf PROFILO bilanciato)")
 $(option prestazioni "Prestazioni: frequenza fissa alla nominale" "$(conf PROFILO bilanciato)")
+$(option dinamico "Dinamico: frequenza che segue il carico, stati di riposo profondi (core audio esclusi)" "$(conf PROFILO bilanciato)")
 </select>
 
 <label for="asc">Modalità ascolto <span>(vale subito)</span></label>
@@ -46,6 +47,13 @@ $(option puro "Ascolto puro: brani della coda in RAM, dischi fermi, lavori di fo
 $(option si "Lavori di fondo sospesi mentre la musica suona, brani letti dal disco" "$(listening_choice)")
 $(option no "Spenta: i lavori di fondo continuano anche durante la musica" "$(listening_choice)")
 </select>
+
+<label for="upnp">Renderer UPnP/DLNA <span>(vale subito)</span></label>
+<select id="upnp" name="renderer_upnp">
+$(option no "Spento" "$(conf RENDERER_UPNP no)")
+$(option si "Acceso: BubbleUPnP, JPlay, mconnect e le altre app UPnP/DLNA vedono Sweetspot come diffusore" "$(conf RENDERER_UPNP no)")
+</select>
+<p class="sub">L'audio passa da Lyrion e dal player, come la musica della libreria: nessun altro programma apre il DAC. Solo con la modalità completa.</p>
 
 <details>
 <summary>Opzioni per esperti</summary>
