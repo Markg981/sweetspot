@@ -566,6 +566,15 @@ ram_quote_calc() {
 	if [ "$(lower "$(conf CORREZIONE no)")" != no ]; then
 		RAM_SERVIZI=$((RAM_SERVIZI + 262144)); RAM_MOTIVO="$RAM_MOTIVO+DSP"
 	fi
+	# Cache delle copertine in RAM (tmpfs a tetto, lo scrive sweetspot-lms): il
+	# suo tetto e' RAM che non va al precarico.
+	local apos acap
+	apos=; acap=
+	[ -f "$RUN/lms.artwork.stato" ] && IFS='|' read -r apos _ acap _ < "$RUN/lms.artwork.stato"
+	case "$acap" in ''|*[!0-9]*) acap=0 ;; esac
+	if [ "$apos" = ram ] && [ "$acap" -gt 0 ]; then
+		RAM_SERVIZI=$((RAM_SERVIZI + acap * 1024)); RAM_MOTIVO="$RAM_MOTIVO+copertine in RAM ${acap} MB"
+	fi
 	RAM_RISERVA=$((RAM_SISTEMA + RAM_SERVIZI + RAM_ALSA))
 	rest=$((RAM_POOL - RAM_RISERVA))
 	[ "$rest" -gt 0 ] || rest=0

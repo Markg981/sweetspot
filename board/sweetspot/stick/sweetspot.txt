@@ -46,6 +46,14 @@ LYRION_MEM_MB=auto
 SCANNER_MEM_MB=auto
 ARTWORK_RAM_MB=auto
 
+# Cache delle copertine di Lyrion: CACHE_COPERTINE = auto (sull'archivio se c'e',
+# se no in RAM), ram, archivio oppure disco (un altro disco scrivibile, per
+# nome: CACHE_COPERTINE_DISCO=Nome). CACHE_COPERTINE_MB: tetto sul disco
+# (auto = 1024 MB). Se il disco manca si ripiega in RAM e la pagina Stato lo dice.
+CACHE_COPERTINE=auto
+CACHE_COPERTINE_DISCO=
+CACHE_COPERTINE_MB=auto
+
 # --- Musica ---------------------------------------------------------------
 # Dischi interni e USB vengono trovati da soli e letti in sola lettura.
 # DISCHI=no li ignora tutti; ESCLUDI_DISCHI ignora quelli indicati per nome,
