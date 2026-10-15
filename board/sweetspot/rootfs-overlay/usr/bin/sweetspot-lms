@@ -9,7 +9,7 @@
 #   sweetspot-lms attendi [s]      aspetta che Lyrion risponda
 #   sweetspot-lms primo-controllo  dopo l'avvio: cerca i brani aggiunti mentre
 #                                  Sweetspot era spento
-#   sweetspot-lms aggiorna         cerca nella libreria i brani nuovi o cambiati
+#   sweetspot-lms aggiorna [DIR]   cerca i brani nuovi o cambiati (solo in DIR, se indicata)
 #   sweetspot-lms ricostruisci     rilegge tutta la libreria da capo
 #   sweetspot-lms plugin stato|installa NOME|rimuovi NOME
 #   sweetspot-lms riavvia          riavvia Lyrion (per i plugin)
@@ -332,7 +332,8 @@ case "$1" in
 	ferma) do_stop ;;
 	attendi) do_wait "$2" ;;
 	primo-controllo) do_first_check ;;
-	aggiorna) lms_json '' rescan > /dev/null ;;
+	# aggiorna [CARTELLA]: rescan incrementale (mai wipe), anche solo di una cartella
+	aggiorna) if [ -n "$2" ]; then lms_json "" rescan "singledir:$2" > /dev/null; else lms_json "" rescan > /dev/null; fi ;;
 	ricostruisci) lms_json '' wipecache > /dev/null ;;
 	# json PLAYER PAROLA...: richiesta a Lyrion con le credenziali di
 	# Sweetspot, per le pagine web (che non le conoscono); sweetspot-priv

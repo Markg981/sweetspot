@@ -1,0 +1,5 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - assegnato un indirizzo DHCP: riprova i montaggi di rete mancanti.
+case "$1" in bound|renew) /usr/bin/sweetspot-rete sveglia > /dev/null 2>&1 & ;; esac
+exit 0

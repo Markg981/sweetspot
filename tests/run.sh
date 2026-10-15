@@ -3156,7 +3156,7 @@ echo \$((n + 1)) > "$RT/n"
 [ "\$n" -lt 6 ] && { echo "mount error(112): Host is down" >&2; exit 32; }
 exit 0
 MOUNT
-printf '#!/bin/sh\ntouch "%s/rescan"\n' "$RT" > "$RT/bin/lms"
+printf '#!/bin/sh\necho "$*" >> "%s/rescan"\n' "$RT" > "$RT/bin/lms"
 printf '#!/bin/sh\nexit 0\n' > "$RT/bin/modprobe"
 printf '#!/bin/sh\nexit 0\n' > "$RT/bin/flock"
 printf '#!/bin/sh\nexit 1\n' > "$RT/busy/flock"
@@ -3175,7 +3175,58 @@ rete_env "$RT/bin" $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" ritenta > /dev/nul
 expect "ritenta: la condivisione che torna viene montata" "1|//192.168.1.10/Musica|OK|montata" "$(grep '^1|' "$RT/run/rete.list")"
 expect "ritenta: l'errore dell'altra resta visibile" "2|//192.168.1.10/Altra|ERRORE|accesso negato: controlla utente e password" "$(grep '^2|' "$RT/run/rete.list")"
 expect "ritenta: dopo il successo chiede la scansione a Lyrion" "si" "$([ -f "$RT/rescan" ] && echo si || echo no)"
+expect "ritenta: rescan solo della sorgente tornata, mai wipe" "aggiorna $RT/musica/Rete - Musica" "$(cat "$RT/rescan" 2>/dev/null)"
+expect "ritenta: stato per sorgente (montata / errore + ultimo errore)" "1|montata|||0
+2|errore|accesso negato: controlla utente e password||0" "$(cat "$RT/run/rete.stato" 2>/dev/null)"
 RD=". $OVERLAY/usr/bin/sweetspot-rete; RETRY_MIN=30; RETRY_MAX=600"
+expect "ritenta: predefiniti 10 s con tetto a 5 min" "10 20 40 80 160 300 300" \
+	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-rete; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
+
+# NAS assente: stato "attesa" con prossimo tentativo; un evento di rete (sveglia)
+# anticipa il giro senza aspettare i 100 s, poi il ciclo si ferma (niente polling).
+rm -f "$RT/n" "$RT/rescan" "$RT/ok" "$RT/run/rete.attesa" "$RT/musica"/*
+cat > "$RT/bin/mount.nfs" <<MOUNT
+#!/bin/sh
+[ -f "$RT/ok" ] && exit 0
+echo "mount.nfs: Connection timed out" >&2
+exit 32
+MOUNT
+chmod +x "$RT/bin/mount.nfs"
+printf 'CONDIVISIONE_1=nfs://192.168.1.20/musica\n' > "$RT/run/sweetspot.conf"
+printf '1|nfs://192.168.1.20/musica|ERRORE|server non raggiungibile\n' > "$RT/run/rete.list"
+rete_env "$RT/bin" env SWEETSPOT_RETE_MIN=100 SWEETSPOT_RETE_MAX=100 $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" ritenta > /dev/null 2>&1 &
+RPID=$!
+i=0
+while [ $i -lt 50 ] && ! grep -q '|attesa|' "$RT/run/rete.stato" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+expect "attesa: stato con ultimo errore e prossimo tentativo" "1|attesa|1|si" \
+	"$(awk -F'|' '{ print $1 "|" $2 "|" $5 "|" ($4 > 0 ? "si" : "no") }' "$RT/run/rete.stato" 2>/dev/null)"
+expect "attesa: ultimo errore riportato" "1|attesa|server non raggiungibile" "$(awk -F'|' '{ print $1 "|" $2 "|" $3 }' "$RT/run/rete.stato" 2>/dev/null)"
+: > "$RT/ok"
+sleep 0.3
+rete_env "$RT/bin" env SWEETSPOT_SELF=/nonesiste $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" sveglia > /dev/null 2>&1
+i=0
+while [ $i -lt 60 ] && kill -0 $RPID 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+expect "sveglia: il ciclo anticipa il tentativo e si ferma una volta montata" "terminato|1|montata" \
+	"$(kill -0 $RPID 2>/dev/null && echo attivo || echo terminato)|$(cut -d'|' -f1 "$RT/run/rete.stato")|$(cut -d'|' -f2 "$RT/run/rete.stato")"
+kill $RPID 2>/dev/null
+wait $RPID 2>/dev/null
+expect "sveglia: nessun file di attesa residuo" "no" "$([ -f "$RT/run/rete.attesa" ] && echo si || echo no)"
+expect "sveglia: rescan della sola sorgente rientrata" "aggiorna $RT/musica/Rete - musica" "$(cat "$RT/rescan" 2>/dev/null)"
+
+# Montaggio stale: stat che non risponde -> smontato (lazy) e rimesso in attesa.
+printf '#!/bin/sh\nexit 1\n' > "$RT/bin/stat"
+printf '#!/bin/sh\necho "$*" >> "%s/umount.log"\n' "$RT" > "$RT/bin/umount"
+chmod +x "$RT/bin/stat" "$RT/bin/umount"
+printf '1|nfs://192.168.1.20/musica|OK|montata\n' > "$RT/run/rete.list"
+rm -f "$RT/ok" "$RT/umount.log"
+expect "stale: il montaggio che non risponde viene contato" "1" "$(rete_env "$RT/bin" env SWEETSPOT_STAT=$RT/bin/stat SWEETSPOT_UMOUNT=$RT/bin/umount $TEST_SH "$OVERLAY/usr/bin/sweetspot-rete" controlla 2>/dev/null)"
+expect "stale: smontato in lazy" "-l $RT/media/rete-1" "$(cat "$RT/umount.log" 2>/dev/null)"
+expect "stale: segnato in errore da rimontare" "1|errore|errore: montaggio non risponde (stale), da rimontare||0" "$(cat "$RT/run/rete.stato" 2>/dev/null)"
+HOOK=$OVERLAY/usr/share/udhcpc/default.script.d/50sweetspot-rete
+expect "sveglia: hook DHCP nella cartella di default.script (\$0.d), eseguibile" "si|no" \
+	"$([ -x "$HOOK" ] && echo si || echo no)|$([ -e "$OVERLAY/etc/udhcpc.d/50sweetspot-rete" ] && echo si || echo no)"
+rm -f "$RT/bin/stat" "$RT/bin/umount"
+rm -f "$RT/musica"/* 2>/dev/null
 expect "ritenta: intervalli crescenti con tetto" "30 60 120 240 480 600 600" \
 	"$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; for t in 1 2 3 4 5 6 7; do printf '%s ' \$(retry_delay \$t); done" | tr -s ' ' | awk '{ $1=$1; print }')"
 expect "ritenta: percorso non valido non si ritenta" "no" "$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$RT/run $TEST_SH -c "$RD; retryable 'percorso non valido: x' && echo si || echo no")"

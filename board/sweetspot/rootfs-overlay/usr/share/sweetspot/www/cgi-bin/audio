@@ -319,6 +319,11 @@ fi
 # volume e con DAC a 16 bit. Il fisso (dall'amplificatore) o il volume
 # hardware del DAC non toccano i campioni.
 volume_note() {
+	# Modalita' effettiva scritta dal player (volume_modo_calcola): ripiego e
+	# cosa e' verificato in locale o non verificabile lato server.
+	if [ -s "$RUN/volume.modalita" ]; then
+		printf '<p class="sub">Volume effettivo: %s.</p>\n' "$(esc "$(volume_descrizione)")"
+	fi
 	if [ "$1" = dsp ]; then
 		printf '<p class="sub">%s</p>\n' "Volume a 64 bit: Squeezelite lascia i campioni invariati e il volume di Lyrion (stessa scala del volume software) lo applica CamillaDSP in virgola mobile, con dither TPDF alla risoluzione del DAC (24 o 16 bit), presente anche al 100%: non è bit-perfect, ma non tronca; per il percorso bit-perfect scegli Fisso. I file DSD si convertono in PCM. In modalità player serve anche SERVER (l'indirizzo del Lyrion da cui si legge il volume): senza, si usa il volume software e lo Stato ne spiega il motivo; se CamillaDSP non parte si usa il volume software, mai il massimo."
 		if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = riserva ] && [ -s "$RUN/volume.motivo" ]; then

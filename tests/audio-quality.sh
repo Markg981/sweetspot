@@ -177,7 +177,7 @@ printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
 chmod +x "$E/bin/sweetspot-dsp"
 player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
 expect "player apre l'endpoint di playback DEV1" 'hw:CARD=DAC,DEV=1' "$(sed -n 's/^-o \([^ ]*\).*/\1/p' "$E/run/player.args")"
-expect "senza volume a 64 bit Squeezelite applica il volume di Lyrion" 0 "$(grep -c -- ' -F ' "$E/run/player.args")"
+expect "volume fisso (predefinito): Squeezelite ignora il guadagno di Lyrion (-F)" 1 "$(grep -c -- ' -F ' "$E/run/player.args")"
 # Volume a 64 bit: CamillaDSP c'e' per il volume (non per la correzione) e
 # Squeezelite lascia i campioni invariati (-F).
 cat > "$E/bin/sweetspot-dsp" <<'DSP'
@@ -331,6 +331,7 @@ expect "ALSA non disponibile: nessun formato inventato" '' "$(dsp 'dsp_out_forma
 expect "ALSA non disponibile: preparazione rifiutata" 1 "$(dsp 'do_prepare 2 > /dev/null; echo $?')"
 
 echo "Preferenze di fedelta' Lyrion: conferma e retry"
+rm -f "$E/run/volume.effettivo" "$E/run/volume.modalita" "$E/run/volume.locale" "$E/run/volume.motivo" "$E/run/volume.server" "$E/run/volume.modo"
 cat > "$E/bin/wget" <<'WGET'
 #!/bin/sh
 state=$(dirname "$0")/..
@@ -367,7 +368,7 @@ expect "risposta di successo valida accettata" 0 "$(common 'lms_json player play
 rm "$E/rpc-response"
 # Senza player avviato la modalita' effettiva deriva da VOLUME: niente stato
 # rimasto dalle prove di run_player precedenti.
-rm -f "$E/run/volume.effettivo"
+rm -f "$E/run/volume.effettivo" "$E/run/volume.modalita" "$E/run/volume.locale" "$E/run/volume.motivo" "$E/run/volume.server"
 printf 'MODALITA=completa\nVOLUME=fisso\n' > "$E/settings"
 common "config_build '$E/settings'"
 printf 'playerpref replayGainMode 0\n' > "$E/rpc-fail"
@@ -394,6 +395,7 @@ rm -f "$E/run/volume.modo"
 # Riconciliazione: le preferenze si riapplicano quando cambiano, dopo una
 # riconnessione e con server esterno; la divergenza non imponibile si vede.
 echo "Preferenze di fedelta' Lyrion: riconciliazione"
+rm -f "$E/run/volume.modalita" "$E/run/volume.locale" "$E/run/volume.motivo" "$E/run/volume.server"
 rm -f "$E/rpc-fail" "$E/rpc-failed" "$E/rpc-ignora" "$E/run/fedelta.stato"
 printf 'MODALITA=completa\nVOLUME=fisso\n' > "$E/settings"
 common "config_build '$E/settings'"
@@ -420,13 +422,13 @@ rm -f "$E/run/fedelta.stato"
 printf 'MODALITA=player\nVOLUME=fisso\n' > "$E/settings"
 common "config_build '$E/settings'"
 player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
-expect "server esterno non indicato: non verificabili" 'non verificabili (server esterno non indicato)' "$(cat "$E/run/fedelta.stato")"
+expect "server esterno non indicato: non verificabili" "non verificabili (server esterno non indicato; guadagno locale non verificato, modalita' fisso)" "$(cat "$E/run/fedelta.stato")"
 # Modalita' effettiva del volume: VOLUME=dac senza mixer nel DAC e' fisso
 # per Squeezelite (niente -V), per Lyrion (cursore spento, 100%) e per il web.
 printf '#!/bin/sh\nexit 1\n' > "$E/bin/sweetspot-dsp"
 printf 'DAC=auto\nVOLUME=dac\nMODALITA=completa\n' > "$E/settings"
 common "config_build '$E/settings'"
-rm -f "$E/run/volume.effettivo" "$E/rpc-log"
+rm -f "$E/run/volume.effettivo" "$E/run/volume.modalita" "$E/run/volume.locale" "$E/run/volume.motivo" "$E/run/volume.server" "$E/rpc-log"
 player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
 expect "volume dac senza mixer: modalita' effettiva fissa, senza -V" 'fisso|0' \
 	"$(cat "$E/run/volume.effettivo")|$(grep -c -- ' -V ' "$E/run/player.args")"
@@ -439,5 +441,37 @@ expect "modalita' effettiva hardware letta dal file di stato" hardware "$(common
 rm -f "$E/run/volume.effettivo"
 expect "senza file di stato la modalita' deriva da VOLUME" hardware "$(common 'volume_effettivo')"
 rm -f "$E/run/volume.modo"
+# Modalita' effettiva unica: stessa funzione per argomenti, preferenze e diagnostica.
+expect "volume dac senza mixer: modalita' fisso con -F, guadagno locale verificato" 'fisso|verificato|1' \
+	"$(cat "$E/run/volume.modalita")|$(cat "$E/run/volume.locale")|$(grep -c -- ' -F ' "$E/run/player.args")"
+expect "volume dac senza mixer: il motivo del ripiego e' registrato" 'il DAC non ha un controllo del volume' "$(cat "$E/run/volume.motivo")"
+printf 'VOLUME=dac\n' > "$E/settings"
+common "config_build '$E/settings'"
+expect "dac con mixer: modalita' dac, argomenti -V" 'dac| -V PCM' "$(common 'volume_modo_calcola PCM; volume_args dac PCM' | tr '\n' ' ' | sed 's/ $//')"
+expect "fisso: Lyrion non digitale, volume a 100" '0 100' "$(common 'volume_prefs fisso')"
+expect "software: Lyrion digitale, nessun volume imposto" '1 -' "$(common 'volume_prefs software')"
+printf 'VOLUME=dsp\nMODALITA=player\nSERVER=192.168.1.50:3483\n' > "$E/settings"
+common "config_build '$E/settings'"
+rm -f "$E/run/volume.modo"
+expect "dsp senza CamillaDSP: ripiego sul software con motivo" 'software|volume a 64 bit non disponibile (CamillaDSP assente o non avviato)' "$(common 'volume_modo_calcola ""')"
+echo dsp > "$E/run/volume.modo"
+expect "dsp con CamillaDSP: modalita' dsp senza motivo" 'dsp|' "$(common 'volume_modo_calcola ""')"
+rm -f "$E/run/volume.modo"
+# Lyrion remoto senza SERVER (preferenze non applicabili) e VOLUME=fisso: il
+# guadagno locale e' garantito da -F, non dalle preferenze del server.
+printf 'MODALITA=player\nVOLUME=fisso\n' > "$E/settings"
+common "config_build '$E/settings'"
+rm -f "$E/run/volume.modalita" "$E/run/volume.locale" "$E/run/volume.server" "$E/run/fedelta.stato"
+player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
+expect "player remoto, fisso: -F locale" 1 "$(grep -c -- ' -F ' "$E/run/player.args")"
+expect "player remoto, fisso: modalita' e guadagno locale verificato" 'fisso|verificato|non verificabile' \
+	"$(cat "$E/run/volume.modalita")|$(cat "$E/run/volume.locale")|$(cat "$E/run/volume.server")"
+expect "diagnostica: locale verificato, server non verificabile" 'fisso; guadagno locale verificato; trasformazioni lato server non verificabili' "$(common 'volume_descrizione')"
+player 'PREFS_SET=0; PLAYER_MAC=00:11:22:33:44:55; apply_player_prefs' > /dev/null
+expect "player remoto senza SERVER: stato dice cosa e' verificato" "non verificabili (server esterno non indicato; guadagno locale verificato, modalita' fisso)" "$(cat "$E/run/fedelta.stato")"
+printf 'MODALITA=player\nVOLUME=software\n' > "$E/settings"
+common "config_build '$E/settings'"
+player 'taskset() { :; }; HK=0; run_player 1; wait "$PID"'
+expect "player remoto, software: niente -F e volume digitale" 'software|0' "$(cat "$E/run/volume.modalita")|$(grep -c -- ' -F ' "$E/run/player.args")"
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ]

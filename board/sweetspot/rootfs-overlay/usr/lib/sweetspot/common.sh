@@ -1003,6 +1003,99 @@ volume_effettivo() {
 	esac
 }
 
+# Modalita' effettiva del volume, UNICA fonte per gli argomenti di Squeezelite,
+# le preferenze di Lyrion e la diagnostica (Stato, Audio, sweetspot-check).
+# Stampa "modo|motivo": modo fisso, dac, software o dsp; il motivo e' vuoto
+# se e' quella chiesta, altrimenti dice perche' si e' ripiegato.
+#   fisso    campioni invariati: Squeezelite con -F, mixer del DAC a 0 dB
+#   dac      mixer hardware del DAC (-V controllo)
+#   software volume di Squeezelite (dither TPDF)
+#   dsp      volume a 64 bit in CamillaDSP, Squeezelite con -F
+# $1: controllo di volume del DAC (vuoto se manca). volume.modo (dsp o
+# riserva) lo scrive il player prima, quando sa se CamillaDSP c'e'.
+volume_modo_calcola() { # controllo
+	case "$(lower "$(conf VOLUME fisso)")" in
+		dac)
+			if [ -n "$1" ]; then echo "dac|"
+			else echo "fisso|il DAC non ha un controllo del volume"; fi ;;
+		software) echo "software|" ;;
+		dsp)
+			if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then echo "dsp|"
+			else echo "software|volume a 64 bit non disponibile (CamillaDSP assente o non avviato)"; fi ;;
+		*) echo "fisso|" ;;
+	esac
+}
+
+# Argomenti di Squeezelite per la modalita' $1 (controllo del DAC in $2),
+# uno per riga.
+volume_args() { # modo controllo
+	case "$1" in
+		fisso|dsp) printf '%s\n' -F ;;
+		dac) printf '%s\n' -V "$2" ;;
+	esac
+}
+
+# Preferenze di Lyrion per la modalita' $1: valore di digitalVolumeControl e
+# volume da imporre ("-" se nessuno).
+volume_prefs() { # modo
+	case "$1" in
+		fisso) echo "0 100" ;;
+		*) echo "1 -" ;;
+	esac
+}
+
+# Scrive lo stato letto da Stato e Audio. volume.modalita e volume.motivo
+# sono la modalita' effettiva; volume.effettivo il vocabolario storico
+# (hardware, fisso, digitale). volume.locale dice se il guadagno locale e'
+# garantito da Squeezelite/DAC stessi, verificandolo sugli argomenti reali
+# ($RUN/player.args): "verificato" o "non verificato". Con Lyrion remoto le
+# trasformazioni lato server (sox, ReplayGain, volume digitale di Lyrion)
+# non sono verificabili da qui: lo dice volume.server.
+volume_stato_scrivi() { # modo motivo
+	local modo=$1 motivo=$2 args loc=verificato srv
+	args=" $(cat "$RUN/player.args" 2>/dev/null)"
+	case "$modo" in
+		fisso|dsp) case "$args" in *" -F "*) ;; *) loc="non verificato" ;; esac ;;
+		dac) case "$args" in *" -V "*) ;; *) loc="non verificato" ;; esac ;;
+		software) case "$args" in *" -F "*|*" -V "*) loc="non verificato" ;; esac ;;
+	esac
+	if [ "$(mode)" = completa ]; then srv="locale"; else srv="non verificabile"; fi
+	echo "$modo" > "$RUN/volume.modalita"
+	printf '%s\n' "$motivo" > "$RUN/volume.motivo"
+	echo "$loc" > "$RUN/volume.locale"
+	echo "$srv" > "$RUN/volume.server"
+	case "$modo" in
+		dac) echo hardware > "$RUN/volume.effettivo" ;;
+		fisso) echo fisso > "$RUN/volume.effettivo" ;;
+		*) echo digitale > "$RUN/volume.effettivo" ;;
+	esac
+}
+
+# Modalita' effettiva (fisso, dac, software, dsp) per la diagnostica.
+volume_modalita() {
+	local v
+	v=$(cat "$RUN/volume.modalita" 2>/dev/null)
+	case "$v" in fisso|dac|software|dsp) echo "$v"; return 0 ;; esac
+	case "$(volume_effettivo)" in
+		hardware) echo dac ;;
+		fisso) echo fisso ;;
+		*) if [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then echo dsp; else echo software; fi ;;
+	esac
+}
+
+# Frase per Stato e Audio: modalita', motivo del ripiego, cosa e' verificato
+# (guadagno locale) e cosa no (lato server con Lyrion remoto).
+volume_descrizione() {
+	local m mot loc srv out
+	m=$(volume_modalita); mot=$(cat "$RUN/volume.motivo" 2>/dev/null)
+	loc=$(cat "$RUN/volume.locale" 2>/dev/null); srv=$(cat "$RUN/volume.server" 2>/dev/null)
+	out="$m"
+	[ -n "$mot" ] && out="$out (ripiego: $mot)"
+	[ -n "$loc" ] && out="$out; guadagno locale $loc"
+	[ "$srv" = "non verificabile" ] && out="$out; trasformazioni lato server non verificabili"
+	printf '%s' "$out"
+}
+
 # CamillaDSP e' nel percorso con i filtri della stanza, non solo per il
 # volume a 64 bit (lo decide il player, vedi sweetspot-player).
 correction_running() {
