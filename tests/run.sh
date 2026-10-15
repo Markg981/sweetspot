@@ -2041,6 +2041,7 @@ dsp_alive && echo vivo
 b=$a
 # Un cambio di frequenza non passa di qui: l'istanza resta la stessa finche'
 # il supervisore non la ferma o non muore.
+# correzione.attiva esiste gia' (creato dai test di pin_dsp) e deve restare.
 touch "$RUN/correzione.attiva"
 dsp_session_check
 [ "$DSPPROC" = "$a" ] && echo stesso-pid
@@ -2059,7 +2060,7 @@ export DSP_T=$DSP
 expect "sessione: avvio unico dal supervisore, riavvio solo se muore, arresto pulito" \
 	"fifo|vivo|stesso-pid|riavviato|pid-nuovo|fifo-rimossa|fermo" \
 	"$(dspfn 1 ". $DSP/sessione.sh" 2>&1 | tr '\n' '|' | sed 's/|$//')"
-rm -f "$DSP/run/correzione.attiva" "$DSP/run/dsp.fifo"
+rm -f "$DSP/run/dsp.fifo"
 expect "CamillaDSP non e' piu' avviato dal plugin con un fork dal thread real-time" "1|1" \
 	"$(grep -c '^start_dsp()' "$OVERLAY/usr/bin/sweetspot-player")|$(grep -c 'taskset -c "\$HK" "\$CAMILLADSP"' "$OVERLAY/usr/bin/sweetspot-player")"
 expect "init: ferma anche l'istanza di CamillaDSP" "1" "$(grep -c 'killall camilladsp' "$OVERLAY/etc/init.d/S60sweetspot-player")"
