@@ -218,7 +218,7 @@ def esegui(porta, uscita):
             # aplay suona sul plugin; appena l'uscita di CamillaDSP e' in
             # riproduzione si registra dal lato di cattura di Loopback.
             script = (
-                "export ALSA_CONFIG_PATH={d}/asound.conf; "
+                "ALSA_CONFIG_PATH={d}/asound.conf "
                 "aplay -q -D cdsptest {d}/tono-{r}.wav 2> {d}/aplay-{r}.err & ap=$!; "
                 "i=0; until grep -q '^rate: {r} ' /proc/asound/Loopback/pcm0p/sub0/hw_params 2>/dev/null && "
                 "grep -q '^state: RUNNING' /proc/asound/Loopback/pcm0p/sub0/status 2>/dev/null; do "
@@ -255,7 +255,10 @@ def esegui(porta, uscita):
     finally:
         try:
             for nome in ("camilladsp.log", "aplay-44100.err", "aplay-96000.err", "arecord-44100.err", "arecord-96000.err"):
-                (uscita / nome).write_bytes(g.run("cat %s/%s 2>/dev/null; true" % (DIR, nome), controlla=False).stdout)
+                dati = g.run("cat %s/%s 2>/dev/null; true" % (DIR, nome), controlla=False).stdout
+                (uscita / nome).write_bytes(dati)
+                if rapporto["status"] != "pass" and dati.strip():
+                    print("--- " + nome + " ---" + chr(10) + dati.decode(errors="replace")[-1500:], file=sys.stderr)
             g.run("killall camilladsp 2>/dev/null; rm -rf %s" % DIR, controlla=False)
         except Exception as e:  # raccolta delle prove, non deve nascondere l'errore
             rapporto.setdefault("raccolta", str(e))
