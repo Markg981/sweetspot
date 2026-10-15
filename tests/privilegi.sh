@@ -56,7 +56,7 @@ else
 	B=$WORK/bin
 	W=$WORK/web
 	mkdir -p "$B" "$W"
-	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https diario; do
+	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https diario bluetooth; do
 		printf '#!/bin/sh\nprintf "%%s" "sweetspot-%s" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\nprintf "\\n" >> "%s/chiamata"\n' "$s" "$WORK" "$WORK" "$WORK" > "$B/sweetspot-$s"
 		chmod +x "$B/sweetspot-$s"
 	done
@@ -228,6 +228,13 @@ nameserver 6.6.6.6')"
 			"$(priv sweetspot-config imposta RENDERER_UPNP si OTTIMIZZAZIONI si)"
 		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
 		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"
+		expect "BLUETOOTH: solo si/no" "sweetspot-config|imposta|BLUETOOTH|si NIENTE(126) NIENTE(126)" "$(priv sweetspot-config imposta BLUETOOTH si) $(priv sweetspot-config imposta BLUETOOTH 'si;id') $(priv sweetspot-config imposta BLUETOOTH forse)"
+		expect "BLUETOOTH_NOME: nome semplice" "sweetspot-config|imposta|BLUETOOTH_NOME|Cucina 2" "$(priv sweetspot-config imposta BLUETOOTH_NOME 'Cucina 2')"
+		expect "BLUETOOTH_NOME: caratteri di shell e virgolette rifiutati" "NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126)" "$(priv sweetspot-config imposta BLUETOOTH_NOME 'a;id') $(priv sweetspot-config imposta BLUETOOTH_NOME 'a$(id)') $(priv sweetspot-config imposta BLUETOOTH_NOME 'a"b') $(priv sweetspot-config imposta BLUETOOTH_NOME 'a`id`')"
+		expect "BLUETOOTH_NOME: oltre 40 caratteri rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta BLUETOOTH_NOME "$(printf 'a%.0s' $(seq 1 41))")"
+		expect "BLUETOOTH e BLUETOOTH_NOME non sono chiavi protette" "0" "$(grep -c '"BLUETOOTH[A-Z_]*", .[bm]., 1' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
+		expect "sweetspot-bluetooth: sottocomandi ammessi" "sweetspot-bluetooth|abbina|5 sweetspot-bluetooth|applica sweetspot-bluetooth|chiudi sweetspot-bluetooth|elenco sweetspot-bluetooth|rimuovi|AA:BB:CC:DD:EE:01" "$(priv sweetspot-bluetooth abbina 5) $(priv sweetspot-bluetooth applica) $(priv sweetspot-bluetooth chiudi) $(priv sweetspot-bluetooth elenco) $(priv sweetspot-bluetooth rimuovi AA:BB:CC:DD:EE:01)"
+		expect "sweetspot-bluetooth: finestra fuori misura, MAC con shell e comandi interni rifiutati" "NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126)" "$(priv sweetspot-bluetooth abbina 99) $(priv sweetspot-bluetooth rimuovi 'AA;id') $(priv sweetspot-bluetooth finestra 5) $(priv sweetspot-bluetooth sorveglia) $(priv sweetspot-bluetooth avvia)"
 	fi
 fi
 

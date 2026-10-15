@@ -35,9 +35,10 @@ $(option player "Solo player: per un Lyrion Music Server su un altro computer" "
 
 <label for="prof">Funzionamento del processore</label>
 <select id="prof" name="profilo">
-$(option bilanciato "Bilanciato: frequenza fissa intermedia (consigliato)" "$(conf PROFILO bilanciato)")
+$(option bilanciato "Bilanciato: frequenza fissa intermedia, non dinamica (consigliato)" "$(conf PROFILO bilanciato)")
 $(option silenzio "Silenzio: frequenza fissa al minimo, meno consumo e calore" "$(conf PROFILO bilanciato)")
 $(option prestazioni "Prestazioni: frequenza fissa alla nominale" "$(conf PROFILO bilanciato)")
+$(option dinamico "Dinamico: frequenza che segue il carico, stati di riposo profondi (core audio esclusi)" "$(conf PROFILO bilanciato)")
 </select>
 
 <label for="asc">Modalità ascolto <span>(vale subito)</span></label>

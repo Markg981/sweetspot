@@ -1,0 +1,106 @@
+Subject: [PATCH] pack: TPDF dither instead of truncation at 16 and 24 bits
+
+Squeezelite keeps 32-bit samples and writes S16/S24 by dropping the low bits,
+with no rounding and no dither. The truncation error is correlated with the
+signal: audible on a 16-bit DAC and whenever the software volume attenuates.
+
+S16_LE: when the output is 16 bits and the block carries more than 16 bits
+of signal (any of the low 16 bits non-zero) or the gain is not unity, round
+with TPDF dither (two uniform values, error within +-1 LSB of the output).
+S24_LE: the same when the gain is not unity. 16-bit sources, silence and
+every unity-gain S24/S32 output are written exactly as before (blocks of
+digital silence stay silent at any gain, no dither noise), so the
+bit-perfect path does not change. The software volume (gain()) already
+keeps the full 32-bit result; only the final pack truncated.
+
+Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+Upstream: Not submitted (local option)
+
+--- a/output_pack.c
++++ b/output_pack.c
+@@ -43,6 +43,46 @@
+ 	return (s32_t)(f * 65536.0F);
+ }
+ 
++// TPDF dither (two uniform values, triangular distribution within +-1 LSB of the
++// output) so that dropping low bits leaves no signal-dependent truncation error.
++static u32_t dither_state = 0x2545F491;
++
++static u32_t dither_rand(void) {
++	dither_state ^= dither_state << 13;
++	dither_state ^= dither_state >> 17;
++	dither_state ^= dither_state << 5;
++	return dither_state;
++}
++
++// sample is a left-justified 32 bit value; returns it rounded with dither to
++// (32 - shift) bits, as a sign-extended value of that width
++static s32_t dither_round(s32_t sample, int shift) {
++	s64_t lsb = (s64_t)1 << shift;
++	s64_t noise = (s64_t)(dither_rand() & (lsb - 1)) + (s64_t)(dither_rand() & (lsb - 1)) - (lsb - 1);
++	s64_t v = (s64_t)sample + noise + (lsb >> 1);
++	if (v > 0x7fffffffLL) v = 0x7fffffffLL;
++	if (v < -0x80000000LL) v = -0x80000000LL;
++	return (s32_t)(v >> shift);
++}
++
++// true when 16 bit output would drop non-zero bits (more than 16 bits of signal);
++// 16 bit sources and silence stay untouched (bit-perfect)
++static bool dither_needed(s32_t *inputptr, frames_t cnt) {
++	frames_t i;
++	for (i = 0; i < cnt * 2; i++) {
++		if (inputptr[i] & 0xffff) return true;
++	}
++	return false;
++}
++
++static bool block_silent(s32_t *inputptr, frames_t cnt) {
++	frames_t i;
++	for (i = 0; i < cnt * 2; i++) {
++		if (inputptr[i]) return false;
++	}
++	return true;
++}
++
+ void _scale_and_pack_frames(void *outputptr, s32_t *inputptr, frames_t cnt, s32_t gainL, s32_t gainR, u8_t flags, output_format format) {
+ 	// in-place copy input samples if mono/combined is used (never happens with DSD active)
+ 	if ((flags & MONO_LEFT) && (flags & MONO_RIGHT)) {
+@@ -168,14 +208,16 @@
+ 		{
+ 			u32_t *optr = (u32_t *)(void *)outputptr;
+ #if SL_LITTLE_ENDIAN
+-			if (gainL == FIXED_ONE && gainR == FIXED_ONE) {
++			if ((gainL == FIXED_ONE && gainR == FIXED_ONE && !dither_needed(inputptr, cnt)) || block_silent(inputptr, cnt)) {
+ 				while (cnt--) {
+ 					*(optr++) = (*(inputptr) >> 16 & 0x0000ffff) | (*(inputptr + 1) & 0xffff0000);
+ 					inputptr += 2;
+ 				}
+ 			} else {
+-				while (cnt--) {
+-					*(optr++) =  (gain(gainL, *(inputptr)) >> 16 & 0x0000ffff) | (gain(gainR, *(inputptr+1)) & 0xffff0000);
++				// TPDF dither at 16 bits: more than 16 bits of signal or an attenuated signal
++				while (cnt--) {
++					*(optr++) = ((u32_t)dither_round(gain(gainL, *(inputptr)), 16) & 0x0000ffff) |
++								((u32_t)dither_round(gain(gainR, *(inputptr+1)), 16) << 16);
+ 					inputptr += 2;
+ 				}
+ 			}
+@@ -210,9 +252,15 @@
+ 					*(optr++) = *(inputptr++) >> 8;
+ 				}
+ 			} else {
+-				while (cnt--) {
+-					*(optr++) = gain(gainL, *(inputptr++)) >> 8;
+-					*(optr++) = gain(gainR, *(inputptr++)) >> 8;
++				// attenuated: TPDF dither at 24 bits instead of truncating
++				// (digital silence stays silent, no dither noise between tracks)
++				if (block_silent(inputptr, cnt)) {
++					memset(optr, 0, cnt * 2 * sizeof(u32_t));
++					break;
++				}
++				while (cnt--) {
++					*(optr++) = (u32_t)dither_round(gain(gainL, *(inputptr++)), 8);
++					*(optr++) = (u32_t)dither_round(gain(gainR, *(inputptr++)), 8);
+ 				}
+ 			}
+ #else

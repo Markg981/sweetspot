@@ -1,0 +1,210 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - banco di prova dei profili CPU sotto carico.
+#
+#   sweetspot-banco [-p profilo] [-c carico] [-d secondi] [-i intervallo] [-o prefisso]
+#       applica il profilo (se indicato), avvia il carico e per la durata
+#       data registra ogni "intervallo" secondi: temperatura, frequenza,
+#       throttling, potenza (RAPL), memoria libera, XRUN. Con cyclictest
+#       presente misura anche la latenza dello scheduler (p99 e massima).
+#       Scrive PREFISSO.csv (un campione per riga) e PREFISSO.json
+#       (riepilogo piatto, una chiave per riga).
+#   sweetspot-banco confronta a.json b.json
+#       affianca due riepiloghi (uno per profilo).
+#
+# Carichi: pcm (PCM ad alta frequenza verso ALSA), fir (convoluzione con
+# CamillaDSP, o CPU sintetica se manca), scansione (visita della libreria),
+# navigazione (richieste all'interfaccia web), nessuno. Ogni carico si puo'
+# sostituire con SWEETSPOT_BANCO_<CARICO>="comando" (maiuscolo).
+#
+# ATTENZIONE: la latenza dello scheduler (cyclictest) misura la puntualita'
+# con cui il sistema serve i buffer, non il jitter del clock di conversione:
+# con USB asincrona il clock lo detta il DAC (feedback). Quello si misura sul
+# DAC. Vedi docs/profili-cpu.md.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DISPOSITIVO=${SWEETSPOT_BANCO_ALSA:-hw:0,0}
+LIBRERIA=${SWEETSPOT_BANCO_LIBRERIA:-${SWEETSPOT_MUSICA:-/mnt/musica}}
+URL=${SWEETSPOT_URL:-http://127.0.0.1/cgi-bin/sistema}
+CPUFREQ=$SYS/devices/system/cpu/cpufreq
+
+# Percentile 99 da un istogramma di cyclictest ("bin conteggio" per riga,
+# un bin = 1 us). Stampa il bin in cui si raggiunge il 99% dei campioni.
+p99_istogramma() {
+	awk '$1 ~ /^[0-9]+$/ && NF >= 2 { b[n] = $1 + 0; c[n++] = $2 + 0; t += $2 }
+		END {
+			if (t == 0) exit
+			lim = t * 0.99; s = 0
+			for (i = 0; i < n; i++) { s += c[i]; if (s >= lim) { print b[i]; exit } }
+		}' "$@"
+}
+
+# Massimo di un istogramma di cyclictest (ultimo bin non vuoto).
+max_istogramma() {
+	awk '$1 ~ /^[0-9]+$/ && NF >= 2 && $2 > 0 { m = $1 + 0 } END { if (m != "") print m }' "$@"
+}
+
+# Throttling cumulativo: bit "e' successo" di vcgencmd get_throttled
+# (Raspberry Pi, bit 16-19; 0 = nessun evento) oppure contatori del kernel
+# (x86, thermal_throttle).
+throttle_conta() {
+	local v
+	if command -v vcgencmd >/dev/null 2>&1; then
+		v=$(vcgencmd get_throttled 2>/dev/null | sed 's/.*=//')
+		case "$v" in 0x*) echo $(( (v >> 16) & 15 )); return ;; esac
+	fi
+	cat "$SYS"/devices/system/cpu/cpu*/thermal_throttle/core_throttle_count 2>/dev/null |
+		awk '{s+=$1} END{print s+0}'
+}
+
+temp_mc() {
+	cat "$SYS"/class/thermal/thermal_zone*/temp 2>/dev/null | sort -n | tail -n 1
+}
+
+freq_khz() {
+	cat "$CPUFREQ"/policy*/scaling_cur_freq 2>/dev/null |
+		awk '{s+=$1;n++} END{if(n) printf "%d", s/n}'
+}
+
+rapl_uj() { cat "$SYS"/class/powercap/intel-rapl:0/energy_uj 2>/dev/null; }
+
+mem_libera_kb() { awk '/^MemAvailable:/{print $2}' "$PROC/meminfo" 2>/dev/null; }
+
+xrun_conta() {
+	local f n=0 v
+	for f in "$PROC"/asound/card*/pcm*p/sub*/xrun_counter; do
+		[ -r "$f" ] || continue
+		v=$(cat "$f" 2>/dev/null)
+		case "$v" in ''|*[!0-9]*) continue ;; esac
+		n=$((n + v))
+	done
+	echo "$n"
+}
+
+# Riepilogo di una colonna del CSV: "minimo media massimo" (interi).
+colonna() { # file numero-colonna
+	awk -F, -v c="$2" 'NR > 1 && $c != "" { v = $c + 0; if (n == 0 || v < mn) mn = v; if (n == 0 || v > mx) mx = v; s += v; n++ }
+		END { if (n) printf "%d %d %d", mn, s / n, mx }' "$1"
+}
+
+# Avvia il carico in fondo e stampa il PID (nulla per "nessuno").
+carico_avvia() {
+	local nome=$1 cmd
+	eval "cmd=\${SWEETSPOT_BANCO_$(printf '%s' "$nome" | tr a-z A-Z):-}"
+	if [ -z "$cmd" ]; then
+		case "$nome" in
+			nessuno) return 0 ;;
+			pcm) cmd="exec aplay -q -D $DISPOSITIVO -f S32_LE -r 384000 -c 2 /dev/zero" ;;
+			fir)
+				if command -v camilladsp >/dev/null 2>&1 && [ -f "${SWEETSPOT_BANCO_FIR_CONF:-/nonesiste}" ]; then
+					cmd="exec camilladsp $SWEETSPOT_BANCO_FIR_CONF"
+				else
+					cmd="while :; do dd if=/dev/zero bs=1M count=64 2>/dev/null | sha256sum >/dev/null; done"
+				fi ;;
+			scansione) cmd="while :; do find '$LIBRERIA' -type f -exec stat -c %s {} + >/dev/null 2>&1; sleep 1; done" ;;
+			navigazione) cmd="while :; do curl -s -o /dev/null -m 5 '$URL'; sleep 1; done" ;;
+			*) echo "carico sconosciuto: $nome" >&2; return 2 ;;
+		esac
+	fi
+	sh -c "$cmd" >/dev/null 2>&1 &
+	echo $!
+}
+
+num() { if [ -n "$1" ]; then printf '%s' "$1"; else printf 'null'; fi; }
+
+banco() {
+	local profilo="" carico=nessuno durata=60 passo=5 prefisso=banco opt
+	while getopts p:c:d:i:o: opt; do
+		case "$opt" in
+			p) profilo=$OPTARG ;; c) carico=$OPTARG ;; d) durata=$OPTARG ;;
+			i) passo=$OPTARG ;; o) prefisso=$OPTARG ;; *) exit 2 ;;
+		esac
+	done
+	case "$durata$passo" in *[!0-9]*|'') echo "durata e intervallo devono essere interi" >&2; exit 2 ;; esac
+	if [ "$passo" -le 0 ] || [ "$durata" -le 0 ]; then
+		echo "durata e intervallo devono essere > 0" >&2; exit 2
+	fi
+	case "$carico" in pcm|fir|scansione|navigazione|nessuno) ;; *) echo "carico sconosciuto: $carico" >&2; exit 2 ;; esac
+
+	[ -n "$profilo" ] && sweetspot-cpu "$profilo" >/dev/null 2>&1
+	profilo=${profilo:-$(lower "$(conf PROFILO bilanciato)")}
+
+	local csv=$prefisso.csv json=$prefisso.json cyc="" cycout pid="" t0 e0 e1 tp0 tp1 xr0 xr1 n=0 now
+	cycout=$(mktemp)
+	if command -v cyclictest >/dev/null 2>&1; then
+		cyclictest -q -D "${durata}s" -p 80 -i 1000 -h 2000 > "$cycout" 2>/dev/null &
+		cyc=$!
+	fi
+	pid=$(carico_avvia "$carico") || exit 2
+	echo "t_s,temp_mC,freq_kHz,throttle,energia_uJ,mem_libera_kB,xrun" > "$csv"
+	e0=$(rapl_uj); tp0=$(throttle_conta); xr0=$(xrun_conta); t0=$(date +%s)
+	while :; do
+		now=$(date +%s)
+		echo "$((now - t0)),$(temp_mc),$(freq_khz),$(throttle_conta),$(rapl_uj),$(mem_libera_kb),$(xrun_conta)" >> "$csv"
+		n=$((n + 1))
+		[ $((now - t0)) -ge "$durata" ] && break
+		sleep "$passo"
+	done
+	e1=$(rapl_uj); tp1=$(throttle_conta); xr1=$(xrun_conta); now=$(date +%s)
+	if [ -n "$pid" ]; then
+		# Prima i figli del carico (es. il processo lanciato da un ciclo).
+		command -v pkill >/dev/null 2>&1 && pkill -P "$pid" 2>/dev/null
+		kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+	fi
+	[ -n "$cyc" ] && wait "$cyc" 2>/dev/null
+
+	local tmp fr mm w="" lp lm
+	tmp=$(colonna "$csv" 2); fr=$(colonna "$csv" 3); mm=$(colonna "$csv" 6)
+	if [ -n "$e0" ] && [ -n "$e1" ] && [ "$now" -gt "$t0" ] && [ "$e1" -ge "$e0" ]; then
+		w=$(( (e1 - e0) / (now - t0) / 1000 ))
+	fi
+	lp=$(p99_istogramma "$cycout"); lm=$(max_istogramma "$cycout")
+	rm -f "$cycout"
+	{
+		echo "{"
+		echo "  \"profilo\": \"$profilo\","
+		echo "  \"carico\": \"$carico\","
+		echo "  \"durata_s\": $((now - t0)),"
+		echo "  \"campioni\": $n,"
+		echo "  \"temp_max_mC\": $(num "$(echo "$tmp" | cut -s -d' ' -f3)"),"
+		echo "  \"temp_media_mC\": $(num "$(echo "$tmp" | cut -s -d' ' -f2)"),"
+		echo "  \"freq_min_kHz\": $(num "$(echo "$fr" | cut -s -d' ' -f1)"),"
+		echo "  \"freq_media_kHz\": $(num "$(echo "$fr" | cut -s -d' ' -f2)"),"
+		echo "  \"freq_max_kHz\": $(num "$(echo "$fr" | cut -s -d' ' -f3)"),"
+		echo "  \"throttling_eventi\": $((tp1 - tp0)),"
+		echo "  \"potenza_media_mW\": $(num "$w"),"
+		echo "  \"mem_libera_min_kB\": $(num "$(echo "$mm" | cut -s -d' ' -f1)"),"
+		echo "  \"xrun\": $((xr1 - xr0)),"
+		echo "  \"latenza_p99_us\": $(num "$lp"),"
+		echo "  \"latenza_max_us\": $(num "$lm")"
+		echo "}"
+	} > "$json"
+	cat "$json"
+}
+
+confronta() {
+	if [ ! -f "${1:-}" ] || [ ! -f "${2:-}" ]; then
+		echo "uso: sweetspot-banco confronta a.json b.json" >&2
+		exit 2
+	fi
+	awk -F': ' '
+		/^  "/ { k = $1; gsub(/[ "]/, "", k); v = $2; gsub(/[",]/, "", v)
+			if (!(k in vis)) { vis[k] = 1; ch[++n] = k }
+			if (FNR == NR) a[k] = v; else b[k] = v }
+		END {
+			printf "%-22s %-16s %-16s\n", "metrica", "A", "B"
+			for (i = 1; i <= n; i++)
+				printf "%-22s %-16s %-16s\n", ch[i], (ch[i] in a ? a[ch[i]] : "-"), (ch[i] in b ? b[ch[i]] : "-")
+		}' "$1" "$2"
+}
+
+# Con SWEETSPOT_BANCO_SOLO_FUNZIONI=1 lo script definisce solo le funzioni.
+if [ -n "${SWEETSPOT_BANCO_SOLO_FUNZIONI:-}" ]; then return 0 2>/dev/null || exit 0; fi
+
+case "${1:-}" in
+	confronta) shift; confronta "$@" ;;
+	-h|--help|help) echo "uso: sweetspot-banco [-p profilo] [-c pcm|fir|scansione|navigazione|nessuno] [-d secondi] [-i intervallo] [-o prefisso] | confronta a.json b.json" ;;
+	*) banco "$@" ;;
+esac

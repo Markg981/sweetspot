@@ -1191,6 +1191,42 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(result["comparison"]["status"], "pass")
             self.assertEqual(result["status"], "fail")
 
+class RefusedRateEvidence(unittest.TestCase):
+    """DAC finto che rifiuta 88,2 k: la prova richiede ricampionamento, non stallo."""
+
+    def test_resampled_without_stall_passes(self):
+        log = "[12:00:00] process:1 resampling from 88200 -> 96000\n"
+        self.assertEqual(DRIVER.refused_rate_evidence(log)["status"], "pass")
+
+    def test_stall_or_missing_resampling_fails(self):
+        stalled = ("[12:00:00] output:1 device dacfinto96 refuses 88200 Hz and strict hw mode (-H) "
+                   "forbids the plughw: fallback: not resampling, output stopped\n")
+        for log in (stalled, "", "resampling from 88200 -> 48000\n",
+                    "resampling from 88200 -> 96000\n" + stalled):
+            with self.subTest(log=log):
+                self.assertEqual(DRIVER.refused_rate_evidence(log)["status"], "fail")
+
+    def test_device_accepts_only_96k_and_is_not_hw(self):
+        self.assertIn("rate 96000", DRIVER.REFUSED_ASOUNDRC)
+        self.assertFalse(DRIVER.REFUSED_DEVICE.startswith("hw:"))
+
+    def test_only_96k_in_aplay_dump(self):
+        for rate in ("96000", "[96000 96001)", "[96000 96000]"):
+            with self.subTest(rate=rate):
+                self.assertTrue(DRIVER.only_rate_offered("HW Params of device:\nRATE: %s\n" % rate, 96000))
+
+    def test_wider_or_other_rates_are_rejected(self):
+        for rate in ("[8000 192001)", "[88200 96001)", "[96000 96002)", "[96000 192000]", "88200", "[96001 96002)"):
+            with self.subTest(rate=rate):
+                self.assertFalse(DRIVER.only_rate_offered("RATE: %s\n" % rate, 96000))
+        self.assertFalse(DRIVER.only_rate_offered("nessuna riga", 96000))
+
+    def test_case_needs_a_booted_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = DRIVER.run_refused_rate_case(None, Path(temp), DRIVER.ChrootTarget(Path(temp)))
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("booted target", result["error"])
+
 class DsdPcmContentTests(unittest.TestCase):
     """Generated DSD tones and the check of a PCM capture of them (no engine involved)."""
 
@@ -1368,9 +1404,22 @@ class AlsaTransitionTailTests(unittest.TestCase):
         for frames in (noise, [(0, 0)] * 44100, self.tono(2177, 44100), self.tono(1000, 44100, peak=1 << 19)):
             self.assertEqual(DRIVER.check_tone_after_tail(frames, 44100, 1000, 1 << 21)["status"], "fail")
 
-    def test_prefisso_troppo_lungo_prima_del_tono_fallisce(self):
-        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=30000), 44100, 1000, 1 << 21)
+    def test_rilettura_del_ring_o_rumore_prima_del_tono_falliscono(self):
+        import random
+        generator = random.Random(2)
+        noise = [(generator.randint(-3 * 10 ** 7, 3 * 10 ** 7),) * 2 for _ in range(3528)]
+        # 80 ms di rumore a pieno livello subito dopo la coda, poi il tono (il difetto reale)
+        replay = noise + self.tono(1000, 44100)
+        self.assertEqual(DRIVER.check_tone_after_tail(replay, 44100, 1000, 1 << 21)["status"], "fail")
+        # contenuto identico a un tratto gia' catturato, anche se breve
+        short = noise[:300] + self.tono(1000, 44100)
+        result = DRIVER.check_tone_after_tail(short, 44100, 1000, 1 << 21, before=noise)
+        self.assertTrue(result["replayed_ring"])
         self.assertEqual(result["status"], "fail")
+
+    def test_silenzio_lungo_prima_del_tono_e_ammesso(self):
+        result = DRIVER.check_tone_after_tail(self.tono(1000, 44100, lead=8820), 44100, 1000, 1 << 21)
+        self.assertEqual(result["status"], "pass", result)
 
     def test_coda_assente_non_viene_localizzata(self):
         with tempfile.TemporaryDirectory() as temp:

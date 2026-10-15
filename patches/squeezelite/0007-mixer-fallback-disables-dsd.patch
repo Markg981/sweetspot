@@ -1,0 +1,60 @@
+Subject: [PATCH] alsa: mixer failure disables native DSD and DoP (software volume does not act on DSD)
+
+When the hardware volume mixer given with -V cannot be initialised, squeezelite
+reverts to software volume. output.c (gain forced to unity for any non-PCM
+output format) never applies that volume to native DSD or DoP, so after an
+attenuated PCM track a DSD file would play at full level (about +30 dB).
+
+Remember the fallback in output_init_alsa and make main.c ignore -D in that
+case: DSD is then converted to PCM, where the software volume applies. The
+event is logged. Nothing changes when the mixer works or without -V.
+
+Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+Upstream: Not submitted (local option)
+
+--- a/main.c
++++ b/main.c
+@@ -23,6 +23,10 @@
+  */
+ 
+ #include "squeezelite.h"
++
++#if ALSA
++extern bool alsa_sw_volume_fallback;
++#endif
+ 
+ #include <signal.h>
+ 
+@@ -792,6 +796,11 @@
+ 	}
+ 
+ #if DSD
++#if ALSA
++	// the hardware mixer failed and the volume fell back to software, which does
++	// not act on native DSD or DoP: convert DSD to PCM, where the volume applies
++	if (alsa_sw_volume_fallback) dsd_outfmt = PCM;
++#endif
+ 	dsd_init(dsd_outfmt, dsd_delay);
+ #endif
+ 
+--- a/output_alsa.c
++++ b/output_alsa.c
+@@ -908,6 +908,9 @@
+ 
+ static pthread_t thread;
+ 
++// set when the requested hardware volume mixer cannot be used (read by main.c)
++bool alsa_sw_volume_fallback = false;
++
+ void output_init_alsa(log_level level, const char *device, unsigned output_buf_size, char *params, unsigned rates[], unsigned rate_delay, unsigned rt_priority, unsigned idle, char *mixer_device, char *volume_mixer, bool mixer_unmute, bool mixer_linear) {
+ 
+ 	unsigned alsa_buffer = ALSA_BUFFER_TIME;
+@@ -984,6 +987,8 @@
+ 			atoi(volume_mixer_index) : 0) < 0)
+ 		{
+ 			LOG_ERROR("Initialization of mixer failed, reverting to software volume");
++			LOG_WARN("software volume does not act on DSD: native DSD and DoP disabled, DSD is converted to PCM");
++			alsa_sw_volume_fallback = true;
+ 			alsa.mixer_handle = NULL;
+ 			alsa.volume_mixer_name = NULL;
+ 		}

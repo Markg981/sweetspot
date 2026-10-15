@@ -7,7 +7,10 @@
  *
  *   sweetspot-precarica tieni ELENCO STATO
  *       carica i file elencati (un percorso per riga), li blocca in RAM e
- *       resta attivo fino a SIGTERM. STATO viene riscritto dopo ogni file:
+ *       resta attivo fino a SIGTERM. Con SIGUSR1 rilegge ELENCO e rilascia
+ *       (munlock/munmap) i file che non ci sono piu': e' come il precarico
+ *       cede memoria quando scende sotto la riserva. STATO viene riscritto
+ *       dopo ogni file:
  *           stato<TAB>caricamento|pronto
  *           file<TAB>byte<TAB>ok|errore: motivo<TAB>percorso
  *   sweetspot-precarica residenza FILE...
@@ -31,9 +34,18 @@ struct entry {
 	char *path;
 	long long size;
 	char result[160];
+	void *map;
+	int dropped;
 };
 
 static volatile sig_atomic_t stop;
+static volatile sig_atomic_t reload;
+
+static void on_reload(int sig)
+{
+	(void)sig;
+	reload = 1;
+}
 
 static void on_signal(int sig)
 {
@@ -54,7 +66,8 @@ static int write_state(const char *state, const char *phase, struct entry *e, in
 		return -1;
 	fprintf(f, "stato\t%s\n", phase);
 	for (i = 0; i < n; i++)
-		fprintf(f, "file\t%lld\t%s\t%s\n", e[i].size, e[i].result, e[i].path);
+		if (!e[i].dropped)
+			fprintf(f, "file\t%lld\t%s\t%s\n", e[i].size, e[i].result, e[i].path);
 	if (fclose(f) != 0)
 		return -1;
 	return rename(tmp, state);
@@ -95,7 +108,46 @@ static void hold(struct entry *e)
 		munmap(p, st.st_size);
 		return;
 	}
+	e->map = p;
 	snprintf(e->result, sizeof(e->result), "ok");
+}
+
+/* Rilegge l'elenco: i file che non ci sono piu' si sbloccano e si liberano. */
+static void drop_missing(const char *list, struct entry *e, int n)
+{
+	char line[4096];
+	FILE *f;
+	int i;
+	static char *keep[MAX_FILES];
+	int k = 0, j;
+
+	f = fopen(list, "r");
+	if (!f)
+		return;
+	while (k < MAX_FILES && fgets(line, sizeof(line), f)) {
+		line[strcspn(line, "\n")] = 0;
+		if (*line && (keep[k] = strdup(line)))
+			k++;
+	}
+	fclose(f);
+	for (i = 0; i < n; i++) {
+		int found = 0;
+
+		if (e[i].dropped)
+			continue;
+		for (j = 0; j < k && !found; j++)
+			found = strcmp(keep[j], e[i].path) == 0;
+		if (found)
+			continue;
+		if (e[i].map) {
+			munlock(e[i].map, e[i].size);
+			munmap(e[i].map, e[i].size);
+			e[i].map = NULL;
+		}
+		e[i].dropped = 1;
+	}
+	for (j = 0; j < k; j++)
+		free(keep[j]);
 }
 
 static int cmd_hold(const char *list, const char *state)
@@ -110,6 +162,8 @@ static int cmd_hold(const char *list, const char *state)
 	sa.sa_handler = on_signal;
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
+	sa.sa_handler = on_reload;
+	sigaction(SIGUSR1, &sa, NULL);
 
 	f = fopen(list, "r");
 	if (!f) {
@@ -133,6 +187,12 @@ static int cmd_hold(const char *list, const char *state)
 
 	write_state(state, "caricamento", e, n);
 	for (i = 0; i < n && !stop; i++) {
+		if (reload) {
+			reload = 0;
+			drop_missing(list, e, n);
+		}
+		if (e[i].dropped)
+			continue;
 		hold(&e[i]);
 		write_state(state, "caricamento", e, n);
 	}
@@ -142,8 +202,14 @@ static int cmd_hold(const char *list, const char *state)
 		perror(state);
 		return 2;
 	}
-	while (!stop)
-		pause();
+	while (!stop) {
+		if (reload) {
+			reload = 0;
+			drop_missing(list, e, n);
+			write_state(state, "pronto", e, n);
+		}
+		sleep(1);
+	}
 	return 0;
 }
 

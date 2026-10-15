@@ -24,6 +24,22 @@ rm -rf "${TARGET_DIR:?}/boot"
 # SSH parte solo se attivato in sweetspot.txt (S45sweetspot-ssh).
 rm -f "$TARGET_DIR/etc/init.d/S50dropbear"
 
+# Bluetooth: parte solo se attivato (S58sweetspot-bluetooth). D-Bus non deve
+# partire da solo all'avvio: lo avvia il servizio Bluetooth, per cui lo script
+# di Buildroot perde il prefisso S e resta richiamabile a mano.
+if [ -e "$TARGET_DIR/etc/init.d/S30dbus" ]; then
+	mv "$TARGET_DIR/etc/init.d/S30dbus" "$TARGET_DIR/etc/init.d/dbus"
+fi
+rm -f "$TARGET_DIR"/etc/init.d/S[0-9][0-9]bluetooth "$TARGET_DIR"/etc/init.d/S[0-9][0-9]bluealsa
+# Il build deve includere bluez e bluez-alsa: senza, la funzione non esiste.
+for f in bluetoothd bluealsa bluealsa-aplay bluetoothctl dbus-send; do
+	if ! find "$TARGET_DIR/usr/bin" "$TARGET_DIR/usr/sbin" "$TARGET_DIR/usr/libexec" "$TARGET_DIR/usr/lib/bluetooth" \
+			-name "$f" -type f 2>/dev/null | grep -q .; then
+		echo "post-build: manca $f (bluez5_utils / bluez-alsa / dbus nel defconfig?)" >&2
+		exit 1
+	fi
+done
+
 # Cartelle della libreria: /musica raccoglie i collegamenti a dischi e
 # cartelle di rete, montati in /media.
 mkdir -p "$TARGET_DIR/musica" "$TARGET_DIR/media" "$TARGET_DIR/var/lib"
