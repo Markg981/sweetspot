@@ -204,7 +204,7 @@ run "$OOM" oom_adj_cmd 500 scanner.pl
 expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
 expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
 grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
-grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && set -- "\$@" -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
+grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && printf .%s\\n. -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
 grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
 grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
@@ -836,7 +836,7 @@ case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita
 
 # Stallo da frequenza (-H) e ricampionamento "solo se serve" (flag E).
 diag_freq() { SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati; }
-grep -q 'set -- "\$@" -R "vLE"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
+grep -q "printf '%s\\\\n' -R vLE" "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
 grep -q '^FREQUENZA_NON_SUPPORTATA=ricampiona' "$OVERLAY/etc/sweetspot/defaults.conf" && ok "default: FREQUENZA_NON_SUPPORTATA=ricampiona" || ko "default FREQUENZA_NON_SUPPORTATA" "ricampiona" "assente"
 printf '[12:00:00] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n[12:00:05] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)

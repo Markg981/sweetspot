@@ -444,6 +444,7 @@ zone_start() { # scheda [numero di zone]
 	set -- -o "hw:CARD=$id,DEV=$dev" -a "$alsa:$periods:$outfmt:1" -n "$name" -M Sweetspot -m "$mac"
 	# Gli stessi argomenti comuni del principale; i buffer in RAM si dividono
 	# fra le zone (PLAYER_BUFFERS_DIV).
+	# shellcheck disable=SC2046  # un argomento per riga, nessuno con spazi
 	set -- "$@" $(PLAYER_BUFFERS_DIV=$((nz * 2)) common_args "$card" "$ZONE_LOGDIR/squeezelite-$id.log" "$prio" "$alsa" "")
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	# Niente DSD nativo ne' DoP sulle zone: il volume della zona e' software
@@ -502,7 +503,8 @@ zone_log_rotate() { # file
 	[ "$max" -gt 0 ] || max=1024
 	size=$(wc -c < "$1" | tr -d ' ')
 	[ "${size:-0}" -ge $((max * 1024)) ] || return 0
-	tail -c 65536 "$1" > "$RUN/zona.rotazione" 2>/dev/null && cat "$RUN/zona.rotazione" > "$1"
+	cp "$1" "$RUN/zona.rotazione" 2>/dev/null || { rm -f "$RUN/zona.rotazione"; return 1; }
+	tail -c 65536 "$RUN/zona.rotazione" > "$1"
 	rm -f "$RUN/zona.rotazione"
 }
 
@@ -776,6 +778,7 @@ run_player() {
 	# Argomenti comuni a DAC principale e zone (buffer, priorita', registro,
 	# frequenza massima e pausa, ricampionamento, -H): vedi common_args.
 	set -- "$@" -n "$name" -M Sweetspot -m "$PLAYER_MAC"
+	# shellcheck disable=SC2046  # un argomento per riga, nessuno con spazi
 	set -- "$@" $(common_args "$card" "$SQLOG" "$prio" "$alsa" "$dsp" 1)
 	[ -n "$server" ] && set -- "$@" -s "$server"
 
