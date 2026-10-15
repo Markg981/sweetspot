@@ -277,7 +277,7 @@ expect 'dati non salvati da oltre il limite: si salva comunque' si "$(lock_probe
 echo 'DATI_ETA_MAX_MIN=0' > "$D/run/sweetspot.conf"
 expect 'limite 0: nessun salvataggio forzato' no "$(lock_probe 'dirty_too_old && echo si || echo no')"
 echo 'DATI_ETA_MAX_MIN=10' > "$D/run/sweetspot.conf"
-expect 'salvataggio forzato a bassa priorita: riuscito' 0"$(lock_probe 'bg_self() { echo bassa > "$RUN/bassa"; }; do_save_low >/dev/null 2>&1; echo $?')"
+expect 'salvataggio forzato a bassa priorita: riuscito' 0 "$(lock_probe 'bg_self() { echo bassa > "$RUN/bassa"; }; do_save_low >/dev/null 2>&1; echo $?')"
 expect 'salvataggio forzato: eseguito a bassa priorita e dati azzerati' bassa-no \
 	"$(printf '%s-' "$(cat "$D/run/bassa" 2>/dev/null)"; [ -e "$D/run/dati.sporco" ] && echo si || echo no)"
 if [ -f "$D/conf.salvata" ]; then cp "$D/conf.salvata" "$D/run/sweetspot.conf"; else rm -f "$D/run/sweetspot.conf"; fi
