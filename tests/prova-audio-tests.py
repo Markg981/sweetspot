@@ -1404,6 +1404,29 @@ class AlsaTransitionTailTests(unittest.TestCase):
         self.assertEqual((evidence["opens"], evidence["drained"], evidence["dropped"], evidence["xruns"]),
                          (2, 1, 0, 0))
 
+    def test_il_drain_prima_del_primo_brano_non_e_il_cambio_di_frequenza(self):
+        class Target:
+            def __init__(self, text):
+                self.text = text
+
+            def read_bytes(self, _path):
+                return self.text.encode()
+
+        class Running:
+            def poll(self):
+                return None
+
+        idle = ("alsa_open:417 opening device at: 44100\n"
+                "alsa_drain_before_close:313 drained 288 ms before closing\n"
+                "_output_frames:153 track start sample rate: 48000 replay_gain: 0\n")
+        # Un solo avvio di brano: il drain a dispositivo inattivo non basta, scade.
+        with self.assertRaises(DRIVER.AudioError):
+            DRIVER.wait_engine_reopen(Target(idle), "log", Running(), timeout=.3, interval=.05)
+        # Secondo brano avviato e drain dopo di esso: e' il cambio di frequenza.
+        changed = idle + ("_output_frames:153 track start sample rate: 44100 replay_gain: 0\n"
+                          "alsa_drain_before_close:313 drained 392 ms before closing\n")
+        DRIVER.wait_engine_reopen(Target(changed), "log", Running(), timeout=.3, interval=.05)
+
     def test_marcatori_dop_alternati_nella_coda(self):
         def dop(markers):
             return [((marker << 24) | 0x123400, (marker << 24) | 0x56700) for marker in markers]

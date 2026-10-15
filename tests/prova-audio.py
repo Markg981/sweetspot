@@ -684,15 +684,23 @@ def wait_loopback_left_rate(target, rate, process, timeout=15, interval=.05):
 
 
 def wait_engine_reopen(target, log, process, timeout=30, interval=.1):
-    """Wait until the engine log reports the drain done (patch 0005), i.e. before the reopen."""
+    """Wait until the engine log reports the drain done (patch 0005), i.e. before the reopen.
+
+    Only a drain after the second track start counts: when the first rate is not
+    the one the idle device was opened at, Squeezelite also drains and reopens
+    before the first track, and that is not the rate change under test.
+    """
     deadline = time.monotonic() + timeout
     needles = (b"before closing", b"drain skipped", b"snd_pcm_drain error")
+    marker = b"track start sample rate"
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise AudioError("Squeezelite exited with status %s during the rate change" % process.returncode)
         try:
             data = target.read_bytes(log)
-            if any(needle in data for needle in needles):
+            first = data.find(marker)
+            second = data.find(marker, first + 1) if first >= 0 else -1
+            if second >= 0 and any(needle in data[second:] for needle in needles):
                 return
         except OSError:
             pass
