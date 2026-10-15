@@ -455,16 +455,44 @@ check_zones() {
 	is_yes "$(conf ALTRI_DAC no)" || return 0
 	for f in "$RUN"/zone/*; do
 		[ -f "$f" ] || continue
-		read -r pid id < "$f"
+		read -r pid id _ < "$f"
 		if kill -0 "$pid" 2>/dev/null; then list="$list, $id"; else down="$down, $id"; fi
 	done
 	if [ -n "$down" ]; then
 		emit ATTENZIONE "Altri DAC (zone)" "player fermo su ${down#, }: riparte entro pochi secondi"
 	elif [ -n "$list" ]; then
 		emit OK "Altri DAC (zone)" "un player in Lyrion per ${list#, }; si raggruppano da Lyrion"
+		check_zone_capacita
 	else
 		emit INFO "Altri DAC (zone)" "nessun altro DAC USB collegato"
 	fi
+}
+
+# Valore di una capacita' ($RUN/capacita/<nome>, scritto da sweetspot-player).
+cap_get() { # nome chiave
+	sed -n "s/^$2=//p" "$RUN/capacita/$1" 2>/dev/null | head -n 1
+}
+
+# Cosa fa ogni zona rispetto al DAC principale. La parita' e' piena per
+# buffer, priorita', frequenze, ricampionamento, formato di uscita, registro e
+# supervisione; qui si dice dove la zona e' diversa e perche'.
+check_zone_capacita() {
+	local f n id txt dsd
+	for f in "$RUN"/capacita/zona-*; do
+		[ -f "$f" ] || continue
+		case "$f" in *.args|*.nuovo) continue ;; esac
+		n=${f##*/}
+		id=$(cap_get "$n" dac)
+		dsd=$(cap_get "$n" dsd_dac)
+		txt="DSD: convertito in PCM (volume software di Lyrion"
+		[ "$dsd" != no ] && txt="$txt; il DAC avrebbe il DSD nativo $dsd"
+		txt="$txt); volume: $(cap_get "$n" volume) di Lyrion, mixer del DAC a 0 dB"
+		txt="$txt; correzione ambientale e volume a 64 bit: solo sul DAC principale"
+		txt="$txt; frequenza massima annunciata: $(cap_get "$n" frequenza_max) Hz"
+		txt="$txt; priorita' real-time $(cap_get "$n" priorita) sui core di sistema $(cap_get "$n" core)"
+		txt="$txt; buffer ALSA $(cap_get "$n" buffer_alsa_ms) ms"
+		emit INFO "Capacita' zona $id" "$txt"
+	done
 }
 
 # Frequenza rifiutata dal DAC (stallo con -H) o ricampionata perche' non

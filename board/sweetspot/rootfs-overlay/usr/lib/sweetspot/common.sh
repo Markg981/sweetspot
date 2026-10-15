@@ -591,7 +591,9 @@ ram_quote_calc() {
 	RAM_RISERVA=$((RAM_SISTEMA + RAM_SERVIZI + RAM_ALSA))
 	rest=$((RAM_POOL - RAM_RISERVA))
 	[ "$rest" -gt 0 ] || rest=0
-	budget=$((rest / 2))
+	# PLAYER_BUFFERS_DIV: le zone (altri DAC) si dividono il budget fra loro,
+	# cosi' piu' player non superano insieme quello di uno.
+	budget=$((rest / 2 / ${PLAYER_BUFFERS_DIV:-1}))
 	smax=$RAM_STREAM_MAX_KB
 	omax=$RAM_OUTPUT_MAX_KB
 	if [ "$budget" -lt $((smax + omax)) ]; then

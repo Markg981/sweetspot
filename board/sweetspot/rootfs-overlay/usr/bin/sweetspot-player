@@ -78,6 +78,88 @@ setup_usb_irq() {
 	log "player: controller USB $bdf, interruzioni $irqs sul core ${target:-di sistema}"
 }
 
+# --- Parametri condivisi fra DAC principale e zone ----------------------------------
+#
+# Cio' che non dipende dal percorso del segnale (CamillaDSP, volume a 64 bit,
+# DSD nativo, core isolato) si calcola qui una volta sola: le zone non possono
+# divergere dal DAC principale.
+
+# Buffer ALSA in ms (BUFFER_ALSA_MS, limitato a 20..499).
+alsa_buffer_ms() {
+	local alsa
+	alsa=$(num_conf BUFFER_ALSA_MS 400)
+	[ "$alsa" -gt 499 ] && alsa=499
+	[ "$alsa" -lt 20 ] && alsa=20
+	printf '%s' "$alsa"
+}
+
+# Formato di uscita forzato (FORMATO_USCITA) o vuoto per la scelta automatica.
+output_format() {
+	case "$(conf FORMATO_USCITA auto)" in 16|24|24_3|32) conf FORMATO_USCITA ;; *) printf '' ;; esac
+}
+
+# Frequenza massima annunciata a Lyrion (HELO MaxSampleRate, dal -r di
+# Squeezelite o dal probe del DAC): sopra, Lyrion ricampiona lato server con
+# sox. FREQUENZA_MAX puo' solo abbassarla. Vuota se non nota.
+announced_max_rate() { # scheda
+	local top maxrate
+	maxrate=$(num_conf FREQUENZA_MAX 0)
+	top=$(dac_rates "$1" 2>/dev/null | tr ' ' '\n' | grep . | sort -n | tail -n 1)
+	if [ "$maxrate" -gt 0 ] && { [ -z "$top" ] || [ "$maxrate" -lt "$top" ]; }; then top=$maxrate; fi
+	printf '%s' "$top"
+}
+
+# Argomenti di Squeezelite uguali per DAC principale e zone, uno per riga
+# (nessuno contiene spazi): buffer di ingresso/uscita, thread real-time,
+# registro (decode=info: resample.c scrive "resampling from X -> Y" con questo
+# livello, che Stato usa per segnalare il ricampionamento), frequenza massima
+# e pausa fra frequenze diverse, ricampionamento facoltativo o di ripiego,
+# uscita hw: senza plughw:. Con dsp (solo DAC principale con CamillaDSP)
+# niente ripiego ne' -H: il dispositivo ALSA e' quello di CamillaDSP.
+common_args() { # scheda registro priorita' buffer_alsa_ms dsp [buffers_nel_registro]
+	local rate_ms maxrate rs alsa=$4 dsp=$5
+	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 0)
+	maxrate=$(num_conf FREQUENZA_MAX 0)
+	printf '%s\n' -b "$(PLAYER_BUFFERS_LOG=${6:-0} player_buffers)" -C 30 -p "$3" \
+		-d output=info -d decode=info -f "$2"
+	# Pausa fra brani a frequenza diversa: Squeezelite svuota il buffer ALSA
+	# (patch 0005) prima di riaprire il DAC; la pausa minima e' quanto il
+	# buffer reale impiega a uscire, PAUSA_FREQUENZA_MS puo' solo allungarla.
+	[ "$rate_ms" -lt "$alsa" ] && rate_ms=$alsa
+	if [ "$maxrate" -gt 0 ]; then printf '%s\n' -r "$maxrate:$rate_ms"; else printf '%s\n' -r ":$rate_ms"; fi
+	rs=$(resample_args)
+	[ -n "$rs" ] && printf '%s\n' -R "$rs"
+	# Ricampiona solo se il DAC non puo' (flag E di Squeezelite): le frequenze
+	# supportate restano bit-perfect, le altre vanno a una che il DAC accetta
+	# invece di bloccarsi con -H. FREQUENZA_NON_SUPPORTATA=blocca mantiene il
+	# rifiuto stretto (la pagina Stato mostra lo stallo).
+	if [ -z "$rs" ] && [ -z "$dsp" ]; then
+		if [ "$(lower "$(conf FREQUENZA_NON_SUPPORTATA ricampiona)")" = blocca ]; then
+			log "player: frequenza non supportata dal DAC: rifiuto stretto (FREQUENZA_NON_SUPPORTATA=blocca)"
+		else
+			printf '%s\n' -R vLE
+		fi
+	fi
+	# Originale (niente ricampionamento, uscita diretta hw:): Squeezelite non
+	# deve ripiegare su plughw: se il DAC rifiuta la frequenza, altrimenti ALSA
+	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
+	[ -z "$rs" ] && [ -z "$dsp" ] && printf '%s\n' -H
+	return 0
+}
+
+# Capacita' di ogni player (principale e zone) in $RUN/capacita/<nome>, righe
+# chiave=valore: cosa il percorso fa davvero su quel DAC. Dove la parita' con
+# il principale non e' possibile (CamillaDSP, volume a 64 bit, DSD nativo,
+# core isolato) lo dice qui; Stato lo mostra.
+CAP_DIR=$RUN/capacita
+
+cap_write() { # nome chiave=valore...
+	local f=$CAP_DIR/$1
+	shift
+	mkdir -p "$CAP_DIR"
+	printf '%s\n' "$@" > "$f.nuovo" && mv "$f.nuovo" "$f"
+}
+
 # Sposta il thread real-time di squeezelite sul core della riproduzione.
 # Squeezelite lo crea dopo aver preparato i buffer: si riprova a ogni giro
 # di sorveglianza finche' non compare.
@@ -333,48 +415,193 @@ zone_mac() { # scheda
 	printf '%s %s' "$(dac_usbid "$1")" "$serial" | md5sum | awk '{ s = $1; printf "02:%s:%s:%s:%s:%s", substr(s, 1, 2), substr(s, 3, 2), substr(s, 5, 2), substr(s, 7, 2), substr(s, 9, 2) }'
 }
 
-zone_start() { # scheda
-	local card=$1 id dev name server prio
+# Parita' con il DAC principale: buffer, frequenza massima annunciata e pausa
+# fra frequenze, ricampionamento (anche di ripiego), -H, registro con
+# decode=info, formato di uscita, MAC stabile, preferenze di fedelta' in
+# Lyrion, supervisione con ritardo crescente, rotazione del registro, OOM e
+# diagnostica (argomenti e capacita' in $RUN/capacita). Non e' possibile sulle
+# zone, e lo dice il file delle capacita': CamillaDSP e volume a 64 bit (un
+# solo processo, sul principale), DSD nativo/DoP (volume software di Lyrion),
+# core isolato e interruzioni USB dedicate (restano al principale).
+ZONE_RIAVVIO=$RUN/zone-riavvio
+SYNC_DIR=$RUN/sync
+ZONE_LOGDIR=${SQLOG%/*}
+
+# Il MAC dei due punti non e' un nome di file comodo.
+mac_key() { printf '%s' "$1" | tr ':' '_'; }
+
+zone_start() { # scheda [numero di zone]
+	local card=$1 nz=${2:-1} id dev name server prio alsa periods outfmt mac dsdfmt top rs pid
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	name="$(conf NOME_PLAYER Sweetspot) - $(dac_name "$card")"
 	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
 	prio=$(( $(num_conf PRIORITA_AUDIO 80) - 5 ))
-	set -- -o "hw:CARD=$id,DEV=$dev" -a "$(num_conf BUFFER_ALSA_MS 400):$(num_conf PERIODI_ALSA 4)::1" \
-		-n "$name" -M Sweetspot -m "$(zone_mac "$card")" -C 30 -p "$prio" \
-		-d output=info -d decode=info -f "/var/log/squeezelite-$id.log"
+	alsa=$(alsa_buffer_ms)
+	periods=$(num_conf PERIODI_ALSA 4)
+	outfmt=$(output_format)
+	mac=$(zone_mac "$card")
+	set -- -o "hw:CARD=$id,DEV=$dev" -a "$alsa:$periods:$outfmt:1" -n "$name" -M Sweetspot -m "$mac"
+	# Gli stessi argomenti comuni del principale; i buffer in RAM si dividono
+	# fra le zone (PLAYER_BUFFERS_DIV).
+	# shellcheck disable=SC2046  # un argomento per riga, nessuno con spazi
+	set -- "$@" $(PLAYER_BUFFERS_DIV=$((nz * 2)) common_args "$card" "$ZONE_LOGDIR/squeezelite-$id.log" "$prio" "$alsa" "")
 	[ -n "$server" ] && set -- "$@" -s "$server"
 	# Niente DSD nativo ne' DoP sulle zone: il volume della zona e' software
 	# (Lyrion) e Squeezelite non lo applica al DSD, che suonerebbe al 100%
 	# dopo un brano PCM attenuato. Il DSD si converte in PCM, attenuabile.
-	# Le zone non ricampionano mai: niente ripiego su plughw: (vedi run_player).
-	set -- "$@" -H
-	mkdir -p "$ZONE_DIR"
+	mkdir -p "$ZONE_DIR" "$ZONE_RIAVVIO" "$SYNC_DIR" "$CAP_DIR"
 	# Il volume della zona lo fa Lyrion (software): il mixer del DAC a 0 dB.
 	dac_unity_gain "$card"
 	SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset -c "$HK" squeezelite "$@" &
-	echo "$! $id" > "$ZONE_DIR/$card"
+	pid=$!
+	echo "$pid $id" > "$ZONE_DIR/$card"
+	oom_adj -1000 "$pid"
+	# Diagnostica: argomenti e capacita' di questa zona.
+	printf '%s ' "$@" > "$CAP_DIR/zona-$id.args"
+	dsdfmt=$(dac_native_dsd "$card")
+	top=$(announced_max_rate "$card")
+	rs=$(resample_args)
+	cap_write "zona-$id" tipo=zona "dac=$id" "nome=$name" "mac=$mac" "frequenza_max=$top" \
+		"formati=$(dac_formats "$card")" "dsd_dac=${dsdfmt:-no}" dsd=pcm volume=software \
+		volume_64bit=no correzione=no "priorita=$prio" "core=$HK" "buffer_alsa_ms=$alsa" \
+		"periodi=$periods" "formato_uscita=${outfmt:-auto}" "ricampionamento=${rs:-no}" irq_usb=sistema
+	# Dopo un riavvio Lyrion puo' non rimettere la zona nel suo gruppo: si
+	# riapplicano le preferenze e il gruppo ricordato (vedi sync_poll).
+	: > "$SYNC_DIR/$(mac_key "$mac").pendente"
+	rm -f "$SYNC_DIR/$(mac_key "$mac").visto"
+	echo "$(date +%s) $(cat "$ZONE_RIAVVIO/$card.ritardo" 2>/dev/null || echo 0)" > "$ZONE_RIAVVIO/$card.avvio"
 	log "player: zona \"$name\" sul DAC $id"
 }
 
+# Una zona terminata da sola si riavvia con il ritardo crescente del
+# principale (backoff_next): senza, un DAC che fa cadere Squeezelite subito
+# lo rilancerebbe a ogni giro.
+zone_note_exit() { # scheda
+	local card=$1 t0 prev delay now
+	now=$(date +%s)
+	[ -f "$ZONE_RIAVVIO/$card.avvio" ] && read -r t0 prev < "$ZONE_RIAVVIO/$card.avvio"
+	delay=$(backoff_next "${prev:-0}" $(( now - ${t0:-$now} )))
+	echo "$delay" > "$ZONE_RIAVVIO/$card.ritardo"
+	echo $(( now + delay )) > "$ZONE_RIAVVIO/$card.fino"
+	# Conta il riavvio fra quelli del player (restart_conta, via evento).
+	evento player riavvio-zona "zona sul DAC $card terminata"
+	[ "$delay" -gt 0 ] && log "player: zona sul DAC $card terminata subito, nuovo tentativo tra $delay s"
+}
+
+zone_ready() { # scheda
+	local fino
+	fino=$(cat "$ZONE_RIAVVIO/$1.fino" 2>/dev/null)
+	[ -z "$fino" ] || [ "$(date +%s)" -ge "$fino" ]
+}
+
+# Sincronizzazione multiroom. Le zone si annunciano a Lyrion con MAC stabile
+# (zone_mac), nome e modello e restano nello stesso gruppo se Lyrion le
+# ricorda. Qui si ricorda il gruppo (a regime, ogni PREFS_OGNI secondi) e,
+# dopo l'avvio di un player, quando e' tornato collegato da qualche secondo e
+# Lyrion non l'ha rimesso da solo nel gruppo, lo si risincronizza con un
+# membro collegato. Un gruppo sciolto da Lyrion si dimentica.
+sync_poll() { # mac
+	local mac=$1 key cur now last visto p LMS_HOST=$LMS_HOST srv pend=0
+	if [ "$(mode)" != completa ]; then
+		srv=$(conf SERVER)
+		[ -n "$srv" ] || return 0
+		LMS_HOST=${srv%%:*}
+	fi
+	key=$(mac_key "$mac")
+	mkdir -p "$SYNC_DIR"
+	now=$(date +%s)
+	[ -f "$SYNC_DIR/$key.pendente" ] && pend=1
+	last=$(cat "$SYNC_DIR/$key.t" 2>/dev/null)
+	if [ "$pend" = 0 ] && [ $(( now - ${last:-0} )) -lt "$PREFS_OGNI" ]; then return 0; fi
+	echo "$now" > "$SYNC_DIR/$key.t"
+	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$mac" connected '?')" = 1 ] || return 0
+	cur=$(LMS_TIMEOUT=5 lms_get '(._sync | if type == "array" then join(",") else . end)' "$mac" sync '?')
+	if [ "$pend" = 1 ]; then
+		visto=$(cat "$SYNC_DIR/$key.visto" 2>/dev/null)
+		if [ -z "$visto" ]; then echo "$now" > "$SYNC_DIR/$key.visto"; return 0; fi
+		[ $(( now - visto )) -ge 5 ] || return 0
+		rm -f "$SYNC_DIR/$key.pendente" "$SYNC_DIR/$key.visto"
+		if [ "$cur" = "-" ] && [ -s "$SYNC_DIR/$key.gruppo" ]; then
+			for p in $(cat "$SYNC_DIR/$key.gruppo"); do
+				[ "$p" = "$mac" ] && continue
+				[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$p" connected '?')" = 1 ] || continue
+				if lms_json "$mac" sync "$p" > /dev/null; then
+					log "player: $mac rimesso nel gruppo di sincronizzazione di $p"
+					return 0
+				fi
+			done
+			log "player: gruppo di sincronizzazione di $mac non ripristinabile (nessun membro collegato)"
+		fi
+		return 0
+	fi
+	case "$cur" in
+		-) rm -f "$SYNC_DIR/$key.gruppo" ;;
+		'') ;;
+		*) printf '%s\n' "$cur" | tr ',' '\n' | grep -vi "^$mac\$" | tr '\n' ' ' > "$SYNC_DIR/$key.gruppo" ;;
+	esac
+}
+
+# Preferenze di fedelta' di una zona in Lyrion (come apply_player_prefs per il
+# principale): volume digitale acceso, niente ReplayGain, dissolvenze o limite
+# di bitrate. Si rileggono ogni PREFS_OGNI secondi e si reimpostano se divergono.
+zone_prefs_poll() { # mac
+	local mac=$1 key now last dig LMS_HOST=$LMS_HOST srv
+	if [ "$(mode)" != completa ]; then
+		srv=$(conf SERVER)
+		[ -n "$srv" ] || return 0
+		LMS_HOST=${srv%%:*}
+	fi
+	key=$(mac_key "$mac")
+	now=$(date +%s)
+	last=$(cat "$SYNC_DIR/$key.prefs" 2>/dev/null)
+	[ $(( now - ${last:-0} )) -ge "$PREFS_OGNI" ] || return 0
+	echo "$now" > "$SYNC_DIR/$key.prefs"
+	[ "$(LMS_TIMEOUT=5 lms_get '._connected' "$mac" connected '?')" = 1 ] || return 0
+	# Modalita' volume delle zone: sempre software (vedi volume_modo_calcola).
+	dig=$(volume_prefs software | cut -d' ' -f1)
+	[ -z "$(prefs_divergenti "$dig" "$mac")" ] && return 0
+	lms_json "$mac" playerpref digitalVolumeControl "$dig" > /dev/null || return 0
+	lms_json "$mac" playerpref replayGainMode 0 > /dev/null || return 0
+	lms_json "$mac" playerpref transitionType 0 > /dev/null || return 0
+	lms_json "$mac" playerpref maxBitrate 0 > /dev/null || return 0
+	log "player: preferenze di fedelta' riapplicate alla zona $mac"
+}
+
 # Allinea le zone ai DAC collegati: ferma quelle di DAC staccati (o diventati
-# il principale, o con ALTRI_DAC=no), riavvia quelle cadute, avvia le nuove.
+# il principale, o con ALTRI_DAC=no), riavvia quelle cadute (con ritardo
+# crescente), avvia le nuove e sorveglia le altre (registro, Lyrion).
 zones_sync() { # scheda del DAC principale (vuota se manca)
-	local f card pid id want=0
+	local f card pid id want=0 cards nz mac
 	is_yes "$(conf ALTRI_DAC no)" && want=1
 	for f in "$ZONE_DIR"/*; do
 		[ -f "$f" ] || continue
 		card=${f##*/}
 		read -r pid id < "$f"
-		if [ "$want" = 0 ] || [ "$card" = "$1" ] || [ "$(dac_id "$card")" != "$id" ] || ! kill -0 "$pid" 2>/dev/null; then
+		if [ "$want" = 0 ] || [ "$card" = "$1" ] || [ "$(dac_id "$card")" != "$id" ]; then
 			kill "$pid" 2>/dev/null
+			rm -f "$f" "$ZONE_RIAVVIO/$card".* "$CAP_DIR/zona-$id" "$CAP_DIR/zona-$id.args"
+			log "player: zona sul DAC $id fermata"
+		elif ! kill -0 "$pid" 2>/dev/null; then
 			rm -f "$f"
+			zone_note_exit "$card"
 			log "player: zona sul DAC $id fermata"
 		fi
 	done
 	[ "$want" = 1 ] || return 0
-	for card in $(other_dacs "$1"); do
-		[ -f "$ZONE_DIR/$card" ] || zone_start "$card"
+	cards=$(other_dacs "$1")
+	nz=$(count_words "$cards")
+	for card in $cards; do
+		if [ -f "$ZONE_DIR/$card" ]; then
+			read -r _ id < "$ZONE_DIR/$card"
+			mac=$(sed -n 's/^mac=//p' "$CAP_DIR/zona-$id" 2>/dev/null)
+			if [ -n "$mac" ]; then
+				zone_prefs_poll "$mac"
+				sync_poll "$mac"
+			fi
+		elif zone_ready "$card"; then
+			zone_start "$card" "$nz"
+		fi
 	done
 }
 
@@ -479,20 +706,16 @@ correzione_non_applicabile() { # motivo
 }
 
 run_player() {
-	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa rate_ms maxrate outfmt vol ctl rs dsp top a
+	local problema card=$1 id dev name server alsa periods prio dsd fmt pausa outfmt vol ctl dsp top a
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	name=$(conf NOME_PLAYER Sweetspot)
 	if [ "$(mode)" = completa ]; then server=127.0.0.1; else server=$(conf SERVER); fi
-	alsa=$(num_conf BUFFER_ALSA_MS 400)
-	[ "$alsa" -gt 499 ] && alsa=499
-	[ "$alsa" -lt 20 ] && alsa=20
+	alsa=$(alsa_buffer_ms)
 	periods=$(num_conf PERIODI_ALSA 4)
 	prio=$(num_conf PRIORITA_AUDIO 80)
 	pausa=$(num_conf PAUSA_DSD_MS 500)
-	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 0)
-	maxrate=$(num_conf FREQUENZA_MAX 0)
-	case "$(conf FORMATO_USCITA auto)" in 16|24|24_3|32) outfmt=$(conf FORMATO_USCITA) ;; *) outfmt="" ;; esac
+	outfmt=$(output_format)
 	PLAYER_MAC=$(player_mac)
 	echo "$PLAYER_MAC" > "$RUN/player.mac"
 
@@ -540,45 +763,17 @@ run_player() {
 	else
 		set -- -o "hw:CARD=$id,DEV=$dev" -a "$alsa:$periods:$outfmt:1"
 	fi
-	# decode=info: resample.c scrive "resampling from X -> Y" con il livello di
-	# decode, che la pagina Stato usa per segnalare il ricampionamento.
-	set -- "$@" -n "$name" -M Sweetspot -m "$PLAYER_MAC" \
-		-b "$(PLAYER_BUFFERS_LOG=1 player_buffers)" -C 30 -p "$prio" \
-		-d output=info -d decode=info -f "$SQLOG"
+	# Argomenti comuni a DAC principale e zone (buffer, priorita', registro,
+	# frequenza massima e pausa, ricampionamento, -H): vedi common_args.
+	set -- "$@" -n "$name" -M Sweetspot -m "$PLAYER_MAC"
+	# shellcheck disable=SC2046  # un argomento per riga, nessuno con spazi
+	set -- "$@" $(common_args "$card" "$SQLOG" "$prio" "$alsa" "$dsp" 1)
 	[ -n "$server" ] && set -- "$@" -s "$server"
-	# Pausa fra brani a frequenza diversa: Squeezelite svuota il buffer ALSA
-	# (patch 0005) prima di riaprire il DAC; la pausa minima e' quanto il
-	# buffer reale impiega a uscire, PAUSA_FREQUENZA_MS puo' solo allungarla.
-	[ "$rate_ms" -lt "$alsa" ] && rate_ms=$alsa
-	if [ "$maxrate" -gt 0 ]; then
-		set -- "$@" -r "$maxrate:$rate_ms"
-	else
-		set -- "$@" -r ":$rate_ms"
-	fi
-	rs=$(resample_args)
-	[ -n "$rs" ] && set -- "$@" -R "$rs"
-	# Ricampiona solo se il DAC non puo' (flag E di Squeezelite): le frequenze
-	# supportate restano bit-perfect, le altre vanno a una che il DAC accetta
-	# invece di bloccarsi con -H. FREQUENZA_NON_SUPPORTATA=blocca mantiene il
-	# rifiuto stretto (la pagina Stato mostra lo stallo).
-	if [ -z "$rs" ] && [ -z "$dsp" ]; then
-		if [ "$(lower "$(conf FREQUENZA_NON_SUPPORTATA ricampiona)")" = blocca ]; then
-			log "player: frequenza non supportata dal DAC: rifiuto stretto (FREQUENZA_NON_SUPPORTATA=blocca)"
-		else
-			set -- "$@" -R "vLE"
-		fi
-	fi
-	# Originale (niente ricampionamento, uscita diretta hw:): Squeezelite non
-	# deve ripiegare su plughw: se il DAC rifiuta la frequenza, altrimenti ALSA
-	# ricampiona di nascosto. Con -H si ferma e scrive l'errore nel registro.
-	[ -z "$rs" ] && [ -z "$dsp" ] && set -- "$@" -H
 
-	# Frequenza massima che il player dichiara a Lyrion (HELO MaxSampleRate,
-	# dal -r di Squeezelite o dal probe del DAC): sopra, Lyrion ricampiona lato
-	# server con sox. Annotata per la pagina Stato (check_lyrion_sox);
-	# MaxSampleRate non e' una preferenza di Lyrion, non si imposta da qui.
-	top=$(dac_rates "$card" 2>/dev/null | tr ' ' '\n' | grep . | sort -n | tail -n 1)
-	if [ "$maxrate" -gt 0 ] && { [ -z "$top" ] || [ "$maxrate" -lt "$top" ]; }; then top=$maxrate; fi
+	# Frequenza massima annunciata a Lyrion (HELO MaxSampleRate). Annotata per
+	# la pagina Stato (check_lyrion_sox); MaxSampleRate non e' una preferenza
+	# di Lyrion, non si imposta da qui.
+	top=$(announced_max_rate "$card")
 	rm -f "$RUN/frequenza.max"
 	[ -n "$top" ] && echo "$top" > "$RUN/frequenza.max"
 	# Modalita' effettiva del volume, calcolata una volta (hardware, fisso,
@@ -636,6 +831,17 @@ EOF
 	esac
 
 	printf '%s ' "$@" > "$RUN/player.args"
+	cap_write principale tipo=principale "dac=$id" "nome=$name" "mac=$PLAYER_MAC" "frequenza_max=$top" \
+		"formati=$(dac_formats "$card")" "dsd_dac=${fmt:-no}" "dsd=$dsd" "volume=$(volume_effettivo)" \
+		"volume_64bit=$([ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && echo si || echo no)" \
+		"correzione=$([ -n "$dsp" ] && echo si || echo no)" "priorita=$prio" \
+		"core=$([ "$PIN" = 1 ] && echo "$LAYOUT_AUDIO" || echo "$HK")" "buffer_alsa_ms=$alsa" \
+		"periodi=$periods" "formato_uscita=${outfmt:-auto}" "ricampionamento=$(resample_args | grep . || echo no)" \
+		"irq_usb=$([ "$PIN" = 1 ] && echo "$LAYOUT_IRQ" || echo sistema)"
+	# Dopo un riavvio del principale: gruppo di sincronizzazione (sync_poll).
+	mkdir -p "$SYNC_DIR"
+	: > "$SYNC_DIR/$(mac_key "$PLAYER_MAC").pendente"
+	rm -f "$SYNC_DIR/$(mac_key "$PLAYER_MAC").visto"
 	# Stato per Stato/Audio, con la verifica sugli argomenti reali.
 	volume_stato_scrivi "$VOL_MODO" "$VOL_MOTIVO"
 	session_start
@@ -665,12 +871,12 @@ prefs_stato() { # testo
 }
 
 # Stampa le preferenze la cui lettura non coincide con quella richiesta.
-prefs_divergenti() { # digitale
-	local nome valore got out=""
+prefs_divergenti() { # digitale [mac]
+	local nome valore got out="" mac=${2:-$PLAYER_MAC}
 	for nome in digitalVolumeControl:$1 replayGainMode:0 transitionType:0 maxBitrate:0; do
 		valore=${nome#*:}
 		nome=${nome%%:*}
-		got=$(LMS_TIMEOUT=5 lms_get '._p2' "$PLAYER_MAC" playerpref "$nome" '?')
+		got=$(LMS_TIMEOUT=5 lms_get '._p2' "$mac" playerpref "$nome" '?')
 		[ "$got" = "$valore" ] || out="$out${out:+ }$nome=${got:-?}(richiesto $valore)"
 	done
 	printf '%s' "$out"
@@ -781,6 +987,7 @@ player_loop() {
 			log_quota_tick
 			zones_sync "$card"
 			apply_player_prefs
+			sync_poll "$PLAYER_MAC"
 			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_instance "$card")" != "$inst" ]; then
 				log "player: DAC scollegato o ricollegato"
 				LOST=1

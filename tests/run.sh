@@ -231,7 +231,7 @@ run "$OOM" oom_adj_cmd 500 scanner.pl
 expect "scanner tra i primi a cadere (+500)" "500" "$(cat "$OOM/proc/200/oom_score_adj")"
 expect "server Lyrion non toccato dallo scanner" "0" "$(cat "$OOM/proc/300/oom_score_adj")"
 grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: squeezelite a -1000" || ko "player: squeezelite a -1000" "presente" "assente"
-grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && set -- "\$@" -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
+grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && printf .%s\\n. -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
 grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
 grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
@@ -879,7 +879,7 @@ case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita
 
 # Stallo da frequenza (-H) e ricampionamento "solo se serve" (flag E).
 diag_freq() { SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati; }
-grep -q 'set -- "\$@" -R "vLE"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
+grep -q "printf '%s\\\\n' -R vLE" "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
 grep -q '^FREQUENZA_NON_SUPPORTATA=ricampiona' "$OVERLAY/etc/sweetspot/defaults.conf" && ok "default: FREQUENZA_NON_SUPPORTATA=ricampiona" || ko "default FREQUENZA_NON_SUPPORTATA" "ricampiona" "assente"
 printf '[12:00:00] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n[12:00:05] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
@@ -2189,8 +2189,69 @@ case "$zcall" in *UMIK*|*R26*) ko "zona: niente microfono ne' DAC principale" "s
 expect "zona: registrata per il controllo" "Zona" "$(cut -d' ' -f2 "$DSP/run/zone/2")"
 expect "zona: MAC stabile e locale" "1|02" \
 	"$([ "$(dspfn 1 'zone_mac 2')" = "$(dspfn 1 'zone_mac 2')" ] && echo 1)|$(dspfn 1 'zone_mac 2' | cut -c1-2)"
+# Parita' con il DAC principale: le zone usano gli stessi argomenti comuni
+# (common_args), con registro e priorita' propri.
+case "$zcall" in *"-b "*":"*" -C 30 "*"-d output=info"*"-f /var/log/squeezelite-Zona.log"*) ok "zona: buffer di ingresso/uscita, -C e registro come il principale" ;; *) ko "zona: argomenti comuni" "-b ... -C 30 ... -f squeezelite-Zona.log" "$zcall" ;; esac
+case "$zcall" in *" -r :400 "*) ok "zona: frequenza massima e pausa fra frequenze come il principale" ;; *) ko "zona: -r" "-r :400" "$zcall" ;; esac
+case "$zcall" in *"-R vLE"*) ok "zona: ricampiona solo se il DAC non regge la frequenza (come il principale)" ;; *) ko "zona: -R vLE" "presente" "$zcall" ;; esac
+case "$zcall" in *"-a 400:4:"*) ok "zona: buffer e periodi ALSA come il principale" ;; *) ko "zona: -a" "-a 400:4:" "$zcall" ;; esac
+expect "zona: gli argomenti comuni coincidono con quelli del principale" \
+	"$(dspfn 1 'common_args 1 /a 80 400 "" | grep -v "^80$" | grep -v "^/a$"')" \
+	"$(dspfn 1 'common_args 2 /b 75 400 "" | grep -v "^75$" | grep -v "^/b$"')"
+printf 'ALTRI_DAC=si\nFREQUENZA_MAX=96000\n' > "$DSP/run/sweetspot.conf"
+expect "FREQUENZA_MAX vale anche per le zone" "-r|96000:400" "$(dspfn 1 'common_args 2 /b 75 400 "" | grep -A1 "^-r$" | tr "\n" "|" | sed "s/|$//"')"
+echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
+expect "buffer delle zone: il budget si divide fra loro" "yes" \
+	"$([ "$(dspfn 1 'PLAYER_BUFFERS_DIV=4 player_buffers | cut -d: -f1')" -le "$(dspfn 1 'player_buffers | cut -d: -f1')" ] && echo yes)"
+# Capacita' per zona e diagnostica: dove la parita' non c'e', lo dice il file.
+expect "capacita' della zona: DSD in PCM, volume software, niente correzione" "zona|pcm|software|no|no" \
+	"$(for k in tipo dsd volume correzione volume_64bit; do sed -n "s/^$k=//p" "$DSP/run/capacita/zona-Zona"; done | tr '\n' '|' | sed 's/|$//')"
+expect "capacita' della zona: MAC e priorita' coincidono con il player" "$(dspfn 1 'zone_mac 2')|75" \
+	"$(sed -n 's/^mac=//p' "$DSP/run/capacita/zona-Zona")|$(sed -n 's/^priorita=//p' "$DSP/run/capacita/zona-Zona")"
+case "$(cat "$DSP/run/capacita/zona-Zona.args" 2>/dev/null)" in "-o hw:CARD=Zona,DEV=0 "*"-H "*) ok "zona: argomenti di Squeezelite salvati per la diagnostica" ;; *) ko "zona: argomenti salvati" "-o hw:CARD=Zona,DEV=0 ... -H" "$(cat "$DSP/run/capacita/zona-Zona.args" 2>/dev/null)" ;; esac
+# Supervisione: una zona che cade subito si riavvia con ritardo crescente.
+dspfn 1 'mkdir -p $ZONE_RIAVVIO; echo "$(date +%s) 0" > $ZONE_RIAVVIO/9.avvio; zone_note_exit 9'
+expect "zona caduta subito: ritardo di 2 s prima del riavvio" "2" "$(cat "$DSP/run/zone-riavvio/9.ritardo")"
+echo 99999999999 > "$DSP/run/zone-riavvio/9.fino"
+expect "zona: finche' dura il ritardo non si riavvia" "attesa" "$(dspfn 1 'zone_ready 9 && echo pronta || echo attesa')"
+echo 1 > "$DSP/run/zone-riavvio/9.fino"
+expect "zona: passato il ritardo si riavvia" "pronta" "$(dspfn 1 'zone_ready 9 && echo pronta || echo attesa')"
+dspfn 1 'echo "$(( $(date +%s) - 100 )) 8" > $ZONE_RIAVVIO/9.avvio; zone_note_exit 9'
+expect "zona stabile prima di cadere: nessun ritardo" "0" "$(cat "$DSP/run/zone-riavvio/9.ritardo")"
+expect "zona caduta: il riavvio e' contato fra quelli del player (restart_conta)" "si" "$([ "$(cat "$DSP/run/restart.player" 2>/dev/null || echo 0)" -ge 1 ] && echo si)"
+# Il registro della zona (squeezelite-ID.log) ha il tetto di log_quota (#100).
+# Sincronizzazione multiroom: gruppo ricordato e ripristinato dopo il riavvio.
+LMSSTUB='mode() { echo completa; }
+lms_get() { case "$3" in connected) echo 1 ;; sync) cat $RUN/lms.sync ;; esac; }
+lms_json() { echo "$*" >> $RUN/lms.call; }
+mkdir -p $SYNC_DIR; k=$(mac_key 02:aa)'
+rm -f "$DSP/run/lms.call"; rm -rf "$DSP/run/sync"
+echo "02:aa,02:bb,02:cc" > "$DSP/run/lms.sync"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: a regime ricorda il gruppo (senza se stesso)" "02:bb 02:cc " "$(cat "$DSP/run/sync/02_aa.gruppo")"
+echo "-" > "$DSP/run/lms.sync"
+dspfn 1 "$LMSSTUB; : > \$SYNC_DIR/\$k.pendente; sync_poll 02:aa; sync_poll 02:aa"
+expect "sincronizzazione: dopo il riavvio aspetta qualche secondo prima di intervenire" "" "$(cat "$DSP/run/lms.call" 2>/dev/null)"
+echo 1 > "$DSP/run/sync/02_aa.visto"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: la zona torna nel gruppo ricordato" "02:aa sync 02:bb|no" \
+	"$(tr '\n' '|' < "$DSP/run/lms.call" | sed 's/|$//')|$([ -f "$DSP/run/sync/02_aa.pendente" ] && echo si || echo no)"
+rm -f "$DSP/run/lms.call"
+dspfn 1 "$LMSSTUB; : > \$SYNC_DIR/\$k.pendente; echo 1 > \$SYNC_DIR/\$k.visto"
+echo "02:bb" > "$DSP/run/lms.sync"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: se Lyrion ha gia' ripristinato il gruppo non si interviene" "" "$(cat "$DSP/run/lms.call" 2>/dev/null)"
+echo "-" > "$DSP/run/lms.sync"
+rm -f "$DSP/run/sync/02_aa.t"
+dspfn 1 "$LMSSTUB; sync_poll 02:aa"
+expect "sincronizzazione: un gruppo sciolto da Lyrion si dimentica" "no" "$([ -f "$DSP/run/sync/02_aa.gruppo" ] && echo si || echo no)"
 sleep 300 & zpid=$!
 echo "$zpid Zona" > "$DSP/run/zone/2"
+expect "stato: zona con le capacita'" "INFO|Capacita' zona Zona|DSD: convertito in PCM (volume software di Lyrion); volume: software di Lyrion, mixer del DAC a 0 dB; correzione ambientale e volume a 64 bit: solo sul DAC principale; frequenza massima annunciata:  Hz; priorita' real-time 75 sui core di sistema 0; buffer ALSA 400 ms" \
+	"$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
+		$TEST_SH -c "$DSPSTUB
+set -- --dati; . $OVERLAY/usr/bin/sweetspot-check" 2>/dev/null | grep "^[A-Z]*|Capacita' zona")"
 expect "stato: zona attiva" "OK|Altri DAC (zone)|un player in Lyrion per Zona; si raggruppano da Lyrion" \
 	"$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$DSP/proc SWEETSPOT_RUN=$DSP/run SWEETSPOT_LOG=$DSP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log \
