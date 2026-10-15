@@ -425,7 +425,7 @@ lv_fn_player() { # nome etichetta momento pid mac [scheda]
 			det="connesso a Lyrion"
 		elif [ -z "$card" ] && bt_dac_busy; then
 			rm -f "$tf"
-			det="connesso a Lyrion, DAC in uso dal Bluetooth"
+			det="connesso a Lyrion, DAC al Bluetooth: PCM non giudicato"
 		else
 			lv_pcm_leggi "$card"
 			hw=$LV_PCM_HW
