@@ -213,14 +213,16 @@ HTTPS_REINDIRIZZA=no
 # Solo con MODALITA=completa. Si accende anche dalla pagina Sistema.
 RENDERER_UPNP=no
 
-# Password delle pagine di Sweetspot (utente admin). Vuota = pagine aperte
-# a chi e' nella rete di casa. Dalla pagina Sistema si salva come impronta
-# ($1$...); qui si puo' scrivere anche in chiaro. Dimenticata: togli la riga.
+# Password delle pagine di Sweetspot (utente admin). Obbligatoria: se e' vuota,
+# al prossimo avvio il dispositivo mostra un codice univoco (console e file
+# PRIMO-ACCESSO.txt su questa chiavetta) con cui scegliere la password dalla
+# pagina Primo accesso. Dimenticata: togli la riga e riavvia (stesso percorso).
 PASSWORD_WEB=
 
-# Lyrion protetto da utente e password (nelle sue impostazioni: Avanzate >
-# Sicurezza): scrivili anche qui, cosi' Sweetspot (volume, precarico,
-# pagine, prova DoP) continua a parlare con Lyrion. Vuoti = Lyrion aperto.
+# Credenziali di Lyrion (porta 9000, Material, app e CLI 9090): se vuote, al
+# primo avvio Sweetspot genera una password casuale (utente sweetspot) e la
+# scrive qui; mostrata nella pagina Sistema. Credenziali Lyrion gia' presenti
+# non vengono sovrascritte: scrivile qui. Togli LYRION_PASSWORD per ruotarla.
 LYRION_UTENTE=
 LYRION_PASSWORD=
 

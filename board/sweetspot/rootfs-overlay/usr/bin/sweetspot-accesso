@@ -32,7 +32,7 @@
 # pagine si salva solo l'impronta ($1$...). Password dimenticata: togli la
 # riga PASSWORD_WEB da sweetspot.txt con il computer: al riavvio il codice
 # di primo accesso torna disponibile (stessa chiavetta, stesso codice).
-# Lyrion (porta 9000) ha la sua protezione nelle sue impostazioni.
+# Lyrion (9000 e CLI 9090) ha credenziali proprie: vedi sweetspot-lms credenziali.
 #
 # La pagina /cgi-bin/vivo (risponde solo "ok" e la copia in uso) serve a
 # sweetspot-aggiorna per confermare che una versione appena installata e'
