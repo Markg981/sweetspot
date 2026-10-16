@@ -3044,7 +3044,9 @@ expect "ascolto: a fine ascolto CPU e peso originali" "max 100000|100|3435973800
 rm -f "$ASC/proc/800/cgroup"
 # f) I2: lo scanner e' ancora nel gruppo del server (sweetspot-lyrion): va
 # assegnato al gruppo dedicato PRIMA di limitare; il server non va toccato.
-rm -rf "$ASC/cg3"; mkdir -p "$ASC/cg3/sweetspot-lyrion"
+rm -rf "$ASC/cg3"; mkdir -p "$ASC/cg3/sweetspot-lyrion" "$ASC/cg3/sweetspot-scanner"
+# il kernel crea i file di controllo con la cartella: qui li simula il test
+printf 'max 100000\n' > "$ASC/cg3/sweetspot-scanner/cpu.max"; echo 100 > "$ASC/cg3/sweetspot-scanner/cpu.weight"
 printf 'cpu io memory\n' > "$ASC/cg3/cgroup.controllers"; : > "$ASC/cg3/cgroup.subtree_control"
 printf 'max 100000\n' > "$ASC/cg3/sweetspot-lyrion/cpu.max"; echo 100 > "$ASC/cg3/sweetspot-lyrion/cpu.weight"
 echo 800 > "$ASC/cg3/sweetspot-lyrion/cgroup.procs"; echo '0::/sweetspot-lyrion' > "$ASC/proc/800/cgroup"
