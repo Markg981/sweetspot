@@ -629,7 +629,6 @@ UDEVADM=${SWEETSPOT_UDEVADM:-udevadm}
 INOTIFYD=${SWEETSPOT_INOTIFYD:-inotifyd}
 BATTITO=$(num_env "${SWEETSPOT_STATO_BATTITO:-900}" 900 SWEETSPOT_STATO_BATTITO)
 MIN_GAP=$(num_env "${SWEETSPOT_STATO_MIN:-5}" 5 SWEETSPOT_STATO_MIN)
-MIN_EV=$(num_env "${SWEETSPOT_STATO_MIN_EV:-${SWEETSPOT_STATO_MIN:-60}}" 60 SWEETSPOT_STATO_MIN_EV)
 PRE_GAP=5
 # Secondi dopo l'avvio di Lyrion in cui si cerca lo scanner anche senza evento.
 SCAN_WIN=$(num_env "${SWEETSPOT_STATO_SCAN:-120}" 120 SWEETSPOT_STATO_SCAN)
@@ -673,15 +672,9 @@ mac_load() {
 # Un giro nuovo del check completo: raccoglie gli eventi ravvicinati (1 s) e
 # rispetta MIN_GAP dal giro precedente.
 #
-# Un giro costa centinaia di processi (sweetspot-check): quello chiesto da chi
-# legge la pagina (R) o da un verdetto di liveness rispetta MIN_GAP (5 s);
-# quello per il solo chiacchiericcio degli eventi (udev, inotify, CLI) aspetta
-# MIN_EV (60 s), cosi' a riposo e subito dopo l'avvio non ne parte uno ogni
-# poco: chi guarda lo stato lo chiede da se' e lo ha entro 12 s.
-#
-# Un cambio di stato di Lyrion o del player (liveness) non cambia nulla di
-# quel che misura il check: want_light rifa' solo la parte di liveness e il
-# traffico, riusando le righe del check dell'ultimo giro completo.
+# want_round_ev (eventi udev, inotify, CLI) e want_light (cambi di liveness)
+# per ora fanno un giro completo come want_round: restano separati per poterli
+# alleggerire in seguito senza toccare chi li chiama.
 want_gap() { # distanza minima dal giro precedente, 1 = giro completo
 	local t=$((NOW + 1))
 	[ "$t" -ge $((LAST_ROUND + $1)) ] || t=$((LAST_ROUND + $1))
