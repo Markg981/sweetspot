@@ -3535,5 +3535,6 @@ python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
 python3 "$ROOT/tests/reference-studio.py" || exit 1
+python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
