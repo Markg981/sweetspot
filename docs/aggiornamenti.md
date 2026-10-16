@@ -14,7 +14,8 @@ La coppia e' stata generata con minisign (senza password, per l'uso in CI):
 la pubblica (id `7E3A788D23A1E0B5`) e' nel repository; la privata esiste solo
 nel segreto `SWEETSPOT_FIRMA` dell'**ambiente** GitHub `firma-aggiornamenti` e
 in una copia di recupero fuori dal repository (cartella `~/.sweetspot-firma`
-della macchina che l'ha generata: spostarla su una chiavetta offline).
+della macchina che l'ha generata, cartella 0700 e file 0600: il trasferimento
+su supporto offline lo deve fare il proprietario).
 Non c'e' nessun segreto a livello di repository: l'ambiente e' limitato ai tag
 `v*`, quindi rami, pull request e workflow piu' vecchi non lo vedono e non
 cambiano comportamento. Solo il workflow aggiornato, su un tag `v*`, firma.
@@ -56,7 +57,9 @@ mostra solo nome e data.
 
 1. Dopo che il `.pub` e' nel ramo principale, crea il tag:
    `git tag v1.0.0 && git push origin v1.0.0`.
-2. Il workflow `build.yml` compila x86_64 e rpi, firma `SHA256SUMS`, controlla
+2. Il workflow `build.yml` compila x86_64 e rpi; il job `firma` (solo sui tag `v*`,
+   ambiente `firma-aggiornamenti` dichiarato esplicitamente, e unico job che vede
+   il segreto) firma `SHA256SUMS`, controlla
    che la chiave incorporata nell'immagine coincida con quella nel repository
    e pubblica la release con i pacchetti `*-aggiornamento.tar`.
 3. Le immagini installate cercano gli aggiornamenti nell'ultima release.

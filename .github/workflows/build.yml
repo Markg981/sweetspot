@@ -62,10 +62,6 @@ jobs:
   build:
     needs: [test, modifiche]
     if: ${{ needs.modifiche.outputs.compila == 'true' }}
-    # La chiave privata di firma vive solo nell'ambiente "firma-aggiornamenti",
-    # limitato ai tag v*: le altre compilazioni (rami, pull request) non la
-    # vedono e restano non firmate.
-    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'firma-aggiornamenti' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -126,7 +122,75 @@ jobs:
         with:
           name: registro-compilazione-${{ matrix.scheda }}
           path: build.log
-      # Firma del pacchetto di aggiornamento con la chiave del progetto (segreto
+      - name: Salva la cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.buildroot-dl
+            ~/.buildroot-ccache
+          key: buildroot-${{ matrix.scheda }}-${{ github.run_id }}
+      # Immagine, disco per VMware e pacchetto di aggiornamento si scaricano
+      # dalla pagina dell'esecuzione come file, non dentro uno zip.
+      - name: Pubblica l'immagine
+        uses: actions/upload-artifact@v7
+        with:
+          path: output/images/${{ matrix.immagine }}.xz
+          archive: false
+          if-no-files-found: error
+      # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
+      - name: Disco per VMware
+        if: matrix.scheda == 'x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils
+          qemu-img convert -f raw -O vmdk -o adapter_type=lsilogic,subformat=monolithicSparse \
+            output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
+      - name: Pubblica il disco per VMware
+        if: matrix.scheda == 'x86_64'
+        uses: actions/upload-artifact@v7
+        with:
+          path: output/images/sweetspot-vmware.vmdk
+          archive: false
+          if-no-files-found: error
+      # Pacchetto per aggiornare dalla pagina Sistema (da internet o da un disco).
+      # Sui rami e nelle pull request il pacchetto resta non firmato. Sui tag v*
+      # passa dal job "firma", l'unico che vede la chiave privata.
+      - name: Pubblica il pacchetto di aggiornamento
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+          archive: false
+          if-no-files-found: error
+      - name: Pubblica il pacchetto da firmare
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: da-firmare-${{ matrix.scheda }}
+          path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+          if-no-files-found: error
+
+  # Firma dei soli tag ufficiali. L'ambiente e' esplicito e limitato ai tag v*
+  # (vedi docs/aggiornamenti.md): rami e pull request non vedono la chiave.
+  firma:
+    needs: [build]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' }}
+    environment: firma-aggiornamenti
+    strategy:
+      fail-fast: false
+      matrix:
+        scheda: [x86_64, rpi]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Strumenti di firma
+        run: sudo apt-get update && sudo apt-get install -y minisign cpio zstd
+      - uses: actions/download-artifact@v8
+        with:
+          name: da-firmare-${{ matrix.scheda }}
+          path: output/images
+          digest-mismatch: error      # Firma del pacchetto di aggiornamento con la chiave del progetto (segreto
       # SWEETSPOT_FIRMA, vedi scripts/genera-chiave-firma.sh). Sui tag ufficiali
       # firma e chiave incorporata sono obbligatorie. Senza il segreto, solo
       # le compilazioni di sviluppo possono produrre pacchetti non firmati.
@@ -166,45 +230,12 @@ jobs:
             -t "Sweetspot $(cat "$d/pacchetto/versione") $(cat "$d/pacchetto/architettura")"
           minisign -V -p "$P" -m "$d/pacchetto/SHA256SUMS" -x "$d/pacchetto/SHA256SUMS.minisig"
           tar -rf "$T" -C "$d/pacchetto" SHA256SUMS.minisig
-      - name: Salva la cache
-        if: always()
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            ~/.buildroot-dl
-            ~/.buildroot-ccache
-          key: buildroot-${{ matrix.scheda }}-${{ github.run_id }}
-      # Immagine, disco per VMware e pacchetto di aggiornamento si scaricano
-      # dalla pagina dell'esecuzione come file, non dentro uno zip.
-      - name: Pubblica l'immagine
-        uses: actions/upload-artifact@v7
-        with:
-          path: output/images/${{ matrix.immagine }}.xz
-          archive: false
-          if-no-files-found: error
-      # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
-      - name: Disco per VMware
-        if: matrix.scheda == 'x86_64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-utils
-          qemu-img convert -f raw -O vmdk -o adapter_type=lsilogic,subformat=monolithicSparse \
-            output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
-      - name: Pubblica il disco per VMware
-        if: matrix.scheda == 'x86_64'
-        uses: actions/upload-artifact@v7
-        with:
-          path: output/images/sweetspot-vmware.vmdk
-          archive: false
-          if-no-files-found: error
-      # Pacchetto per aggiornare dalla pagina Sistema (da internet o da un disco).
-      - name: Pubblica il pacchetto di aggiornamento
+      - name: Pubblica il pacchetto firmato
         uses: actions/upload-artifact@v7
         with:
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           archive: false
           if-no-files-found: error
-
   # Lyrion nel sistema appena compilato, su un server della stessa
   # architettura: per il Raspberry Pi e' la prova che i moduli compilati per
   # ARM funzionano con il Perl del sistema.
@@ -255,7 +286,7 @@ jobs:
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$id" "$COMPILA" | tee "$RUNNER_TEMP/sweetspot-audio-evidence/pacchetti.txt"
       - uses: actions/download-artifact@v8
         with:
-          name: sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && format('da-firmare-{0}', matrix.scheda) || format('sweetspot-{0}-aggiornamento.tar', matrix.scheda) }}
           run-id: ${{ steps.pacchetti.outputs.id }}
           github-token: ${{ github.token }}
       - name: Strumenti
@@ -298,11 +329,12 @@ jobs:
   # Una sola pubblicazione, dopo il successo di entrambe le compilazioni e
   # di entrambi i test Lyrion. Un gate fallito, saltato o annullato la blocca.
   release:
-    needs: [test, build, lyrion]
+    needs: [test, build, firma, lyrion]
     if: >-
       ${{ startsWith(github.ref, 'refs/tags/v') &&
           needs.test.result == 'success' &&
           needs.build.result == 'success' &&
+          needs.firma.result == 'success' &&
           needs.lyrion.result == 'success' }}
     runs-on: ubuntu-26.04
     permissions:

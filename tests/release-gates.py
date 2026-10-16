@@ -133,7 +133,7 @@ class ReleaseGateTests(unittest.TestCase):
         downloads = [step for step in jobs["lyrion"]["steps"]
                      if step.get("uses", "").startswith("actions/download-artifact@")]
         self.assertEqual({step["with"]["name"] for step in downloads},
-                         {"sweetspot-${{ matrix.scheda }}-aggiornamento.tar", "sweetspot.img.xz"})
+                         {"${{ startsWith(github.ref, 'refs/tags/v') && format('da-firmare-{0}', matrix.scheda) || format('sweetspot-{0}-aggiornamento.tar', matrix.scheda) }}", "sweetspot.img.xz"})
         for step in downloads:
             self.assertEqual(step["with"]["run-id"], "${{ steps.pacchetti.outputs.id }}")
         choose = next(step for step in jobs["lyrion"]["steps"] if step.get("id") == "pacchetti")
@@ -200,7 +200,7 @@ class ReleaseGateTests(unittest.TestCase):
                       if step.get("uses", "").startswith("softprops/action-gh-release@")]
         self.assertEqual(len(publishers), 1, "publish once after both architectures pass")
         job, step = publishers[0]
-        self.assertTrue({"test", "build", "lyrion"} <= ancestors(job),
+        self.assertTrue({"test", "build", "firma", "lyrion"} <= ancestors(job),
                         "publication can run before all test/build/Lyrion jobs finish")
         self.assertFalse(step.get("continue-on-error", False))
         self.assertFalse(WORKFLOW["jobs"][job].get("continue-on-error", False))
@@ -209,7 +209,7 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_publication_rejects_failed_skipped_cancelled_and_non_tag_runs(self):
         self.assertIn("release", WORKFLOW["jobs"], "publication needs a downstream job")
-        good = {"modifiche": "success", "test": "success", "build": "success", "lyrion": "success"}
+        good = {"modifiche": "success", "test": "success", "build": "success", "firma": "success", "lyrion": "success"}
         self.assertTrue(eligible("release", "refs/tags/v1.0.0", good))
         for job in good:
             for result in ("failure", "skipped", "cancelled"):
@@ -267,7 +267,7 @@ class SigningTests(unittest.TestCase):
 
     def sign(self, board="x86_64"):
         return subprocess.run(["bash", "-e", "-o", "pipefail", "-c",
-                               workflow_script("build", "Firma del pacchetto di aggiornamento", board)],
+                               workflow_script("firma", "Firma del pacchetto di aggiornamento", board)],
                               cwd=self.root, env=self.env, capture_output=True, text=True)
 
     def test_official_tag_requires_signing_secret(self):
@@ -356,9 +356,16 @@ class SigningTests(unittest.TestCase):
 
 class SigningKeyProvisioningTests(unittest.TestCase):
     def test_private_key_only_through_tag_restricted_environment(self):
-        env = str(WORKFLOW["jobs"]["build"].get("environment", ""))
-        self.assertIn("firma-aggiornamenti", env)
-        self.assertIn("refs/tags/v", env)
+        for name, job in WORKFLOW["jobs"].items():
+            if name != "firma":
+                self.assertNotIn("environment", job, f"{name} non deve vedere l'ambiente di firma")
+        firma = WORKFLOW["jobs"]["firma"]
+        self.assertEqual(firma["environment"], "firma-aggiornamenti")
+        self.assertIn("refs/tags/v", firma["if"])
+        self.assertIn("firma", WORKFLOW["jobs"]["release"]["needs"])
+        self.assertTrue(eligible("firma", "refs/tags/v1.0.0", {"test": "success", "modifiche": "success", "build": "success"}))
+        self.assertFalse(eligible("firma", "refs/heads/main", {"test": "success", "modifiche": "success", "build": "success"}))
+        self.assertFalse(eligible("firma", "refs/pull/1/merge", {"test": "success", "modifiche": "success", "build": "success"}))
         text = (ROOT / ".github/workflows/build.yml").read_text()
         self.assertEqual(text.count("secrets.SWEETSPOT_FIRMA"), 1)
 
