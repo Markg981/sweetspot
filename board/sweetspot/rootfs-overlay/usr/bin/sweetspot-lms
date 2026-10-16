@@ -416,9 +416,8 @@ do_cover() {
 	case "$id" in ''|*[!0-9a-fA-F]*) return 1 ;; esac
 	[ "${#id}" -le 32 ] || return 1
 	case "$sz" in 64|96|128|200|300|400|600) ;; *) return 1 ;; esac
-	confv LYRION_UTENTE
-	auth=''
-	[ -z "$CONFV" ] || auth=$(lms_auth_header)
+	lms_auth_prepara
+	auth=$LMS_AUTH
 	tmp=$(mktemp "$RUN/cover.XXXXXX") || return 1
 	if ! "${SWEETSPOT_WGET:-wget}" -q -T 8 -O "$tmp" ${auth:+--header "$auth"} \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" 2>/dev/null \

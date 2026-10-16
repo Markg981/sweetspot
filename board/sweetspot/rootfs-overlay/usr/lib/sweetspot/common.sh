@@ -1088,11 +1088,30 @@ json_q_v() {
 # le richieste JSON di Sweetspot (Basic) e per la CLI (login). Senza, le
 # richieste restano come prima.
 lms_user() { conf LYRION_UTENTE; }
-lms_auth_header() {
+# Intestazione Basic in LMS_AUTH (vuota senza utente). Le credenziali si
+# leggono con confv (nessun processo) e l'intestazione si ricalcola (base64)
+# solo se cambiano: con Lyrion protetto ogni richiesta la usa, e i giri a
+# riposo del player ne fanno molte. Chiamata fuori da $(...), cosi' la
+# memoria resta nella shell che fa le richieste.
+LMS_AUTH=''
+LMS_AUTH_PER=''
+LMS_AUTH_VAL=''
+lms_auth_prepara() {
 	local u
-	u=$(lms_user)
+	confv LYRION_UTENTE
+	u=$CONFV
+	LMS_AUTH=''
 	[ -n "$u" ] || return 0
-	printf 'Authorization: Basic %s' "$(printf '%s:%s' "$u" "$(conf LYRION_PASSWORD)" | base64 | tr -d '\n')"
+	confv LYRION_PASSWORD
+	if [ "$u:$CONFV" != "$LMS_AUTH_PER" ]; then
+		LMS_AUTH_VAL="Authorization: Basic $(printf '%s:%s' "$u" "$CONFV" | base64 | tr -d '\n')"
+		LMS_AUTH_PER="$u:$CONFV"
+	fi
+	LMS_AUTH=$LMS_AUTH_VAL
+}
+lms_auth_header() {
+	lms_auth_prepara
+	[ -z "$LMS_AUTH" ] || printf '%s' "$LMS_AUTH"
 }
 
 lms_json() { lms_json_locale "$@"; }
@@ -1201,10 +1220,10 @@ lms_json_diretto() {
 	shift 2
 	for w in "$@"; do json_q_v "$w"; args="$args${args:+,}\"$JQV\""; done
 	json_q_v "$player"
-	# Senza utente di Lyrion (il caso normale) niente intestazione: nessun processo.
-	confv LYRION_UTENTE
-	auth=''
-	[ -z "$CONFV" ] || auth=$(lms_auth_header)
+	# Intestazione Basic gia' pronta se le credenziali non sono cambiate:
+	# nessun processo per richiesta.
+	lms_auth_prepara
+	auth=$LMS_AUTH
 	if [ "${LMS_WEB:-0}" = 1 ]; then
 		posto=$(lms_posto_prendi) || return 6
 	fi
