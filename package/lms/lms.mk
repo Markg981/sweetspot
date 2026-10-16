@@ -47,9 +47,7 @@ define LMS_INSTALL_MODULI
 endef
 endif
 
-# lms.hash contiene l'impronta dei moduli per ARM; il sorgente di Lyrion
-# (archivio generato da GitHub) non ne ha una.
-BR_NO_CHECK_HASH_FOR += $(LMS_SOURCE)
+# lms.hash fissa sorgente (archivio del tag 9.1.1) e moduli per ARM.
 
 # I moduli compilati di Lyrion per Perl 5.42 usano il contesto dei thread
 # in una variabile thread-local (PL_current_context), come il Perl delle

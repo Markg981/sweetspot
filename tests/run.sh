@@ -3485,6 +3485,13 @@ case "$c" in *root*) ko "nessun root nella condivisione" "assente" "presente" ;;
 case "$c" in *"veto files"*artwork.db*imgproxy.db*) ok "file interni (artwork.db) nascosti" ;; *) ko "file interni (artwork.db) nascosti" "veto files" "$c" ;; esac
 expect "utente nas nella tabella degli utenti" "1" "$(grep -c '^nas -1 nas -1 ' "$ROOT/board/sweetspot/users.txt")"
 
+echo "Integrita' dei sorgenti (hash fissati)"
+if out=$(sh "$ROOT/scripts/inventario.sh" verifica 2>&1); then
+	ok "ogni pacchetto proprio ha sha256 e nessuna esclusione"
+else
+	ko "hash dei pacchetti" "tutti presenti" "$out"
+fi
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
