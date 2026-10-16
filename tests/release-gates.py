@@ -354,5 +354,21 @@ class SigningTests(unittest.TestCase):
         self.assertNotEqual(self.verify_release().returncode, 0)
 
 
+class SigningKeyProvisioningTests(unittest.TestCase):
+    def test_private_key_only_through_tag_restricted_environment(self):
+        env = str(WORKFLOW["jobs"]["build"].get("environment", ""))
+        self.assertIn("firma-aggiornamenti", env)
+        self.assertIn("refs/tags/v", env)
+        text = (ROOT / ".github/workflows/build.yml").read_text()
+        self.assertEqual(text.count("secrets.SWEETSPOT_FIRMA"), 1)
+
+    def test_committed_public_key_is_a_well_formed_minisign_key(self):
+        lines = (ROOT / PUBKEY).read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("untrusted comment: minisign public key "))
+        self.assertRegex(lines[1], r"^RW[A-Za-z0-9+/]{54}$")
+        self.assertNotIn("SECRET", (ROOT / PUBKEY).read_text().upper())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

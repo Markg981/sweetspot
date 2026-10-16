@@ -62,6 +62,10 @@ jobs:
   build:
     needs: [test, modifiche]
     if: ${{ needs.modifiche.outputs.compila == 'true' }}
+    # La chiave privata di firma vive solo nell'ambiente "firma-aggiornamenti",
+    # limitato ai tag v*: le altre compilazioni (rami, pull request) non la
+    # vedono e restano non firmate.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'firma-aggiornamenti' || '' }}
     strategy:
       fail-fast: false
       matrix:
