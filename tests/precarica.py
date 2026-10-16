@@ -6,6 +6,7 @@ Files stay small: an unprivileged mlock is limited by RLIMIT_MEMLOCK.
 Needs a C compiler (cc, or CC=gcc).
 """
 import os
+import json
 import signal
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ import unittest
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1] / "package/sweetspot-tools/src/sweetspot-precarica.c"
+OVERLAY = Path(__file__).resolve().parents[1] / "board/sweetspot/rootfs-overlay"
 
 
 class PreloadToolTests(unittest.TestCase):
@@ -104,6 +106,94 @@ class PreloadToolTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 2)
         unreadable = subprocess.run([str(self.tool), "residenza", "/non/esiste"], capture_output=True)
         self.assertEqual(unreadable.returncode, 1)
+
+    def test_manifest_above_4096_is_complete_and_reload_keeps_its_tail(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            paths = [root / ("%04d.flac" % i) for i in range(4097)]
+            for path in paths:
+                path.touch()
+            listing = root / "elenco"
+            listing.write_text("".join("%s\n" % p for p in paths))
+            state = root / "stato"
+            process = subprocess.Popen([str(self.tool), "tieni", str(listing), str(state)])
+            try:
+                text = self.wait_state(state, "pronto", process)
+                self.assertEqual(len(text.splitlines()) - 1, len(paths))
+                self.assertIn("file\t0\tok\t%s\n" % paths[-1], text)
+                listing.write_text("".join("%s\n" % p for p in reversed(paths[1:])))
+                process.send_signal(signal.SIGUSR1)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and str(paths[0]) in state.read_text():
+                    time.sleep(.05)
+                text = state.read_text()
+                self.assertNotIn(str(paths[0]), text)
+                self.assertIn("file\t0\tok\t%s\n" % paths[-1], text)
+                self.assertEqual(len(text.splitlines()) - 1, len(paths) - 1)
+            finally:
+                process.send_signal(signal.SIGTERM)
+                self.assertEqual(process.wait(5), 0)
+
+
+class PreloadControllerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="sweetspot-precarico-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.run = self.root / "run"
+        self.run.mkdir()
+        proc = self.root / "proc"
+        proc.mkdir()
+        (proc / "meminfo").write_text("MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n")
+        (self.run / "sweetspot.conf").write_text("MODALITA=completa\n")
+        (self.run / "precarico.tieni.pid").write_text(str(os.getpid()))
+        self.env = dict(os.environ, SWEETSPOT_TEST="1",
+                        SWEETSPOT_LIB=str(OVERLAY / "usr/lib/sweetspot"),
+                        SWEETSPOT_RUN=str(self.run), SWEETSPOT_PROCFS=str(proc),
+                        SWEETSPOT_DEFAULTS=str(OVERLAY / "etc/sweetspot/defaults.conf"),
+                        SWEETSPOT_LOG=str(self.root / "log"),
+                        PRELOAD_SCRIPT=str(OVERLAY / "usr/bin/sweetspot-precarico"))
+
+    def shell(self, command):
+        result = subprocess.run(["busybox", "sh", "-c", '. "$PRELOAD_SCRIPT"; ' + command],
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_held_memory_counts_only_successful_results(self):
+        (self.run / "precarico.piano").write_text("SI 1048576 /missing.flac\nSI 8 /good.flac\n")
+        for phase in ("caricamento", "pronto"):
+            with self.subTest(phase=phase):
+                (self.run / "precarico.stato").write_text(
+                    "stato\t%s\nfile\t1073741824\terrore: Cannot allocate memory\t/missing.flac\n"
+                    "file\t4096\tok\t/good.flac\nfile\t4096\tin attesa\t/wait.flac\n" % phase)
+                self.assertEqual(self.shell("precarico_tenuto_kb"), "4")
+        (self.run / "precarico.stato").unlink()
+        self.assertEqual(self.shell("precarico_tenuto_kb"), "0")
+
+    def test_summary_uses_loaded_bytes_not_planned_bytes(self):
+        (self.run / "precarico.piano").write_text("SI 2048 /good.flac\nSI 3072 /bad.flac\n")
+        (self.run / "precarico.stato").write_text(
+            "stato\tpronto\nfile\t2097152\tok\t/good.flac\n"
+            "file\t3145728\terrore: Cannot allocate memory\t/bad.flac\n")
+        summary = json.loads(self.shell('write_summary parziale; cat "$SUMMARY"'))
+        self.assertEqual(summary["caricati"], 1)
+        self.assertEqual(summary["errori"], 1)
+        self.assertEqual(summary["mb"], 2)
+
+    def test_incomplete_holder_state_does_not_allow_disk_standby(self):
+        (self.run / "precarico.piano").write_text("SI 1 /a.flac\nSI 1 /b.flac\n")
+        (self.run / "precarico.coda").write_text("file:///a.flac\nfile:///b.flac\n")
+        (self.run / "precarico.stato").write_text("stato\tpronto\nfile\t1024\tok\t/a.flac\n")
+        self.shell('''
+queue_urls() { cat "$URLS"; }
+standby_disks() { touch "$RUN/standby-attempt"; }
+step
+''')
+        self.assertFalse((self.run / "standby-attempt").exists())
+        summary = json.loads((self.run / "precarico.json").read_text())
+        self.assertEqual(summary["stato"], "parziale")
+        self.assertEqual(summary["caricati"], 1)
 
 
 if __name__ == "__main__":

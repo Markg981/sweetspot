@@ -609,12 +609,13 @@ RAM_ALSA_KB=16384
 RAM_STREAM_MAX_KB=65536
 RAM_OUTPUT_MAX_KB=131072
 
-# KB dei file che il precarico tiene gia' bloccati in RAM (piano e demone).
+# KB dei file caricati con successo dal demone, non di quelli pianificati.
 precarico_tenuto_kb() {
 	local pid
 	pid=$(cat "$RUN/precarico.tieni.pid" 2>/dev/null)
-	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -f "$RUN/precarico.piano" ] || { echo 0; return; }
-	awk '$1 == "SI" { t += $2 } END { print t + 0 }' "$RUN/precarico.piano"
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -f "$RUN/precarico.stato" ] || { echo 0; return; }
+	awk -F '\t' '$1 == "file" && $3 == "ok" { t += $2 } END { printf "%.0f\n", int((t + 1023) / 1024) }' \
+		"$RUN/precarico.stato"
 }
 
 ram_quote_calc() {
@@ -2068,6 +2069,11 @@ host_allowed() {
 	return 1
 }
 
+page_embeddable() {
+	case "$1" in */audio|*/stato|*/accesso) return 0 ;; esac
+	return 1
+}
+
 # Intestazioni di sicurezza di ogni risposta delle pagine. Nessuna pagina puo'
 # essere incorporata in un'altra (clickjacking), tranne Audio, Stato e Accesso:
 # l'interfaccia Material di Lyrion (porta 9000) le mostra in un riquadro, e
@@ -2076,11 +2082,10 @@ host_allowed() {
 # 9000"; i browser con CSP lo ignorano comunque quando c'e' frame-ancestors).
 sec_headers() {
 	local anc="'none'" xfo="X-Frame-Options: DENY\r\n"
-	case "${SCRIPT_NAME:-}" in
-		*/audio|*/stato|*/accesso)
-			anc="'self' http://*:9000 https://*:9000"
-			xfo="" ;;
-	esac
+	if page_embeddable "${SCRIPT_NAME:-}"; then
+		anc="'self' http://*:9000 https://*:9000"
+		xfo=""
+	fi
 	printf "Content-Security-Policy: frame-ancestors %s; base-uri 'self'; form-action 'self'; object-src 'none'\r\n" "$anc"
 	printf '%b' "$xfo"
 	printf 'X-Content-Type-Options: nosniff\r\nReferrer-Policy: same-origin\r\n'

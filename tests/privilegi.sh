@@ -277,7 +277,16 @@ echo "Azioni delle pagine con l'helper"
 A=$WORK/azioni
 mkdir -p "$A/run/web/correzione"
 printf 'tokenfinto\n' > "$A/run/web.token"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/priv.log"\ncase "$1" in sweetspot-aggiorna) echo "versione=9" ;; esac\nexit 0\n' "$A" > "$A/priv"
+cat > "$A/priv" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$A/priv.log"
+case "\$1 \$2" in
+	"sweetspot-dsp leggi") echo "PK 100 -3 Q 2" ;;
+	"sweetspot-dsp salva") exit "\${DSP_SAVE_RC:-0}" ;;
+	"sweetspot-aggiorna"*) echo "versione=9" ;;
+esac
+exit 0
+EOF
 chmod +x "$A/priv"
 act() { # corpo senza gettone
 	local body="t=tokenfinto&$1"
@@ -316,6 +325,12 @@ expect "audio: salva con l'helper e riavvia il player" "1|1" "$(grep -c '^sweets
 act "a=correzione_salva&modo=si&sinistro=Filter+1%3A+ON+PK+Fc+100+Hz+Gain+-3+dB+Q+2&destro=" > /dev/null
 expect "correzione: le bozze stanno nella cartella delle pagine" "si" "$(grep -q "^sweetspot-dsp leggi $A/run/web/correzione/nuovo-sinistro.txt" "$A/priv.log" && echo si || echo no)"
 expect "correzione: nessun file nuovo nella cartella di root" "0" "$(ls "$A/run/correzione" 2> /dev/null | wc -l | tr -d ' ')"
+: > "$A/priv.log"
+out=$(DSP_SAVE_RC=1 act "a=correzione_salva&modo=si&sinistro=Filter+1%3A+ON+PK+Fc+100+Hz+Gain+-3+dB+Q+2&destro=")
+expect "filtri non salvati: nessuna modifica della modalita" "0" "$(grep -c '^sweetspot-config imposta CORREZIONE' "$A/priv.log")"
+expect "filtri non salvati: il player non si riavvia" "0" "$(grep -c '^@player$' "$A/priv.log")"
+expect "filtri non salvati: errore esplicito nella risposta" "1" \
+	"$(httpd -d "$(printf '%s' "$out" | sed -n 's/^Location:.*msg=//p' | tr -d '\r')" | grep -c 'Filtri non salvati')"
 # Una richiesta senza gettone non arriva all'helper.
 : > "$A/priv.log"
 printf 't=sbagliato&a=riavvia' | SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="$A/run" SWEETSPOT_LOG="$A/log" \

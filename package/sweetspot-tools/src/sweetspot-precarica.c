@@ -10,7 +10,7 @@
  *       resta attivo fino a SIGTERM. Con SIGUSR1 rilegge ELENCO e rilascia
  *       (munlock/munmap) i file che non ci sono piu': e' come il precarico
  *       cede memoria quando scende sotto la riserva. STATO viene riscritto
- *       dopo ogni file:
+ *       durante il caricamento (al massimo una volta al secondo) e alla fine:
  *           stato<TAB>caricamento|pronto
  *           file<TAB>byte<TAB>ok|errore: motivo<TAB>percorso
  *   sweetspot-precarica residenza FILE...
@@ -21,14 +21,14 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
-
-#define MAX_FILES 4096
 
 struct entry {
 	char *path;
@@ -53,11 +53,11 @@ static void on_signal(int sig)
 	stop = 1;
 }
 
-static int write_state(const char *state, const char *phase, struct entry *e, int n)
+static int write_state(const char *state, const char *phase, struct entry *e, size_t n)
 {
 	char tmp[4096];
 	FILE *f;
-	int i;
+	size_t i;
 
 	if (snprintf(tmp, sizeof(tmp), "%s.tmp", state) >= (int)sizeof(tmp))
 		return -1;
@@ -71,6 +71,70 @@ static int write_state(const char *state, const char *phase, struct entry *e, in
 	if (fclose(f) != 0)
 		return -1;
 	return rename(tmp, state);
+}
+
+static void free_paths(char **paths, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		free(paths[i]);
+	free(paths);
+}
+
+static int read_paths(const char *list, char ***paths, size_t *count)
+{
+	FILE *f = fopen(list, "r");
+	char *line = NULL, **items = NULL;
+	size_t length = 0, n = 0, capacity = 0;
+	int saved;
+
+	if (!f)
+		return -1;
+	while (getline(&line, &length, f) >= 0) {
+		line[strcspn(line, "\n")] = 0;
+		if (!*line)
+			continue;
+		if (n == capacity) {
+			char **grown;
+			size_t next;
+
+			if (capacity > SIZE_MAX / sizeof(*items) / 2) {
+				errno = ENOMEM;
+				goto failed;
+			}
+			next = capacity ? capacity * 2 : 128;
+			grown = realloc(items, next * sizeof(*items));
+			if (!grown)
+				goto failed;
+			items = grown;
+			capacity = next;
+		}
+		items[n] = strdup(line);
+		if (!items[n])
+			goto failed;
+		n++;
+	}
+	if (ferror(f))
+		goto failed;
+	free(line);
+	if (fclose(f) != 0) {
+		saved = errno;
+		free_paths(items, n);
+		errno = saved;
+		return -1;
+	}
+	*paths = items;
+	*count = n;
+	return 0;
+
+failed:
+	saved = errno;
+	free(line);
+	fclose(f);
+	free_paths(items, n);
+	errno = saved;
+	return -1;
 }
 
 /* Mappa e blocca un file: mlock legge dal disco ogni pagina mancante. */
@@ -113,31 +177,24 @@ static void hold(struct entry *e)
 }
 
 /* Rilegge l'elenco: i file che non ci sono piu' si sbloccano e si liberano. */
-static void drop_missing(const char *list, struct entry *e, int n)
+static int compare_paths(const void *a, const void *b)
 {
-	char line[4096];
-	FILE *f;
-	int i;
-	static char *keep[MAX_FILES];
-	int k = 0, j;
+	return strcmp(*(char *const *)a, *(char *const *)b);
+}
 
-	f = fopen(list, "r");
-	if (!f)
-		return;
-	while (k < MAX_FILES && fgets(line, sizeof(line), f)) {
-		line[strcspn(line, "\n")] = 0;
-		if (*line && (keep[k] = strdup(line)))
-			k++;
-	}
-	fclose(f);
+static int drop_missing(const char *list, struct entry *e, size_t n)
+{
+	char **keep = NULL;
+	size_t i, k = 0;
+
+	if (read_paths(list, &keep, &k) != 0)
+		return -1;
+	if (k)
+		qsort(keep, k, sizeof(*keep), compare_paths);
 	for (i = 0; i < n; i++) {
-		int found = 0;
-
 		if (e[i].dropped)
 			continue;
-		for (j = 0; j < k && !found; j++)
-			found = strcmp(keep[j], e[i].path) == 0;
-		if (found)
+		if (k && bsearch(&e[i].path, keep, k, sizeof(*keep), compare_paths))
 			continue;
 		if (e[i].map) {
 			munlock(e[i].map, e[i].size);
@@ -146,17 +203,19 @@ static void drop_missing(const char *list, struct entry *e, int n)
 		}
 		e[i].dropped = 1;
 	}
-	for (j = 0; j < k; j++)
-		free(keep[j]);
+	free_paths(keep, k);
+	return 0;
 }
 
 static int cmd_hold(const char *list, const char *state)
 {
-	static struct entry e[MAX_FILES];
+	struct entry *e;
 	struct sigaction sa;
-	char line[4096];
-	FILE *f;
-	int n = 0, i;
+	struct timespec now;
+	char **paths = NULL;
+	size_t n = 0, i;
+	time_t last_report = 0;
+	int rc = 2;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = on_signal;
@@ -165,52 +224,82 @@ static int cmd_hold(const char *list, const char *state)
 	sa.sa_handler = on_reload;
 	sigaction(SIGUSR1, &sa, NULL);
 
-	f = fopen(list, "r");
-	if (!f) {
+	if (read_paths(list, &paths, &n) != 0) {
 		perror(list);
 		return 2;
 	}
-	while (n < MAX_FILES && fgets(line, sizeof(line), f)) {
-		line[strcspn(line, "\n")] = 0;
-		if (!*line)
-			continue;
-		e[n].path = strdup(line);
-		if (!e[n].path) {
-			fclose(f);
-			return 2;
-		}
-		e[n].size = 0;
-		snprintf(e[n].result, sizeof(e[n].result), "in attesa");
-		n++;
+	e = calloc(n ? n : 1, sizeof(*e));
+	if (!e) {
+		perror("precarica");
+		free_paths(paths, n);
+		return 2;
 	}
-	fclose(f);
+	for (i = 0; i < n; i++) {
+		e[i].path = paths[i];
+		snprintf(e[i].result, sizeof(e[i].result), "in attesa");
+	}
+	free(paths);
 
-	write_state(state, "caricamento", e, n);
+	if (write_state(state, "caricamento", e, n) != 0) {
+		perror(state);
+		goto done;
+	}
 	for (i = 0; i < n && !stop; i++) {
 		if (reload) {
 			reload = 0;
-			drop_missing(list, e, n);
+			if (drop_missing(list, e, n) != 0) {
+				perror(list);
+				goto done;
+			}
 		}
 		if (e[i].dropped)
 			continue;
 		hold(&e[i]);
-		write_state(state, "caricamento", e, n);
+		if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+			perror("clock_gettime");
+			goto done;
+		}
+		if (now.tv_sec != last_report) {
+			if (write_state(state, "caricamento", e, n) != 0) {
+				perror(state);
+				goto done;
+			}
+			last_report = now.tv_sec;
+		}
 	}
-	if (stop)
-		return 0;
+	if (stop) {
+		rc = 0;
+		goto done;
+	}
 	if (write_state(state, "pronto", e, n) != 0) {
 		perror(state);
-		return 2;
+		goto done;
 	}
 	while (!stop) {
 		if (reload) {
 			reload = 0;
-			drop_missing(list, e, n);
-			write_state(state, "pronto", e, n);
+			if (drop_missing(list, e, n) != 0) {
+				perror(list);
+				goto done;
+			}
+			if (write_state(state, "pronto", e, n) != 0) {
+				perror(state);
+				goto done;
+			}
 		}
 		sleep(1);
 	}
-	return 0;
+	rc = 0;
+done:
+	for (i = 0; i < n; i++) {
+		if (e[i].map) {
+			munlock(e[i].map, e[i].size);
+			munmap(e[i].map, e[i].size);
+		}
+		free(e[i].path);
+	}
+	free(e);
+	return rc;
 }
 
 static int cmd_residency(int argc, char **argv)

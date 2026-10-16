@@ -61,9 +61,10 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    che lascia 768 MB al resto.
 9. **Precarico in RAM** (modalità completa): i file della coda, dal brano in
    corso alla fine, vengono letti dietro a tutti gli altri processi (`nice`,
-   `ionice` idle) e bloccati in RAM (`mlock`), entro un budget di memoria (per
-   difetto metà di quella libera, tolti i buffer di Squeezelite ancora da
-   riempire). Quando tutta la coda è in RAM, i dischi meccanici che la
+   `ionice` idle) e bloccati in RAM (`mlock`), entro il budget unificato che
+   riserva memoria a sistema, servizi e buffer del player. Nel capitale
+   rientrano solo i file caricati con successo, non quelli soltanto pianificati.
+   Quando tutti i file previsti risultano caricati, i dischi meccanici che li
    contengono vanno in standby; lo stato mostrato è quello vero (`hdparm -C`):
    un disco svegliato da altro esce dall'elenco e si riprova a fermarlo dopo
    un minuto. Con la coda invariata il piano non si ricalcola (niente `stat`
@@ -71,7 +72,8 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    oltre `PRECARICO_FILE_MAX_MB` restano sul disco e la pagina Stato mostra
    brani caricati, memoria usata, esclusioni e dischi fermi. Le righe `#inizio-fine`
    dei brani CUE contano come il loro file (letto una volta sola) e la coda si
-   legge a pagine da 500: anche le code oltre 1000 brani sono precaricate.
+   legge a pagine da 500. Il caricatore non tronca il manifest a 4096 file;
+   lo stato viene aggiornato durante il caricamento e al completamento.
 
 ## Come si usa
 
@@ -80,8 +82,27 @@ che compare sullo schermo): si apre l'interfaccia **Material** di Lyrion, con
 libreria, radio e servizi in streaming. Funzionano anche le app per Lyrion
 (iPeng, Squeezer, Material) e gli altri player Squeezebox della casa.
 
+L'aspetto **Reference Studio** usa grafite, blu e controlli leggibili su
+telefono, tablet e computer. Le impostazioni SweetSpot hanno la stessa
+identità visiva della skin musicale: navigazione laterale sugli schermi ampi
+e navigazione compatta a scorrimento sugli schermi piccoli. Il tema non
+introduce dipendenze da font o CDN esterni.
+
+Per Material vengono installati il tema **Reference-Studio** e il colore
+omonimo attraverso il supporto ufficiale ai temi utente, senza modificare
+il plugin. Sono i predefiniti quando non sono state salvate altre scelte.
+Le preferenze esplicite, anche quelle già memorizzate nel browser, restano:
+per applicare il nuovo aspetto a un client già personalizzato seleziona
+tema e colore Reference-Studio nelle impostazioni dell'interfaccia Material.
+I file di questo tema sono gestiti da SweetSpot; gli altri temi e colori
+personalizzati non vengono modificati.
+
 Nel menu di Material, **Impostazioni Sweetspot** apre le sezioni, come su
-Daphile:
+Daphile.
+
+Audio e Stato possono restare nel riquadro di Material. I collegamenti alle
+altre impostazioni, compresa la correzione ambientale, aprono la pagina completa:
+le protezioni contro l'incorporamento da siti esterni restano attive.
 
 | Sezione | Cosa contiene |
 | --- | --- |
@@ -181,7 +202,15 @@ diffusore sinistro e uno per il destro.
   volume.
 - Il DSD diventa PCM mentre la correzione è accesa.
 - I filtri restano sulla chiavetta, nella cartella `correzione-ambientale`
-  (testo di REW, leggibile anche dal computer).
+  (testo di REW, leggibile anche dal computer). Il salvataggio prepara e verifica
+  una nuova generazione prima di pubblicarla; i FIR esistenti sono conservati.
+  Salvataggio e ripristino includono anche tutti i FIR con la frequenza nel
+  nome; la copia in RAM resta leggibile dal pannello senza concedergli scrittura.
+  La generazione precedente resta in `correzione-ambientale.vecchio` e viene
+  usata all'avvio se un'interruzione ha lasciato assente la cartella principale.
+  Se la chiavetta manca o la scrittura fallisce, il pannello avvisa che i nuovi
+  filtri valgono solo fino al riavvio. Un errore nella preparazione in memoria
+  lascia invece invariati i filtri precedenti, senza riavviare il player.
 
 ### Bluetooth come sorgente
 
@@ -250,6 +279,14 @@ e copertina su MusicBrainz (modificabili), **Copia** legge in modo sicuro
 verifica ogni traccia con il database **AccurateRip** e salva FLAC con tag e
 copertina in `Artista/Album (Anno)`, con un registro della copia
 (`sweetspot-copia.txt`).
+
+Le tracce esistenti **non vengono sovrascritte**: un conflitto interrompe la
+copia prima di leggere il CD e viene segnalato nella pagina Archivio. Per
+una nuova copia scegli un nome album diverso. Ogni FLAC viene codificato con
+verifica in una cartella temporanea dello stesso filesystem e pubblicato solo
+quando completo; anche un file comparso durante la codifica viene preservato.
+Copertina e rapporti precedenti non vengono sovrascritti. Un errore di scrittura
+non viene contato come una traccia copiata e verificata.
 
 ### Installazione sul disco interno
 

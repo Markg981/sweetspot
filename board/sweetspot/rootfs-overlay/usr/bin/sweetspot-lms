@@ -85,6 +85,53 @@ material_actions() {
 EOF
 }
 
+material_theme() (
+	local assets=${SWEETSPOT_ASSETS:-/usr/share/sweetspot} dir=$PREFS/material-skin
+	local prefs=$PREFS/plugin/material-skin.prefs current f
+	local theme_tmp="" color_tmp="" prefs_tmp=""
+	umask 077
+	trap '[ -z "$theme_tmp" ] || rm -f "$theme_tmp"; [ -z "$color_tmp" ] || rm -f "$color_tmp"; [ -z "$prefs_tmp" ] || rm -f "$prefs_tmp"' EXIT
+	for f in www/reference-studio.css material/reference-studio.css material/reference-studio-colors.css; do
+		if [ ! -r "$assets/$f" ]; then
+			log "lyrion: Reference Studio non disponibile, manca $f"
+			return 1
+		fi
+	done
+	if ! mkdir -p "$dir/themes/dark" "$dir/colors" "$PREFS/plugin"; then
+		log "lyrion: cartelle di Reference Studio non scrivibili"
+		return 1
+	fi
+	theme_tmp=$(mktemp "$dir/themes/dark/.studio.XXXXXX") &&
+		color_tmp=$(mktemp "$dir/colors/.studio.XXXXXX") ||
+		{ log "lyrion: preparazione di Reference Studio non riuscita"; return 1; }
+	if ! cat "$assets/www/reference-studio.css" "$assets/material/reference-studio.css" > "$theme_tmp" ||
+		! cat "$assets/www/reference-studio.css" "$assets/material/reference-studio-colors.css" > "$color_tmp" ||
+		! mv "$theme_tmp" "$dir/themes/dark/Reference-Studio.css" ||
+		! mv "$color_tmp" "$dir/colors/Reference-Studio.css"; then
+		log "lyrion: pubblicazione di Reference Studio non riuscita"
+		return 1
+	fi
+	current=$(sed -n 's/^defaults:[[:space:]]*//p' "$prefs" 2>/dev/null | tail -n 1)
+	case "$current" in
+		"" | "''" | '""' | "'{}'" | '"{}"' | '{}' | '~' | null) ;;
+		*) return 0 ;;
+	esac
+	prefs_tmp=$(mktemp "$PREFS/plugin/.studio-prefs.XXXXXX") ||
+		{ log "lyrion: preferenze di Reference Studio non scrivibili"; return 1; }
+	if [ -f "$prefs" ]; then
+		awk '!/^defaults:/' "$prefs" > "$prefs_tmp" ||
+			{ log "lyrion: lettura delle preferenze Material non riuscita"; return 1; }
+	else
+		printf '%s\n' '---' > "$prefs_tmp" || return 1
+	fi
+	if ! printf "defaults: '%s'\n" '{"theme":"user:dark/Reference-Studio","color":"user:Reference-Studio","colorUsage":0,"tinted":false}' >> "$prefs_tmp" ||
+		! mv "$prefs_tmp" "$prefs"; then
+		log "lyrion: preferenze di Reference Studio non salvate"
+		return 1
+	fi
+	log "lyrion: Reference Studio impostato come tema predefinito"
+)
+
 # Cache delle copertine di Lyrion (artwork.db: copertine ridimensionate;
 # imgproxy.db: copertine dei servizi in streaming). In RAM crescono con la
 # libreria (Lyrion le prepara durante la lettura) e si perdono a ogni
@@ -287,6 +334,7 @@ do_prepare() {
 		log "lyrion: preferenze iniziali scritte"
 	fi
 	ensure_csrf
+	material_theme || return 1
 	material_actions > "$PREFS/material-skin/actions.json"
 	# Material Skin preinstallata. Se l'utente l'ha aggiornata dal gestore
 	# dei plugin si tiene la sua versione.

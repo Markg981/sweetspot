@@ -12,6 +12,7 @@ W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 mkdir -p "$W/bin" "$W/sys/block/sr0" "$W/run" "$W/media/Archivio"
 gcc -O2 -o "$W/bin/sweetspot-arcrc" "$ROOT/package/sweetspot-tools/src/sweetspot-arcrc.c"
+gcc -O2 -Wall -Wextra -Werror -o "$W/bin/sweetspot-pubblica" "$ROOT/package/sweetspot-tools/src/sweetspot-pubblica.c"
 for t in cd-paranoia curl; do
 	printf '#!/bin/sh\nexec python3 %s %s "$@"\n' "$ROOT/tests/cd/finto.py" "$t" > "$W/bin/$t"
 done

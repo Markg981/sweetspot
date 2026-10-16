@@ -817,7 +817,6 @@ for v in 1 3 -24.1 -25 -3.55 abc -3x -; do
 	expect "margine DSD $v non valido: predefinito" "-3" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
 done
 printf '' > "$WEB/s.txt"
-grep -q 'SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: il margine DSD arriva a Squeezelite" || ko "player margine DSD" "variabile d'ambiente" "assente"
 cat > "$WEB/actionbin/sweetspot-prova-dop" <<'FINTO'
 #!/bin/sh
 printf '%s\n' "$*" > "$SWEETSPOT_RUN/prova-dop.call"
@@ -2060,9 +2059,10 @@ printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc
 sleep 30 &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 /musica/a.flac\nSTREAM http://radio.example/stream\n' > "$PRE/run/precarico.piano"
+printf 'stato\tpronto\nfile\t1024000\tok\t/musica/a.flac\n' > "$PRE/run/precarico.stato"
 expect "budget stabile: la memoria gia' bloccata conta come libera" "2933736" "$(prefn preload_budget_kb)"
 kill "$(cat "$PRE/run/precarico.tieni.pid")"
-rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano"
+rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano" "$PRE/run/precarico.stato"
 # Pressione di memoria (PSI) e rilascio progressivo dei brani piu' lontani.
 mkdir -p "$PRE/proc/pressure"
 printf 'some avg10=25.00 avg60=3.00 avg300=1.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$PRE/proc/pressure/memory"
@@ -2074,6 +2074,8 @@ expect "senza /proc/pressure/memory: nessuna pressione" "no" "$(prefn 'psi_alta 
 sh -c 'trap : USR1; while :; do sleep 1; done' &
 echo $! > "$PRE/run/precarico.tieni.pid"
 printf 'SI 1000 %s\nSI 2000 %s\nSTREAM http://radio.example/stream\n' "$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.piano"
+printf 'stato\tpronto\nfile\t1024000\tok\t%s\nfile\t2048000\tok\t%s\n' \
+	"$PRE/musica/Album è/a.flac" "$PRE/musica/Album è/b c.flac" > "$PRE/run/precarico.stato"
 expect "memoria sufficiente: nessun rilascio" "1" "$(prefn 'shed_farthest; echo $?')"
 printf 'MemTotal:        8388608 kB\nMemAvailable:    1100000 kB\n' > "$PRE/proc/meminfo"
 prefn shed_farthest
@@ -2084,7 +2086,7 @@ prefn shed_farthest
 expect "ancora sotto la riserva: rilascia anche l'ultimo, poi non c'e' altro" "OLTRE 1000|1" \
 	"$(sed -n 1p "$PRE/run/precarico.piano" | cut -d' ' -f1,2)|$(prefn 'shed_farthest; echo $?')"
 kill "$(cat "$PRE/run/precarico.tieni.pid")" 2>/dev/null
-rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano" "$PRE/run/precarico.elenco"
+rm -f "$PRE/run/precarico.tieni.pid" "$PRE/run/precarico.piano" "$PRE/run/precarico.elenco" "$PRE/run/precarico.stato"
 printf 'MemTotal:        8388608 kB\nMemAvailable:    4194304 kB\n' > "$PRE/proc/meminfo"
 # Brani CUE (URL#inizio-fine): il file e' quello intero, caricato una volta sola.
 expect "URL di un brano CUE: il frammento si scarta" "$PRE/musica/Album è/a.flac" "$(prefn "url_path '$U/a.flac#12.5-100.25'")"
@@ -3487,8 +3489,12 @@ python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
 python3 "$ROOT/tests/squeezelite-strict-hw.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
+python3 "$ROOT/tests/player-avvio.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
 python3 "$ROOT/tests/squeezelite-mixer-dsd.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
+python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
+python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
+python3 "$ROOT/tests/reference-studio.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

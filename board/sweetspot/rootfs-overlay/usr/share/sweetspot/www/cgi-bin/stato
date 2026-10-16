@@ -18,7 +18,7 @@ page_start "Stato" stato 15
 printf '<p class="sub">Player in %s &middot; si aggiorna ogni 15 secondi</p>\n' "$(esc "$(net_ipv4)")"
 srv=$(lms_server_ip)
 if [ "$(mode)" = player ] && [ -n "$srv" ]; then
-	printf '<p><a class="btn" href="http://%s:9000/">Apri Lyrion per scegliere la musica</a></p>\n' "$srv"
+	printf '<p><a class="btn" href="http://%s:9000/" target="_top">Apri Lyrion per scegliere la musica</a></p>\n' "$srv"
 fi
 echo '<div class="card">'
 if [ "$st_ts" -eq 0 ] || [ ! -r "$CACHE_DATI" ]; then
@@ -34,5 +34,5 @@ else
 	done < "$CACHE_DATI"
 fi
 echo '</div>'
-printf '<p class="sub"><a href="/cgi-bin/rapporto">Scarica il rapporto di compatibilità</a>: computer, DAC e questi esiti, senza indirizzi né dati personali. Allegalo a una segnalazione su <a href="https://github.com/Markg981/sweetspot/issues/new?template=compatibilita.yml" target="_blank" rel="noopener">GitHub</a> per la matrice di compatibilità.</p>\n'
+printf '<p class="sub"><a href="/cgi-bin/rapporto" target="_top">Scarica il rapporto di compatibilità</a>: computer, DAC e questi esiti, senza indirizzi né dati personali. Allegalo a una segnalazione su <a href="https://github.com/Markg981/sweetspot/issues/new?template=compatibilita.yml" target="_blank" rel="noopener">GitHub</a> per la matrice di compatibilità.</p>\n'
 page_end

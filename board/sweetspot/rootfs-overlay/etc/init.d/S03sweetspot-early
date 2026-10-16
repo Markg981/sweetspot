@@ -76,12 +76,8 @@ case "$1" in
 			# Impostazioni, plugin e libreria di Lyrion salvati.
 			sweetspot-dati ripristina "$STICK_MNT/$DATA_DIR_NAME"
 			# Filtri della correzione ambientale (REW) e impulsi FIR.
-			if [ -d "$STICK_MNT/correzione-ambientale" ]; then
-				mkdir -p "$RUN/correzione"
-				cp "$STICK_MNT/correzione-ambientale/"*.txt "$RUN/correzione/" 2>/dev/null
-				cp "$STICK_MNT/correzione-ambientale/"fir-sinistro.wav "$STICK_MNT/correzione-ambientale/"fir-destro.wav \
-					"$RUN/correzione/" 2>/dev/null
-			fi
+			sweetspot-dsp ripristina "$STICK_MNT/correzione-ambientale" ||
+				log "correzione: ripristino dei filtri non riuscito"
 			stick_umount
 			log "impostazioni lette dalla chiavetta"
 			echo "fatto"

@@ -960,7 +960,7 @@ EOF
 	# Stato per Stato/Audio, con la verifica sugli argomenti reali.
 	volume_stato_scrivi "$VOL_MODO" "$VOL_MOTIVO"
 	session_start
-	taskset -c "$HK" squeezelite "$@" &
+	SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset -c "$HK" squeezelite "$@" &
 	PID=$!
 	echo "$PID" > "$RUN/squeezelite.pid"
 	# Mai ucciso dall'OOM killer: senza swap, sotto pressione di memoria
