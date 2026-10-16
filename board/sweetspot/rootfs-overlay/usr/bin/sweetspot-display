@@ -47,12 +47,16 @@ case "$min" in ''|*[!0-9]*) min=2 ;; esac
 { printf '\033[9;%s]\033[14;%s]' "$min" "$min" > "$TTY"; } 2>/dev/null
 
 last=""
+nap_init
 while true; do
-	ip=$(net_ipv4)
-	now="$ip|$(cat "$RUN/player.stato" 2>/dev/null)|$(lms_server_ip)"
+	net_ipv4_v; ip=$IPV4
+	pst=''
+	read -r pst < "$RUN/player.stato" 2>/dev/null
+	now="$ip|$pst|$(lms_server_ip)"
 	if [ "$now" != "$last" ]; then
 		{ draw "$ip" > "$TTY"; } 2>/dev/null
 		last=$now
 	fi
-	sleep 10
+	# Il testo cambia di rado (rete, stato del player): ogni 20 s bastano.
+	nap 20
 done

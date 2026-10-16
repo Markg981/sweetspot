@@ -321,19 +321,16 @@ lms_cgroups() {
 	cg_make "$CG_SCANNER" "memory.max=$max" "memory.high=$high" "memory.swap.max=0" "io.weight=default 20"
 }
 
-# Finche' Lyrion vive, ogni 20 secondi porta lo scanner (figlio del server,
-# nasce con il valore di Lyrion) tra i primi candidati dell'OOM killer e nel
-# suo gruppo di memoria. Un giro leggero sulle righe di comando; niente
-# scanner, niente scritture.
-oom_watch() {
+# Un passo (lo chiama il demone dello stato sweetspot-stato durante una
+# scansione e a ogni giro, al posto del vecchio oom_watch ogni 20 s): lo
+# scanner (a +500 per l'OOM killer lo porta gia' il demone) entra nel suo
+# gruppo di memoria e si controlla il tmpfs delle copertine.
+do_scanner() {
 	local spid
-	while kill -0 "$1" 2>/dev/null; do
-		oom_adj_cmd 500 scanner.pl
-		spid=$(pgrep -f scanner.pl 2>/dev/null)
-		[ -n "$spid" ] && cg_add "$CG_SCANNER" $spid
-		art_ram_check
-		sleep 20
-	done
+	spid=$(pgrep -f scanner.pl 2>/dev/null)
+	[ -n "$spid" ] && cg_add "$CG_SCANNER" $spid
+	art_ram_check
+	return 0
 }
 
 do_service() {
@@ -358,7 +355,9 @@ do_service() {
 		# OOM killer: Lyrion poco protetto, lo scanner (figlio, lo eredita)
 		# tra i primi a cadere; il player (-1000) mai.
 		oom_adj -100 "$lmspid"
-		oom_watch "$lmspid" &
+		# Lo scanner lo porta a +500 il demone dello stato quando Lyrion
+		# annuncia una scansione (evento rescan della CLI): nessun processo
+		# che a riposo si risveglia ogni 20 secondi.
 		wait "$lmspid"
 		rc=$?
 		[ -f "$STOPFLAG" ] && break
@@ -570,6 +569,7 @@ case "$1" in
 	ferma) do_stop ;;
 	attendi) do_wait "$2" ;;
 	primo-controllo) do_first_check ;;
+	scanner) do_scanner ;;
 	# aggiorna [CARTELLA]: rescan incrementale (mai wipe), anche solo di una cartella
 	aggiorna) if [ -n "$2" ]; then lms_json "" rescan "singledir:$2" > /dev/null; else lms_json "" rescan > /dev/null; fi ;;
 	ricostruisci) lms_json '' wipecache > /dev/null ;;

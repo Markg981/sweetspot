@@ -234,7 +234,7 @@ grep -q 'oom_adj -1000 "\$PID"' "$OVERLAY/usr/bin/sweetspot-player" && ok "playe
 grep -q '\[ -z "\$rs" \] && \[ -z "\$dsp" \] && printf .%s\\n. -H' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: Originale senza ripiego su plughw: (-H)" || ko "player: Originale -H" "presente" "assente"
 grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: CamillaDSP a -1000" || ko "player: CamillaDSP a -1000" "presente" "assente"
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
-grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: scanner a +500" || ko "lms: scanner a +500" "presente" "assente"
+grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-stato" && ok "stato: scanner a +500 (evento rescan)" || ko "stato: scanner a +500" "presente" "assente"
 grep -q 'oom_score_adj' "$OVERLAY/usr/bin/sweetspot-copia" && ok "copia: lavoro sospendibile a +500" || ko "copia: lavoro sospendibile a +500" "presente" "assente"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-precarico" && ok "precarico a +500" || ko "precarico a +500" "presente" "assente"
@@ -3478,6 +3478,7 @@ sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1

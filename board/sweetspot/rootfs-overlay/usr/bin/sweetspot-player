@@ -978,6 +978,7 @@ EOF
 # divergono li reimposta e, se non ci riesce, lo scrive in
 # $RUN/fedelta.stato e nel log (una volta per cambio di stato).
 PREFS_OGNI=${SWEETSPOT_PREFS_OGNI:-15}
+PREFS_ATTIVO=$PREFS_OGNI
 
 prefs_stato() { # testo
 	[ "$(cat "$RUN/fedelta.stato" 2>/dev/null)" = "$1" ] && return 0
@@ -1052,13 +1053,32 @@ apply_player_prefs() {
 	fi
 }
 
+# Istanza del DAC senza processi: id ALSA e, per USB, busnum:devnum del
+# dispositivo (come dac_instance, ma con la sola shell; il percorso USB si
+# ricava una volta per sessione con inst_fast_start).
+inst_fast_start() { # scheda
+	INSTP=$(dac_usb_device "$1" 2>/dev/null)
+	inst_fast "$1"
+}
+inst_fast() { # scheda
+	local id='' bus='' dev=''
+	read -r id < "$PROC/asound/card$1/id" 2>/dev/null
+	if [ -n "$INSTP" ] && [ -f "$INSTP/devnum" ]; then
+		read -r bus < "$INSTP/busnum" 2>/dev/null
+		read -r dev < "$INSTP/devnum" 2>/dev/null
+	fi
+	IFAST="$id $bus:$dev"
+}
+SORVEGLIA_LUNGO=${SWEETSPOT_SORVEGLIA_LUNGO:-60}
+SORVEGLIA_RIPOSO=${SWEETSPOT_SORVEGLIA_RIPOSO:-300}
+
 player_loop() {
 	BACKOFF=0
 	while true; do
 		# DAC in uso dal Bluetooth: nessuno riapre Squeezelite finche' non lo restituisce.
 		if bt_dac_busy; then
 			[ "$(cat "$STATE" 2>/dev/null)" = "DAC in uso dal Bluetooth" ] || say "DAC in uso dal Bluetooth"
-			sleep 2
+			nap 2
 			continue
 		fi
 		card=$(dac_find)
@@ -1066,18 +1086,17 @@ player_loop() {
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
 			# Le zone continuano anche senza il DAC principale.
 			zones_sync ""
-			sleep 3
+			nap 3
 			continue
 		fi
-		inst=$(dac_instance "$card")
 		remember_main_dac "$card"
 		setup_usb_irq "$card"
 		run_player "$card" || {
 			if [ -s "$RUN/correzione.errore" ] && [ "$(dsp_politica)" = blocca ]; then
 				[ "$(cat "$STATE" 2>/dev/null)" = "bloccato: correzione non disponibile" ] || say "bloccato: correzione non disponibile"
-				sleep 10
+				nap 10
 			else
-				sleep 2
+				nap 2
 			fi
 			continue
 		}
@@ -1089,25 +1108,67 @@ player_loop() {
 		start_volume_watch
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"
+		# Il DAC e la sua istanza si guardano a ogni giro con la sola shell
+		# (nessun processo); il resto (zone, preferenze, rotazione del
+		# registro, stato di CamillaDSP) a riposo ogni SORVEGLIA_LUNGO s: a
+		# ogni giro costava decine di processi, la fonte principale dei fork
+		# a riposo. Con la correzione attiva, o finche' il thread audio non
+		# e' agganciato, il giro completo resta ogni 2 s.
+		inst_fast_start "$card"
+		inst_ref=$IFAST
+		prossimo=0
+		ripr=0
+		read -r ini_s _ < /proc/uptime
+		ini_s=${ini_s%%.*}
 		while kill -0 "$PID" 2>/dev/null; do
 			# Con CamillaDSP nel percorso si guarda piu' spesso: ogni nuovo
 			# processo nasce con la priorita' del player e va sistemato.
-			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then sleep 5; else sleep 2; fi
-			pin_output_thread "$PID"
-			dsp_session_check
-			pin_dsp
-			dsp_clip_poll
-			dsp_underrun_poll
-			dsp_stato_poll
-			sqlog_rotate "$SQLOG"
-			log_quota_tick
-			zones_sync "$card"
-			apply_player_prefs
-			sync_poll "$PLAYER_MAC"
-			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_instance "$card")" != "$inst" ]; then
+			# A riposo (nessuna riproduzione sul DAC) il giro e' sempre lento.
+			if dac_playing; then
+				if [ "$ripr" = 0 ]; then ripr=1; prossimo=0; fi
+				if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then nap 5; else nap 2; fi
+			else
+				ripr=0
+				nap 5
+			fi
+			inst_fast "$card"
+			if [ ! -d "$PROC/asound/card$card" ] || [ "$IFAST" != "$inst_ref" ]; then
 				log "player: DAC scollegato o ricollegato"
 				LOST=1
 				kill "$PID" 2>/dev/null
+				break
+			fi
+			read -r adesso_s _ < /proc/uptime
+			adesso_s=${adesso_s%%.*}
+			# Giro completo ogni 2 s solo mentre il DAC riproduce (correzione
+			# attiva o thread audio non agganciato); a riposo ogni SORVEGLIA_LUNGO.
+			# Nei primi 30 s un gruppo di sincronizzazione da ripristinare si guarda ogni 5 s.
+			pend=0
+			if [ "$adesso_s" -lt $((ini_s + 30)) ]; then
+				for f in "$SYNC_DIR"/*.pendente; do [ -f "$f" ] && pend=1; done
+			fi
+			if [ "$adesso_s" -ge "$prossimo" ] || [ "$pend" = 1 ] || { [ "$ripr" = 1 ] && { [ -f "$RUN/correzione.attiva" ] || [ ! -f "$RUN/audio.tid" ]; }; }; then
+				if [ "$ripr" = 1 ]; then
+					prossimo=$((adesso_s + SORVEGLIA_LUNGO))
+					PREFS_OGNI=$PREFS_ATTIVO
+					pin_output_thread "$PID"
+					pin_dsp
+					dsp_clip_poll
+					dsp_underrun_poll
+				else
+					# A riposo (nessuna riproduzione) contano solo le cose che
+					# non dipendono dal flusso: il giro costa decine di
+					# processi (jq, wget, sottoshell) e si fa raramente.
+					prossimo=$((adesso_s + SORVEGLIA_RIPOSO))
+					PREFS_OGNI=$SORVEGLIA_RIPOSO
+				fi
+				dsp_session_check
+				dsp_stato_poll
+				sqlog_rotate "$SQLOG"
+				log_quota_tick
+				zones_sync "$card"
+				apply_player_prefs
+				sync_poll "$PLAYER_MAC"
 			fi
 		done
 		wait "$PID" 2>/dev/null
@@ -1118,15 +1179,15 @@ player_loop() {
 		if [ "$LOST" = 1 ]; then
 			BACKOFF=0
 			say "riavvio del player"
-			sleep 2
+			nap 2
 		else
 			BACKOFF=$(backoff_next "$BACKOFF" $(( $(date +%s) - t0 )))
 			if [ "$BACKOFF" -gt 0 ]; then
 				say "squeezelite terminato subito, nuovo tentativo tra $BACKOFF s"
-				sleep "$BACKOFF"
+				nap "$BACKOFF"
 			else
 				say "riavvio del player"
-				sleep 2
+				nap 2
 			fi
 		fi
 	done
@@ -1136,6 +1197,7 @@ player_loop() {
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 mkdir -p "$RUN" /var/log
+nap_init
 # Supervisore appena partito: il DAC principale si sceglie di nuovo e le
 # zone rimaste senza processo (fermate con il supervisore) non contano.
 rm -f "$RUN/dac.principale"

@@ -17,6 +17,12 @@
 #
 # Stato per la pagina Stato in $RUN/precarico.json. Solo in modalita'
 # completa: in modalita' player la musica arriva da un server in rete.
+#
+# Non e' piu' un servizio con il suo giro ogni 5 secondi (status 0 1000 a
+# Lyrion e decine di processi a vuoto): le funzioni le carica il demone a
+# eventi sweetspot-stato, che chiama step() quando la CLI di Lyrion segnala
+# un evento playlist, quando il caricamento scrive precarico.stato o cambia
+# la configurazione. A mano: sweetspot-precarico passo | ferma.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -346,8 +352,8 @@ step() {
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 mkdir -p "$RUN"
-trap 'release; write_summary spento; exit 0' TERM INT
-while true; do
-	step
-	sleep 5
-done
+case "${1:-}" in
+	passo) step ;;
+	ferma) release; write_summary spento ;;
+	*) echo "uso: $0 passo|ferma (il precarico lo guida sweetspot-stato: step() a ogni evento playlist)" >&2; exit 1 ;;
+esac

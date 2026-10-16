@@ -39,6 +39,14 @@ CONFIG_IONICE=y
 CONFIG_SETSID=y
 # Credenziali di Lyrion nelle richieste JSON (lms_auth_header).
 CONFIG_BASE64=y
+# Demone a eventi (sweetspot-stato): inotify sui file di configurazione e di
+# run (inotifyd), FIFO degli eventi (mkfifo), pkill per fermare i processi
+# di ascolto (nc, udevadm, inotifyd) insieme al demone.
+CONFIG_INOTIFYD=y
+CONFIG_PKILL=y
+CONFIG_MKFIFO=y
+CONFIG_USLEEP=y
+
 
 # Bundle diagnostico (sweetspot-diario bundle): tar.gz e log del kernel.
 CONFIG_GZIP=y

@@ -152,10 +152,53 @@ config_build() {
 }
 
 # conf CHIAVE [predefinito]: l'ultima riga vince.
+# Solo comandi interni della shell (prima grep, tail e cut: quattro processi
+# a ogni lettura, centinaia al minuto nei cicli dei servizi).
 conf() {
-	local v=""
-	[ -f "$CONF" ] && v=$(grep "^$1=" "$CONF" | tail -n 1 | cut -d= -f2-)
+	local v="" l
+	if [ -f "$CONF" ]; then
+		while IFS= read -r l || [ -n "$l" ]; do
+			case "$l" in "$1="*) v=${l#*=} ;; esac
+		done < "$CONF"
+	fi
 	if [ -n "$v" ]; then printf '%s' "$v"; else printf '%s' "$2"; fi
+}
+
+# conf senza sottoshell: il valore resta in CONFV. Per i cicli dei servizi:
+# "$(conf ...)" costa un fork a ogni chiamata.
+confv() { # chiave [predefinito]
+	local l
+	CONFV=""
+	if [ -f "$CONF" ]; then
+		while IFS= read -r l || [ -n "$l" ]; do
+			case "$l" in "$1="*) CONFV=${l#*=} ;; esac
+		done < "$CONF"
+	fi
+	[ -n "$CONFV" ] || CONFV=$2
+	return 0
+}
+
+# Attesa senza fork. nap_init apre (una volta, nel servizio) una FIFO che
+# nessuno scrive sul descrittore 4; nap legge con timeout. Era "sleep": un
+# processo nuovo a ogni giro di ogni ciclo, la meta' dei fork a riposo.
+# Senza FIFO ripiega su sleep. Solo secondi interi.
+# shellcheck disable=SC3045
+nap() { # secondi
+	if [ "${NAP_OK:-0}" = 1 ]; then
+		read -r -t "$1" _ <&4 || [ $? -gt 128 ] || sleep "$1"
+	else
+		sleep "$1"
+	fi
+}
+nap_init() {
+	local f="${RUN:-/run/sweetspot}/nap.$$"
+	NAP_OK=0
+	mkdir -p "$RUN" 2>/dev/null
+	mkfifo -m 600 "$f" 2>/dev/null || return 0
+	exec 4<>"$f"
+	NAP_OK=1
+	rm -f "$f"
+	return 0
 }
 
 # Profilo energetico: "fisso" (predefinito: SMT spento, stati C limitati,
@@ -168,7 +211,13 @@ energia() {
 	esac
 }
 
-lower() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
+# tr solo se c'e' una maiuscola (di norma i valori sono gia' minuscoli).
+lower() {
+	case "$1" in
+		*[A-Z]*) printf '%s' "$1" | tr 'A-Z' 'a-z' ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
 
 # Modalita' di funzionamento:
 #   completa  Lyrion Music Server (libreria, plugin, interfaccia web) e
@@ -240,8 +289,12 @@ put() {
 }
 
 is_yes() {
-	case "$(lower "$1")" in
+	case "$1" in
 		si|sì|s|yes|y|1|true|on|vero|attivo) return 0 ;;
+		*[A-Z]*)
+			case "$(lower "$1")" in
+				si|sì|s|yes|y|1|true|on|vero|attivo) return 0 ;;
+			esac ;;
 	esac
 	return 1
 }
@@ -440,13 +493,21 @@ oom_adj() {
 	return 0
 }
 
-# oom_adj_cmd VALORE TESTO: come oom_adj, per i processi la cui riga di
-# comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+# oom_adj_cmd VALORE TESTO [PADRE]: come oom_adj, per i processi la cui riga
+# di comando contiene TESTO (es. scanner.pl di Lyrion, figlio del server).
+# Con PADRE si guardano solo i suoi figli: il padre di ogni processo si legge
+# da /proc/PID/stat con la shell, senza lanciare un comando per processo.
 oom_adj_cmd() {
-	local v=$1 pat=$2 d p
+	local v=$1 pat=$2 parent=${3:-} d p st
 	for d in "$PROC"/[0-9]*; do
-		[ -r "$d/cmdline" ] || continue
 		p=${d##*/}
+		if [ -n "$parent" ]; then
+			read -r st < "$d/stat" 2>/dev/null || continue
+			st=${st##*) }   # dopo "(nome) "
+			st=${st#* }     # dopo lo stato: resta "ppid ..."
+			[ "${st%% *}" = "$parent" ] || continue
+		fi
+		[ -r "$d/cmdline" ] || continue
 		case "$(tr '\000' ' ' < "$d/cmdline" 2>/dev/null)" in
 			*"$pat"*) oom_adj "$v" "$p" ;;
 		esac
@@ -799,7 +860,37 @@ dac_playback_stream() { # scheda [canali]
 # Senza stream USB (es. I2S), ALSA dichiara i formati prima di configurare
 # il PCM. /dev/null non contiene campioni da riprodurre. L'apertura puo'
 # fallire se il dispositivo e' occupato: in quel caso non si inventano capacita'.
-dac_hw_params() {
+dac_hw_params() { dac_cached hw "$1" dac_hw_params_live "$1"; }
+
+# Le capacita' del DAC cambiano solo con l'hardware, ma ogni prova apre il PCM
+# (hw:): con un DAC I2S la serie costa una ventina di aperture a ogni giro.
+# Mentre il demone dello stato e' attivo (esiste dac.cache.attiva) gli esiti
+# riusciti restano in $RUN/dac.cache finche' udev non segnala un evento
+# "sound" (il demone svuota la cache). Senza demone niente cache.
+# La chiave contiene l'identita' della scheda (id e usbid da /proc/asound),
+# non solo il numero: un altro DAC nello stesso posto non riusa i dati.
+#   dac_cached TIPO SCHEDA COMANDO...
+dac_cached() {
+	local kind=$1 card=$2 f out id='' usb=''
+	shift 2
+	if [ ! -f "$RUN/dac.cache.attiva" ]; then "$@"; return; fi
+	read -r id < "$PROC/asound/card$card/id" 2>/dev/null
+	read -r usb < "$PROC/asound/card$card/usbid" 2>/dev/null
+	f=$RUN/dac.cache/$kind.$card.$id.$usb
+	if [ -s "$f" ]; then cat "$f"; return 0; fi
+	out=$("$@") || return 1
+	[ -n "$out" ] || return 0
+	# Un'apertura fallita (dispositivo occupato, o in uso: ascolto in corso)
+	# non si ricorda.
+	case "$kind" in hw) case "$out" in *FORMAT:*) ;; *) printf '%s\n' "$out"; return 0 ;; esac ;; esac
+	if dac_playing; then printf '%s\n' "$out"; return 0; fi
+	mkdir -p "$RUN/dac.cache" 2>/dev/null &&
+		printf '%s\n' "$out" > "$f.nuovo" 2>/dev/null && mv "$f.nuovo" "$f"
+	printf '%s\n' "$out"
+}
+dac_cache_purge() { rm -rf "$RUN/dac.cache"; }
+
+dac_hw_params_live() {
 	local dev id
 	dev=$(dac_playback_dev "$1") || return 1
 	id=$(dac_id "$1")
@@ -848,6 +939,11 @@ dac_rates() { # scheda [formato ALSA] [canali]
 			*) return 1 ;;
 		esac
 	fi
+	dac_cached "rates-$fmt" "$1" dac_rates_probe "$1" "$fmt"
+}
+
+dac_rates_probe() { # scheda formato
+	local id dev rate out actual fmt=$2
 	id=$(dac_id "$1")
 	dev=$(dac_playback_dev "$1") || return 1
 	# Un intervallo RATE non prova che ogni frequenza sia supportata. Prova
@@ -922,9 +1018,24 @@ net_ipv4() {
 	ip -4 -o addr show scope global 2>/dev/null | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -n 1
 }
 
+# Come net_ipv4, con un solo processo (ip) e nessuna sottoshell aggiuntiva
+# per sed e head: l'indirizzo resta in IPV4.
+# shellcheck disable=SC2034  # IPV4 la legge chi chiama
+net_ipv4_v() {
+	local out l
+	IPV4=""
+	out=$(ip -4 -o addr show scope global 2>/dev/null)
+	while IFS= read -r l; do
+		case "$l" in *" inet "*) l=${l#* inet }; IPV4=${l%%[/ ]*}; return 0 ;; esac
+	done <<EOF
+$out
+EOF
+	return 0
+}
+
 # Indirizzo del server Lyrion a cui e' collegato il player (porta 3483).
 lms_server_ip() {
-	local line rem hex
+	local line rem hex b1 b2 b3 b4
 	[ -f "$PROC/net/tcp" ] || return 0
 	while read -r line; do
 		set -- $line
@@ -934,9 +1045,10 @@ lms_server_ip() {
 			*:0D9B)
 				hex=${rem%:*}
 				# /proc/net/tcp scrive l'indirizzo IPv4 in esadecimale, byte invertiti.
-				printf '%d.%d.%d.%d\n' \
-					"0x$(echo "$hex" | cut -c7-8)" "0x$(echo "$hex" | cut -c5-6)" \
-					"0x$(echo "$hex" | cut -c3-4)" "0x$(echo "$hex" | cut -c1-2)"
+				# Byte a byte con la sola shell (era echo|cut: 8 processi).
+				b1=${hex#??????}; b2=${hex#????}; b2=${b2%??}
+				b3=${hex#??}; b3=${b3%????}; b4=${hex%??????}
+				printf '%d.%d.%d.%d\n' "0x$b1" "0x$b2" "0x$b3" "0x$b4"
 				return 0 ;;
 		esac
 	done < "$PROC/net/tcp"
@@ -950,6 +1062,23 @@ lms_server_ip() {
 
 # Stringa JSON (i valori arrivano gia' privi di caratteri di controllo).
 json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+# Come json_str senza processi: il testo con barra e virgolette protette (senza
+# le virgolette esterne) resta in JQV. Una richiesta a Lyrion ne fa una decina.
+# shellcheck disable=SC2034
+json_q_v() {
+	local s=$1 o='' r c
+	while :; do
+		case "$s" in *[\\\"]*) ;; *) break ;; esac
+		r=${s%%[\\\"]*}
+		o="$o$r"
+		s=${s#"$r"}
+		c=${s%"${s#?}"}
+		s=${s#?}
+		o="$o\\$c"
+	done
+	JQV="$o$s"
+}
 
 # lms_json PLAYER PAROLA...: invia un comando a Lyrion (PLAYER vuoto per i
 # comandi del server) e stampa la risposta JSON. Fallisce se non risponde.
@@ -1069,18 +1198,23 @@ lms_posto_prendi() {
 lms_json_diretto() {
 	local tmo=$1 player=$2 args="" w out auth rc posto="" t0 t1
 	shift 2
-	for w in "$@"; do args="$args${args:+,}$(json_str "$w")"; done
-	auth=$(lms_auth_header)
+	for w in "$@"; do json_q_v "$w"; args="$args${args:+,}\"$JQV\""; done
+	json_q_v "$player"
+	# Senza utente di Lyrion (il caso normale) niente intestazione: nessun processo.
+	confv LYRION_UTENTE
+	auth=''
+	[ -z "$CONFV" ] || auth=$(lms_auth_header)
 	if [ "${LMS_WEB:-0}" = 1 ]; then
 		posto=$(lms_posto_prendi) || return 6
 	fi
-	t0=$(date +%s)
+	# Secondi dall'avvio (solo per misurare la durata), senza date.
+	read -r t0 _ < /proc/uptime; t0=${t0%%.*}
 	out=$("${SWEETSPOT_WGET:-wget}" -q -T "$tmo" -O - --header 'Content-Type: application/json' \
 		${auth:+--header "$auth"} \
-		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[$(json_str "$player"),[$args]]}" \
+		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[\"$JQV\",[$args]]}" \
 		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null)
 	rc=$?
-	t1=$(date +%s)
+	read -r t1 _ < /proc/uptime; t1=${t1%%.*}
 	[ -z "$posto" ] || rm -rf "$RUN/lms-posti/$posto"
 	if [ "$rc" -ne 0 ]; then
 		# wget non distingue i motivi: li deduciamo dal tempo impiegato (tempo
@@ -1284,6 +1418,46 @@ correction_running() {
 }
 
 # Il DAC sta suonando? (stato del flusso ALSA, vale per qualunque player)
+# Solo comandi interni della shell (nessun fork): il demone dello stato lo
+# chiede ogni pochi secondi mentre Lyrion dice "play".
+dac_playing() {
+	local f l
+	for f in "$PROC"/asound/card*/pcm*p/sub*/status; do
+		[ -r "$f" ] || continue
+		while IFS= read -r l; do
+			case "$l" in "state: RUNNING"*) return 0 ;; esac
+		done < "$f"
+	done
+	return 1
+}
+
+# Lo stato si calcola quando succede qualcosa o quando qualcuno lo chiede:
+# chi lo legge (pagina Stato, stato.json) chiama stato_richiedi, che chiede al
+# demone un giro nuovo se la cache e' piu' vecchia di ETA secondi (10, o 40
+# durante l'ascolto: il controllo completo non e' leggero) e aspetta fino a 12
+# s il file aggiornato. La richiesta e' una riga nella FIFO stato.richiesta
+# (scrivibile da tutti: puo' solo chiedere un giro, che il demone limita);
+# senza demone, o con la FIFO senza lettore, si serve la cache com'e'.
+stato_richiedi() { # [eta]
+	local ts t2 i max=${1:-10}
+	[ -p "$RUN/stato.richiesta" ] || return 0
+	dac_playing && [ "$max" -lt 40 ] && max=40
+	ts=0
+	read -r ts _ < "$RUN/stato.ts" 2>/dev/null
+	case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+	[ $(( $(date +%s) - ts )) -gt "$max" ] || return 0
+	timeout 2 sh -c 'echo r > "$1"' sh "$RUN/stato.richiesta" 2>/dev/null || return 0
+	i=0
+	while [ $i -lt 24 ]; do
+		usleep 500000
+		t2=0
+		read -r t2 _ < "$RUN/stato.ts" 2>/dev/null
+		case "$t2" in ''|*[!0-9]*) t2=0 ;; esac
+		[ "$t2" -gt "$ts" ] && return 0
+		i=$((i + 1))
+	done
+	return 0
+}
 # Il DAC e' del Bluetooth (sweetspot-bluetooth)? Il segnale $RUN/dac.bluetooth
 # contiene il PID di chi tiene il DAC: se non esiste piu' il segnale e' orfano,
 # si rimuove (con una riga nel registro) e il DAC torna al player.
@@ -1297,7 +1471,6 @@ bt_dac_busy() {
 	return 1
 }
 
-dac_playing() { grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status; }
 
 # Osservazione /proc del solo PCM scelto dal player, non certificazione del DAC.
 # DEV|SUB|STATE|FORMAT|RATE|CHANNELS|BUFFER_SIZE|PERIOD_SIZE
@@ -1796,7 +1969,7 @@ log_tronca() { # file keep
 # Squeezelite passa da sqlog_rotate (conserva i contatori XRUN).
 log_quota() {
 	local fkb qkb f files total sq i oldest
-	fkb=$(conf LOG_FILE_KB 512); qkb=$(conf LOG_QUOTA_KB 4096)
+	confv LOG_FILE_KB 512; fkb=$CONFV; confv LOG_QUOTA_KB 4096; qkb=$CONFV
 	case "$fkb" in ''|*[!0-9]*|0) fkb=512 ;; esac
 	case "$qkb" in ''|*[!0-9]*|0) qkb=4096 ;; esac
 	sq=${SQLOG:-$LOGDIR/squeezelite.log}
@@ -1824,12 +1997,21 @@ log_quota() {
 	done
 }
 
-# Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (30).
+# Come log_quota, ma al massimo una volta ogni LOG_QUOTA_SECONDI (120).
 log_quota_tick() {
-	local now last
-	now=$(date +%s); last=$(cat "$RUN/log.quota.ts" 2>/dev/null)
+	local now last=''
+	# Secondi dall'avvio e lettura del segno con la sola shell: i cicli dei
+	# servizi la chiamano ogni pochi secondi; la configurazione si legge solo
+	# se e' passato un po' di tempo.
+	read -r now _ < /proc/uptime
+	now=${now%%.*}
+	read -r last < "$RUN/log.quota.ts" 2>/dev/null
 	case "$last" in ''|*[!0-9]*) last=0 ;; esac
-	[ $((now - last)) -ge "$(conf LOG_QUOTA_SECONDI 30)" ] || return 0
+	if [ "$now" -ge "$last" ]; then
+		[ $((now - last)) -ge 5 ] || return 0
+		confv LOG_QUOTA_SECONDI 120
+		[ $((now - last)) -ge "${CONFV:-120}" ] || return 0
+	fi
 	echo "$now" > "$RUN/log.quota.ts" 2>/dev/null
 	log_quota
 }
