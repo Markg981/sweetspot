@@ -39,9 +39,16 @@ HTML
 	page_end
 }
 
+no_code() {
+	printf 'Status: 503 Service Unavailable\r\nRetry-After: 10\r\n'
+	page_start "Primo accesso" accesso
+	printf '<p class="msg">Codice di primo accesso in preparazione. Ricarica tra qualche secondo; se non compare, riavvia il dispositivo.</p>\n'
+	page_end
+}
+
 if [ "$REQUEST_METHOD" != POST ]; then
 	auth_enabled && { redirect /cgi-bin/accesso; exit 0; }
-	[ -f "$RUN/primo-accesso.attivo" ] || { redirect /cgi-bin/audio; exit 0; }
+	[ -f "$RUN/primo-accesso.attivo" ] || { no_code; exit 0; }
 	first_page ""
 	exit 0
 fi
@@ -49,7 +56,7 @@ fi
 read_form
 
 if auth_enabled; then redirect /cgi-bin/accesso; exit 0; fi
-[ -f "$RUN/primo-accesso.attivo" ] || { redirect /cgi-bin/audio; exit 0; }
+[ -f "$RUN/primo-accesso.attivo" ] || { no_code; exit 0; }
 
 if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
 	reply_page "403 Forbidden" "Modulo scaduto: ricarica la pagina e riprova."

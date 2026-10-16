@@ -95,6 +95,47 @@ expect "allineate a sweetspot.txt" "$(sha 'la-sua')" "$(pref password)"
 expect "dichiarato nel diario" 1 "$(grep -c 'al posto di quelle precedenti' "$WORK/log")"
 expect "il diario non contiene la password" 0 "$(grep -c 'la-sua' "$WORK/log")"
 
+echo "Fail-closed: se la protezione non e' applicabile, Lyrion non parte"
+mkdir -p "$WORK/senzaperl"
+printf '#!/bin/sh\nexit 1\n' > "$WORK/senzaperl/perl"
+chmod +x "$WORK/senzaperl/perl"
+printf 'language: IT\n' > "$PREFS/server.prefs"
+: > "$WORK/run/sweetspot.conf"
+rm -f "$WORK/data/prefs/sweetspot-auth.hash"
+PATH=$WORK/senzaperl:$WORK/bin:$PATH SWEETSPOT_PATH=$WORK/senzaperl SWEETSPOT_TEST=1 SWEETSPOT_LMS_DATA=$WORK/data SWEETSPOT_RUN=$WORK/run \
+	SWEETSPOT_LOG=$WORK/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	sh -c ". $OVERLAY/usr/bin/sweetspot-lms; ensure_auth"
+expect "ensure_auth fallisce senza impronta" 1 "$?"
+expect "nessuna autorizzazione scritta" "" "$(pref authorize)"
+lancia() { # lancia: comando completo con l'ambiente del test, senza perl
+	(
+		export PATH="$EXTRA$WORK/senzaperl:$WORK/bin:$PATH" SWEETSPOT_PATH=$WORK/senzaperl \
+			SWEETSPOT_LMS_DATA=$WORK/data SWEETSPOT_RUN=$WORK/run SWEETSPOT_LOG=$WORK/log \
+			SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf
+		"$@"
+	) > "$WORK/out" 2>&1
+}
+EXTRA=
+rm -f "$WORK/run/lyrion-auth.stato"
+lancia sh "$OVERLAY/usr/bin/sweetspot-lms" prepara
+expect "prepara esce con errore" 1 "$?"
+lancia timeout 20 sh "$OVERLAY/usr/bin/sweetspot-lms" servizio
+expect "servizio non parte senza protezione" 1 "$?"
+expect "il diario lo dichiara" 1 "$(grep -c 'servizio non avviato' "$WORK/log")"
+mkdir -p "$WORK/finti"
+printf '#!/bin/sh\nexit 1\n' > "$WORK/finti/sweetspot-lms"
+printf '#!/bin/sh\necho avviato >> "%s/avvii"\n' "$WORK" > "$WORK/finti/start-stop-daemon"
+chmod +x "$WORK/finti/"*
+EXTRA=$WORK/finti:
+lancia sh "$OVERLAY/etc/init.d/S62sweetspot-lms" start
+expect "init: esce con errore se prepara fallisce" 1 "$?"
+expect "init: nessun avvio" 0 "$(cat "$WORK/avvii" 2>/dev/null | wc -l | tr -d ' ')"
+expect "init: non scrive 'fatto'" 0 "$(grep -c fatto "$WORK/out")"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/finti/sweetspot-lms"
+lancia sh "$OVERLAY/etc/init.d/S62sweetspot-lms" start
+expect "init: ripristinato, parte" 1 "$(grep -c avviato "$WORK/avvii" 2>/dev/null)"
+
 echo
 [ "$FAIL" -eq 0 ] && echo "lyrion-auth: tutto ok" || echo "lyrion-auth: $FAIL falliti"
 exit "$FAIL"

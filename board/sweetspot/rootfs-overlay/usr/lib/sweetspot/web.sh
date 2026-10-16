@@ -248,8 +248,8 @@ auth_gate() {
 	[ "${WEB_PUBLIC:-}" = 1 ] && return 0
 	if ! auth_enabled; then
 		# Primo accesso (nessuna password scelta): niente pagine finche' non si
-		# sceglie la password con il codice del dispositivo.
-		[ -f "$RUN/primo-accesso.attivo" ] || return 0
+		# sceglie la password con il codice del dispositivo. Vale sempre, anche
+		# se il codice e' in rigenerazione: mai una finestra anonima.
 		case "${SCRIPT_NAME:-}" in
 			*/copertina|*/studio-copertina) cover_placeholder ;;
 			*.json)

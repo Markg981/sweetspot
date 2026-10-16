@@ -40,7 +40,25 @@ verifica() {
 			echo "KO  $nome: manca una riga sha256/sha512 in $nome.hash" >&2
 			errori=1
 		else
-			echo "ok  $nome"
+			# Il nome nel file .hash deve essere quello che Buildroot scarica:
+			# FOO_SOURCE se c'e', altrimenti <nome>-<versione>.tar.gz.
+			local up ver src
+			up=$(printf '%s' "$nome" | tr 'a-z-' 'A-Z_')
+			ver=$(sed -n "s/^${up}_VERSION[[:space:]]*[:+]\?=[[:space:]]*//p" "$mk" | head -n 1)
+			src=$(sed -n "s/^${up}_SOURCE[[:space:]]*[:+]\?=[[:space:]]*//p" "$mk" | head -n 1)
+			if [ -z "$src" ] && [ -n "$ver" ]; then
+				src="$nome-$ver.tar.gz"
+			fi
+			case "$src" in
+				*'$('*|'') echo "ok  $nome (nome dell'archivio non verificabile: $src)" ;;
+				*)
+					if grep -Eq "^(sha256|sha512)[[:space:]]+[0-9a-f]{64,128}[[:space:]]+$src\$" "$hash"; then
+						echo "ok  $nome ($src)"
+					else
+						echo "KO  $nome: $nome.hash non ha una riga per $src (Buildroot: No hash found)" >&2
+						errori=1
+					fi ;;
+			esac
 		fi
 	done
 	return $errori

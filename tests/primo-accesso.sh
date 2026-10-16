@@ -162,6 +162,21 @@ boot
 expect "tolta la riga: torna il primo accesso" "si" "$([ -f "$R/primo-accesso.attivo" ] && echo si)"
 expect "codice di nuovo sulla chiavetta" "1" "$(grep -c "$(sed -n 1p "$R/primo-accesso.codice")" "$STICK/PRIMO-ACCESSO.txt")"
 
+echo "Password tolta solo in RAM (marcatore gia' consumato): mai anonimo"
+rm -f "$R/primo-accesso.attivo" "$R/primo-accesso.codice"
+E sh -c ". $SWEETSPOT_LIB/common.sh; config_build $STICK/sweetspot.txt"
+printf 'NOME_PLAYER=Prova\n' > "$STICK/sweetspot.txt"
+E sh -c ". $SWEETSPOT_LIB/common.sh; config_build $STICK/sweetspot.txt"
+out=$(req "$WORK/pagina" GET "" "")
+expect "senza password e senza marcatore: pagina non eseguita" "0" "$(printf '%s' "$out" | grep -c PAGINA)"
+expect "senza password e senza marcatore: va al primo accesso" "303|/cgi-bin/primo-accesso" "$(status "$out")|$(header "$out" Location)"
+out=$(SCRIPT_NAME_T=/cgi-bin/stato.json req "$WORK/pagina" GET "" "")
+expect "dati JSON: 401 anche senza marcatore" "401" "$(status "$out")"
+out=$(req "$CGI/primo-accesso" GET "" "")
+expect "codice in rigenerazione: 503, non l'audio" "503" "$(status "$out")"
+boot
+expect "avvio: il primo accesso si riapre" "si" "$([ -f "$R/primo-accesso.attivo" ] && echo si)"
+
 echo "Migrazione: password gia' presente in sweetspot.txt"
 printf 'NOME_PLAYER=Prova\nPASSWORD_WEB=vecchiapass\n' > "$STICK/sweetspot.txt"
 rm -f "$STICK/PRIMO-ACCESSO.txt"

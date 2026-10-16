@@ -8,7 +8,10 @@ case "$1" in
 	start)
 		[ "$(mode)" = completa ] || exit 0
 		printf "Avvio di Lyrion Music Server: "
-		sweetspot-lms prepara
+		if ! sweetspot-lms prepara; then
+			echo "ERRORE: protezione di accesso non applicata, Lyrion non avviato"
+			exit 1
+		fi
 		start-stop-daemon -S -b -m -p "$RUN/lms-servizio.pid" -x /usr/bin/sweetspot-lms -- servizio
 		setsid /usr/bin/sweetspot-lms primo-controllo > /dev/null 2>&1 < /dev/null &
 		echo "fatto"

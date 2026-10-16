@@ -2,6 +2,6 @@
 # questo progetto (workflow "Moduli di Lyrion"). Il file pubblicato non cambia.
 sha256  90c1e34fb6f4e1edfe6c4f3b08a08dba04e93ad962784da27a36e3a156e0f439  lyrion-cpan-5.42-aarch64-linux-thread-multi-b62107b-fc43.tar.xz
 
-# Sorgente slimserver 9.1.1 (archivio del tag generato da GitHub): calcolato
+# Sorgente slimserver 9.1.1, salvato da Buildroot come lms-9.1.1.tar.gz (archivio del tag generato da GitHub): calcolato
 # con sha256sum; se GitHub cambiasse la compressione, va riverificato.
-sha256  dccceabdd0d437038251771d4c93c057ff054adb11f14a78eef021eee036cff52  slimserver-9.1.1.tar.gz
+sha256  dccceabdd0d437038251771d4c93c057ff054adb11f14a78eef021eee036cff52  lms-9.1.1.tar.gz

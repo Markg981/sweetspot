@@ -128,12 +128,14 @@ ensure_auth() {
 		log "lyrion: protezione allineata a sweetspot.txt (utente $u)"
 	fi
 	grep -v -e '^authorize:' -e '^username:' -e '^password:' "$f" > "$f.tmp" 2>/dev/null
-	printf 'authorize: 1\nusername: %s\npassword: %s\n' "$u" "$h" >> "$f.tmp"
-	mv "$f.tmp" "$f"
+	printf 'authorize: 1\nusername: %s\npassword: %s\n' "$u" "$h" >> "$f.tmp" \
+		&& mv "$f.tmp" "$f" \
+		|| { rm -f "$f.tmp"; log "lyrion: preferenze non scrivibili: protezione non applicata"; return 1; }
 	printf '%s' "$h" > "$AUTH_HASH"
 	mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
 	echo "$stato" > "$AUTH_STATO"
 	chmod 644 "$AUTH_STATO" 2>/dev/null
+	return 0
 }
 
 # Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
@@ -453,7 +455,8 @@ do_prepare() {
 		log "lyrion: preferenze iniziali scritte"
 	fi
 	ensure_csrf
-	ensure_auth || log "lyrion: ATTENZIONE, protezione di accesso non applicata"
+	# Fail-closed: senza protezione Lyrion non parte, per non esporre l'amministrazione.
+	ensure_auth || { log "lyrion: protezione di accesso non applicabile, avvio annullato"; return 1; }
 	material_theme || return 1
 	material_actions > "$PREFS/material-skin/actions.json"
 	# Material Skin preinstallata. Se l'utente l'ha aggiornata dal gestore
@@ -503,6 +506,12 @@ do_scanner() {
 
 do_service() {
 	local restarts=0 started rc hk
+	# Mai senza protezione: se nessuno l'ha applicata (prepara fallito o
+	# saltato) o le preferenze non la chiedono, Lyrion non parte.
+	if [ ! -s "$AUTH_STATO" ] || [ "$(prefs_get authorize)" != 1 ]; then
+		log "lyrion: protezione di accesso non applicata, servizio non avviato"
+		return 1
+	fi
 	rm -f "$STOPFLAG"
 	cpu_layout
 	hk=$(join_list "$LAYOUT_HK")
