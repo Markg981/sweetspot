@@ -251,7 +251,7 @@ auth_gate() {
 		# sceglie la password con il codice del dispositivo.
 		[ -f "$RUN/primo-accesso.attivo" ] || return 0
 		case "${SCRIPT_NAME:-}" in
-			*/copertina) cover_placeholder ;;
+			*/copertina|*/studio-copertina) cover_placeholder ;;
 			*.json)
 				printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
 				sec_headers
@@ -267,7 +267,7 @@ auth_gate() {
 	case "${SCRIPT_NAME:-}" in
 		# Un'immagine non puo' mostrare un errore: senza sessione risponde con
 		# il segnaposto (altrimenti il browser disegna un'immagine rotta).
-		*/copertina) cover_placeholder ;;
+		*/copertina|*/studio-copertina) cover_placeholder ;;
 		*.json)
 			printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
 			sec_headers
@@ -335,8 +335,9 @@ urlenc() {
 	printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g'
 }
 
+# printf con a capo: read scarta l'ultimo parametro se manca il fine riga.
 query_param() {
-	printf '%s' "$QUERY_STRING" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1 | while IFS= read -r v; do httpd -d "$v"; done
+	printf '%s\n' "$QUERY_STRING" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1 | while IFS= read -r v; do httpd -d "$v"; done
 }
 
 # Risposta di reindirizzamento dopo un'azione (POST -> GET).
@@ -358,6 +359,12 @@ web_host() {
 
 # Interfaccia di Lyrion (Material Skin).
 player_url() { printf 'http://%s:9000/material/' "$(web_host)"; }
+# Interfaccia di ascolto: Reference Studio (predefinita) o Material con
+# INTERFACCIA_ASCOLTO=material. Material resta raggiungibile dal link nello
+# Studio; le preferenze di Lyrion/Material non vengono toccate.
+listen_url() {
+	if [ "$(lower "$(conf INTERFACCIA_ASCOLTO studio)")" = material ]; then player_url; else echo /cgi-bin/studio; fi
+}
 
 # Sezioni delle impostazioni, come su Daphile. In modalita' player libreria
 # e plugin stanno sul server Lyrion dell'altro computer.
@@ -410,7 +417,7 @@ ${refresh:+<meta http-equiv="refresh" content="$refresh">}
 <nav aria-label="Impostazioni SweetSpot">
 HTML
 	if [ "$(mode)" = completa ]; then
-		printf '<a class="play" href="%s" target="_top"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#play"></use></svg>Ascolta</a>\n' "$(player_url)"
+		printf '<a class="play" href="%s" target="_top"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#play"></use></svg>Ascolta</a>\n' "$(listen_url)"
 	fi
 	for p in $(web_sections); do
 		target=""

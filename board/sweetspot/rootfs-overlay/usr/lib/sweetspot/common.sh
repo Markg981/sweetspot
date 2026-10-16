@@ -1152,7 +1152,7 @@ lms_lettura() {
 	local cmd=${1:-} ultimo=""
 	for ultimo in "$@"; do :; done
 	case "$cmd" in
-		serverstatus|status|version|players|player|syncgroups) return 0 ;;
+		serverstatus|status|version|players|player|syncgroups|albums|artists|genres|titles|playlists) return 0 ;;
 		sweetspot) case "${2:-}" in stato|plugin-stato) return 0 ;; esac ;;
 	esac
 	[ "$ultimo" = '?' ]

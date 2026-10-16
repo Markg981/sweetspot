@@ -78,9 +78,26 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
 ## Come si usa
 
 Dal telefono o dal computer apri `http://sweetspot.local/` (oppure l'indirizzo
-che compare sullo schermo): si apre l'interfaccia **Material** di Lyrion, con
-libreria, radio e servizi in streaming. Funzionano anche le app per Lyrion
-(iPeng, Squeezer, Material) e gli altri player Squeezebox della casa.
+che compare sullo schermo): dopo l'accesso si apre **Reference Studio**
+(`/cgi-bin/studio`), l'interfaccia musicale di Sweetspot: home, album con
+filtri e paginazione, artisti, ricerca, dettaglio album, riproduzione con
+seek e volume, coda, playlist, scelta del player e delle zone, percorso audio
+e collegamento alle impostazioni. È un frontend statico leggero (JS e CSS
+senza dipendenze esterne) che legge i dati veri di Lyrion attraverso una CGI
+autenticata con sessione e gettone anti-CSRF, e un elenco chiuso di comandi
+in sola lettura/riproduzione (`sweetspot-priv`); non sostituisce il server e
+non interroga il percorso audio con polling pesante (stato ogni 5 s a scheda
+visibile, tempo interpolato in locale). Responsive da 320 px in su, con
+tastiera ed etichette. Le copertine passano da `/cgi-bin/studio-copertina`.
+
+L'interfaccia **Material** di Lyrion resta raggiungibile dal collegamento
+*Material* e come ripiego. Per aprirla di default imposta
+`INTERFACCIA_ASCOLTO=material` in `sweetspot.txt` (predefinito: `studio`);
+nessuna preferenza esistente viene cancellata. Funzionano anche le app per
+Lyrion (iPeng, Squeezer, Material) e gli altri player Squeezebox della casa.
+Il frontend è provato con Lyrion e `sweetspot-priv` simulati
+(`tests/reference-studio.py` e prove in browser a 320, 390, 768 e 1440 px),
+non ancora con un Lyrion vero.
 
 L'aspetto **Reference Studio** usa grafite, blu e controlli leggibili su
 telefono, tablet e computer. Le impostazioni SweetSpot hanno la stessa
@@ -597,6 +614,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | --- | --- | --- |
 | `NOME_PLAYER` | testo | Sweetspot |
 | `MODALITA` | `completa`, `player` | completa |
+| `INTERFACCIA_ASCOLTO` | `studio` (Reference Studio) o `material`: pagina aperta da *Ascolta* e dalla home | studio |
 | `SERVER` | solo modalità player: indirizzo di Lyrion, vuoto = ricerca automatica | vuoto |
 | `MODALITA_ASCOLTO` | `si`, `no`: mentre la musica suona lettura della libreria, copie e ripping restano sospesi. Nella pagina Sistema un'unica scelta, che vale subito: *ascolto puro* (questa più `PRECARICO=si`: coda in RAM e dischi fermi), *lavori sospesi* (`PRECARICO=no`) o *spenta*; la pagina Stato, voce "Ascolto", dice quale è attiva e quanti lavori sono sospesi ora | si |
 | `PRECARICO` | `si`, `no`: coda di ascolto in RAM | si |

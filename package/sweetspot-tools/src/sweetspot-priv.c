@@ -126,6 +126,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-installa", "dischi", "", "", 0},
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
+	{"sweetspot-lms", "cover", "ww", "", 0},
 	{"sweetspot-lms", "credenziali", "", "", 0},
 	{"sweetspot-lms", "json", "", "", 0}, // controllato a parte (lms_json_ok)
 	{"sweetspot-lms", "operazione", "", "", 0}, // controllato a parte (operazione_ok)
@@ -437,6 +438,108 @@ static int arg_ok(char tipo, const char *s, char **sost, uid_t web)
 	return 0;
 }
 
+static int cifre_ok(const char *s)
+{
+	size_t n = strlen(s);
+	if (n < 1 || n > 9)
+		return 0;
+	for (; *s; s++)
+		if (!isdigit((unsigned char)*s))
+			return 0;
+	return 1;
+}
+
+static int numero_ok(const char *s, int segno)
+{
+	if (segno && (*s == '+' || *s == '-'))
+		s++;
+	return cifre_ok(s);
+}
+
+// Opzioni "chiave:valore" delle ricerche del Reference Studio.
+static int opzione_ok(const char *s)
+{
+	static const char *const num[] = {"artist_id:", "album_id:", "genre_id:",
+	    "track_id:", "playlist_id:", "year:", "compilation:", NULL};
+	size_t i, n;
+	for (i = 0; num[i]; i++)
+		if (!strncmp(s, num[i], strlen(num[i])))
+			return cifre_ok(s + strlen(num[i]));
+	if (!strncmp(s, "tags:", 5)) {
+		for (n = 0, s += 5; isalpha((unsigned char)*s); s++, n++)
+			;
+		return n > 0 && n <= 40 && !*s;
+	}
+	if (!strncmp(s, "sort:", 5))
+		return !strcmp(s + 5, "new") || !strcmp(s + 5, "album") ||
+		    !strcmp(s + 5, "artflow") || !strcmp(s + 5, "random") ||
+		    !strcmp(s + 5, "artistalbum") || !strcmp(s + 5, "title") || !strcmp(s + 5, "tracknum");
+	if (!strncmp(s, "search:", 7))
+		return s[7] && strlen(s + 7) <= 64 && testo_ok(s);
+	return 0;
+}
+
+// Comandi del Reference Studio: elenchi (albums, artists...), stato e coda,
+// trasporto, volume, posizione, riproduzione di un elemento, zone (sync).
+static int studio_ok(int argc, char **argv)
+{
+	const char *player = argv[0], *c = argv[1];
+	static const char *const elenchi[] = {"albums", "artists", "genres",
+	    "titles", "playlists", "players", NULL};
+	int i, j;
+	for (i = 0; elenchi[i]; i++)
+		if (!strcmp(c, elenchi[i])) {
+			if (argc < 4 || argc > 9 || (*player && !parola_ok(player)))
+				return 0;
+			if (!cifre_ok(argv[2]) || !cifre_ok(argv[3]) || atol(argv[3]) > 500)
+				return 0;
+			for (j = 4; j < argc; j++)
+				if (!opzione_ok(argv[j]))
+					return 0;
+			return 1;
+		}
+	if (!parola_ok(player))
+		return 0;
+	if (!strcmp(c, "status")) {
+		if (argc < 4 || argc > 7 || (strcmp(argv[2], "-") && !cifre_ok(argv[2])) ||
+		    !cifre_ok(argv[3]) || atol(argv[3]) > 500)
+			return 0;
+		for (j = 4; j < argc; j++)
+			if (!opzione_ok(argv[j]))
+				return 0;
+		return 1;
+	}
+	if (argc == 2)
+		return !strcmp(c, "play") || !strcmp(c, "stop");
+	if (argc == 3) {
+		if (!strcmp(c, "pause"))
+			return !strcmp(argv[2], "0") || !strcmp(argv[2], "1");
+		if (!strcmp(c, "time"))
+			return cifre_ok(argv[2]);
+		if (!strcmp(c, "sync"))
+			return !strcmp(argv[2], "-") || (parola_ok(argv[2]) && !strchr(argv[2], '.'));
+		if (!strcmp(c, "playlist"))
+			return !strcmp(argv[2], "clear");
+		return 0;
+	}
+	if (argc == 4) {
+		if (!strcmp(c, "mixer") && !strcmp(argv[2], "volume"))
+			return numero_ok(argv[3], 1) && atol(argv[3] + (*argv[3] == '+' || *argv[3] == '-')) <= 100;
+		if (!strcmp(c, "playlist") && !strcmp(argv[2], "index"))
+			return numero_ok(argv[3], 1);
+		if (!strcmp(c, "playlist") && !strcmp(argv[2], "delete"))
+			return cifre_ok(argv[3]);
+		if (!strcmp(c, "playlistcontrol")) {
+			if (strcmp(argv[2], "cmd:load") && strcmp(argv[2], "cmd:add") &&
+			    strcmp(argv[2], "cmd:insert"))
+				return 0;
+			return (!strncmp(argv[3], "album_id:", 9) || !strncmp(argv[3], "track_id:", 9) ||
+			    !strncmp(argv[3], "artist_id:", 10) || !strncmp(argv[3], "playlist_id:", 12)) &&
+			    opzione_ok(argv[3]);
+		}
+	}
+	return 0;
+}
 // Comandi di Lyrion consentiti alle pagine: stato del server, anteprima
 // della prova DoP (e suo arresto), nome del player. Nient'altro: con Lyrion
 // protetto da password questo helper parla a nome di Sweetspot.
@@ -444,6 +547,8 @@ static int lms_json_ok(int argc, char **argv)
 {
 	// argv: PLAYER PAROLA...
 	const char *player;
+	if (argc >= 2 && testo_ok(argv[0]) && studio_ok(argc, argv))
+		return 1;
 	if (argc < 3 || !testo_ok(argv[0]))
 		return 0;
 	player = argv[0];
@@ -797,6 +902,20 @@ int main(int argc, char **argv)
 
 	if (!strcmp(r->sub, "json") && !strcmp(r->script, "sweetspot-lms")) {
 		if (!lms_json_ok(argc, argv))
+			return NO_ELENCO;
+		for (i = 0; i < (size_t)argc; i++)
+			av[2 + i] = argv[i];
+		esegui(av);
+	}
+	if (!strcmp(r->sub, "cover") && !strcmp(r->script, "sweetspot-lms")) {
+		static const char *const dim[] = {"64", "96", "128", "200", "300", "400", "600"};
+		size_t k, buono = 0;
+		if (argc != 2 || strlen(argv[0]) == 0 || strlen(argv[0]) > 32 || strspn(argv[0], "0123456789abcdefABCDEF") != strlen(argv[0]))
+			return NO_ELENCO;
+		for (k = 0; k < sizeof(dim) / sizeof(dim[0]); k++)
+			if (!strcmp(argv[1], dim[k]))
+				buono = 1;
+		if (!buono)
 			return NO_ELENCO;
 		for (i = 0; i < (size_t)argc; i++)
 			av[2 + i] = argv[i];

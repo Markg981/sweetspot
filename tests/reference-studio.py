@@ -122,6 +122,148 @@ page_end
         self.assertTrue(any(href.startswith("/reference-studio.css") for href in styles))
         self.assertTrue(all(href.startswith("/") for href in styles))
 
+class StudioApiTests(unittest.TestCase):
+    """CGI del Reference Studio con un sweetspot-priv FINTO: provano accesso,
+    gettone, validazione e istradamento dei comandi, non Lyrion vero."""
+    SID = "0123456789abcdef0123456789abcdef"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="sweetspot-studio-api-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "run/web/sessioni").mkdir(parents=True)
+        self.log = self.root / "priv.log"
+        priv = self.root / "priv"
+        priv.write_text('''#!/bin/sh
+echo "$*" >> "%s"
+case "$*" in
+  *" albums "*) echo '{"result":{"count":1,"albums_loop":[{"id":7,"album":"A"}]}}' ;;
+  *" bogus "*) exit 126 ;;
+  *" boom "*) echo 'non json' ;;
+  *) echo '{"result":{}}' ;;
+esac
+''' % self.log)
+        priv.chmod(0o755)
+        self.write_conf("MODALITA=completa\nPASSWORD_WEB=x\n")
+        (self.root / "run/web/sessioni" / self.SID).write_text(str(2 ** 31))
+        (self.root / "run/web.token").write_text("tok123\n")
+        self.env = dict(os.environ, GATEWAY_INTERFACE="CGI/1.1", HTTP_HOST="127.0.0.1", REMOTE_ADDR="127.0.0.1",
+                        SWEETSPOT_LIB=str(OVERLAY / "usr/lib/sweetspot"),
+                        SWEETSPOT_RUN=str(self.root / "run"),
+                        SWEETSPOT_DEFAULTS=str(OVERLAY / "etc/sweetspot/defaults.conf"),
+                        SWEETSPOT_LOG=str(self.root / "log"), SWEETSPOT_PRIV=str(priv),
+                        SWEETSPOT_ASSETS=str(OVERLAY / "usr/share/sweetspot"))
+
+    def write_conf(self, text):
+        for name in ("sweetspot.conf", "sweetspot.web"):
+            (self.root / "run" / name).write_text(text)
+
+    def cgi(self, name, method="GET", query="", body="", session=True, token=None):
+        env = dict(self.env, REQUEST_METHOD=method, QUERY_STRING=query,
+                   SCRIPT_NAME="/cgi-bin/" + name, REQUEST_URI="/cgi-bin/" + name,
+                   CONTENT_LENGTH=str(len(body)),
+                   CONTENT_TYPE="application/x-www-form-urlencoded")
+        if session:
+            env["HTTP_COOKIE"] = "sweetspot_sid=" + self.SID
+        if token:
+            env["HTTP_X_SWEETSPOT_TOKEN"] = token
+        script = OVERLAY / "usr/share/sweetspot/www/cgi-bin" / name
+        r = subprocess.run(["busybox", "sh", str(script)], input=body, capture_output=True,
+                           text=True, env=env, timeout=20)
+        head, _, payload = r.stdout.partition("\n\n")
+        status = 200
+        for line in head.split("\n"):
+            if line.startswith("Status:"):
+                status = int(line.split()[1])
+        return status, head, payload
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def test_without_session_api_is_401_and_page_redirects(self):
+        status, _, _ = self.cgi("studio-api.json", query="op=albums", session=False)
+        self.assertEqual(status, 401)
+        status, head, _ = self.cgi("studio", session=False)
+        self.assertEqual(status, 303)
+        self.assertIn("/cgi-bin/accesso", head)
+        status, head, body = self.cgi("studio-copertina", query="id=ab&s=96", session=False)
+        self.assertEqual(status, 200)
+        self.assertIn("image/svg+xml", head)
+        self.assertEqual(self.calls(), [])
+
+    def test_read_albums_returns_result_and_uses_allowlisted_command(self):
+        status, _, body = self.cgi("studio-api.json", query="op=albums&count=10&search=ab")
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["result"]["albums_loop"][0]["album"], "A")
+        self.assertIn("sweetspot-lms json  albums 0 10", self.calls()[0])
+        self.assertIn("search:ab", self.calls()[0])
+
+    def test_invalid_parameters_are_rejected_before_lyrion(self):
+        for q in ("op=albums&count=0", "op=albums&count=999", "op=albums&start=x",
+                  "op=albums&sort=evil", "op=albums&genre_id=1;2", "op=stato",
+                  "op=stato&player=zz zz", "op=nope"):
+            with self.subTest(q=q):
+                status, _, body = self.cgi("studio-api.json", query=q)
+                self.assertEqual(status, 400, body)
+        self.assertEqual(self.calls(), [])
+
+    def test_post_requires_token(self):
+        body = "op=play&player=aa:bb:cc:dd:ee:ff"
+        status, _, _ = self.cgi("studio-api.json", "POST", body=body)
+        self.assertEqual(status, 403)
+        status, _, _ = self.cgi("studio-api.json", "POST", body=body, token="sbagliato")
+        self.assertEqual(status, 403)
+        self.assertEqual(self.calls(), [])
+        status, _, _ = self.cgi("studio-api.json", "POST", body=body, token="tok123")
+        self.assertEqual(status, 200)
+        self.assertIn("play", self.calls()[0])
+
+    def test_post_validation_and_mapping(self):
+        mac = "player=aa:bb:cc:dd:ee:ff"
+        bad = ("op=volume&v=101&" + mac, "op=carica&kind=x&id=1&mode=load&" + mac,
+               "op=carica&kind=album&id=1&mode=rm&" + mac, "op=seek&v=-1&" + mac,
+               "op=volume&v=5&player=;rm")
+        for body in bad:
+            with self.subTest(body=body):
+                status, _, _ = self.cgi("studio-api.json", "POST", body=body, token="tok123")
+                self.assertEqual(status, 400)
+        self.assertEqual(self.calls(), [])
+        self.cgi("studio-api.json", "POST", body="op=volume&v=40&" + mac, token="tok123")
+        self.cgi("studio-api.json", "POST", body="op=carica&kind=album&id=7&mode=add&" + mac, token="tok123")
+        self.assertIn("mixer volume 40", self.calls()[0])
+        self.assertIn("playlistcontrol cmd:add album_id:7", self.calls()[1])
+
+    def test_priv_refusal_and_bad_json_are_distinct_errors(self):
+        status, _, body = self.cgi("studio-api.json", query="op=albums")
+        self.assertEqual(status, 200)
+        self.write_conf("MODALITA=player\nPASSWORD_WEB=x\n")
+        status, _, body = self.cgi("studio-api.json", query="op=albums")
+        self.assertEqual(status, 409)
+
+    def test_page_exposes_token_and_assets_and_is_accessible(self):
+        status, _, page = self.cgi("studio")
+        self.assertEqual(status, 200)
+        parser = Elements()
+        parser.feed(page)
+        metas = {a.get("name"): a.get("content") for t, a in parser.elements if t == "meta"}
+        self.assertEqual(metas.get("sweetspot-token"), "tok123")
+        srcs = [a.get("src") for t, a in parser.elements if t == "script"]
+        self.assertTrue(any(s.startswith("/studio.js") for s in srcs))
+        self.assertTrue(any(t == "nav" and a.get("aria-label") for t, a in parser.elements))
+        self.assertIn(("main", {"id": "st-main", "tabindex": "-1"}),
+                      [(t, a) for t, a in parser.elements if t == "main"])
+        self.assertIn("/material/", page)
+
+    def test_listen_url_default_and_material_choice(self):
+        script = '. "$SWEETSPOT_LIB/web.sh"; listen_url'
+        run = lambda: subprocess.run(["busybox", "sh"], input=script, capture_output=True,
+                                     text=True, env=dict(self.env, GATEWAY_INTERFACE=""),
+                                     timeout=10).stdout.strip()
+        self.assertEqual(run(), "/cgi-bin/studio")
+        self.write_conf("MODALITA=completa\nINTERFACCIA_ASCOLTO=material\n")
+        self.assertEqual(run(), "http://127.0.0.1:9000/material/")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - copertine del Reference Studio. Lyrion e' protetto: la
+# copertina la scarica l'helper con le credenziali di Sweetspot (solo ID
+# esadecimale e dimensioni previste). Senza sessione o senza copertina
+# risponde con il segnaposto, come /cgi-bin/copertina.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+id=$(query_param id)
+sz=$(query_param s)
+[ -n "$sz" ] || sz=200
+case "$id" in ''|*[!0-9a-fA-F]*) cover_placeholder; exit 0 ;; esac
+[ "$(mode)" = completa ] || { cover_placeholder; exit 0; }
+
+f=$(mktemp 2>/dev/null) || { cover_placeholder; exit 0; }
+if priv sweetspot-lms cover "$id" "$sz" > "$f" 2>/dev/null && [ -s "$f" ]; then
+	if head -c 3 "$f" | od -An -tx1 | grep -q 'ff d8 ff'; then
+		ct=image/jpeg
+	else
+		ct=image/png
+	fi
+	printf 'Content-Type: %s\r\nCache-Control: private, max-age=86400\r\n' "$ct"
+	sec_headers
+	printf '\r\n'
+	cat "$f"
+else
+	cover_placeholder
+fi
+rm -f "$f"

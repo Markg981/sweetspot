@@ -406,6 +406,28 @@ link_caches() {
 	chmod 644 "$ART_STATE" 2>/dev/null
 }
 
+# cover ID DIMENSIONE: copertina di Lyrion (con le credenziali di Sweetspot)
+# per il Reference Studio. Solo ID esadecimale e dimensioni previste; la
+# risposta si accetta solo se e' un'immagine JPEG/PNG di dimensione ragionevole.
+do_cover() {
+	local id=$1 sz=$2 auth tmp
+	case "$id" in ''|*[!0-9a-fA-F]*) return 1 ;; esac
+	[ "${#id}" -le 32 ] || return 1
+	case "$sz" in 64|96|128|200|300|400|600) ;; *) return 1 ;; esac
+	confv LYRION_UTENTE
+	auth=''
+	[ -z "$CONFV" ] || auth=$(lms_auth_header)
+	tmp=$(mktemp "$RUN/cover.XXXXXX") || return 1
+	if ! "${SWEETSPOT_WGET:-wget}" -q -T 8 -O "$tmp" ${auth:+--header "$auth"} \
+		"http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" 2>/dev/null \
+		|| [ "$(wc -c < "$tmp")" -gt 4194304 ] || [ ! -s "$tmp" ] \
+		|| ! { head -c 3 "$tmp" | od -An -tx1 | grep -q 'ff d8 ff' || head -c 4 "$tmp" | od -An -tx1 | grep -q '89 50 4e 47'; }; then
+		rm -f "$tmp"
+		return 1
+	fi
+	cat "$tmp"
+	rm -f "$tmp"
+}
 do_credenziali() {
 	local st u
 	st=$(cat "$AUTH_STATO" 2>/dev/null)
@@ -707,7 +729,7 @@ do_operazione() {
 # Le richieste delle pagine web passano dalla cache condivisa e dal limite di
 # richieste contemporanee verso Lyrion (vedi common.sh).
 # shellcheck disable=SC2034 # lo legge lms_json (common.sh)
-case "$1" in json|plugin|operazione) LMS_WEB=1 ;; esac
+case "$1" in json|plugin|operazione|cover) LMS_WEB=1 ;; esac
 
 case "$1" in
 	prepara) do_prepare ;;
@@ -729,6 +751,7 @@ case "$1" in
 	# credenziali: stato e utente di Lyrion per la pagina Sistema (autenticata);
 	# la password si mostra solo se l'ha generata Sweetspot.
 	credenziali) do_credenziali ;;
+	cover) do_cover "$2" "$3" ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
 	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|credenziali|plugin|operazione|riavvia" >&2; exit 1 ;;
 esac
