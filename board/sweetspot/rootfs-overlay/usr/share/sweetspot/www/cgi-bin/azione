@@ -23,7 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamen
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_web_password="" F_web_libero="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
+F_web_password="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
 F_bt_attivo="" F_bt_nome="" F_bt_minuti="" F_bt_mac=""
@@ -525,11 +525,10 @@ case "$F_a" in
 				CACHE_COPERTINE "$F_cache_copertine" CACHE_COPERTINE_MB "$F_cache_copertine_mb" CACHE_COPERTINE_DISCO "$F_cache_copertine_disco" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
 		# Password delle pagine: si salva solo l'impronta MD5-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
+		[ -z "$F_web_password" ] || [ ${#F_web_password} -ge 10 ] || done_to sistema "La password delle pagine ha almeno 10 caratteri. Niente e' stato cambiato."
 		if [ -n "$F_web_password" ]; then
 			h=$(priv sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
 			set -- "$@" PASSWORD_WEB "$h"
-		elif [ "$F_web_libero" = si ]; then
-			priv sweetspot-config rimuovi PASSWORD_WEB
 		fi
 		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else priv sweetspot-config rimuovi SERVER; fi
 		priv sweetspot-config imposta "$@"
@@ -543,8 +542,6 @@ case "$F_a" in
 			rm -f "$SESSION_DIR"/* 2>/dev/null
 			# shellcheck disable=SC2034
 			REDIRECT_COOKIE=$(session_new) || REDIRECT_COOKIE=""
-		elif [ "$F_web_libero" = si ]; then
-			rm -f "$SESSION_DIR"/* 2>/dev/null
 		fi
 		# Il nome nuovo vale subito, in Lyrion e nel player.
 		if [ "$nome" != "$old_name" ] && [ "$old_mode" = completa ]; then

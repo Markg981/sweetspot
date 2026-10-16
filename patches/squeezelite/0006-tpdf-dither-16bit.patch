@@ -1,4 +1,4 @@
-Subject: [PATCH] pack: TPDF dither instead of truncation at 16 and 24 bits
+Subject: [PATCH] pack: TPDF dither instead of truncation at 16 and 24 bits (S24_3LE included)
 
 Squeezelite keeps 32-bit samples and writes S16/S24 by dropping the low bits,
 with no rounding and no dither. The truncation error is correlated with the
@@ -7,7 +7,7 @@ signal: audible on a 16-bit DAC and whenever the software volume attenuates.
 S16_LE: when the output is 16 bits and the block carries more than 16 bits
 of signal (any of the low 16 bits non-zero) or the gain is not unity, round
 with TPDF dither (two uniform values, error within +-1 LSB of the output).
-S24_LE: the same when the gain is not unity. 16-bit sources, silence and
+S24_LE and S24_3LE: the same when the gain is not unity. 16-bit sources, silence and
 every unity-gain S24/S32 output are written exactly as before (blocks of
 digital silence stay silent at any gain, no dither noise), so the
 bit-perfect path does not change. The software volume (gain()) already
@@ -18,7 +18,7 @@ Upstream: Not submitted (local option)
 
 --- a/output_pack.c
 +++ b/output_pack.c
-@@ -43,6 +43,46 @@
+@@ -43,6 +43,51 @@ s32_t to_gain(float f) {
  	return (s32_t)(f * 65536.0F);
  }
  
@@ -62,10 +62,15 @@ Upstream: Not submitted (local option)
 +	return true;
 +}
 +
++// attenuated sample, dithered to 24 bits and left-justified in 32 (low byte zero)
++static s32_t gain_dither24(s32_t g, s32_t sample) {
++	return (s32_t)((u32_t)dither_round(gain(g, sample), 8) << 8);
++}
++
  void _scale_and_pack_frames(void *outputptr, s32_t *inputptr, frames_t cnt, s32_t gainL, s32_t gainR, u8_t flags, output_format format) {
  	// in-place copy input samples if mono/combined is used (never happens with DSD active)
  	if ((flags & MONO_LEFT) && (flags & MONO_RIGHT)) {
-@@ -168,14 +208,16 @@
+@@ -168,14 +213,16 @@ void _scale_and_pack_frames(void *outputptr, s32_t *inputptr, frames_t cnt, s32_
  		{
  			u32_t *optr = (u32_t *)(void *)outputptr;
  #if SL_LITTLE_ENDIAN
@@ -76,31 +81,62 @@ Upstream: Not submitted (local option)
  					inputptr += 2;
  				}
  			} else {
--				while (cnt--) {
--					*(optr++) =  (gain(gainL, *(inputptr)) >> 16 & 0x0000ffff) | (gain(gainR, *(inputptr+1)) & 0xffff0000);
 +				// TPDF dither at 16 bits: more than 16 bits of signal or an attenuated signal
-+				while (cnt--) {
+ 				while (cnt--) {
+-					*(optr++) =  (gain(gainL, *(inputptr)) >> 16 & 0x0000ffff) | (gain(gainR, *(inputptr+1)) & 0xffff0000);
 +					*(optr++) = ((u32_t)dither_round(gain(gainL, *(inputptr)), 16) & 0x0000ffff) |
 +								((u32_t)dither_round(gain(gainR, *(inputptr+1)), 16) << 16);
  					inputptr += 2;
  				}
  			}
-@@ -210,9 +252,15 @@
+@@ -210,9 +257,15 @@ void _scale_and_pack_frames(void *outputptr, s32_t *inputptr, frames_t cnt, s32_
  					*(optr++) = *(inputptr++) >> 8;
  				}
  			} else {
--				while (cnt--) {
--					*(optr++) = gain(gainL, *(inputptr++)) >> 8;
--					*(optr++) = gain(gainR, *(inputptr++)) >> 8;
 +				// attenuated: TPDF dither at 24 bits instead of truncating
 +				// (digital silence stays silent, no dither noise between tracks)
 +				if (block_silent(inputptr, cnt)) {
 +					memset(optr, 0, cnt * 2 * sizeof(u32_t));
 +					break;
 +				}
-+				while (cnt--) {
+ 				while (cnt--) {
+-					*(optr++) = gain(gainL, *(inputptr++)) >> 8;
+-					*(optr++) = gain(gainR, *(inputptr++)) >> 8;
 +					*(optr++) = (u32_t)dither_round(gain(gainL, *(inputptr++)), 8);
 +					*(optr++) = (u32_t)dither_round(gain(gainR, *(inputptr++)), 8);
  				}
  			}
  #else
+@@ -278,14 +331,19 @@ void _scale_and_pack_frames(void *outputptr, s32_t *inputptr, frames_t cnt, s32_
+ 					}
+ 				}
+ 			} else {
++				// attenuated: TPDF dither at 24 bits as for S24_LE (silence stays silent)
++				if (block_silent(inputptr, cnt)) {
++					memset(optr, 0, cnt * 6);
++					break;
++				}
+ 				while (cnt) {
+ 					// attempt to do 32 bit memory accesses - move 2 frames at once: 16 bytes -> 12 bytes
+ 					// falls through to exception case when not aligned or if less than 2 frames to move
+ 					if (((uintptr_t)optr & 0x3) == 0 && cnt >= 2) {
+ 						u32_t *o_ptr = (u32_t *)(void *)optr;
+ 						while (cnt >= 2) {
+-							s32_t l1 = gain(gainL, *(inputptr++)); s32_t r1 = gain(gainR, *(inputptr++));
+-							s32_t l2 = gain(gainL, *(inputptr++)); s32_t r2 = gain(gainR, *(inputptr++));
++							s32_t l1 = gain_dither24(gainL, *(inputptr++)); s32_t r1 = gain_dither24(gainR, *(inputptr++));
++							s32_t l2 = gain_dither24(gainL, *(inputptr++)); s32_t r2 = gain_dither24(gainR, *(inputptr++));
+ #if SL_LITTLE_ENDIAN
+ 							*(o_ptr++) = (l1 & 0xffffff00) >>  8 | (r1 & 0x0000ff00) << 16;
+ 							*(o_ptr++) = (r1 & 0xffff0000) >> 16 | (l2 & 0x00ffff00) <<  8;
+@@ -302,8 +360,8 @@ void _scale_and_pack_frames(void *outputptr, s32_t *inputptr, frames_t cnt, s32_
+ 							cnt  -=  2;
+ 						}
+ 					} else {
+-						s32_t lsample = gain(gainL, *(inputptr++));
+-						s32_t rsample = gain(gainR, *(inputptr++));
++						s32_t lsample = gain_dither24(gainL, *(inputptr++));
++						s32_t rsample = gain_dither24(gainR, *(inputptr++));
+ 						*(optr++) = (lsample & 0x0000ff00) >>  8;
+ 						*(optr++) = (lsample & 0x00ff0000) >> 16;
+ 						*(optr++) = (lsample & 0xff000000) >> 24;

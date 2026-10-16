@@ -9,6 +9,7 @@ its clock, or analog output. Lyrion must already be running in the isolated
 rootfs, on loopback.
 """
 import argparse
+import base64
 import hashlib
 import itertools
 import json
@@ -157,6 +158,13 @@ class LmsClient:
         self._id = 0
         self.journal = []
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        # Lyrion protetto (authorize=1): credenziali dall'ambiente, mai nell'URL.
+        self.headers = {"Content-Type": "application/json"}
+        user = os.environ.get("LYRION_UTENTE", "")
+        password = os.environ.get("LYRION_PASSWORD", "")
+        if user and password:
+            token = base64.b64encode(("%s:%s" % (user, password)).encode()).decode()
+            self.headers["Authorization"] = "Basic " + token
 
     def request(self, player, command, *, deadline=None):
         entry = {"player": player, "command": command}
@@ -182,7 +190,7 @@ class LmsClient:
         self._id += 1
         payload = {"id": self._id, "method": "slim.request", "params": [player, command]}
         request = urllib.request.Request(self.url, data=json.dumps(payload).encode(),
-                                         headers={"Content-Type": "application/json"})
+                                         headers=self.headers)
         try:
             with self.opener.open(request, timeout=timeout) as response:
                 body = response.read(1024 * 1024 + 1)

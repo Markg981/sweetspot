@@ -99,6 +99,32 @@ int main(int argc, char **argv) {
 	unsigned i;
 	double mean, sd, max;
 
+	if (!strcmp(mode, "s24_3gain") || !strcmp(mode, "s24_3unity")) {
+		/* S24_3LE: tre byte per campione; si parte da indirizzi pari e dispari per
+		   percorrere sia il ramo a 32 bit sia quello byte per byte */
+		static u8_t raw[6 * N + 4];
+		unsigned off;
+		double ssum = 0, smax = 0, qsum = 0;
+		int exact = 1, silent = 1;
+		s32_t g = !strcmp(mode, "s24_3gain") ? 32768 : FIXED_ONE;
+		for (off = 0; off < 2; off++) {
+			u8_t *o = raw + off;
+			for (i = 0; i < 2 * N; i++) in[i] = (s32_t)((rnd() % 2000000) - 1000000) * 1000 + 77;
+			_scale_and_pack_frames(o, in, N, g, g, 0, S24_3LE);
+			for (i = 0; i < 2 * N; i++) {
+				s32_t v = (s32_t)((u32_t)o[3 * i] << 8 | (u32_t)o[3 * i + 1] << 16 | (u32_t)o[3 * i + 2] << 24) >> 8;
+				double e = v - (double)in[i] * g / 65536.0 / 256.0;
+				ssum += e; qsum += e * e; if (fabs(e) > smax) smax = fabs(e);
+				if (v != (in[i] >> 8)) exact = 0;
+			}
+			memset(in, 0, sizeof(in));
+			_scale_and_pack_frames(o, in, N, 20000, 20000, 0, S24_3LE);
+			for (i = 0; i < 6 * N; i++) if (o[i]) silent = 0;
+		}
+		if (g == FIXED_ONE) printf("%d %d\n", exact, silent);
+		else printf("%.4f %.4f %.4f %d\n", ssum / (4.0 * N), sqrt(qsum / (4.0 * N)), smax, silent);
+		return 0;
+	}
 	if (!strcmp(mode, "s16") || !strcmp(mode, "s16gain") || !strcmp(mode, "s24gain")) {
 		/* segnale casuale a 32 bit giustificato a sinistra, lontano dalla saturazione */
 		s32_t g = strcmp(mode, "s16") ? 32768 : FIXED_ONE; /* -6 dB */
@@ -199,6 +225,17 @@ class Dither(unittest.TestCase):
                 self.assertLess(abs(mean), 0.02)
                 self.assertLessEqual(peak, 1.5)
                 self.assertLess(sd, 0.6)
+
+    def test_s24_3le_attenuato_con_dither_senza_bias(self):
+        # prima della patch il troncamento lasciava un errore medio di -0,5 LSB
+        mean, rms, peak, silent = self.run_bin("s24_3gain")
+        self.assertLess(abs(mean), 0.02)
+        self.assertLessEqual(peak, 1.5)
+        self.assertAlmostEqual(rms, 0.5, delta=0.05)
+        self.assertEqual(silent, 1)
+
+    def test_s24_3le_guadagno_unitario_bit_perfect_e_silenzio(self):
+        self.assertEqual(self.run_bin("s24_3unity"), [1, 1])
 
     def test_guadagno_unitario_invariato_e_silenzio_silenzioso(self):
         self.assertEqual(self.run_bin("unity"), [1, 1, 1, 1, 1])

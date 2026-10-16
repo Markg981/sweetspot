@@ -34,7 +34,7 @@ cleanup() {
 	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/run/stato.debug" ]; then
 		echo "  eventi ricevuti dal demone (momento in s dall'avvio, riga):"
-		grep -v 'version 9.1.1' "$E/run/stato.debug" | tail -n 60 | cut -c1-110 | sed 's/^/    | /'
+		grep -v 'version 9.1.1' "$E/run/stato.debug" | tail -n 150 | cut -c1-110 | sed 's/^/    | /'
 	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/log" ]; then
 		echo "  registro del demone (ultime righe):"
@@ -148,7 +148,15 @@ attendi() {
 # Scrive una riga in una FIFO degli eventi senza mai bloccarsi (se il demone
 # o l'ascoltatore finto non c'e', la scrittura si abbandona dopo 3 s).
 invia() { # fifo riga
-	timeout 3 sh -c 'printf "%s\n" "$2" > "$1"' sh "$1" "$2" 2>/dev/null
+	# L'apertura della FIFO blocca finche' non c'e' un lettore (il "cat" finto
+	# si riapre fra un writer e l'altro): se scade non e' stato scritto nulla,
+	# quindi si riprova invece di perdere l'evento.
+	local n=0
+	while [ "$n" -lt 3 ]; do
+		timeout 3 sh -c 'printf "%s\n" "$2" > "$1"' sh "$1" "$2" 2>/dev/null && return 0
+		n=$((n + 1))
+	done
+	echo "    (invia: nessun lettore su $1 dopo 3 tentativi)" >&2
 	return 0
 }
 giri() { [ -f "$E/giri" ] && wc -l < "$E/giri" | tr -d ' ' || echo 0; }
@@ -179,16 +187,29 @@ assesta() {
 # Una finestra di 8 s: i processi nati devono essere al piu' il rumore + 3.
 # Se no, classifica "padre > comando: N" dei 10 s successivi.
 finestra() { # descrizione
-	local P D
+	local P D R dem alt ign
 	P=$(esegui)
-	sleep 8
+	# I processi nati si attribuiscono per discendenza dal PID del demone
+	# (solo comandi interni, nessun fork a carico del conteggio): quelli di
+	# altri processi del computer (altre prove, servizi) non sono del demone.
+	R=$(FORKS_ATTRIB_FILE="$E/attrib" sh "$ROOT/tests/forks-riposo.sh" --attribuisci 8 "$DPID")
 	D=$(esegui)
-	expect "$1" "si" "$([ $((D - P)) -le $((NOISE + 6)) ] && echo si || echo "no: $((D - P)) contro rumore $NOISE")"
-	if [ $((D - P)) -gt $((NOISE + 6)) ]; then
-		sh "$ROOT/tests/forks-riposo.sh" --dettaglio 10 2>&1 | sed 's/^/    | /'
+	dem=${R#demone=}; dem=${dem%% *}
+	ign=${R##*ignoti=}
+	alt=${R#*altri=}; alt=${alt%% *}
+	# Del demone: al piu' 3 (come la tolleranza di prima). Non attribuibili
+	# (spariti prima della lettura): al piu' il rumore + 6, come prima.
+	expect "$1" "si" "$([ "$dem" -le 3 ] && [ "$ign" -le $((NOISE + 6)) ] && echo si || echo "no: demone $dem, altri $alt, ignoti $ign (totale $((D - P)), rumore $NOISE)")"
+	if [ "$dem" -gt 3 ] || [ "$ign" -gt $((NOISE + 6)) ]; then
+		echo "    | processi nati in 8 s (gruppo > padre > comando: numero):"
+		sort "$E/attrib" | uniq -c | sort -rn | head -n 20 | sed 's/^/    |   /'
 	fi
 }
 giri_sono() { [ "$(giri)" -ge "$1" ]; }
+# Il check si conta all'inizio del giro ma stato.ts si scrive alla fine: prima di
+# toccare stato.ts bisogna che ogni giro iniziato sia anche concluso.
+giri_conclusi() { [ -f "$E/run/stato.debug" ] && grep -c 'giro concluso' "$E/run/stato.debug" || echo 0; }
+giri_chiusi() { [ "$(giri_conclusi)" -ge "$(giri)" ]; }
 passi_sono() { [ "$(passi)" -ge "$1" ]; }
 
 NOISE=$(rumore 8)
@@ -260,6 +281,7 @@ sleep 3
 expect "inotify: file non osservato ignorato" "5" "$(giri)"
 
 # Richiesta di chi legge la cache (pagina Stato, stato.json, plugin).
+attendi 20 giri_chiusi
 echo "1000 20" > "$E/run/stato.ts"
 denv "$BB" sh -c '. "$SWEETSPOT_LIB/common.sh"; stato_richiedi' > /dev/null 2>&1
 read -r nuovo _ < "$E/run/stato.ts"

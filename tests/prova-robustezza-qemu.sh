@@ -115,7 +115,10 @@ mcopy -o -i "$W/disco.img@@1M" ::/boot/grub/grub.cfg "$W/grub.cfg"
 sed -i 's/quiet loglevel=3 /console=tty0 console=ttyS0,115200 /' "$W/grub.cfg"
 mcopy -o -i "$W/disco.img@@1M" "$W/grub.cfg" ::/boot/grub/grub.cfg
 mcopy -o -i "$W/disco.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
-printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nBLUETOOTH=si\n' "$SSHPASS" >> "$W/sweetspot.txt"
+# Credenziali di Lyrion dichiarate: il primo avvio non genera e non salva una
+# password in sweetspot.txt (scrittura che rimette in moto i servizi a riposo).
+printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nBLUETOOTH=si\nLYRION_UTENTE=prova\nLYRION_PASSWORD=%s\n' \
+	"$SSHPASS" "$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/disco.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
 
 ACCEL=tcg
@@ -167,6 +170,15 @@ pid1=$(squeezelite_pid)
 echo "== 2b. Fork a riposo (demone a eventi, meno di 100 al minuto)"
 # DAC collegato, player attivo, nessun ascolto e nessuna pagina aperta: il
 # contatore "processes" di /proc/stat misura il lavoro dei servizi.
+# Il controllo della libreria dopo l'avvio di Lyrion (scanner.pl) non e'
+# riposo: alla fine ("rescan done") il demone fa giustamente un giro, che
+# cadrebbe nella finestra di misura. Si aspetta che finisca (al massimo 300 s).
+i=0
+while [ $i -lt 60 ] && guest 'pgrep -f scanner.pl' > /dev/null 2>&1; do
+	i=$((i + 1))
+	sleep 5
+done
+[ $i -lt 60 ] || echo "  (controllo della libreria ancora in corso dopo 300 s)"
 if guest 'FORKS_PRIMA=18 FORKS_QUIETO=65 sh -s 60 100'< "$TEST_DIR/forks-riposo.sh" > "$OUT/forks-riposo.txt" 2>&1; then
 	esito OK "fork a riposo: $(head -n 1 "$OUT/forks-riposo.txt")"
 else

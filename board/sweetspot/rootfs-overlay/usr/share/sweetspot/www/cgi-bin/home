@@ -6,7 +6,7 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 if [ "$(mode)" = completa ] && lms_ready; then
-	redirect "$(player_url)"
+	redirect "$(listen_url)"
 else
 	redirect /cgi-bin/stato
 fi

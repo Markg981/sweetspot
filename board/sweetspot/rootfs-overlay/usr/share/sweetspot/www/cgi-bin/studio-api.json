@@ -1,0 +1,156 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - API del Reference Studio: l'interfaccia di ascolto parla con
+# Lyrion solo da qui. Le pagine non hanno le credenziali di Lyrion: la
+# richiesta passa da sweetspot-priv, che lascia passare soltanto i comandi
+# elencati in lms_json_ok (elenchi, stato, trasporto, volume, posizione,
+# riproduzione di un elemento, zone). Il percorso e' protetto dalla sessione
+# (auth_gate: senza accesso risponde 401); le scritture (POST) richiedono
+# anche il gettone anti-CSRF nell'intestazione X-Sweetspot-Token.
+#
+#   GET  ?op=albums|artists|genres|titles|playlists  [start count search sort genre_id artist_id album_id]
+#   GET  ?op=players
+#   GET  ?op=stato&player=MAC            brano in ascolto, volume, tempo
+#   GET  ?op=coda&player=MAC&start=N     coda del player
+#   POST op=play|pausa|stop|avanti|indietro|salta|togli|svuota|volume|seek|carica|zona
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+LMS_WEB=1
+export LMS_WEB
+
+JT='tags:acdltyoITrKe'
+
+rispondi() { # CODICE_HTTP JSON
+	[ "$1" = 200 ] || printf 'Status: %s\r\n' "$1"
+	printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n'
+	sec_headers
+	printf '\r\n%s\n' "$2"
+}
+
+errore() { # CODICE_HTTP NOME [TESTO]
+	json_q_v "${3:-$2}"
+	rispondi "$1" "{\"errore\":\"$2\",\"testo\":\"$JQV\"}"
+	exit 0
+}
+
+num() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "${#1}" -le 9 ]; }
+mac_ok() { case "$1" in ''|*[!0-9a-fA-F:]*) return 1 ;; esac; [ "${#1}" -le 17 ]; }
+
+# Esito di lms_json -> risposta.
+esito_lms() { # CODICE USCITA
+	local rc=$1 out=$2
+	if [ "$rc" -ne 0 ]; then
+		case "$rc" in
+			2) errore 503 non_in_esecuzione "Lyrion non e' in esecuzione." ;;
+			3) errore 503 in_avvio "Lyrion si sta avviando." ;;
+			4) errore 504 timeout "Lyrion non risponde in tempo." ;;
+			6) errore 503 occupato "Troppe richieste a Lyrion: riprova tra poco." ;;
+			126) errore 403 non_consentito "Comando non consentito." ;;
+			*) errore 502 applicativo "Risposta non valida da Lyrion." ;;
+		esac
+	fi
+	rispondi 200 "{\"ok\":true,\"result\":$(printf '%s' "$out" | jq -c '.result // {}')}"
+}
+
+# Parametri: GET dalla query, POST dal corpo.
+if [ "$REQUEST_METHOD" = POST ]; then
+	read_form
+	P_op=${F_op:-} P_player=${F_player:-} P_v=${F_v:-} P_kind=${F_kind:-} P_id=${F_id:-}
+	P_to=${F_to:-} P_mode=${F_mode:-}
+	if [ -z "${HTTP_X_SWEETSPOT_TOKEN:-}" ] || [ "$HTTP_X_SWEETSPOT_TOKEN" != "$(token)" ]; then
+		errore 403 gettone "Gettone non valido: ricarica la pagina."
+	fi
+elif [ "$REQUEST_METHOD" = GET ] || [ "$REQUEST_METHOD" = HEAD ]; then
+	P_op=$(query_param op) P_player=$(query_param player) P_start=$(query_param start)
+	P_count=$(query_param count) P_search=$(query_param search) P_sort=$(query_param sort)
+	P_genre=$(query_param genre_id) P_artist=$(query_param artist_id) P_album=$(query_param album_id)
+else
+	errore 405 metodo "Metodo non consentito."
+fi
+
+[ "$(mode)" = completa ] || errore 409 solo_completa "Il Reference Studio richiede la modalita' completa (Lyrion)."
+
+if [ "$REQUEST_METHOD" != POST ]; then
+	P_start=${P_start:-0} P_count=${P_count:-48}
+	num "$P_start" || errore 400 parametro "start non valido"
+	num "$P_count" && [ "$P_count" -ge 1 ] && [ "$P_count" -le 200 ] || errore 400 parametro "count non valido"
+	[ -z "$P_player" ] || mac_ok "$P_player" || errore 400 parametro "player non valido"
+	set --
+	if [ -n "$P_search" ]; then
+		P_search=$(printf '%s' "$P_search" | tr -d '\000-\037\177' | cut -c1-64)
+		[ -z "$P_search" ] || set -- "$@" "search:$P_search"
+	fi
+	[ -z "$P_genre" ] || { num "$P_genre" || errore 400 parametro "genre_id non valido"; set -- "$@" "genre_id:$P_genre"; }
+	[ -z "$P_artist" ] || { num "$P_artist" || errore 400 parametro "artist_id non valido"; set -- "$@" "artist_id:$P_artist"; }
+	[ -z "$P_album" ] || { num "$P_album" || errore 400 parametro "album_id non valido"; set -- "$@" "album_id:$P_album"; }
+	srt=""
+	case "$P_sort" in
+		'') ;;
+		new|album|artflow|random|artistalbum|title|tracknum) srt="sort:$P_sort" ;;
+		*) errore 400 parametro "ordinamento non valido" ;;
+	esac
+	set -f
+	case "$P_op" in
+		albums)
+			out=$(lms_json "" albums "$P_start" "$P_count" tags:ljaSy ${srt:-sort:album} "$@") ;;
+		artists)
+			out=$(lms_json "" artists "$P_start" "$P_count" "$@") ;;
+		genres)
+			out=$(lms_json "" genres "$P_start" "$P_count" "$@") ;;
+		titles)
+			out=$(lms_json "" titles "$P_start" "$P_count" "$JT" ${srt:-${P_album:+sort:tracknum}} "$@") ;;
+		playlists)
+			out=$(lms_json "" playlists "$P_start" "$P_count" "$@") ;;
+		players)
+			out=$(lms_json "" players 0 100) ;;
+		stato)
+			[ -n "$P_player" ] || errore 400 parametro "player mancante"
+			out=$(lms_json "$P_player" status - 1 "$JT") ;;
+		coda)
+			[ -n "$P_player" ] || errore 400 parametro "player mancante"
+			out=$(lms_json "$P_player" status "$P_start" "$P_count" "$JT") ;;
+		*) errore 400 operazione "Operazione sconosciuta." ;;
+	esac
+	rc=$?
+	set +f
+	esito_lms "$rc" "$out"
+	exit 0
+fi
+
+# --- Scritture -----------------------------------------------------------------
+mac_ok "$P_player" || errore 400 parametro "player non valido"
+case "$P_op" in
+	play) out=$(lms_json "$P_player" play) ;;
+	stop) out=$(lms_json "$P_player" stop) ;;
+	pausa)
+		case "$P_v" in 0|1) ;; *) errore 400 parametro "valore non valido" ;; esac
+		out=$(lms_json "$P_player" pause "$P_v") ;;
+	avanti) out=$(lms_json "$P_player" playlist index +1) ;;
+	indietro) out=$(lms_json "$P_player" playlist index -1) ;;
+	salta)
+		num "$P_v" || errore 400 parametro "posizione non valida"
+		out=$(lms_json "$P_player" playlist index "$P_v") ;;
+	togli)
+		num "$P_v" || errore 400 parametro "posizione non valida"
+		out=$(lms_json "$P_player" playlist delete "$P_v") ;;
+	svuota) out=$(lms_json "$P_player" playlist clear) ;;
+	volume)
+		num "$P_v" && [ "$P_v" -le 100 ] || errore 400 parametro "volume non valido"
+		out=$(lms_json "$P_player" mixer volume "$P_v") ;;
+	seek)
+		num "$P_v" || errore 400 parametro "posizione non valida"
+		out=$(lms_json "$P_player" time "$P_v") ;;
+	carica)
+		num "$P_id" || errore 400 parametro "id non valido"
+		case "$P_kind" in album|track|artist|playlist) ;; *) errore 400 parametro "tipo non valido" ;; esac
+		case "$P_mode" in load|add|insert) ;; *) errore 400 parametro "modo non valido" ;; esac
+		out=$(lms_json "$P_player" playlistcontrol "cmd:$P_mode" "${P_kind}_id:$P_id") ;;
+	zona)
+		# to=MAC del player con cui sincronizzarsi; to=- per lasciare il gruppo.
+		if [ "$P_to" != - ]; then mac_ok "$P_to" || errore 400 parametro "zona non valida"; fi
+		out=$(lms_json "$P_player" sync "$P_to") ;;
+	*) errore 400 operazione "Operazione sconosciuta." ;;
+esac
+rc=$?
+esito_lms "$rc" "$out"

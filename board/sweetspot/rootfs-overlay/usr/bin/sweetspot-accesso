@@ -11,16 +11,28 @@
 #                                      standard (non compare tra gli
 #                                      argomenti) e risponde 0 se e' quella
 #                                      di PASSWORD_WEB, 1 se no
+#   sweetspot-accesso avvio            all'avvio: senza PASSWORD_WEB prepara
+#                                      il primo accesso (codice casuale)
+#   sweetspot-accesso primo            legge dall'ingresso standard il codice
+#                                      e la password scelta (due righe):
+#                                      con il codice giusto salva la password
 #
-# PASSWORD_WEB vuota (predefinita): pagine aperte a chi e' nella rete di
-# casa, come oggi. Con una password, ogni pagina e ogni azione chiedono
+# Primo accesso: non esiste una password predefinita. Se PASSWORD_WEB e'
+# vuota, all'avvio si genera un codice casuale di 12 caratteri (unico per
+# questo dispositivo, resta lo stesso finche' non si sceglie la password):
+# compare sulla console, in /run/sweetspot/primo-accesso.codice (solo root)
+# e nel file PRIMO-ACCESSO.txt sulla chiavetta, cosi' lo si legge anche
+# senza schermo. Finche' non si sceglie la password (minimo 10 caratteri) le
+# pagine mostrano solo "Primo accesso" (/cgi-bin/primo-accesso).
+# Con una password, ogni pagina e ogni azione chiedono
 # l'accesso (/cgi-bin/accesso, sessione con cookie: vedi web.sh). La
 # password si verifica qui, da root: le pagine non leggono l'impronta.
 # Non protegge da chi ascolta il traffico (http). In sweetspot.txt si puo'
 # scrivere la password in chiaro: all'avvio vale come la sua impronta; dalle
 # pagine si salva solo l'impronta ($1$...). Password dimenticata: togli la
-# riga PASSWORD_WEB da sweetspot.txt con il computer.
-# Lyrion (porta 9000) ha la sua protezione nelle sue impostazioni.
+# riga PASSWORD_WEB da sweetspot.txt con il computer: al riavvio il codice
+# di primo accesso torna disponibile (stessa chiavetta, stesso codice).
+# Lyrion (9000 e CLI 9090) ha credenziali proprie: vedi sweetspot-lms credenziali.
 #
 # La pagina /cgi-bin/vivo (risponde solo "ok" e la copia in uso) serve a
 # sweetspot-aggiorna per confermare che una versione appena installata e'
@@ -94,11 +106,96 @@ verify() {
 	esac
 }
 
+PRIMO_CODICE=$RUN/primo-accesso.codice
+PRIMO_ATTIVO=$RUN/primo-accesso.attivo
+PRIMO_FILE=PRIMO-ACCESSO.txt
+PASSWORD_MIN=10
+
+# Codice casuale: 12 caratteri da un alfabeto di 32 senza I, O, 0, 1 (256 e'
+# multiplo di 32: nessuna distorsione). Stampato come XXXX-XXXX-XXXX.
+new_code() {
+	od -An -v -N12 -tu1 "${SWEETSPOT_URANDOM:-/dev/urandom}" 2>/dev/null | awk '
+		BEGIN { a = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; n = 0 }
+		{ for (i = 1; i <= NF; i++) { printf "%s", substr(a, ($i % 32) + 1, 1); if (++n % 4 == 0 && n < 12) printf "-" } }
+		END { if (n != 12) exit 1 }'
+}
+
+code_norm() { printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -d ' -'; }
+
+valid_code() {
+	local n
+	n=$(code_norm "$1")
+	case "$n" in
+		*[!23456789ABCDEFGHJKLMNPQRSTUVWXYZ]*|'') return 1 ;;
+	esac
+	[ ${#n} -eq 12 ]
+}
+
+# Avvio: con password niente da fare (e si toglie il codice rimasto); senza,
+# primo accesso attivo con il codice della chiavetta o uno nuovo.
+boot_setup() {
+	local code="" f
+	mkdir -p "$RUN"
+	if [ -n "$(conf PASSWORD_WEB)" ]; then
+		rm -f "$PRIMO_CODICE" "$PRIMO_ATTIVO"
+		return 0
+	fi
+	if stick_mount rw 2>/dev/null; then
+		f=$STICK_MNT/$PRIMO_FILE
+		if [ -f "$f" ]; then
+			code=$(sed -n 's/^[Cc]odice[^:]*: *//p' "$f" | tr -d '\r' | head -n 1)
+			valid_code "$code" || code=""
+		fi
+		if [ -z "$code" ]; then
+			code=$(new_code) || { stick_umount; return 1; }
+			printf 'Sweetspot - primo accesso\r\n\r\nCodice: %s\r\n\r\nApri http://sweetspot.local/ (o l indirizzo del dispositivo), inserisci il codice e scegli la password.\r\nIl codice vale solo finche non scegli la password; poi questo file viene cancellato.\r\n' "$code" > "$f.tmp" &&
+				sync && mv "$f.tmp" "$f"
+		fi
+		stick_umount
+	fi
+	[ -n "$code" ] || code=$(sed -n 1p "$PRIMO_CODICE" 2>/dev/null)
+	valid_code "$code" || code=$(new_code) || return 1
+	( umask 077; printf '%s\n' "$code" > "$PRIMO_CODICE.nuovo" ) && mv "$PRIMO_CODICE.nuovo" "$PRIMO_CODICE"
+	: > "$PRIMO_ATTIVO"
+	chmod 644 "$PRIMO_ATTIVO"
+	for f in ${SWEETSPOT_CONSOLE-/dev/console /dev/tty1}; do
+		[ -w "$f" ] && printf '\nSweetspot - PRIMO ACCESSO\nCodice: %s\nApri le pagine di Sweetspot dal telefono o dal computer e scegli la password.\n\n' "$code" > "$f" 2>/dev/null
+	done
+	log "primo accesso: codice generato (console e chiavetta)"
+	return 0
+}
+
+# Codice + password nuova (due righe dall'ingresso). 0 = salvata; 1 = codice
+# errato o non in attesa; 2 = password troppo corta o non valida.
+first_access() {
+	local code pw expected h
+	IFS= read -r code
+	IFS= read -r pw
+	[ -f "$PRIMO_ATTIVO" ] && [ -z "$(conf PASSWORD_WEB)" ] || return 1
+	expected=$(sed -n 1p "$PRIMO_CODICE" 2>/dev/null)
+	[ -n "$expected" ] && [ "$(code_norm "$code")" = "$(code_norm "$expected")" ] || return 1
+	[ ${#pw} -ge "$PASSWORD_MIN" ] && valid_value "$pw" || return 2
+	h=$(hash "$pw") && [ -n "$h" ] || return 2
+	sweetspot-config imposta PASSWORD_WEB "$h" >/dev/null 2>&1
+	[ $? -ne 1 ] || return 2
+	rm -f "$PRIMO_CODICE" "$PRIMO_ATTIVO"
+	if stick_mount rw 2>/dev/null; then
+		rm -f "$STICK_MNT/$PRIMO_FILE"
+		sync
+		stick_umount
+	fi
+	apply
+	log "primo accesso: password scelta"
+	return 0
+}
+
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 case "$1" in
 	applica) apply ;;
 	hash) hash "${2:?password}" ;;
 	verifica) verify ;;
-	*) echo "uso: $0 applica | hash PASSWORD | verifica" >&2; exit 1 ;;
+	avvio) boot_setup ;;
+	primo) first_access ;;
+	*) echo "uso: $0 applica | hash PASSWORD | verifica | avvio | primo" >&2; exit 1 ;;
 esac

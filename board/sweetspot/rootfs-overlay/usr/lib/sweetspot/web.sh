@@ -246,12 +246,28 @@ login_ok() { rm -f "$LOGIN_DIR/$(login_key "$1")"; }
 auth_gate() {
 	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
 	[ "${WEB_PUBLIC:-}" = 1 ] && return 0
-	auth_enabled || return 0
+	if ! auth_enabled; then
+		# Primo accesso (nessuna password scelta): niente pagine finche' non si
+		# sceglie la password con il codice del dispositivo. Vale sempre, anche
+		# se il codice e' in rigenerazione: mai una finestra anonima.
+		case "${SCRIPT_NAME:-}" in
+			*/copertina|*/studio-copertina) cover_placeholder ;;
+			*.json)
+				printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
+				sec_headers
+				printf '\r\nprimo accesso richiesto\n' ;;
+			*)
+				printf 'Status: 303 See Other\r\nLocation: /cgi-bin/primo-accesso\r\nCache-Control: no-store\r\n'
+				sec_headers
+				printf '\r\n' ;;
+		esac
+		exit 0
+	fi
 	session_valid && return 0
 	case "${SCRIPT_NAME:-}" in
 		# Un'immagine non puo' mostrare un errore: senza sessione risponde con
 		# il segnaposto (altrimenti il browser disegna un'immagine rotta).
-		*/copertina) cover_placeholder ;;
+		*/copertina|*/studio-copertina) cover_placeholder ;;
 		*.json)
 			printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
 			sec_headers
@@ -319,8 +335,9 @@ urlenc() {
 	printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n' | sed 's/\(..\)/%\1/g'
 }
 
+# printf con a capo: read scarta l'ultimo parametro se manca il fine riga.
 query_param() {
-	printf '%s' "$QUERY_STRING" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1 | while IFS= read -r v; do httpd -d "$v"; done
+	printf '%s\n' "$QUERY_STRING" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1 | while IFS= read -r v; do httpd -d "$v"; done
 }
 
 # Risposta di reindirizzamento dopo un'azione (POST -> GET).
@@ -342,6 +359,12 @@ web_host() {
 
 # Interfaccia di Lyrion (Material Skin).
 player_url() { printf 'http://%s:9000/material/' "$(web_host)"; }
+# Interfaccia di ascolto: Reference Studio (predefinita) o Material con
+# INTERFACCIA_ASCOLTO=material. Material resta raggiungibile dal link nello
+# Studio; le preferenze di Lyrion/Material non vengono toccate.
+listen_url() {
+	if [ "$(lower "$(conf INTERFACCIA_ASCOLTO studio)")" = material ]; then player_url; else echo /cgi-bin/studio; fi
+}
 
 # Sezioni delle impostazioni, come su Daphile. In modalita' player libreria
 # e plugin stanno sul server Lyrion dell'altro computer.
@@ -394,7 +417,7 @@ ${refresh:+<meta http-equiv="refresh" content="$refresh">}
 <nav aria-label="Impostazioni SweetSpot">
 HTML
 	if [ "$(mode)" = completa ]; then
-		printf '<a class="play" href="%s" target="_top"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#play"></use></svg>Ascolta</a>\n' "$(player_url)"
+		printf '<a class="play" href="%s" target="_top"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#play"></use></svg>Ascolta</a>\n' "$(listen_url)"
 	fi
 	for p in $(web_sections); do
 		target=""

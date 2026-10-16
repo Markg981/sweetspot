@@ -238,9 +238,9 @@ R2=$A/run2
 mkdir -p "$R2/web"
 printf 'NOME_RETE=salotto\n' > "$R2/sweetspot.web"
 out=$(RUN_T=$R2 HOST_T=salotto.local req "$A/pagina" GET "" "")
-expect "salotto.local con NOME_RETE=salotto: nessun 403" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+expect "salotto.local con NOME_RETE=salotto: nessun 403 (arriva al controllo di accesso)" "303" "$(status "$out")"
 out=$(RUN_T=$R2 HOST_T=salotto req "$A/pagina" GET "" "")
-expect "salotto (senza .local) accettato" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+expect "salotto (senza .local) accettato" "303" "$(status "$out")"
 out=$(RUN_T=$R2 HOST_T=sweetspot.local req "$A/pagina" GET "" "")
 expect "il nome predefinito non vale piu'" "403" "$(status "$out")"
 expect "il messaggio del 403 dice il nome giusto" "1" "$(printf '%s' "$out" | grep -c 'http://salotto.local/')"
@@ -285,24 +285,25 @@ expect "riavvio con sessione e gettone sbagliato: nulla" "0" "$(wc -c < "$PRIVLO
 SCRIPT_NAME_T=/cgi-bin/azione req "$CGI/azione" POST "sweetspot_sid=$sid" "t=tokenfinto&a=riavvia" > /dev/null
 expect "riavvio con sessione e gettone: eseguito" "@riavvia" "$(cat "$PRIVLOG")"
 
-echo "Senza password le pagine restano aperte"
+echo "Senza password le pagine restano chiuse (primo accesso)"
 printf 'NOME_PLAYER=Prova\n' > "$RUNDIR/sweetspot.web"
 out=$(req "$A/pagina" GET "" "")
-expect "senza PASSWORD_WEB nessun accesso richiesto" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
+expect "senza PASSWORD_WEB la pagina non e' mai anonima" "303|/cgi-bin/primo-accesso|0" "$(status "$out")|$(header "$out" Location)|$(printf '%s' "$out" | grep -c PAGINA)"
 out=$(req "$CGI/accesso" GET "" "")
-expect "senza PASSWORD_WEB l'accesso rimanda alle pagine" "303|/cgi-bin/audio" "$(status "$out")|$(header "$out" Location)"
+expect "senza PASSWORD_WEB l'accesso rimanda alle pagine, che portano al primo accesso" "303|/cgi-bin/audio" "$(status "$out")|$(header "$out" Location)"
 
+printf 'PASSWORD_WEB=*\nNOME_PLAYER=Prova\n' > "$RUNDIR/sweetspot.web"
 echo "HTTPS: rimando delle pagine in chiaro (flag di sweetspot-https)"
-out=$(REMOTE_T=192.168.1.5 req "$A/pagina" GET "" "")
+out=$(REMOTE_T=192.168.1.5 req "$A/pagina" GET "sweetspot_sid=$sid" "")
 expect "senza HTTPS acceso nessun rimando" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
 : > "$RUNDIR/https.reindirizza"
 out=$(REMOTE_T=192.168.1.5 HOST_T=localhost URI_T="/cgi-bin/sistema?msg=ok" req "$A/pagina" GET "" "")
 expect "con il rimando acceso: 301 verso https, stesso indirizzo" "301|https://localhost/cgi-bin/sistema?msg=ok" "$(status "$out")|$(header "$out" Location)"
 expect "il rimando non esegue la pagina" "0" "$(printf '%s' "$out" | grep -c PAGINA)"
 expect "il rimando ha le intestazioni di sicurezza" "nosniff" "$(header "$out" X-Content-Type-Options)"
-out=$(REMOTE_T=127.0.0.1 req "$A/pagina" GET "" "")
+out=$(REMOTE_T=127.0.0.1 req "$A/pagina" GET "sweetspot_sid=$sid" "")
 expect "le richieste dal computer stesso non rimandano" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
-out=$(HTTPS=on REMOTE_HOST=192.168.1.5 REMOTE_T=local: req "$A/pagina" GET "" "")
+out=$(HTTPS=on REMOTE_HOST=192.168.1.5 REMOTE_T=local: req "$A/pagina" GET "sweetspot_sid=$sid" "")
 expect "gia' in https: nessun rimando" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
 out=$(REMOTE_T=192.168.1.5 SCRIPT_NAME_T=/cgi-bin/vivo req "$CGI/vivo" GET "" "")
 expect "vivo (verifica degli aggiornamenti) non rimanda mai" "ok" "$(printf '%s' "$out" | sed -n 's/^\(ok\) .*/\1/p')"

@@ -195,16 +195,23 @@ exec env SWEETSPOT_PATH="$E/bin:$BASEPATH" "\$@"
 EOF
 printf '#!/bin/sh\nexec sh "%s/usr/bin/sweetspot-diario" "$@"\n' "$OVERLAY" > "$E/bin/sweetspot-diario"
 chmod +x "$E/bin/sweetspot-priv" "$E/bin/sweetspot-diario"
-cgi() { # PASSWORD_WEB
+cgi() { # PASSWORD_WEB [cookie]
 	[ -n "$1" ] && printf 'PASSWORD_WEB=*\n' > "$E/run/sweetspot.web" || : > "$E/run/sweetspot.web"
 	env_run SWEETSPOT_PRIV="$E/bin/sweetspot-priv" PATH="$E/bin:$BASEPATH" GATEWAY_INTERFACE=CGI/1.1 HTTP_HOST=127.0.0.1 REMOTE_ADDR=127.0.0.1 \
-		REQUEST_METHOD=GET SCRIPT_NAME=/cgi-bin/diagnostica QUERY_STRING="" sh "$CGI/diagnostica"
+		HTTP_COOKIE="${2:-}" REQUEST_METHOD=GET SCRIPT_NAME=/cgi-bin/diagnostica QUERY_STRING="" sh "$CGI/diagnostica"
 }
 cgi si | tr -d '\r' | head -n 3 > "$WORK/auth.txt"
 expect "con la password e senza sessione: rimanda all'accesso, nessun bundle" "Status: 303 See Other|Location: /cgi-bin/accesso" \
 	"$(sed -n 1p "$WORK/auth.txt")|$(sed -n 2p "$WORK/auth.txt")"
-cgi "" > "$WORK/cgi.out"
-expect "senza password: scarica un tar.gz con il nome e il tipo giusti" "1|1" \
+cgi "" | tr -d '\r' | head -n 3 > "$WORK/primo.txt"
+expect "senza password: rimanda al primo accesso, nessun bundle" "Status: 303 See Other|Location: /cgi-bin/primo-accesso" \
+	"$(sed -n 1p "$WORK/primo.txt")|$(sed -n 2p "$WORK/primo.txt")"
+# Sessione valida: un file con la scadenza, nome = ID del cookie.
+SID=0123456789abcdef0123456789abcdef
+mkdir -p "$E/run/web/sessioni"
+echo $(($(date +%s) + 3600)) > "$E/run/web/sessioni/$SID"
+cgi si "sweetspot_sid=$SID" > "$WORK/cgi.out"
+expect "con la sessione: scarica un tar.gz con il nome e il tipo giusti" "1|1" \
 	"$(head -c 400 "$WORK/cgi.out" | tr -d '\r' | grep -c '^Content-Disposition: attachment; filename="sweetspot-diagnostica-.*\.tar\.gz"')|$(head -c 400 "$WORK/cgi.out" | tr -d '\r' | grep -c '^Content-Type: application/gzip')"
 # Il corpo comincia dopo la prima riga vuota (\r\n\r\n o \n\n), qualunque
 # siano le intestazioni che la precedono.

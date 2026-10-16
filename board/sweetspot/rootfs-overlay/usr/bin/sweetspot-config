@@ -48,6 +48,13 @@ case "$OP" in
 	*) usage ;;
 esac
 
+# Senza password web (anche per un ripristino o una rimozione solo in RAM) il
+# dispositivo torna al primo accesso: codice nuovo su console e chiavetta.
+reopen_onboarding() {
+	[ -n "$(conf PASSWORD_WEB)" ] && return 0
+	sweetspot-accesso avvio > /dev/null 2>&1 || log "primo accesso: codice non generato"
+}
+
 # Impostazioni iniziali: il sweetspot.txt dell'immagine sostituisce quello
 # della chiavetta (con un rename: mai un file a meta'). Musica, archivio e
 # filtri della correzione stanno in altre cartelle e restano.
@@ -66,6 +73,7 @@ if [ "$OP" = ripristina ]; then
 	chmod 600 "$RUN/sweetspot.txt" 2>/dev/null
 	config_build "$RUN/sweetspot.txt"
 	log "impostazioni: ripristinate quelle iniziali"
+	reopen_onboarding
 	exit $saved
 fi
 
@@ -147,6 +155,7 @@ if [ $saved -ne 0 ]; then
 fi
 chmod 600 "$RUN/sweetspot.txt" 2>/dev/null # contiene le password: solo root
 config_build "$RUN/sweetspot.txt"
+reopen_onboarding
 while [ $# -gt 0 ]; do
 	case "$1" in
 		*PASSWORD*) log "impostazioni: $OP $1" ;;

@@ -72,6 +72,72 @@ ensure_csrf() {
 	log "lyrion: protezione CSRF portata al livello $CSRF_LEVEL"
 }
 
+# Protezione di Lyrion (HTTP 9000 con Material e /jsonrpc.js, CLI 9090):
+# con authorize=1 ogni richiesta HTTP senza Basic valido riceve 401 e la CLI
+# chiede "login". Slimproto (3483) non ha autenticazione in Lyrion: i player
+# si collegano come prima, ma la porta resta protetta solo dalla rete.
+# Utente e password stanno in LYRION_UTENTE/LYRION_PASSWORD (sweetspot.txt);
+# in Lyrion la password e' l'impronta SHA-1 in base64 senza riempimento.
+#  - password in sweetspot.txt: vale quella (si riallinea Lyrion a ogni avvio);
+#  - assente e Lyrion con credenziali non nostre: si conservano, non si
+#    sovrascrivono; Sweetspot non le conosce e lo dice (lyrion-auth.stato);
+#  - assente, Lyrion aperto o con credenziali gia' nostre: se ne genera una
+#    casuale e la si salva in sweetspot.txt (migrazione dichiarata).
+# Va chiamata con Lyrion fermo: lo riscrive in chiusura.
+AUTH_HASH=$PREFS/sweetspot-auth.hash
+AUTH_STATO=${SWEETSPOT_RUN:-/run/sweetspot}/lyrion-auth.stato
+
+lyrion_hash() {
+	printf '%s' "$1" | perl -MDigest::SHA=sha1_base64 -e 'print sha1_base64(<STDIN>)' 2>/dev/null
+}
+
+prefs_get() { grep "^$1:" "$PREFS/server.prefs" 2>/dev/null | tail -n 1 | cut -d: -f2- | tr -d ' "'"'"; }
+
+ensure_auth() {
+	local f=$PREFS/server.prefs u p h cur_auth cur_user cur_hash ours stato
+	u=$(conf LYRION_UTENTE)
+	p=$(conf LYRION_PASSWORD)
+	cur_auth=$(prefs_get authorize)
+	cur_user=$(prefs_get username)
+	cur_hash=$(prefs_get password)
+	ours=""
+	[ -s "$AUTH_HASH" ] && ours=$(cat "$AUTH_HASH")
+	stato=configurata
+	if [ -z "$p" ]; then
+		if [ "$cur_auth" = 1 ] && [ -n "$cur_user" ] && [ -n "$cur_hash" ] && [ "$cur_hash" != "$ours" ]; then
+			mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
+			echo preesistente > "$AUTH_STATO"
+			log "lyrion: credenziali preesistenti conservate; Sweetspot non le conosce: metti LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt"
+			return 0
+		fi
+		p=$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')
+		stato=generata
+	fi
+	[ -n "$u" ] || u=sweetspot
+	h=$(lyrion_hash "$p")
+	if [ -z "$h" ]; then
+		log "lyrion: impronta non calcolabile (perl): protezione non applicata"
+		return 1
+	fi
+	if [ "$stato" = generata ]; then
+		sweetspot-config imposta LYRION_UTENTE "$u" LYRION_PASSWORD "$p" > /dev/null 2>&1 \
+			|| { log "lyrion: password generata non salvabile: protezione non applicata"; return 1; }
+		log "lyrion: protezione attivata con una password generata (utente $u), salvata in sweetspot.txt"
+	elif [ "$cur_auth" != 1 ] || [ "$cur_user" != "$u" ] || [ "$cur_hash" != "$h" ]; then
+		[ -n "$cur_hash" ] && [ "$cur_hash" != "$ours" ] && log "lyrion: credenziali di sweetspot.txt al posto di quelle precedenti"
+		log "lyrion: protezione allineata a sweetspot.txt (utente $u)"
+	fi
+	grep -v -e '^authorize:' -e '^username:' -e '^password:' "$f" > "$f.tmp" 2>/dev/null
+	printf 'authorize: 1\nusername: %s\npassword: %s\n' "$u" "$h" >> "$f.tmp" \
+		&& mv "$f.tmp" "$f" \
+		|| { rm -f "$f.tmp"; log "lyrion: preferenze non scrivibili: protezione non applicata"; return 1; }
+	printf '%s' "$h" > "$AUTH_HASH"
+	mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
+	echo "$stato" > "$AUTH_STATO"
+	chmod 644 "$AUTH_STATO" 2>/dev/null
+	return 0
+}
+
 # Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
 # aprono dentro l'interfaccia, come su Daphile.
 material_actions() {
@@ -255,25 +321,39 @@ art_used_mb() {
 # copia in un file provvisorio e solo a copia riuscita si toglie l'originale.
 # Se il file supera il tetto non si porta dietro (si rifa').
 art_move() { # origine destinazione tetto_mb
-	local sz
+	local sz s dest_dir
 	[ -f "$1" ] || return 0
 	[ "$1" = "$2" ] && return 0
-	[ -f "$2" ] && return 0
+	if [ -f "$2" ]; then
+		log "lyrion: cache $2 gia' presente, vale quella; $1 non migrata"
+		return 0
+	fi
 	sz=$(wc -c < "$1") || sz=0
 	if [ $((${sz:-0} / 1048576)) -ge "$3" ]; then
 		log "lyrion: cache $1 oltre il tetto di $3 MB, non migrata (si ricostruisce)"
-		rm -f "$1"; return 0
+		rm -f "$1" "$1-wal" "$1-shm"; return 0
 	fi
-	if cp "$1" "$2.tmp.$$" 2>/dev/null && mv "$2.tmp.$$" "$2" 2>/dev/null; then
-		rm -f "$1"
-	else
-		rm -f "$2.tmp.$$"
-		log "lyrion: spostamento di $1 non riuscito, resta dov'e'"
+	# Il database e il suo giornale (-wal/-shm) viaggiano insieme: il WAL puo'
+	# contenere scritture non ancora riportate nel file principale.
+	dest_dir=${2%/*}
+	for s in "" -wal -shm; do
+		[ -f "$1$s" ] || continue
+		cp "$1$s" "$2$s.tmp.$$" 2>/dev/null || { rm -f "$2.tmp.$$" "$2-wal.tmp.$$" "$2-shm.tmp.$$"; log "lyrion: copia di $1$s in $dest_dir non riuscita, la cache resta dov'e'"; return 1; }
+	done
+	for s in -wal -shm; do
+		[ -f "$2$s.tmp.$$" ] && { mv "$2$s.tmp.$$" "$2$s" 2>/dev/null || { rm -f "$2.tmp.$$" "$2-wal.tmp.$$" "$2-shm.tmp.$$" "$2-wal" "$2-shm"; log "lyrion: spostamento di $1$s non riuscito, la cache resta dov'e'"; return 1; }; }
+	done
+	if ! mv "$2.tmp.$$" "$2" 2>/dev/null; then
+		rm -f "$2.tmp.$$" "$2-wal" "$2-shm"
+		log "lyrion: spostamento di $1 non riuscito, la cache resta dov'e'"
+		return 1
 	fi
+	rm -f "$1" "$1-wal" "$1-shm"
+	return 0
 }
 
 link_caches() {
-	local t pos dir motivo f old cap used
+	local t pos dir motivo f old cap used oldpos olddir
 	t=$(art_target)
 	pos=${t%%|*}; dir=${t#*|}
 	motivo=
@@ -290,10 +370,20 @@ link_caches() {
 			old=
 			if [ -L "$CACHE/$f" ]; then old=$(readlink "$CACHE/$f")
 			elif [ -f "$CACHE/$f" ]; then old=$CACHE/$f; fi
-			# Cambio di posizione: migrazione sicura.
-			[ -n "$old" ] && [ "${old%/*}" != "$dir" ] && art_move "$old" "$dir/$f" "$cap"
-			rm -f "$CACHE/$f-wal" "$CACHE/$f-shm"
-			# Un file vero non migrato o un collegamento vecchio si sostituiscono.
+			# Cambio di posizione: migrazione sicura. Se non riesce non si
+			# tocca nulla: cache, giornale e collegamento restano dove sono e
+			# lo stato dichiara la posizione reale.
+			if [ -n "$old" ] && [ "${old%/*}" != "$dir" ] && ! art_move "$old" "$dir/$f" "$cap"; then
+				olddir=${old%/*}
+				if [ "$olddir" = "$CACHE" ] || [ "$olddir" = "$ART_RAM" ]; then oldpos=ram; else oldpos=disco; fi
+				pos=$oldpos; dir=$olddir
+				[ "$oldpos" = ram ] && cap=$(art_ram_mb) || cap=$(art_disk_mb)
+				motivo="migrazione non riuscita: cache lasciata in $olddir"
+				log "lyrion: $motivo"
+				break
+			fi
+			# Con la cache ora altrove si tolgono gli avanzi e si ricollega.
+			[ -L "$CACHE/$f" ] || rm -f "$CACHE/$f-wal" "$CACHE/$f-shm"
 			rm -f "$CACHE/$f"
 			ln -s "$dir/$f" "$CACHE/$f"
 		done
@@ -318,6 +408,36 @@ link_caches() {
 	chmod 644 "$ART_STATE" 2>/dev/null
 }
 
+# cover ID DIMENSIONE: copertina di Lyrion (con le credenziali di Sweetspot)
+# per il Reference Studio. Solo ID esadecimale e dimensioni previste; la
+# risposta si accetta solo se e' un'immagine JPEG/PNG di dimensione ragionevole.
+do_cover() {
+	local id=$1 sz=$2 auth tmp
+	case "$id" in ''|*[!0-9a-fA-F]*) return 1 ;; esac
+	[ "${#id}" -le 32 ] || return 1
+	case "$sz" in 64|96|128|200|300|400|600) ;; *) return 1 ;; esac
+	lms_auth_prepara
+	auth=$LMS_AUTH
+	tmp=$(mktemp "$RUN/cover.XXXXXX") || return 1
+	if ! "${SWEETSPOT_WGET:-wget}" -q -T 8 -O "$tmp" ${auth:+--header "$auth"} \
+		"http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" 2>/dev/null \
+		|| [ "$(wc -c < "$tmp")" -gt 4194304 ] || [ ! -s "$tmp" ] \
+		|| ! { head -c 3 "$tmp" | od -An -tx1 | grep -q 'ff d8 ff' || head -c 4 "$tmp" | od -An -tx1 | grep -q '89 50 4e 47'; }; then
+		rm -f "$tmp"
+		return 1
+	fi
+	cat "$tmp"
+	rm -f "$tmp"
+}
+do_credenziali() {
+	local st u
+	st=$(cat "$AUTH_STATO" 2>/dev/null)
+	u=$(conf LYRION_UTENTE)
+	printf 'stato=%s\nutente=%s\n' "${st:-sconosciuto}" "$u"
+	[ "$st" = generata ] && printf 'password=%s\n' "$(conf LYRION_PASSWORD)"
+	return 0
+}
+
 # Diagnostica: posizione, tetto e MB usati adesso (non quelli dell'avvio).
 do_artwork() {
 	local pos dir cap used motivo
@@ -334,6 +454,8 @@ do_prepare() {
 		log "lyrion: preferenze iniziali scritte"
 	fi
 	ensure_csrf
+	# Fail-closed: senza protezione Lyrion non parte, per non esporre l'amministrazione.
+	ensure_auth || { log "lyrion: protezione di accesso non applicabile, avvio annullato"; return 1; }
 	material_theme || return 1
 	material_actions > "$PREFS/material-skin/actions.json"
 	# Material Skin preinstallata. Se l'utente l'ha aggiornata dal gestore
@@ -383,6 +505,12 @@ do_scanner() {
 
 do_service() {
 	local restarts=0 started rc hk
+	# Mai senza protezione: se nessuno l'ha applicata (prepara fallito o
+	# saltato) o le preferenze non la chiedono, Lyrion non parte.
+	if [ ! -s "$AUTH_STATO" ] || [ "$(prefs_get authorize)" != 1 ]; then
+		log "lyrion: protezione di accesso non applicata, servizio non avviato"
+		return 1
+	fi
 	rm -f "$STOPFLAG"
 	cpu_layout
 	hk=$(join_list "$LAYOUT_HK")
@@ -609,7 +737,7 @@ do_operazione() {
 # Le richieste delle pagine web passano dalla cache condivisa e dal limite di
 # richieste contemporanee verso Lyrion (vedi common.sh).
 # shellcheck disable=SC2034 # lo legge lms_json (common.sh)
-case "$1" in json|plugin|operazione) LMS_WEB=1 ;; esac
+case "$1" in json|plugin|operazione|cover) LMS_WEB=1 ;; esac
 
 case "$1" in
 	prepara) do_prepare ;;
@@ -628,6 +756,10 @@ case "$1" in
 	json) shift; lms_json_locale "$@" ;;
 	plugin) shift; do_plugin "$@" ;;
 	operazione) shift; do_operazione "$@" ;;
+	# credenziali: stato e utente di Lyrion per la pagina Sistema (autenticata);
+	# la password si mostra solo se l'ha generata Sweetspot.
+	credenziali) do_credenziali ;;
+	cover) do_cover "$2" "$3" ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
-	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|plugin|operazione|riavvia" >&2; exit 1 ;;
+	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|credenziali|plugin|operazione|riavvia" >&2; exit 1 ;;
 esac

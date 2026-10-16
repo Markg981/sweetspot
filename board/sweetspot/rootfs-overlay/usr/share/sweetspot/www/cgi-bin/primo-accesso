@@ -1,0 +1,100 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - primo accesso: non c'e' una password predefinita. Il codice
+# casuale del dispositivo (console e file PRIMO-ACCESSO.txt sulla chiavetta)
+# autorizza la scelta della password dell'amministratore, obbligatoria.
+# La verifica del codice e il salvataggio li fa root (sweetspot-accesso primo);
+# qui solo modulo, gettone anti-CSRF e limite ai tentativi.
+
+# shellcheck disable=SC2034
+WEB_PUBLIC=1 # e' la pagina che serve per cominciare
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+F_t="" F_codice="" F_password="" F_password2=""
+
+reply_page() { # codice-stato messaggio
+	printf 'Status: %s\r\n' "$1"
+	first_page "$2"
+}
+
+first_page() {
+	page_start "Primo accesso" accesso
+	[ -n "$1" ] && printf '<p class="msg">%s</p>\n' "$(esc "$1")"
+	cat <<HTML
+<p class="sub">Questo Sweetspot non ha ancora una password. Il codice di primo accesso è sullo schermo collegato al dispositivo e nel file <code>PRIMO-ACCESSO.txt</code> sulla chiavetta. Inseriscilo e scegli la password dell'amministratore (almeno 10 caratteri): serve per tutte le pagine e le operazioni di amministrazione.</p>
+<form method="post" action="/cgi-bin/primo-accesso" class="card">
+<input type="hidden" name="t" value="$(token)">
+<div class="row"><div class="grow">
+<label for="cod">Codice di primo accesso</label>
+<input id="cod" name="codice" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX" autofocus required>
+<label for="pw">Nuova password</label>
+<input id="pw" name="password" type="password" autocomplete="new-password" minlength="10" required>
+<label for="pw2">Ripeti la password</label>
+<input id="pw2" name="password2" type="password" autocomplete="new-password" minlength="10" required>
+</div></div>
+<button class="primary">Imposta la password</button>
+</form>
+HTML
+	page_end
+}
+
+no_code() {
+	printf 'Status: 503 Service Unavailable\r\nRetry-After: 10\r\n'
+	page_start "Primo accesso" accesso
+	printf '<p class="msg">Codice di primo accesso in preparazione. Ricarica tra qualche secondo; se non compare, riavvia il dispositivo.</p>\n'
+	page_end
+}
+
+if [ "$REQUEST_METHOD" != POST ]; then
+	auth_enabled && { redirect /cgi-bin/accesso; exit 0; }
+	[ -f "$RUN/primo-accesso.attivo" ] || { no_code; exit 0; }
+	first_page ""
+	exit 0
+fi
+
+read_form
+
+if auth_enabled; then redirect /cgi-bin/accesso; exit 0; fi
+[ -f "$RUN/primo-accesso.attivo" ] || { no_code; exit 0; }
+
+if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
+	reply_page "403 Forbidden" "Modulo scaduto: ricarica la pagina e riprova."
+	exit 0
+fi
+
+w=$(login_wait ip "$LOGIN_FREE")
+wg=$(login_wait globale $((LOGIN_FREE * 6)))
+[ "$wg" -gt "$w" ] && w=$wg
+if [ "$w" -gt 0 ]; then
+	reply_page "429 Too Many Requests" "Troppi tentativi: riprova tra $w secondi."
+	exit 0
+fi
+
+if [ "$F_password" != "$F_password2" ]; then
+	reply_page "400 Bad Request" "Le due password non coincidono."
+	exit 0
+fi
+
+printf '%s\n%s\n' "$F_codice" "$F_password" | priv sweetspot-accesso primo
+case $? in
+	0) ;;
+	2)
+		reply_page "400 Bad Request" "Password non valida: servono almeno 10 caratteri."
+		exit 0 ;;
+	*)
+		login_fail ip
+		login_fail globale
+		log "primo accesso: codice rifiutato da ${REMOTE_ADDR:-?}"
+		reply_page "401 Unauthorized" "Codice non corretto."
+		exit 0 ;;
+esac
+
+login_ok ip
+login_ok globale
+rm -f "$SESSION_DIR"/* 2>/dev/null
+id=$(session_new)
+printf 'Status: 303 See Other\r\nLocation: /cgi-bin/audio\r\nCache-Control: no-store\r\n'
+sec_headers
+[ -n "$id" ] && session_cookie "$id"
+printf '\r\n'

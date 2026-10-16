@@ -26,10 +26,11 @@ def ancestors(job):
     return set(needs).union(*(ancestors(dep) for dep in needs))
 
 
-def eligible(job, ref, results):
+def eligible(job, ref, results, compila="true"):
     """Evaluate the narrow release expression plus Actions' success default."""
     expression = str(WORKFLOW["jobs"][job].get("if", "success()"))
     expression = expression.removeprefix("${{").removesuffix("}}").strip()
+    expression = expression.replace("needs.modifiche.outputs.compila", repr(compila))
     success = all(results[dep] == "success" for dep in ancestors(job))
     if not re.search(r"\b(?:always|success|failure|cancelled)\s*\(", expression):
         expression = "success() && (" + expression + ")"
@@ -133,14 +134,83 @@ class ReleaseGateTests(unittest.TestCase):
         downloads = [step for step in jobs["lyrion"]["steps"]
                      if step.get("uses", "").startswith("actions/download-artifact@")]
         self.assertEqual({step["with"]["name"] for step in downloads},
-                         {"sweetspot-${{ matrix.scheda }}-aggiornamento.tar", "sweetspot.img.xz"})
+                         {"${{ startsWith(github.ref, 'refs/tags/v') && format('da-firmare-{0}', matrix.scheda) || format('sweetspot-{0}-aggiornamento.tar', matrix.scheda) }}", "sweetspot.img.xz"})
         for step in downloads:
             self.assertEqual(step["with"]["run-id"], "${{ steps.pacchetti.outputs.id }}")
         choose = next(step for step in jobs["lyrion"]["steps"] if step.get("id") == "pacchetti")
-        self.assertIn("branch=main&event=push&status=success", choose["run"])
+        self.assertIn("branch=main&event=push", choose["run"])
+        self.assertNotIn("status=success", choose["run"])
         self.assertIn("pacchetti.txt", choose["run"])
         # Tags never reuse packages: modifiche compiles on every non-PR event.
         self.assertIn("needs.build.result == 'success'", jobs["release"]["if"])
+
+    def test_lyrion_runs_only_when_there_are_packages_to_prove(self):
+        good = {"modifiche": "success", "test": "success", "build": "success"}
+        cases = ((good, "true", True),
+                 # One board failed: the other one is still proven.
+                 ({**good, "build": "failure"}, "true", True),
+                 # Build due but skipped (tests failed): nothing of this run to prove.
+                 ({**good, "test": "failure", "build": "skipped"}, "true", False),
+                 # No build needed: main's packages are proven, even if tests failed.
+                 ({**good, "build": "skipped"}, "false", True),
+                 ({**good, "test": "failure", "build": "skipped"}, "false", True),
+                 ({**good, "build": "cancelled"}, "true", False),
+                 ({**good, "modifiche": "failure", "build": "skipped"}, "true", False))
+        for results, compila, expected in cases:
+            with self.subTest(results=results, compila=compila):
+                self.assertEqual(eligible("lyrion", "refs/heads/x", results, compila), expected)
+
+    def test_lyrion_reports_a_missing_build_once(self):
+        choose = next(step for step in WORKFLOW["jobs"]["lyrion"]["steps"] if step.get("id") == "pacchetti")
+        for artifacts, code in (("sweetspot-rpi-aggiornamento.tar\n", 1),
+                                ("sweetspot-x86_64-aggiornamento.tar\nsweetspot.img.xz\n", 0)):
+            with self.subTest(artifacts=artifacts), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                tools = root / "bin"
+                tools.mkdir()
+                (tools / "gh").write_text("#!/bin/sh\nprintf '%s'\n" % artifacts)
+                (tools / "gh").chmod(0o755)
+                env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"], "COMPILA": "true",
+                       "SCHEDA": "x86_64", "GITHUB_RUN_ID": "42", "GITHUB_REF": "refs/pull/1/merge",
+                       "GITHUB_REPOSITORY": "o/r", "GITHUB_SERVER_URL": "https://x",
+                       "GITHUB_OUTPUT": str(root / "output"), "RUNNER_TEMP": str(root)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", choose["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                evidence = (root / "sweetspot-audio-evidence" / "pacchetti.txt").read_text()
+                if code:
+                    self.assertIn("non riuscita", evidence)
+                    self.assertEqual(result.stdout.count("::error::"), 1)
+                else:
+                    self.assertEqual((root / "output").read_text(), "id=42\n")
+                    self.assertIn("ricompilato in questa esecuzione: true", evidence)
+
+    def test_main_packages_come_from_the_newest_run_with_every_file(self):
+        choose = next(step for step in WORKFLOW["jobs"]["lyrion"]["steps"] if step.get("id") == "pacchetti")
+        # Run 30 (cancelled after build x86 tar only), 20 (complete), 10 (old).
+        gh = ('#!/bin/sh\ncase "$2" in\n'
+              '  */runs\\?*) printf "30\\n20\\n10\\n" ;;\n'
+              '  */runs/30/artifacts*) printf "sweetspot-x86_64-aggiornamento.tar\\nsweetspot-rpi-aggiornamento.tar\\n" ;;\n'
+              '  */runs/20/artifacts*|*/runs/10/artifacts*) printf "sweetspot-x86_64-aggiornamento.tar\\nsweetspot.img.xz\\n'
+              'sweetspot-rpi-aggiornamento.tar\\n" ;;\n'
+              '  */runs/*) echo "sha-${2##*/}" ;;\nesac\n')
+        for board, expected in (("x86_64", "20"), ("rpi", "30")):
+            with self.subTest(board=board), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                tools = root / "bin"
+                tools.mkdir()
+                (tools / "gh").write_text(gh)
+                (tools / "gh").chmod(0o755)
+                env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"], "COMPILA": "false",
+                       "SCHEDA": board, "GITHUB_RUN_ID": "99", "GITHUB_REF": "refs/pull/1/merge",
+                       "GITHUB_REPOSITORY": "o/r", "GITHUB_SERVER_URL": "https://x",
+                       "GITHUB_OUTPUT": str(root / "output"), "RUNNER_TEMP": str(root)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", choose["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((root / "output").read_text(), f"id={expected}\n")
+                self.assertIn(f"commit: sha-{expected}",
+                              (root / "sweetspot-audio-evidence" / "pacchetti.txt").read_text())
 
     def test_x86_alsa_proof_boots_the_image_and_keeps_evidence(self):
         steps = WORKFLOW["jobs"]["lyrion"]["steps"]
@@ -200,7 +270,7 @@ class ReleaseGateTests(unittest.TestCase):
                       if step.get("uses", "").startswith("softprops/action-gh-release@")]
         self.assertEqual(len(publishers), 1, "publish once after both architectures pass")
         job, step = publishers[0]
-        self.assertTrue({"test", "build", "lyrion"} <= ancestors(job),
+        self.assertTrue({"test", "build", "firma", "lyrion"} <= ancestors(job),
                         "publication can run before all test/build/Lyrion jobs finish")
         self.assertFalse(step.get("continue-on-error", False))
         self.assertFalse(WORKFLOW["jobs"][job].get("continue-on-error", False))
@@ -209,7 +279,7 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_publication_rejects_failed_skipped_cancelled_and_non_tag_runs(self):
         self.assertIn("release", WORKFLOW["jobs"], "publication needs a downstream job")
-        good = {"modifiche": "success", "test": "success", "build": "success", "lyrion": "success"}
+        good = {"modifiche": "success", "test": "success", "build": "success", "firma": "success", "lyrion": "success"}
         self.assertTrue(eligible("release", "refs/tags/v1.0.0", good))
         for job in good:
             for result in ("failure", "skipped", "cancelled"):
@@ -267,7 +337,7 @@ class SigningTests(unittest.TestCase):
 
     def sign(self, board="x86_64"):
         return subprocess.run(["bash", "-e", "-o", "pipefail", "-c",
-                               workflow_script("build", "Firma del pacchetto di aggiornamento", board)],
+                               workflow_script("firma", "Firma del pacchetto di aggiornamento", board)],
                               cwd=self.root, env=self.env, capture_output=True, text=True)
 
     def test_official_tag_requires_signing_secret(self):
@@ -352,6 +422,29 @@ class SigningTests(unittest.TestCase):
         self.release_artifacts()
         (self.root / "artifacts/sweetspot-rpi-aggiornamento.tar").unlink()
         self.assertNotEqual(self.verify_release().returncode, 0)
+
+
+class SigningKeyProvisioningTests(unittest.TestCase):
+    def test_private_key_only_through_tag_restricted_environment(self):
+        for name, job in WORKFLOW["jobs"].items():
+            if name != "firma":
+                self.assertNotIn("environment", job, f"{name} non deve vedere l'ambiente di firma")
+        firma = WORKFLOW["jobs"]["firma"]
+        self.assertEqual(firma["environment"], "firma-aggiornamenti")
+        self.assertIn("refs/tags/v", firma["if"])
+        self.assertIn("firma", WORKFLOW["jobs"]["release"]["needs"])
+        self.assertTrue(eligible("firma", "refs/tags/v1.0.0", {"test": "success", "modifiche": "success", "build": "success"}))
+        self.assertFalse(eligible("firma", "refs/heads/main", {"test": "success", "modifiche": "success", "build": "success"}))
+        self.assertFalse(eligible("firma", "refs/pull/1/merge", {"test": "success", "modifiche": "success", "build": "success"}))
+        text = (ROOT / ".github/workflows/build.yml").read_text()
+        self.assertEqual(text.count("secrets.SWEETSPOT_FIRMA"), 1)
+
+    def test_committed_public_key_is_a_well_formed_minisign_key(self):
+        lines = (ROOT / PUBKEY).read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("untrusted comment: minisign public key "))
+        self.assertRegex(lines[1], r"^RW[A-Za-z0-9+/]{54}$")
+        self.assertNotIn("SECRET", (ROOT / PUBKEY).read_text().upper())
 
 
 if __name__ == "__main__":

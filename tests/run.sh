@@ -135,6 +135,14 @@ mkdac "$N550B" no
 
 # --- Test -------------------------------------------------------------------------
 
+# Un'impronta scritta male in un .hash ferma la build dopo mezz'ora: qui si
+# vede subito (lunghezza per algoritmo, solo cifre esadecimali minuscole).
+echo "Impronte dei pacchetti"
+expect "file .hash: impronte ben formate" "" "$(awk '
+	$1 == "sha256" { n = 64 } $1 == "sha512" { n = 128 } $1 == "sha1" { n = 40 } $1 == "md5" { n = 32 }
+	$1 ~ /^(sha256|sha512|sha1|md5)$/ && (length($2) != n || $2 !~ /^[0-9a-f]+$/) { printf "%s: %s %s ", FILENAME, $1, $3 }
+' "$ROOT"/package/*/*.hash)"
+
 echo "Impostazioni"
 printf '# commento\r\nnome_player = Sala d'"'"'ascolto \r\nDSD="nativo"   # forzato\r\nWIFI_PASSWORD=abc#123 \r\n\r\n; altro commento\r\nRIGA SENZA UGUALE\r\nPROFILO=silenzio' > "$WORK/sweetspot.txt"
 mkdir -p "$WORK/cfg/run"
@@ -902,9 +910,9 @@ for v in 2 1 -25 -3.55 abc; do
 done
 rm -f "$WEB/run/config.call"
 rm -f "$WEB/run/config.call"
-web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta" > /dev/null
+web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta-lunga-1" > /dev/null
 expect "sistema: si salva l'impronta, non la password" '1|0' \
-	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.call")|$(grep -c segreta "$WEB/run/config.call")"
+	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.call")|$(grep -c segreta-lunga "$WEB/run/config.call")"
 out=$(web_action "a=ripristina")
 case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
 expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"
@@ -2152,6 +2160,19 @@ expect "cache oltre il tetto: non migrata" "no" "$([ -s "$CC/archivio/.sweetspot
 printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=../x\n' > "$CC/run/sweetspot.conf"
 CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
 expect "nome del disco con percorso: rifiutato, ripiego" "ram|disco per le copertine non indicato" "$(cc_stato)"
+# Fault injection: la copia verso il nuovo disco fallisce (cp finto), le cache
+# e il WAL devono restare dove stanno, con lo stato che lo dichiara.
+rm -f "$CC/run/sweetspot.conf" "$CC/lms/cache"/* "$CC/archivio/.sweetspot-cache"/*
+echo prezioso > "$CC/lms/cache/artwork.db"; echo wal-prezioso > "$CC/lms/cache/artwork.db-wal"
+lmsfn 'cp() { return 1; }; link_caches'
+expect "copia fallita: cache e WAL restano dove sono" "prezioso|wal-prezioso|no" \
+	"$(cat "$CC/lms/cache/artwork.db")|$(cat "$CC/lms/cache/artwork.db-wal")|$([ -L "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+expect "copia fallita: nessun file provvisorio in destinazione" "0" "$(ls -A "$CC/archivio/.sweetspot-cache" | grep -c artwork)"
+case "$(cc_stato)" in *"migrazione non riuscita"*) ok "copia fallita: lo stato lo dichiara" ;; *) ko "stato dopo migrazione fallita" "migrazione non riuscita" "$(cc_stato)" ;; esac
+lmsfn link_caches
+expect "dopo il guasto la migrazione riesce, WAL compreso" "prezioso|wal-prezioso|si" \
+	"$(cat "$CC/archivio/.sweetspot-cache/artwork.db")|$(cat "$CC/archivio/.sweetspot-cache/artwork.db-wal")|$([ -L "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+rm -f "$CC/run/sweetspot.conf"
 rm -f "$CC/run/sweetspot.conf"
 # Il tetto della cache in RAM rientra nella quota servizi del budget RAM unificato.
 mkdir -p "$CC/q/run" "$CC/q/proc"
@@ -3174,6 +3195,38 @@ ascrun "$ASC/cg" "resume_work"
 expect "ascolto: cgroup, a fine ascolto tornano nel gruppo radice" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/cgroup.procs" | sed 's/ $//')"
 expect "ascolto: cgroup, ionice di nuovo normale" "ionice -c 2 -n 4 -p 701|ionice -c 2 -n 4 -p 702|ionice -c 2 -n 4 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
 expect "ascolto: cgroup, elenco dei rallentati svuotato" "0" "$(grep -c . "$ASC/run/ascolto.lenti")"
+# e) composizione: lo scanner sta in sweetspot-scanner (tetti di memoria e I/O):
+# l'ascolto non lo sposta, limita la CPU di quel gruppo e poi ripristina.
+rm -rf "$ASC/cg2"; mkdir -p "$ASC/cg2/sweetspot-scanner" "$ASC/proc/800"
+printf 'cpu io memory\n' > "$ASC/cg2/cgroup.controllers"; : > "$ASC/cg2/cgroup.subtree_control"
+printf 'max 100000\n' > "$ASC/cg2/sweetspot-scanner/cpu.max"; echo 100 > "$ASC/cg2/sweetspot-scanner/cpu.weight"
+echo 3435973800 > "$ASC/cg2/sweetspot-scanner/memory.max"; echo 800 > "$ASC/cg2/sweetspot-scanner/cgroup.procs"
+echo '0::/sweetspot-scanner' > "$ASC/proc/800/cgroup"
+rm -f "$ASC/calls" "$ASC/run/ascolto.lenti"; rm -rf "$ASC/run/sospendibili"/*
+ascrun "$ASC/cg2" "pause_work"
+expect "ascolto: scanner con tetti propri, CPU limitata sul posto" "5000 100000|1|3435973800|800" \
+	"$(cat "$ASC/cg2/sweetspot-scanner/cpu.max")|$(cat "$ASC/cg2/sweetspot-scanner/cpu.weight")|$(cat "$ASC/cg2/sweetspot-scanner/memory.max")|$(tr '\n' ' ' < "$ASC/cg2/sweetspot-scanner/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: scanner non spostato nel gruppo dell'ascolto" "no" "$([ -s "$ASC/cg2/sweetspot-ascolto/cgroup.procs" ] && echo si || echo no)"
+ascrun "$ASC/cg2" "pause_work"
+ascrun "$ASC/cg2" "resume_work"
+expect "ascolto: a fine ascolto CPU e peso originali" "max 100000|100|3435973800" \
+	"$(cat "$ASC/cg2/sweetspot-scanner/cpu.max")|$(cat "$ASC/cg2/sweetspot-scanner/cpu.weight")|$(cat "$ASC/cg2/sweetspot-scanner/memory.max")"
+rm -f "$ASC/proc/800/cgroup"
+# f) I2: lo scanner e' ancora nel gruppo del server (sweetspot-lyrion): va
+# assegnato al gruppo dedicato PRIMA di limitare; il server non va toccato.
+rm -rf "$ASC/cg3"; mkdir -p "$ASC/cg3/sweetspot-lyrion" "$ASC/cg3/sweetspot-scanner"
+# il kernel crea i file di controllo con la cartella: qui li simula il test
+printf 'max 100000\n' > "$ASC/cg3/sweetspot-scanner/cpu.max"; echo 100 > "$ASC/cg3/sweetspot-scanner/cpu.weight"
+printf 'cpu io memory\n' > "$ASC/cg3/cgroup.controllers"; : > "$ASC/cg3/cgroup.subtree_control"
+printf 'max 100000\n' > "$ASC/cg3/sweetspot-lyrion/cpu.max"; echo 100 > "$ASC/cg3/sweetspot-lyrion/cpu.weight"
+echo 800 > "$ASC/cg3/sweetspot-lyrion/cgroup.procs"; echo '0::/sweetspot-lyrion' > "$ASC/proc/800/cgroup"
+rm -f "$ASC/calls" "$ASC/run/ascolto.lenti" "$ASC/run/ascolto.cgsalvati"
+ascrun "$ASC/cg3" "pause_work"
+expect "ascolto: scanner ancora nel gruppo server, il server non e' limitato" "max 100000|100" \
+	"$(cat "$ASC/cg3/sweetspot-lyrion/cpu.max")|$(cat "$ASC/cg3/sweetspot-lyrion/cpu.weight")"
+expect "ascolto: scanner spostato nel gruppo dedicato prima del limite" "800|5000 100000" \
+	"$(tr '\n' ' ' < "$ASC/cg3/sweetspot-scanner/cgroup.procs" | sed 's/ $//')|$(cat "$ASC/cg3/sweetspot-scanner/cpu.max" 2>/dev/null)"
+rm -f "$ASC/proc/800/cgroup"
 
 echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
 # Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
@@ -3617,6 +3670,13 @@ case "$c" in *root*) ko "nessun root nella condivisione" "assente" "presente" ;;
 case "$c" in *"veto files"*artwork.db*imgproxy.db*) ok "file interni (artwork.db) nascosti" ;; *) ko "file interni (artwork.db) nascosti" "veto files" "$c" ;; esac
 expect "utente nas nella tabella degli utenti" "1" "$(grep -c '^nas -1 nas -1 ' "$ROOT/board/sweetspot/users.txt")"
 
+echo "Integrita' dei sorgenti (hash fissati)"
+if out=$(sh "$ROOT/scripts/inventario.sh" verifica 2>&1); then
+	ok "ogni pacchetto proprio ha sha256 e nessuna esclusione"
+else
+	ko "hash dei pacchetti" "tutti presenti" "$out"
+fi
+
 echo "Analisi statica (shellcheck)"
 if command -v shellcheck >/dev/null; then
 	files="$OVERLAY/usr/lib/sweetspot/common.sh $OVERLAY/usr/lib/sweetspot/web.sh $OVERLAY/usr/bin/sweetspot-* $OVERLAY/etc/init.d/S*
@@ -3639,6 +3699,8 @@ sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
+sh "$ROOT/tests/primo-accesso.sh" || exit 1
+sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
@@ -3658,5 +3720,11 @@ python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
 python3 "$ROOT/tests/reference-studio.py" || exit 1
+if command -v node > /dev/null 2>&1; then
+	node "$ROOT/tests/studio-js.js" || exit 1
+else
+	echo "studio-js: node assente, prova del JS saltata"
+fi
+python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

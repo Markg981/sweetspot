@@ -6,8 +6,9 @@
 #   ./scripts/genera-chiave-firma.sh
 #
 # La chiave pubblica va nel repository (il sistema accetta solo aggiornamenti
-# firmati con la chiave privata corrispondente). La chiave privata va SOLO nei
-# segreti del repository su GitHub, dove la usa la compilazione ufficiale:
+# firmati con la chiave privata corrispondente). La chiave privata va SOLO nel
+# segreto SWEETSPOT_FIRMA dell'ambiente GitHub "firma-aggiornamenti" (limitato
+# ai tag v*), dove la usa la compilazione ufficiale:
 # chi la possiede puo' pubblicare aggiornamenti accettati da ogni Sweetspot.
 # Serve minisign (Debian/Ubuntu/WSL: sudo apt install minisign).
 set -e
@@ -32,9 +33,10 @@ Chiave pubblica scritta in:
   -> fai commit e push (oppure manda la sua seconda riga a chi cura il progetto):
      $(sed -n 2p "$d/aggiornamenti.pub")
 
-Chiave privata: su GitHub, Settings > Secrets and variables > Actions >
-New repository secret, nome SWEETSPOT_FIRMA, come valore tutto il testo
-tra le righe qui sotto:
+Chiave privata: su GitHub, Settings > Environments > firma-aggiornamenti >
+Environment secrets, nome SWEETSPOT_FIRMA, come valore tutto il testo
+tra le righe qui sotto (oppure: gh secret set SWEETSPOT_FIRMA --env
+firma-aggiornamenti < file):
 ----------------------------------------------------------------------
 $(cat "$d/aggiornamenti.key")
 ----------------------------------------------------------------------

@@ -1,0 +1,91 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - Reference Studio: l'interfaccia di ascolto (libreria, ricerca,
+# riproduzione, coda, zone, percorso audio). La pagina e' una sola, statica
+# (studio.css, studio.js) e protetta dalla sessione; i dati veri arrivano da
+# Lyrion tramite /cgi-bin/studio-api.json. Material resta raggiungibile dal
+# collegamento "Material" e come ripiego se Lyrion non e' pronto.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+if [ "$(mode)" != completa ]; then
+	redirect /cgi-bin/stato
+	exit 0
+fi
+
+vol=$(volume_effettivo)
+case "$vol" in
+	fisso) vol_txt="Volume fisso al 100%: si regola dall'amplificatore, i campioni passano invariati." ;;
+	hardware) vol_txt="Volume nel DAC (hardware): i campioni digitali passano invariati." ;;
+	*) vol_txt="Volume digitale: $(volume_descrizione). Sotto il 100% non e' bit-perfect." ;;
+esac
+
+printf 'Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n'
+sec_headers
+printf '\r\n'
+cat <<HTML
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#10151d">
+<meta name="sweetspot-token" content="$(esc "$(token)")">
+<title>Ascolta - SweetSpot</title>
+<link rel="stylesheet" href="/reference-studio.css?v=1">
+<link rel="stylesheet" href="/studio.css?v=1">
+</head>
+<body class="st">
+<a class="st-skip" href="#st-main">Vai al contenuto</a>
+<div class="st-app" id="st-app" data-volume="$(esc "$vol")" data-volume-testo="$(esc "$vol_txt")" data-main-mac="$(esc "$(head -n 1 "$RUN/player.mac" 2>/dev/null)")" data-material="$(esc "$(player_url)")">
+<aside class="st-side">
+<a class="st-brand" href="#/" aria-label="SweetSpot, home">
+<svg viewBox="0 0 28 32" fill="currentColor" aria-hidden="true"><rect x="1" y="10" width="4" height="13" rx="2"/><rect x="8" y="4" width="4" height="25" rx="2"/><rect x="15" y="1" width="4" height="30" rx="2"/><rect x="22" y="7" width="4" height="19" rx="2"/></svg>
+<span><strong>SweetSpot</strong><small>Reference Studio</small></span>
+</a>
+<nav class="st-nav" aria-label="Sezioni">
+<a href="#/" data-v="home">Ascolta</a>
+<a href="#/albums" data-v="albums">Album</a>
+<a href="#/artists" data-v="artists">Artisti</a>
+<a href="#/playlists" data-v="playlists">Playlist</a>
+<a href="#/queue" data-v="queue">Coda</a>
+<a href="#/players" data-v="players">Zone</a>
+<a href="#/audio" data-v="audio">Percorso audio</a>
+</nav>
+<nav class="st-nav st-nav-sec" aria-label="Altro">
+<a href="/cgi-bin/audio" target="_top">Impostazioni</a>
+<a href="$(esc "$(player_url)")" target="_top">Material</a>
+</nav>
+</aside>
+<div class="st-col">
+<header class="st-top">
+<form class="st-search" role="search" id="st-search">
+<label for="st-q">Cerca nella libreria</label>
+<input id="st-q" type="search" maxlength="64" autocomplete="off" placeholder="Album, artisti, brani">
+<button type="submit">Cerca</button>
+</form>
+<label class="st-sel" for="st-player">Player
+<select id="st-player" aria-label="Player da controllare"></select></label>
+</header>
+<div id="st-banner" class="st-banner" role="status" aria-live="polite" hidden></div>
+<main id="st-main" tabindex="-1"><p class="st-vuoto">Caricamento…</p><noscript><p class="st-vuoto">Il Reference Studio richiede JavaScript. Le <a href="/cgi-bin/audio">impostazioni</a> e <a href="$(esc "$(player_url)")">Material</a> funzionano anche senza.</p></noscript></main>
+</div>
+<section class="st-bar" id="st-bar" aria-label="Riproduzione">
+<img class="st-bar-cover" id="st-bar-cover" alt="" width="56" height="56">
+<div class="st-bar-info"><strong id="st-bar-title">Nessun brano</strong><span id="st-bar-sub"></span></div>
+<div class="st-ctl" role="group" aria-label="Trasporto">
+<button type="button" id="st-prev" aria-label="Brano precedente">&#9198;</button>
+<button type="button" id="st-play" class="st-main-btn" aria-label="Riproduci">&#9654;</button>
+<button type="button" id="st-next" aria-label="Brano successivo">&#9197;</button>
+</div>
+<div class="st-seek"><span id="st-t0" class="mono">0:00</span>
+<input type="range" id="st-seek" min="0" max="0" step="1" value="0" aria-label="Posizione nel brano">
+<span id="st-t1" class="mono">0:00</span></div>
+<div class="st-vol"><label for="st-vol">Volume</label>
+<input type="range" id="st-vol" min="0" max="100" step="1" value="0"><output id="st-volv" class="mono"></output></div>
+</section>
+</div>
+<script src="/studio.js?v=1"></script>
+</body>
+</html>
+HTML

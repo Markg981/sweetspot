@@ -92,6 +92,8 @@ case "$1" in
 		# Impostazioni e stato di Sweetspot sulla porta 80 (Lyrion e' sulla 9000).
 		# Con PASSWORD_WEB le pagine chiedono utente e password (sweetspot-accesso).
 		sweetspot-accesso applica
+		# Senza password: codice di primo accesso (console e chiavetta).
+		sweetspot-accesso avvio || log "primo accesso: preparazione non riuscita"
 		# Cartella scrivibile dalle pagine (utente "web"): bozze dei filtri e
 		# stato della prova DoP. Il gettone anti-CSRF lo crea root: le pagine
 		# lo leggono soltanto.
