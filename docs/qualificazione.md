@@ -27,9 +27,19 @@ python3 scripts/qualifica-libreria.py misura http://DISPOSITIVO:9000 \
 
 Il corpus e' di file brevissimi (silenzio): misura **catalogo, tag e ricerca**,
 non l'I/O di file audio reali. Per l'I/O usare una libreria vera.
-Da leggere nel JSON insieme a `ambiente`. **Stato: non eseguito** (nessun
-Lyrion reale disponibile nell'ambiente di sviluppo; i test con Lyrion finto non
-sono benchmark).
+Da leggere nel JSON insieme a `ambiente`.
+
+**Eseguito (ambiente di sviluppo, NON il dispositivo).** Lyrion 9.1.1 vero con il
+perl del rootfs dell'artifact CI x86_64 (run 38861841635, estratto in una
+cartella temporanea), in `unshare -Urmpf` + chroot su WSL, solo loopback
+(HTTP 19000), autenticazione attiva, corpus sintetico di 50.000 file validi + 6
+corrotti: 50.003 brani, 4.168 album, 1.779 artisti, scansione da zero in 65,3 s
+(≈765 brani/s); ricerca brano p50 160 ms, album 25 ms, artista 18 ms, liste
+5-62 ms (3 ripetizioni: indicativo, non statistica). Scostamenti dichiarati:
+la copia temporanea di `slimserver.pl` e' stata modificata per togliere
+`setgroups` (negato nel user namespace); I/O su disco WSL (ext4),
+CPU/disco dell'host, nessun cgroup, nessun DAC. Non rappresenta tempi su RPi/SSD
+USB: quelli restano **da eseguire sul dispositivo**.
 
 ## Scansione incrementale e watch del filesystem
 
