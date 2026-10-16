@@ -76,6 +76,8 @@ cg_ready() {
 # memoria e I/O) non viene spostato: i limiti di CPU dell'ascolto si applicano
 # a quel gruppo e alla fine si ripristinano i valori di prima.
 CGSAVED=$RUN/ascolto.cgsalvati
+CG_SCANNER=sweetspot-scanner
+CG_LYRION=sweetspot-lyrion
 
 # Gruppo del processo, relativo a $CGROOT; vuoto = radice o sconosciuto.
 cg_of() {
@@ -109,7 +111,14 @@ slow_pids() {
 		cur=$(cg_of "$pid")
 		case "$cur" in
 			''|sweetspot-ascolto) echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue ;;
-			sweetspot-*) slow_group "$cur" || continue ;;
+			"$CG_SCANNER") slow_group "$cur" || continue ;;
+			# Lo scanner nasce nel gruppo di Lyrion: prima lo si assegna al
+			# gruppo dedicato, poi si limita quello; mai il gruppo del server.
+			"$CG_LYRION")
+				mkdir -p "$CGROOT/$CG_SCANNER" 2>/dev/null
+				echo "$pid" >> "$CGROOT/$CG_SCANNER/cgroup.procs" 2>/dev/null || continue
+				slow_group "$CG_SCANNER" || continue ;;
+			sweetspot-*) continue ;;
 			*) echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue ;;
 		esac
 		ok=0
