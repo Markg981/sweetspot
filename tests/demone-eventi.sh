@@ -34,7 +34,7 @@ cleanup() {
 	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/run/stato.debug" ]; then
 		echo "  eventi ricevuti dal demone (momento in s dall'avvio, riga):"
-		grep -v 'version 9.1.1' "$E/run/stato.debug" | tail -n 60 | cut -c1-110 | sed 's/^/    | /'
+		grep -v 'version 9.1.1' "$E/run/stato.debug" | tail -n 150 | cut -c1-110 | sed 's/^/    | /'
 	fi
 	if [ "$FAIL" -ne 0 ] && [ -s "$E/log" ]; then
 		echo "  registro del demone (ultime righe):"
@@ -148,7 +148,15 @@ attendi() {
 # Scrive una riga in una FIFO degli eventi senza mai bloccarsi (se il demone
 # o l'ascoltatore finto non c'e', la scrittura si abbandona dopo 3 s).
 invia() { # fifo riga
-	timeout 3 sh -c 'printf "%s\n" "$2" > "$1"' sh "$1" "$2" 2>/dev/null
+	# L'apertura della FIFO blocca finche' non c'e' un lettore (il "cat" finto
+	# si riapre fra un writer e l'altro): se scade non e' stato scritto nulla,
+	# quindi si riprova invece di perdere l'evento.
+	local n=0
+	while [ "$n" -lt 3 ]; do
+		timeout 3 sh -c 'printf "%s\n" "$2" > "$1"' sh "$1" "$2" 2>/dev/null && return 0
+		n=$((n + 1))
+	done
+	echo "    (invia: nessun lettore su $1 dopo 3 tentativi)" >&2
 	return 0
 }
 giri() { [ -f "$E/giri" ] && wc -l < "$E/giri" | tr -d ' ' || echo 0; }
