@@ -561,6 +561,11 @@ zone_start() { # scheda [numero di zone]
 	pid=$!
 	echo "$pid $id" > "$ZONE_DIR/$card"
 	oom_adj -1000 "$pid"
+	# MAC della zona per i controlli funzionali di sweetspot-stato (connessa a
+	# Lyrion, tempo che avanza). In una cartella a parte: ZONE_DIR ha un file
+	# per scheda e lo leggono altri.
+	mkdir -p "$RUN/zone.mac"
+	echo "$mac" > "$RUN/zone.mac/$card"
 	# Diagnostica: argomenti e capacita' di questa zona.
 	printf '%s ' "$@" > "$CAP_DIR/zona-$id.args"
 	dsdfmt=$(dac_native_dsd "$card")

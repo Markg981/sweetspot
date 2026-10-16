@@ -510,6 +510,168 @@ echo "100000 0 0 0" > "$LV/run/liveness.player"
 lv_round wget-ok
 expect "liveness: Lyrion in pausa e PCM fermo, nessun riavvio" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
 kill $LV_SQ_PID 2>/dev/null
+# Controlli funzionali: player connesso e tempo che avanza, zone, CamillaDSP,
+# limite di riavvii per finestra e contatori per componente.
+echo "Controlli funzionali (player, zone, CamillaDSP, limite di riavvii)"
+FB=$LV/fbin
+mkdir -p "$FB" "$LV/run/zone" "$LV/run/zone.mac"
+rm -f "$LV/run"/liveness.* "$LV/run/correzione.attiva"
+printf '#!/bin/sh\necho "{\\"result\\":{}}"\n' > "$FB/wget"
+# jq finto: risponde secondo il campo chiesto (connected, mode, time).
+printf '#!/bin/sh\nin=$(cat)\n[ -n "$in" ] || exit 1\ncase "$*" in *-e*) exit 0 ;; *_connected*) cat "%s/conn" ;; *_mode*) cat "%s/modo" ;; *_time*) cat "%s/tempo" ;; esac\n' "$LV" "$LV" "$LV" > "$FB/jq"
+printf '#!/bin/sh\nif [ -s "%s/cam.pid" ]; then cat "%s/cam.pid"; else exit 1; fi\n' "$LV" "$LV" > "$FB/pidof"
+printf '#!/bin/sh\n[ "$(cat "%s/cam.ok" 2>/dev/null)" = si ] && echo "{\\"GetState\\":{\\"result\\":\\"Ok\\",\\"value\\":\\"Running\\"}}" || exit 1\n' "$LV" > "$FB/sweetspot-camilla"
+chmod +x "$FB"/*
+printf 'LIVENESS_PLAYER_SECONDI=100000\nLIVENESS_FUNZ_FALLIMENTI=3\nLIVENESS_RIAVVII_MAX=2\nLIVENESS_RIAVVII_FINESTRA=1800\nLIVENESS_BACKOFF_MIN=3600\n' > "$LV/run/sweetspot.conf"
+lv_fn() { # wget
+	local w=${1:-$FB/wget}
+	env SWEETSPOT_RUN=$LV/run SWEETSPOT_PROCFS=$LV/proc SWEETSPOT_LOG=$LV/log SWEETSPOT_WGET=$w SWEETSPOT_PIDOF=$FB/pidof \
+		SWEETSPOT_PATH="$FB:$LV/bin:$SWEETSPOT_PATH" SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf PATH="$FB:$LV/bin:$PATH" \
+		$TEST_SH "$OVERLAY/usr/bin/sweetspot-stato" funzionale
+}
+# PCM e processo finti: status ALSA con hw_ptr e /proc/<pid>/stat con i tick di CPU.
+pcm() { printf 'state: %s\nowner_pid   : 1\n-----\nhw_ptr      : %s\nappl_ptr    : %s\n' "$1" "${2:-0}" "${2:-0}" > "$LV/proc/asound/card1/pcm0p/sub0/status"; }
+cpu() { mkdir -p "$LV/proc/$1"; echo "$1 (squeezelite) S 1 1 1 0 0 0 0 0 0 0 $2 0 0" > "$LV/proc/$1/stat"; }
+pcm RUNNING 1000
+echo 02:53:57:45:45:54 > "$LV/run/player.mac"
+rm -f "$LV/log"
+# Player connesso, in pausa: nessun intervento.
+sleep 7200 &
+LF_SQ=$!
+echo "$LF_SQ" > "$LV/run/squeezelite.pid"
+echo 1 > "$LV/conn"; echo pause > "$LV/modo"; echo 10 > "$LV/tempo"
+lv_fn; lv_fn; lv_fn; lv_fn
+expect "funzionale: player connesso, nessun riavvio" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/stato.json")" in *'"funzionali":[{"componente":"principale","stato":"ok","riavvii":0,"riavvii_finestra":0,"limite":false}]'*) ok "funzionale: stato.json espone il player ok con il contatore" ;; *) ko "funzionale json ok" "principale ok" "$(cat "$LV/run/stato.json")" ;; esac
+# In play con il PCM fermo (XRUN) e il processo bloccato (tick di CPU invariati):
+# primo campione, poi tre controlli falliti e riavvio. Il "time ?" di Lyrion
+# continua ad avanzare (lo estrapola): non deve nascondere il blocco.
+echo play > "$LV/modo"
+pcm XRUN 1000; cpu "$LF_SQ" 500
+for t in 11 12 13; do echo "$t" > "$LV/tempo"; lv_fn; done   # campione, fermo (1), fermo (2)
+expect "funzionale: PCM fermo e processo bloccato sotto soglia, il player resta" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+echo 14 > "$LV/tempo"; lv_fn          # fermo (3)
+sleep 1
+expect "funzionale: PCM fermo e processo bloccato oltre soglia, squeezelite fermato anche se time ? avanza" "no" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/log")" in *"liveness: Player principale bloccato (in play ma PCM XRUN e processo player fermo"*"riavvio 1)"*) ok "funzionale: riavvio per PCM fermo nel log" ;; *) ko "funzionale log pcm" "riavvio" "$(cat "$LV/log")" ;; esac
+case "$(cat "$LV/run/stato.json")" in *'"componente":"principale","stato":"riavviato","riavvii":1,'*) ok "funzionale: contatore dei riavvii nel json" ;; *) ko "funzionale json riavvio" "riavvii 1" "$(cat "$LV/run/stato.json")" ;; esac
+case "$(cat "$LV/run/stato.dati")" in *"ERRORE|Player principale risponde|"*) ok "funzionale: la pagina Stato mostra l'errore" ;; *) ko "funzionale stato.dati" "ERRORE" "$(cat "$LV/run/stato.dati")" ;; esac
+# PCM RUNNING con hw_ptr che avanza: sano.
+sleep 7200 &
+LF_SQ=$!
+echo "$LF_SQ" > "$LV/run/squeezelite.pid"
+rm -f "$LV"/run/liveness.c.* "$LV"/run/liveness.t.*
+for t in 1 2 3 4 5; do pcm RUNNING "$((t * 1000))"; lv_fn; done
+expect "funzionale: PCM che avanza, nessun riavvio" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+# PCM RUNNING ma hw_ptr fermo: il DAC non consuma, riavvio al terzo controllo fermo.
+rm -f "$LV"/run/liveness.c.* "$LV"/run/liveness.t.*
+pcm RUNNING 9000
+lv_fn; lv_fn; lv_fn
+expect "funzionale: hw_ptr fermo sotto soglia, il player resta" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+lv_fn
+sleep 1
+expect "funzionale: hw_ptr fermo oltre soglia, squeezelite fermato" "no" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+# Ribuffering (rete lenta): Lyrion in play, PCM non RUNNING ma il processo lavora
+# (tick di CPU che crescono): stato "attesa", nessun riavvio ne' fallimento.
+sleep 7200 &
+LF_SQ=$!
+echo "$LF_SQ" > "$LV/run/squeezelite.pid"
+rm -f "$LV"/run/liveness.c.* "$LV"/run/liveness.t.*
+pcm PREPARED 0
+for t in 1 2 3 4; do cpu "$LF_SQ" "$((600 + t * 7))"; lv_fn; done
+sleep 1
+expect "funzionale: ribuffering, il player non viene riavviato" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/stato.json")" in *'"componente":"principale","stato":"attesa","riavvii":0,'*'"limite":false'*) ok "funzionale: stato attesa nel json, senza riavvii" ;; *) ko "funzionale json attesa" "attesa" "$(cat "$LV/run/stato.json")" ;; esac
+case "$(cat "$LV/run/stato.dati")" in *"INFO|Player principale risponde|in attesa di dati"*) ok "funzionale: la pagina Stato mostra l'attesa di dati" ;; *) ko "funzionale stato.dati attesa" "INFO in attesa" "$(cat "$LV/run/stato.dati")" ;; esac
+# Il buffer si riempie: il PCM riparte e l'attesa e' finita.
+pcm RUNNING 100; cpu "$LF_SQ" 700; lv_fn
+pcm RUNNING 5100; cpu "$LF_SQ" 710; lv_fn
+case "$(cat "$LV/run/stato.json")" in *'"componente":"principale","stato":"ok",'*) ok "funzionale: dopo il ribuffering torna ok" ;; *) ko "funzionale json ripresa" "ok" "$(cat "$LV/run/stato.json")" ;; esac
+# L'attesa non e' infinita: oltre LIVENESS_FUNZ_ATTESA controlli conta come fallimento.
+rm -f "$LV"/run/liveness.c.* "$LV"/run/liveness.t.*
+pcm PREPARED 0
+for t in 1 2 3 4 5 6 7 8 9 10; do cpu "$LF_SQ" "$((800 + t))"; lv_fn; done
+sleep 1
+expect "funzionale: attesa oltre il limite di controlli, squeezelite fermato" "no" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+sleep 7200 &
+LF_SQ=$!
+echo "$LF_SQ" > "$LV/run/squeezelite.pid"
+rm -f "$LV"/run/liveness.c.* "$LV"/run/liveness.t.*
+pcm RUNNING 1
+for t in 1 2 3 4 5; do pcm RUNNING "$((t * 100))"; lv_fn; done
+# Player non connesso a Lyrion: 3 controlli, poi riavvio; Lyrion muto: nessun giudizio.
+echo 0 > "$LV/conn"
+lv_fn "$LV/bin/wget-muto"; lv_fn "$LV/bin/wget-muto"; lv_fn "$LV/bin/wget-muto"; lv_fn "$LV/bin/wget-muto"
+expect "funzionale: con Lyrion muto il player non viene giudicato" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+lv_fn; lv_fn
+expect "funzionale: player non connesso sotto soglia, resta" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+lv_fn
+sleep 1
+expect "funzionale: player non connesso oltre soglia, fermato" "no" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+# Limite: ormai 2 riavvii nella finestra (MAX=2) con il secondo qui sopra e il
+# primo di prima azzerato dal rm: ne servono 2 per arrivare al limite.
+sleep 7200 &
+LF_SQ=$!
+echo "$LF_SQ" > "$LV/run/squeezelite.pid"
+lv_fn; lv_fn; lv_fn
+sleep 1
+expect "funzionale: secondo riavvio consentito (MAX=2)" "no" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+sleep 7200 &
+LF_SQ=$!
+echo "$LF_SQ" > "$LV/run/squeezelite.pid"
+lv_fn; lv_fn; lv_fn
+expect "funzionale: limite di riavvii raggiunto, il player non viene piu' fermato" "yes" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/stato.json")" in *'"componente":"principale","stato":"limite","riavvii":2,'*'"limite":true'*) ok "funzionale: stato limite e contatore 2 nel json" ;; *) ko "funzionale json limite" "limite 2" "$(cat "$LV/run/stato.json")" ;; esac
+case "$(cat "$LV/log")" in *"non riavvio (limite)"*) ok "funzionale: il limite e' nel log" ;; *) ko "funzionale log limite" "limite" "$(cat "$LV/log")" ;; esac
+# Finestra scaduta: i vecchi riavvii non contano piu'.
+echo "3 2 1 2" > "$LV/run/liveness.c.principale"
+lv_fn
+sleep 1
+expect "funzionale: fuori finestra il riavvio e' di nuovo consentito" "no" "$(kill -0 $LF_SQ 2>/dev/null && echo yes || echo no)"
+# Zona: connessa a Lyrion tramite il suo MAC.
+sleep 7200 &
+LF_Z=$!
+echo "$LF_Z DACZ" > "$LV/run/zone/2"
+echo 02:aa:bb:cc:dd:ee > "$LV/run/zone.mac/2"
+rm -f "$LV/run/squeezelite.pid" "$LV"/run/liveness.c.*
+lv_fn; lv_fn
+expect "funzionale: zona non connessa sotto soglia, resta" "yes" "$(kill -0 $LF_Z 2>/dev/null && echo yes || echo no)"
+lv_fn
+sleep 1
+expect "funzionale: zona non connessa oltre soglia, fermata" "no" "$(kill -0 $LF_Z 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/liveness.c.zona-DACZ")" in "0 1 "*) ok "funzionale: contatore della zona" ;; *) ko "funzionale contatore zona" "0 1 ..." "$(cat "$LV/run/liveness.c.zona-DACZ" 2>&1)" ;; esac
+rm -rf "$LV/run/zone" "$LV/run/zone.mac"
+# CamillaDSP: websocket che non risponde.
+sleep 7200 &
+LF_C=$!
+echo "$LF_C" > "$LV/cam.pid"
+touch "$LV/run/correzione.attiva"
+echo si > "$LV/cam.ok"
+lv_fn; lv_fn; lv_fn
+expect "funzionale: CamillaDSP che risponde, nessun riavvio" "yes" "$(kill -0 $LF_C 2>/dev/null && echo yes || echo no)"
+echo no > "$LV/cam.ok"
+lv_fn; lv_fn
+expect "funzionale: websocket muto sotto soglia, CamillaDSP resta" "yes" "$(kill -0 $LF_C 2>/dev/null && echo yes || echo no)"
+lv_fn
+sleep 1
+expect "funzionale: websocket muto oltre soglia, CamillaDSP fermato" "no" "$(kill -0 $LF_C 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/stato.json")" in *'"componente":"camilladsp","stato":"riavviato","riavvii":1,'*) ok "funzionale: contatore di CamillaDSP nel json" ;; *) ko "funzionale json camilla" "camilladsp riavviato" "$(cat "$LV/run/stato.json")" ;; esac
+rm -f "$LV/cam.pid" "$LV/run/correzione.attiva" "$LV/run/squeezelite.pid"
+# Lyrion: lo stesso limite vale anche per il suo riavvio.
+printf 'LIVENESS_LYRION_FALLIMENTI=3\nLIVENESS_BACKOFF_MIN=3600\nLIVENESS_LYRION_AVVIO=180\nLIVENESS_RIAVVII_MAX=1\nLIVENESS_RIAVVII_FINESTRA=1800\n' > "$LV/run/sweetspot.conf"
+sleep 7200 &
+LF_L=$!
+echo "$LF_L" > "$LV/run/lms.pid"
+touch -d '2000-01-01' "$LV/run/lms.pid"
+rm -f "$LV/run/liveness.lyrion" "$LV/run/liveness.funz"
+echo "2 0 0 0 0" > "$LV/run/liveness.lyrion"
+echo "0 1 $(date +%s)" > "$LV/run/liveness.c.lyrion"
+lv_round wget-muto
+sleep 1
+expect "limite: Lyrion in stallo ma gia' un riavvio nella finestra, non riavviato" "yes" "$(kill -0 $LF_L 2>/dev/null && echo yes || echo no)"
+case "$(cat "$LV/run/stato.json")" in *'"lyrion":{"stato":"limite"'*) ok "limite: stato.json espone Lyrion in limite" ;; *) ko "limite json lyrion" "limite" "$(cat "$LV/run/stato.json")" ;; esac
+kill $LF_L 2>/dev/null
+rm -f "$LV/run/lms.pid" "$LV/run/liveness.lyrion" "$LV"/run/liveness.c.* "$LV"/run/liveness.t.* "$LV/run/liveness.funz"
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nsubformat: STD\nchannels: 2\nrate: 192000 (192000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cambiata segnalata" ;; *) ko "audio ricampionato" "Non bit-perfect" "-" ;; esac
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
