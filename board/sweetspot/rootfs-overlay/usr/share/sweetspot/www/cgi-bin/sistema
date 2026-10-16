@@ -103,8 +103,19 @@ else
 fi)
 <label for="webp">Password di queste pagine <span>(utente admin; lascia vuoto per non cambiarla)</span></label>
 <input id="webp" name="web_password" type="password" autocomplete="new-password">
-$(if [ -n "$(conf PASSWORD_WEB)" ]; then echo '<label class="check"><input type="checkbox" name="web_libero" value="si"> Togli la password: pagine aperte a chi è nella rete di casa</label>'; fi)
-<p class="sub">Con la password ogni pagina chiede utente <b>admin</b> e password; vale subito. Se la dimentichi, togli la riga PASSWORD_WEB da sweetspot.txt sulla chiavetta.</p>
+<p class="sub">Ogni pagina chiede la password; vale subito e non si può togliere da qui (minimo 10 caratteri). Se la dimentichi, togli la riga PASSWORD_WEB da sweetspot.txt sulla chiavetta: al riavvio il codice di primo accesso (file PRIMO-ACCESSO.txt) permette di sceglierne una nuova.</p>
+$(lyr=$(priv sweetspot-lms credenziali 2>/dev/null)
+lyr_st=$(printf '%s\n' "$lyr" | sed -n 's/^stato=//p')
+lyr_u=$(printf '%s\n' "$lyr" | sed -n 's/^utente=//p')
+lyr_p=$(printf '%s\n' "$lyr" | sed -n 's/^password=//p')
+echo '<h3>Accesso a Lyrion (porta 9000, app e CLI)</h3>'
+case "$lyr_st" in
+	preesistente) echo '<p class="sub">Lyrion ha credenziali già presenti che Sweetspot ha conservato senza cambiarle e non conosce: per usare Sweetspot con Lyrion scrivi LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt.</p>' ;;
+	"") echo '<p class="sub">Stato della protezione di Lyrion non disponibile.</p>' ;;
+	*) printf '<p class="sub">Lyrion chiede utente e password (anche Material Skin e le app JSON/CLI). Utente: <code>%s</code>.' "$(esc "$lyr_u")"
+	   [ -n "$lyr_p" ] && printf ' Password generata da Sweetspot: <code>%s</code>.' "$(esc "$lyr_p")"
+	   echo ' Inseriscili nelle app (Squeezer, iPeng, Material come app) quando li chiedono. Per cambiarli scrivi LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt: valgono al riavvio di Lyrion. I player (porta 3483) non usano la password: la porta resta protetta solo dalla rete di casa.</p>' ;;
+esac)
 <label for="https">Connessione protetta (HTTPS)</label>
 <select id="https" name="https">
 $(option no "Spenta: pagine solo in chiaro (http)" "$(if is_yes "$(conf HTTPS no)"; then echo si; else echo no; fi)")

@@ -72,6 +72,70 @@ ensure_csrf() {
 	log "lyrion: protezione CSRF portata al livello $CSRF_LEVEL"
 }
 
+# Protezione di Lyrion (HTTP 9000 con Material e /jsonrpc.js, CLI 9090):
+# con authorize=1 ogni richiesta HTTP senza Basic valido riceve 401 e la CLI
+# chiede "login". Slimproto (3483) non ha autenticazione in Lyrion: i player
+# si collegano come prima, ma la porta resta protetta solo dalla rete.
+# Utente e password stanno in LYRION_UTENTE/LYRION_PASSWORD (sweetspot.txt);
+# in Lyrion la password e' l'impronta SHA-1 in base64 senza riempimento.
+#  - password in sweetspot.txt: vale quella (si riallinea Lyrion a ogni avvio);
+#  - assente e Lyrion con credenziali non nostre: si conservano, non si
+#    sovrascrivono; Sweetspot non le conosce e lo dice (lyrion-auth.stato);
+#  - assente, Lyrion aperto o con credenziali gia' nostre: se ne genera una
+#    casuale e la si salva in sweetspot.txt (migrazione dichiarata).
+# Va chiamata con Lyrion fermo: lo riscrive in chiusura.
+AUTH_HASH=$PREFS/sweetspot-auth.hash
+AUTH_STATO=${SWEETSPOT_RUN:-/run/sweetspot}/lyrion-auth.stato
+
+lyrion_hash() {
+	printf '%s' "$1" | perl -MDigest::SHA=sha1_base64 -e 'print sha1_base64(<STDIN>)' 2>/dev/null
+}
+
+prefs_get() { grep "^$1:" "$PREFS/server.prefs" 2>/dev/null | tail -n 1 | cut -d: -f2- | tr -d ' "'"'"; }
+
+ensure_auth() {
+	local f=$PREFS/server.prefs u p h cur_auth cur_user cur_hash ours stato
+	u=$(conf LYRION_UTENTE)
+	p=$(conf LYRION_PASSWORD)
+	cur_auth=$(prefs_get authorize)
+	cur_user=$(prefs_get username)
+	cur_hash=$(prefs_get password)
+	ours=""
+	[ -s "$AUTH_HASH" ] && ours=$(cat "$AUTH_HASH")
+	stato=configurata
+	if [ -z "$p" ]; then
+		if [ "$cur_auth" = 1 ] && [ -n "$cur_user" ] && [ -n "$cur_hash" ] && [ "$cur_hash" != "$ours" ]; then
+			mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
+			echo preesistente > "$AUTH_STATO"
+			log "lyrion: credenziali preesistenti conservate; Sweetspot non le conosce: metti LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt"
+			return 0
+		fi
+		p=$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')
+		stato=generata
+	fi
+	[ -n "$u" ] || u=sweetspot
+	h=$(lyrion_hash "$p")
+	if [ -z "$h" ]; then
+		log "lyrion: impronta non calcolabile (perl): protezione non applicata"
+		return 1
+	fi
+	if [ "$stato" = generata ]; then
+		sweetspot-config imposta LYRION_UTENTE "$u" LYRION_PASSWORD "$p" > /dev/null 2>&1 \
+			|| { log "lyrion: password generata non salvabile: protezione non applicata"; return 1; }
+		log "lyrion: protezione attivata con una password generata (utente $u), salvata in sweetspot.txt"
+	elif [ "$cur_auth" != 1 ] || [ "$cur_user" != "$u" ] || [ "$cur_hash" != "$h" ]; then
+		[ -n "$cur_hash" ] && [ "$cur_hash" != "$ours" ] && log "lyrion: credenziali di sweetspot.txt al posto di quelle precedenti"
+		log "lyrion: protezione allineata a sweetspot.txt (utente $u)"
+	fi
+	grep -v -e '^authorize:' -e '^username:' -e '^password:' "$f" > "$f.tmp" 2>/dev/null
+	printf 'authorize: 1\nusername: %s\npassword: %s\n' "$u" "$h" >> "$f.tmp"
+	mv "$f.tmp" "$f"
+	printf '%s' "$h" > "$AUTH_HASH"
+	mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
+	echo "$stato" > "$AUTH_STATO"
+	chmod 644 "$AUTH_STATO" 2>/dev/null
+}
+
 # Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
 # aprono dentro l'interfaccia, come su Daphile.
 material_actions() {
@@ -342,6 +406,15 @@ link_caches() {
 	chmod 644 "$ART_STATE" 2>/dev/null
 }
 
+do_credenziali() {
+	local st u
+	st=$(cat "$AUTH_STATO" 2>/dev/null)
+	u=$(conf LYRION_UTENTE)
+	printf 'stato=%s\nutente=%s\n' "${st:-sconosciuto}" "$u"
+	[ "$st" = generata ] && printf 'password=%s\n' "$(conf LYRION_PASSWORD)"
+	return 0
+}
+
 # Diagnostica: posizione, tetto e MB usati adesso (non quelli dell'avvio).
 do_artwork() {
 	local pos dir cap used motivo
@@ -358,6 +431,7 @@ do_prepare() {
 		log "lyrion: preferenze iniziali scritte"
 	fi
 	ensure_csrf
+	ensure_auth || log "lyrion: ATTENZIONE, protezione di accesso non applicata"
 	material_theme || return 1
 	material_actions > "$PREFS/material-skin/actions.json"
 	# Material Skin preinstallata. Se l'utente l'ha aggiornata dal gestore
@@ -652,6 +726,9 @@ case "$1" in
 	json) shift; lms_json_locale "$@" ;;
 	plugin) shift; do_plugin "$@" ;;
 	operazione) shift; do_operazione "$@" ;;
+	# credenziali: stato e utente di Lyrion per la pagina Sistema (autenticata);
+	# la password si mostra solo se l'ha generata Sweetspot.
+	credenziali) do_credenziali ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
-	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|plugin|operazione|riavvia" >&2; exit 1 ;;
+	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|credenziali|plugin|operazione|riavvia" >&2; exit 1 ;;
 esac

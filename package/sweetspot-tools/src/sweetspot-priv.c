@@ -80,6 +80,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-accesso", "applica", "", "", 0},
 	{"sweetspot-accesso", "hash", "s", "", 0},
 	{"sweetspot-accesso", "verifica", "", "", 0}, // password dall'ingresso standard
+	{"sweetspot-accesso", "primo", "", "", 0},    // codice e password nuova dall'ingresso standard
 	{"sweetspot-aggiorna", "altra", "", "", 0},
 	{"sweetspot-aggiorna", "annulla", "", "", 0},
 	{"sweetspot-aggiorna", "cerca", "", "", 0},
@@ -125,6 +126,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-installa", "dischi", "", "", 0},
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
+	{"sweetspot-lms", "credenziali", "", "", 0},
 	{"sweetspot-lms", "json", "", "", 0}, // controllato a parte (lms_json_ok)
 	{"sweetspot-lms", "operazione", "", "", 0}, // controllato a parte (operazione_ok)
 	{"sweetspot-lms", "plugin", "", "", 0}, // controllato a parte

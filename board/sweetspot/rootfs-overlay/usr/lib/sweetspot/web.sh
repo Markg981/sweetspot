@@ -246,7 +246,23 @@ login_ok() { rm -f "$LOGIN_DIR/$(login_key "$1")"; }
 auth_gate() {
 	[ -n "${GATEWAY_INTERFACE:-}" ] || return 0
 	[ "${WEB_PUBLIC:-}" = 1 ] && return 0
-	auth_enabled || return 0
+	if ! auth_enabled; then
+		# Primo accesso (nessuna password scelta): niente pagine finche' non si
+		# sceglie la password con il codice del dispositivo.
+		[ -f "$RUN/primo-accesso.attivo" ] || return 0
+		case "${SCRIPT_NAME:-}" in
+			*/copertina) cover_placeholder ;;
+			*.json)
+				printf 'Status: 401 Unauthorized\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\n'
+				sec_headers
+				printf '\r\nprimo accesso richiesto\n' ;;
+			*)
+				printf 'Status: 303 See Other\r\nLocation: /cgi-bin/primo-accesso\r\nCache-Control: no-store\r\n'
+				sec_headers
+				printf '\r\n' ;;
+		esac
+		exit 0
+	fi
 	session_valid && return 0
 	case "${SCRIPT_NAME:-}" in
 		# Un'immagine non puo' mostrare un errore: senza sessione risponde con
