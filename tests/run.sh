@@ -135,6 +135,14 @@ mkdac "$N550B" no
 
 # --- Test -------------------------------------------------------------------------
 
+# Un'impronta scritta male in un .hash ferma la build dopo mezz'ora: qui si
+# vede subito (lunghezza per algoritmo, solo cifre esadecimali minuscole).
+echo "Impronte dei pacchetti"
+expect "file .hash: impronte ben formate" "" "$(awk '
+	$1 == "sha256" { n = 64 } $1 == "sha512" { n = 128 } $1 == "sha1" { n = 40 } $1 == "md5" { n = 32 }
+	$1 ~ /^(sha256|sha512|sha1|md5)$/ && (length($2) != n || $2 !~ /^[0-9a-f]+$/) { printf "%s: %s %s ", FILENAME, $1, $3 }
+' "$ROOT"/package/*/*.hash)"
+
 echo "Impostazioni"
 printf '# commento\r\nnome_player = Sala d'"'"'ascolto \r\nDSD="nativo"   # forzato\r\nWIFI_PASSWORD=abc#123 \r\n\r\n; altro commento\r\nRIGA SENZA UGUALE\r\nPROFILO=silenzio' > "$WORK/sweetspot.txt"
 mkdir -p "$WORK/cfg/run"

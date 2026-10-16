@@ -5,6 +5,10 @@
 # su main che li ha prodotti, oppure di quella indicata a mano. Si avvia a
 # mano (Actions > Prova di Lyrion > Run workflow): nelle PR la prova vera e'
 # il job "lyrion" di Compila Sweetspot, sui pacchetti della PR stessa.
+# Con "qemu" (x86_64) esegue anche le prove in QEMU sull'immagine della stessa
+# esecuzione: dopo una modifica ai soli test di una PR si riprovano in circa
+# 25 minuti, sul ramo della PR, senza ricompilare:
+#   gh workflow run prova-lyrion.yml --ref <ramo> -f esecuzione=<id> -f qemu=true
 name: Prova di Lyrion
 
 on:
@@ -13,6 +17,10 @@ on:
       esecuzione:
         description: "Numero dell'esecuzione di Compila Sweetspot con i pacchetti (vuoto: l'ultima su main)"
         required: false
+      qemu:
+        description: "Anche le prove in QEMU (PCM/DoP su ALSA e robustezza) sull'immagine x86_64"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,7 +37,7 @@ jobs:
           - scheda: rpi
             runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - name: Esecuzione con i pacchetti
@@ -76,3 +84,28 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zstd cpio curl
       - name: Avvio di Lyrion nel sistema compilato
         run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
+      # Le stesse prove in QEMU del job "lyrion" di Compila Sweetspot.
+      - uses: actions/download-artifact@v8
+        if: ${{ !cancelled() && inputs.qemu && matrix.scheda == 'x86_64' }}
+        with:
+          name: sweetspot.img.xz
+          run-id: ${{ steps.esecuzione.outputs.id }}
+          github-token: ${{ github.token }}
+      - name: Verifica PCM/DoP sul percorso ALSA in QEMU
+        if: ${{ !cancelled() && inputs.qemu && matrix.scheda == 'x86_64' }}
+        run: |
+          sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass python3
+          versione=$(tar -xOf sweetspot-x86_64-aggiornamento.tar versione)
+          sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-alsa-qemu.sh sweetspot.img.xz "$versione"
+      - name: Prove di robustezza in QEMU
+        if: ${{ !cancelled() && inputs.qemu && matrix.scheda == 'x86_64' }}
+        run: |
+          sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass dosfstools
+          sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-robustezza-qemu.sh sweetspot.img.xz
+      - name: Evidenza delle prove
+        if: ${{ always() && inputs.qemu && matrix.scheda == 'x86_64' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: prova-qemu-${{ matrix.scheda }}
+          path: ${{ runner.temp }}/sweetspot-audio-evidence
+          if-no-files-found: ignore

@@ -45,6 +45,12 @@ trap cleanup EXIT
 # Password casuale, valida solo per questa copia dell'immagine.
 SSHPASS=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
 export SSHPASS
+# Credenziali di Lyrion note alla prova (Lyrion chiede Basic sulla 9000),
+# dichiarate in sweetspot.txt: il primo avvio non genera e non salva una
+# password. prova-audio.py le legge dall'ambiente.
+LYRION_UTENTE=prova
+LYRION_PASSWORD=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
+export LYRION_UTENTE LYRION_PASSWORD
 guest() {
 	sshpass -e ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
 		-o LogLevel=ERROR -o ConnectTimeout=5 root@127.0.0.1 "$@"
@@ -61,7 +67,8 @@ mcopy -o -i "$W/disco.img@@1M" ::/boot/grub/grub.cfg "$W/grub.cfg"
 sed -i 's/quiet loglevel=3 /console=tty0 console=ttyS0,115200 /' "$W/grub.cfg"
 mcopy -o -i "$W/disco.img@@1M" "$W/grub.cfg" ::/boot/grub/grub.cfg
 mcopy -o -i "$W/disco.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
-printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nDAC=prova-alsa-nessun-dac\n' "$SSHPASS" >> "$W/sweetspot.txt"
+printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nDAC=prova-alsa-nessun-dac\nLYRION_UTENTE=%s\nLYRION_PASSWORD=%s\n' \
+	"$SSHPASS" "$LYRION_UTENTE" "$LYRION_PASSWORD" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/disco.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
 
 ACCEL=tcg
@@ -94,7 +101,7 @@ echo "SSH pronto dopo circa $((i * 5)) secondi"
 i=0
 ans=""
 while [ $i -lt 120 ]; do
-	ans=$(curl -s -m 5 -H 'Content-Type: application/json' \
+	ans=$(curl -s -m 5 -u "$LYRION_UTENTE:$LYRION_PASSWORD" -H 'Content-Type: application/json' \
 		-d '{"id":1,"method":"slim.request","params":["",["serverstatus",0,0]]}' \
 		http://127.0.0.1:9000/jsonrpc.js 2>/dev/null) || ans=""
 	printf '%s' "$ans" | grep -q '"version"' && break
@@ -113,7 +120,7 @@ qemu_attendi_stabile 600 || exit 1
 i=0
 ans=""
 while [ $i -lt 60 ]; do
-	ans=$(curl -s -m 5 -H 'Content-Type: application/json' \
+	ans=$(curl -s -m 5 -u "$LYRION_UTENTE:$LYRION_PASSWORD" -H 'Content-Type: application/json' \
 		-d '{"id":1,"method":"slim.request","params":["",["serverstatus",0,0]]}' \
 		http://127.0.0.1:9000/jsonrpc.js 2>/dev/null) || ans=""
 	printf '%s' "$ans" | grep -q '"version"' && break
