@@ -141,9 +141,9 @@ if ! wait_ssh 500; then
 	exit 1
 fi
 echo "SSH pronto"
-# Fine dell'avvio: i servizi sono partiti tutti.
-i=0
-until guest 'test -f /run/sweetspot/avvio-completato' 2>/dev/null || [ $i -ge 300 ]; do i=$((i + 5)); sleep 5; done
+# Fine dell'avvio e riavvio del primo avvio (sweetspot.tune) gia' avvenuto.
+. "$TEST_DIR/qemu-attesa.sh"
+qemu_attendi_stabile 600 || exit 1
 
 echo "== 1. Watchdog"
 guest 'cat /sys/class/watchdog/watchdog0/identity /sys/class/watchdog/watchdog0/state /sys/class/watchdog/watchdog0/timeout; pidof watchdog' \

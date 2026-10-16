@@ -104,8 +104,36 @@ done
 printf '%s' "$ans" | grep -q '"version"' || { echo "Lyrion non risponde"; tail -n 60 "$W/seriale.log"; exit 1; }
 echo "Lyrion risponde"
 
+# Il primo avvio riavvia il sistema una volta (sweetspot.tune): si attende
+# che sia avvenuto e che il sistema sia stabile, poi Lyrion deve rispondere
+# anche dopo il riavvio.
+. "$TEST_DIR/qemu-attesa.sh"
+echo "== Attesa del riavvio del primo avvio"
+qemu_attendi_stabile 600 || exit 1
+i=0
+ans=""
+while [ $i -lt 60 ]; do
+	ans=$(curl -s -m 5 -H 'Content-Type: application/json' \
+		-d '{"id":1,"method":"slim.request","params":["",["serverstatus",0,0]]}' \
+		http://127.0.0.1:9000/jsonrpc.js 2>/dev/null) || ans=""
+	printf '%s' "$ans" | grep -q '"version"' && break
+	i=$((i + 1))
+	sleep 5
+done
+printf '%s' "$ans" | grep -q '"version"' || { echo "Lyrion non risponde dopo il riavvio"; tail -n 60 "$W/seriale.log"; exit 1; }
+
 echo "== Scheda hw:Loopback nel kernel di Sweetspot"
 guest 'uname -a; modprobe snd-aloop id=Loopback pcm_substreams=1 && cat /proc/asound/cards' | tee "$OUT/kernel.txt"
+if [ "$(qemu_boot_id)" != "$QEMU_BOOT_ID" ]; then
+	echo "la VM si e' riavviata dopo l'attesa (boot_id cambiato): prova non valida"
+	tail -n 60 "$W/seriale.log"
+	exit 1
+fi
+if ! guest 'test -d /proc/asound/Loopback' 2>/dev/null; then
+	echo "hw:Loopback non esiste dopo modprobe snd-aloop"
+	guest 'cat /proc/asound/cards; dmesg | tail -n 30' || true
+	exit 1
+fi
 if guest 'pidof squeezelite' >/dev/null 2>&1; then
 	echo "il player di Sweetspot e' in esecuzione: la prova userebbe la stessa scheda"
 	guest 'ps' > "$OUT/processi.txt" 2>&1 || true
@@ -116,6 +144,13 @@ echo "== Verifica PCM/DoP sul percorso ALSA del sistema avviato"
 rc=0
 python3 "$TEST_DIR/prova-audio.py" --ssh-port "$SSH_PORT" --backend alsa_loopback \
 	--server http://127.0.0.1:9000 --output "$OUT" --version "$VERSIONE" || rc=1
+
+# CamillaDSP di sessione: una sola istanza (stesso PID) che segue il cambio di
+# frequenza 44,1 -> 96 kHz dal websocket, col plugin cdsp in modalita'
+# sessione; verifica anche l'audio registrato da Loopback. Si salta da solo
+# se l'immagine non include CamillaDSP.
+echo "== CamillaDSP di sessione, cambio di frequenza 44,1 -> 96 kHz"
+python3 "$TEST_DIR/camilladsp-sessione.py" --ssh-port "$SSH_PORT" --output "$OUT/camilladsp-sessione" || rc=1
 guest 'dmesg' > "$OUT/dmesg.txt" 2>&1 || true
 guest 'cat /var/log/messages' > "$OUT/messages.txt" 2>&1 || true
 [ "$rc" -eq 0 ] || { echo "== Verifica ALSA non riuscita"; exit 1; }

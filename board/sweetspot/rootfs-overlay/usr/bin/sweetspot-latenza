@@ -16,6 +16,20 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
+# Priorita' del thread di misura in ascolto: un gradino sotto il player
+# (PRIORITA_AUDIO), cosi' non gli ruba mai il core; in cima alla scala
+# misurerebbe una latenza che il player non vede. Mai sotto quella di
+# CamillaDSP (PRIORITA_DSP): misura il ritardo con cui il kernel risveglia
+# un thread al livello del player.
+listen_priority() {
+	local p
+	p=$(conf PRIORITA_AUDIO 80)
+	case "$p" in ''|*[!0-9]*) p=80 ;; esac
+	p=$((p - 1))
+	[ "$p" -ge 2 ] || p=2
+	printf '%s' "$p"
+}
+
 # Un'uscita audio in riproduzione (anche quella verso il DAC dietro CamillaDSP).
 playing() {
 	grep -qs '^state: RUNNING' "$PROC"/asound/card*/pcm*p/sub*/status
@@ -28,7 +42,7 @@ listen_watch() { # core
 	trap 'kill "$cpid" 2>/dev/null; exit 0' TERM INT
 	while kill -0 "$PPID" 2>/dev/null; do
 		if ! playing; then sleep 5; continue; fi
-		cyclictest -m -q -p 85 -i 10000 -D 30 -a "$1" -t 1 > "$RUN/latenza.finestra" 2>/dev/null &
+		cyclictest -m -q -p "$(listen_priority)" -i 10000 -D 30 -a "$1" -t 1 > "$RUN/latenza.finestra" 2>/dev/null &
 		cpid=$!
 		wait "$cpid"
 		playing || continue

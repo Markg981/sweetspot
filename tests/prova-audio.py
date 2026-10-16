@@ -351,8 +351,13 @@ class SshTarget:
         except subprocess.TimeoutExpired as error:
             raise OSError("remote command timed out: %s" % script) from error
         if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace").strip()
+            if "Connection reset" in stderr or "kex_exchange_identification" in stderr:
+                raise OSError("la VM si e' riavviata durante la prova (SSH: connessione "
+                              "chiusa): attendere il riavvio del primo avvio prima di "
+                              "lanciarla (tests/qemu-attesa.sh)")
             raise OSError("remote command failed (%s): %s: %s" % (
-                result.returncode, script, result.stderr.decode(errors="replace").strip()))
+                result.returncode, script, stderr))
         return result.stdout
 
     def command(self, argv):

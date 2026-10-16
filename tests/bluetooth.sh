@@ -191,6 +191,7 @@ chmod +x "$T/bin/bluealsa-aplay"
 bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; echo $? > '"$T"'/rc; handoff_end' >/dev/null 2>&1
 expect "passaggio: il player si ferma prima del DAC" "1" "$(grep -c '^start-stop-daemon -K .*supervisore.pid' "$BTLOG")"
 expect "passaggio: Squeezelite fermato" "1" "$(grep -c '^killall squeezelite' "$BTLOG")"
+expect "passaggio: CamillaDSP di sessione fermato (libera il DAC per il Bluetooth)" "1" "$(grep -c '^killall camilladsp' "$BTLOG")"
 expect "passaggio: uscita hw: diretta sul DAC" "1" "$(grep -c '^bluealsa-aplay -D hw:1,0 00:00:00:00:00:00$' "$BTLOG")"
 expect "passaggio: bluealsa-aplay sui core di sistema" "1" "$(grep -c '^taskset -c [0-9,]* bluealsa-aplay' "$BTLOG")"
 expect "passaggio: esito ok" "0" "$(cat "$T/rc")"

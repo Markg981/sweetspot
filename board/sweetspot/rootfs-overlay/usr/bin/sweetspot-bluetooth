@@ -341,6 +341,11 @@ stream_active() {
 stop_player() {
 	start-stop-daemon -K -p "$SUPERVISORE_PID" 2>/dev/null
 	killall squeezelite 2>/dev/null
+	# L'istanza di CamillaDSP della sessione tiene aperto il DAC (hw:) anche
+	# in pausa: va fermata, o bluealsa-aplay trova il DAC occupato. Il
+	# supervisore, riavviato da handoff_end, ricrea pipe e istanza.
+	killall camilladsp 2>/dev/null
+	rm -f "$DSP_FIFO" "$RUN/dsp.pid"
 	return 0
 }
 
