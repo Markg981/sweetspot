@@ -27,6 +27,20 @@ import urllib.request
 SAMPLE_RATE = 44100
 
 
+def tempo_lms(v):
+    """totaltime di rescanprogress in LMS 9.1.1 e' HH:MM:SS (Queries.pm);
+    si accetta anche un numero di secondi."""
+    if v in (None, ""):
+        return 0
+    secs = 0
+    try:
+        for p in str(v).split(":"):
+            secs = secs * 60 + int(p)
+    except ValueError:
+        return 0
+    return secs
+
+
 def flac_blocks(data):
     """Scorre i blocchi di metadati di un FLAC: (tipo, ultimo, corpo), resto."""
     assert data[:4] == b"fLaC"
@@ -208,7 +222,7 @@ def wait_scan(lms, poll, limit):
         state = lms.req("rescanprogress")
         running = int(state.get("rescan", 0)) == 1
         curve.append([round(time.monotonic() - start, 1), state.get("steps", ""),
-                      int(state.get("totaltime", 0) or 0)])
+                      tempo_lms(state.get("totaltime"))])
         if not running:
             return time.monotonic() - start, curve
         time.sleep(poll)

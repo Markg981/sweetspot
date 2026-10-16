@@ -65,5 +65,15 @@ class Corpus(unittest.TestCase):
             q.Lyrion = orig
 
 
+class TempoLms(unittest.TestCase):
+    def test_hhmmss_e_numeri(self):
+        self.assertEqual(q.tempo_lms("00:00:01"), 1)
+        self.assertEqual(q.tempo_lms("01:02:03"), 3723)
+        self.assertEqual(q.tempo_lms("42"), 42)
+        self.assertEqual(q.tempo_lms(None), 0)
+        self.assertEqual(q.tempo_lms(""), 0)
+        self.assertEqual(q.tempo_lms("xx"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
