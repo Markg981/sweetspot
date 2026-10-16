@@ -138,7 +138,8 @@ class ReleaseGateTests(unittest.TestCase):
         for step in downloads:
             self.assertEqual(step["with"]["run-id"], "${{ steps.pacchetti.outputs.id }}")
         choose = next(step for step in jobs["lyrion"]["steps"] if step.get("id") == "pacchetti")
-        self.assertIn("branch=main&event=push&status=success", choose["run"])
+        self.assertIn("branch=main&event=push", choose["run"])
+        self.assertNotIn("status=success", choose["run"])
         self.assertIn("pacchetti.txt", choose["run"])
         # Tags never reuse packages: modifiche compiles on every non-PR event.
         self.assertIn("needs.build.result == 'success'", jobs["release"]["if"])
@@ -183,6 +184,33 @@ class ReleaseGateTests(unittest.TestCase):
                 else:
                     self.assertEqual((root / "output").read_text(), "id=42\n")
                     self.assertIn("ricompilato in questa esecuzione: true", evidence)
+
+    def test_main_packages_come_from_the_newest_run_with_every_file(self):
+        choose = next(step for step in WORKFLOW["jobs"]["lyrion"]["steps"] if step.get("id") == "pacchetti")
+        # Run 30 (cancelled after build x86 tar only), 20 (complete), 10 (old).
+        gh = ('#!/bin/sh\ncase "$2" in\n'
+              '  */runs\\?*) printf "30\\n20\\n10\\n" ;;\n'
+              '  */runs/30/artifacts*) printf "sweetspot-x86_64-aggiornamento.tar\\nsweetspot-rpi-aggiornamento.tar\\n" ;;\n'
+              '  */runs/20/artifacts*|*/runs/10/artifacts*) printf "sweetspot-x86_64-aggiornamento.tar\\nsweetspot.img.xz\\n'
+              'sweetspot-rpi-aggiornamento.tar\\n" ;;\n'
+              '  */runs/*) echo "sha-${2##*/}" ;;\nesac\n')
+        for board, expected in (("x86_64", "20"), ("rpi", "30")):
+            with self.subTest(board=board), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                tools = root / "bin"
+                tools.mkdir()
+                (tools / "gh").write_text(gh)
+                (tools / "gh").chmod(0o755)
+                env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"], "COMPILA": "false",
+                       "SCHEDA": board, "GITHUB_RUN_ID": "99", "GITHUB_REF": "refs/pull/1/merge",
+                       "GITHUB_REPOSITORY": "o/r", "GITHUB_SERVER_URL": "https://x",
+                       "GITHUB_OUTPUT": str(root / "output"), "RUNNER_TEMP": str(root)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", choose["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((root / "output").read_text(), f"id={expected}\n")
+                self.assertIn(f"commit: sha-{expected}",
+                              (root / "sweetspot-audio-evidence" / "pacchetti.txt").read_text())
 
     def test_x86_alsa_proof_boots_the_image_and_keeps_evidence(self):
         steps = WORKFLOW["jobs"]["lyrion"]["steps"]
