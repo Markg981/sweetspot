@@ -11,6 +11,8 @@
 	var TOKEN = (document.querySelector('meta[name="sweetspot-token"]') || {}).content || '';
 	var VOLMODE = app.getAttribute('data-volume');
 	var VOLTXT = app.getAttribute('data-volume-testo') || '';
+	var MAINMAC = (app.getAttribute('data-main-mac') || '').toLowerCase();
+	var VOLZONE = 'Volume digitale di Lyrion su questo player: sotto il 100% non è bit-perfect.';
 	var MATERIAL = app.getAttribute('data-material') || '/';
 	var S = { players: [], player: '', st: null, stAt: 0, seeking: false, volTimer: 0, reqId: 0 };
 
@@ -73,8 +75,16 @@
 	function act(op, extra) {
 		var p = { op: op, player: S.player }, k;
 		for (k in (extra || {})) p[k] = extra[k];
-		return api(p, true).then(function () { return refreshStatus(); }).catch(failure);
+		// Risolve true solo se il comando e' riuscito: chi chiama non deve
+		// mostrare un successo quando la richiesta e' fallita.
+		return api(p, true).then(function () { return refreshStatus(); }).then(function () { return true; }, function (e) { failure(e); return false; });
 	}
+	// Il modo volume configurato vale solo per il player principale (MAC di
+	// player.mac); gli altri (zone, app) hanno il volume digitale di Lyrion.
+	// Senza MAC noto (player non ancora pronto) si resta prudenti: modo del principale.
+	function isMain() { return !!S.player && (!MAINMAC || S.player.toLowerCase() === MAINMAC); }
+	function volFixed() { return isMain() && VOLMODE === 'fisso'; }
+	function volText() { return isMain() ? VOLTXT : VOLZONE; }
 
 	function cover(id, size, alt) {
 		var img = h('img', { alt: alt || '', width: size, height: size, loading: 'lazy' });
@@ -112,8 +122,8 @@
 		var vol = st && st['mixer volume'] !== undefined ? Number(st['mixer volume']) : 0;
 		if (document.activeElement !== v) v.value = Math.max(0, vol);
 		$('st-volv').textContent = Math.round(vol) + '%';
-		v.disabled = !S.player || VOLMODE === 'fisso';
-		v.title = VOLTXT;
+		v.disabled = !S.player || volFixed();
+		v.title = volText();
 		['st-prev', 'st-play', 'st-next'].forEach(function (i) { $(i).disabled = !S.player; });
 	}
 	function refreshStatus() {
@@ -216,7 +226,8 @@
 	}
 	function load(kind, id, mode, msg) {
 		if (needPlayer()) return;
-		act('carica', { kind: kind, id: id, mode: mode }).then(function () {
+		act('carica', { kind: kind, id: id, mode: mode }).then(function (ok) {
+			if (!ok) return;
 			if (mode !== 'load') say(msg || 'Aggiunto alla coda.');
 			else say('');
 		});
@@ -396,7 +407,7 @@
 		kids.push(h('p', { class: 'st-hint', text: 'Dati reali del brano in ascolto e del volume configurato. Il percorso completo (DAC, DSP, filtri, uscita) è nella pagina Audio.' }));
 		kids.push(h('dl', { class: 'st-tech mono' }, [h('dt', { text: 'Brano' }), h('dd', { text: t ? (t.title || 'Senza titolo') : 'nessuno in riproduzione' })]
 			.concat(tl.reduce(function (a, x) { return a.concat([h('dt', { text: x[0] }), h('dd', { text: x[1] })]); }, []))
-			.concat([h('dt', { text: 'Volume' }), h('dd', { text: VOLTXT })])));
+			.concat([h('dt', { text: 'Volume' }), h('dd', { text: volText() })])));
 		kids.push(h('p', {}, [h('a', { class: 'st-primary', href: '/cgi-bin/audio', target: '_top', text: 'Apri il percorso audio completo' })]));
 		setMain(kids, 'Percorso audio');
 	}

@@ -76,14 +76,14 @@ if [ "$REQUEST_METHOD" != POST ]; then
 	num "$P_start" || errore 400 parametro "start non valido"
 	num "$P_count" && [ "$P_count" -ge 1 ] && [ "$P_count" -le 200 ] || errore 400 parametro "count non valido"
 	[ -z "$P_player" ] || mac_ok "$P_player" || errore 400 parametro "player non valido"
-	opt=""
+	set --
 	if [ -n "$P_search" ]; then
 		P_search=$(printf '%s' "$P_search" | tr -d '\000-\037\177' | cut -c1-64)
-		[ -z "$P_search" ] || opt="$opt search:$P_search"
+		[ -z "$P_search" ] || set -- "$@" "search:$P_search"
 	fi
-	[ -z "$P_genre" ] || { num "$P_genre" || errore 400 parametro "genre_id non valido"; opt="$opt genre_id:$P_genre"; }
-	[ -z "$P_artist" ] || { num "$P_artist" || errore 400 parametro "artist_id non valido"; opt="$opt artist_id:$P_artist"; }
-	[ -z "$P_album" ] || { num "$P_album" || errore 400 parametro "album_id non valido"; opt="$opt album_id:$P_album"; }
+	[ -z "$P_genre" ] || { num "$P_genre" || errore 400 parametro "genre_id non valido"; set -- "$@" "genre_id:$P_genre"; }
+	[ -z "$P_artist" ] || { num "$P_artist" || errore 400 parametro "artist_id non valido"; set -- "$@" "artist_id:$P_artist"; }
+	[ -z "$P_album" ] || { num "$P_album" || errore 400 parametro "album_id non valido"; set -- "$@" "album_id:$P_album"; }
 	srt=""
 	case "$P_sort" in
 		'') ;;
@@ -91,18 +91,17 @@ if [ "$REQUEST_METHOD" != POST ]; then
 		*) errore 400 parametro "ordinamento non valido" ;;
 	esac
 	set -f
-	# shellcheck disable=SC2086 # le opzioni sono parole gia' validate
 	case "$P_op" in
 		albums)
-			out=$(lms_json "" albums "$P_start" "$P_count" tags:ljaSy ${srt:-sort:album} $opt) ;;
+			out=$(lms_json "" albums "$P_start" "$P_count" tags:ljaSy ${srt:-sort:album} "$@") ;;
 		artists)
-			out=$(lms_json "" artists "$P_start" "$P_count" $opt) ;;
+			out=$(lms_json "" artists "$P_start" "$P_count" "$@") ;;
 		genres)
-			out=$(lms_json "" genres "$P_start" "$P_count" $opt) ;;
+			out=$(lms_json "" genres "$P_start" "$P_count" "$@") ;;
 		titles)
-			out=$(lms_json "" titles "$P_start" "$P_count" "$JT" ${srt:-${P_album:+sort:tracknum}} $opt) ;;
+			out=$(lms_json "" titles "$P_start" "$P_count" "$JT" ${srt:-${P_album:+sort:tracknum}} "$@") ;;
 		playlists)
-			out=$(lms_json "" playlists "$P_start" "$P_count" $opt) ;;
+			out=$(lms_json "" playlists "$P_start" "$P_count" "$@") ;;
 		players)
 			out=$(lms_json "" players 0 100) ;;
 		stato)

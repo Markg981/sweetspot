@@ -3042,6 +3042,19 @@ ascrun "$ASC/cg2" "resume_work"
 expect "ascolto: a fine ascolto CPU e peso originali" "max 100000|100|3435973800" \
 	"$(cat "$ASC/cg2/sweetspot-scanner/cpu.max")|$(cat "$ASC/cg2/sweetspot-scanner/cpu.weight")|$(cat "$ASC/cg2/sweetspot-scanner/memory.max")"
 rm -f "$ASC/proc/800/cgroup"
+# f) I2: lo scanner e' ancora nel gruppo del server (sweetspot-lyrion): va
+# assegnato al gruppo dedicato PRIMA di limitare; il server non va toccato.
+rm -rf "$ASC/cg3"; mkdir -p "$ASC/cg3/sweetspot-lyrion"
+printf 'cpu io memory\n' > "$ASC/cg3/cgroup.controllers"; : > "$ASC/cg3/cgroup.subtree_control"
+printf 'max 100000\n' > "$ASC/cg3/sweetspot-lyrion/cpu.max"; echo 100 > "$ASC/cg3/sweetspot-lyrion/cpu.weight"
+echo 800 > "$ASC/cg3/sweetspot-lyrion/cgroup.procs"; echo '0::/sweetspot-lyrion' > "$ASC/proc/800/cgroup"
+rm -f "$ASC/calls" "$ASC/run/ascolto.lenti" "$ASC/run/ascolto.cgsalvati"
+ascrun "$ASC/cg3" "pause_work"
+expect "ascolto: scanner ancora nel gruppo server, il server non e' limitato" "max 100000|100" \
+	"$(cat "$ASC/cg3/sweetspot-lyrion/cpu.max")|$(cat "$ASC/cg3/sweetspot-lyrion/cpu.weight")"
+expect "ascolto: scanner spostato nel gruppo dedicato prima del limite" "800|5000 100000" \
+	"$(tr '\n' ' ' < "$ASC/cg3/sweetspot-scanner/cgroup.procs" | sed 's/ $//')|$(cat "$ASC/cg3/sweetspot-scanner/cpu.max" 2>/dev/null)"
+rm -f "$ASC/proc/800/cgroup"
 
 echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
 # Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una
@@ -3535,6 +3548,11 @@ python3 "$ROOT/tests/precarica.py" || exit 1
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
 python3 "$ROOT/tests/reference-studio.py" || exit 1
+if command -v node > /dev/null 2>&1; then
+	node "$ROOT/tests/studio-js.js" || exit 1
+else
+	echo "studio-js: node assente, prova del JS saltata"
+fi
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

@@ -37,7 +37,7 @@ cat <<HTML
 </head>
 <body class="st">
 <a class="st-skip" href="#st-main">Vai al contenuto</a>
-<div class="st-app" id="st-app" data-volume="$(esc "$vol")" data-volume-testo="$(esc "$vol_txt")" data-material="$(esc "$(player_url)")">
+<div class="st-app" id="st-app" data-volume="$(esc "$vol")" data-volume-testo="$(esc "$vol_txt")" data-main-mac="$(esc "$(head -n 1 "$RUN/player.mac" 2>/dev/null)")" data-material="$(esc "$(player_url)")">
 <aside class="st-side">
 <a class="st-brand" href="#/" aria-label="SweetSpot, home">
 <svg viewBox="0 0 28 32" fill="currentColor" aria-hidden="true"><rect x="1" y="10" width="4" height="13" rx="2"/><rect x="8" y="4" width="4" height="25" rx="2"/><rect x="15" y="1" width="4" height="30" rx="2"/><rect x="22" y="7" width="4" height="19" rx="2"/></svg>

@@ -136,13 +136,14 @@ class StudioApiTests(unittest.TestCase):
         priv = self.root / "priv"
         priv.write_text('''#!/bin/sh
 echo "$*" >> "%s"
+{ for a in "$@"; do printf '[%%s]' "$a"; done; echo; } >> "%s.argv"
 case "$*" in
   *" albums "*) echo '{"result":{"count":1,"albums_loop":[{"id":7,"album":"A"}]}}' ;;
   *" bogus "*) exit 126 ;;
   *" boom "*) echo 'non json' ;;
   *) echo '{"result":{}}' ;;
 esac
-''' % self.log)
+''' % (self.log, self.log))
         priv.chmod(0o755)
         self.write_conf("MODALITA=completa\nPASSWORD_WEB=x\n")
         (self.root / "run/web/sessioni" / self.SID).write_text(str(2 ** 31))
@@ -199,6 +200,17 @@ esac
         self.assertEqual(data["result"]["albums_loop"][0]["album"], "A")
         self.assertIn("sweetspot-lms json  albums 0 10", self.calls()[0])
         self.assertIn("search:ab", self.calls()[0])
+
+    def test_multiword_unicode_search_is_a_single_argument(self):
+        for op in ("albums", "artists", "titles"):
+            with self.subTest(op=op):
+                (self.root / "priv.log.argv").unlink(missing_ok=True)
+                q = "op=%s&count=10&search=Pink%%20Floyd%%20%%C3%%A8" % op
+                status, _, body = self.cgi("studio-api.json", query=q)
+                self.assertEqual(status, 200, body)
+                argv = (self.root / "priv.log.argv").read_text()
+                self.assertIn("[search:Pink Floyd è]", argv)
+                self.assertNotIn("[Floyd", argv)
 
     def test_invalid_parameters_are_rejected_before_lyrion(self):
         for q in ("op=albums&count=0", "op=albums&count=999", "op=albums&start=x",
