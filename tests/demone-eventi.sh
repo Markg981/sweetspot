@@ -179,13 +179,22 @@ assesta() {
 # Una finestra di 8 s: i processi nati devono essere al piu' il rumore + 3.
 # Se no, classifica "padre > comando: N" dei 10 s successivi.
 finestra() { # descrizione
-	local P D
+	local P D R dem alt ign
 	P=$(esegui)
-	sleep 8
+	# I processi nati si attribuiscono per discendenza dal PID del demone
+	# (solo comandi interni, nessun fork a carico del conteggio): quelli di
+	# altri processi del computer (altre prove, servizi) non sono del demone.
+	R=$(FORKS_ATTRIB_FILE="$E/attrib" sh "$ROOT/tests/forks-riposo.sh" --attribuisci 8 "$DPID")
 	D=$(esegui)
-	expect "$1" "si" "$([ $((D - P)) -le $((NOISE + 6)) ] && echo si || echo "no: $((D - P)) contro rumore $NOISE")"
-	if [ $((D - P)) -gt $((NOISE + 6)) ]; then
-		sh "$ROOT/tests/forks-riposo.sh" --dettaglio 10 2>&1 | sed 's/^/    | /'
+	dem=${R#demone=}; dem=${dem%% *}
+	ign=${R##*ignoti=}
+	alt=${R#*altri=}; alt=${alt%% *}
+	# Del demone: al piu' 3 (come la tolleranza di prima). Non attribuibili
+	# (spariti prima della lettura): al piu' il rumore + 6, come prima.
+	expect "$1" "si" "$([ "$dem" -le 3 ] && [ "$ign" -le $((NOISE + 6)) ] && echo si || echo "no: demone $dem, altri $alt, ignoti $ign (totale $((D - P)), rumore $NOISE)")"
+	if [ "$dem" -gt 3 ] || [ "$ign" -gt $((NOISE + 6)) ]; then
+		echo "    | processi nati in 8 s (gruppo > padre > comando: numero):"
+		sort "$E/attrib" | uniq -c | sort -rn | head -n 20 | sed 's/^/    |   /'
 	fi
 }
 giri_sono() { [ "$(giri)" -ge "$1" ]; }

@@ -56,6 +56,58 @@ dettaglio() {
 	done | sort | uniq -c | sort -rn | head -n 25 | awk '{ n = $1; $1 = ""; sub(/^ /, ""); printf "  %s: %d\n", $0, n }'
 }
 
+# Attribuzione dei fork per discendenza: sh forks-riposo.sh --attribuisci SECONDI PID
+# Per SECONDI legge /proc con i soli comandi interni (nessun fork proprio: l'ultimo
+# PID assegnato e' il quinto campo di loadavg) e assegna ogni processo nato
+# al PID dato (suo discendente), ad altri o a "ignoti" (gia' spariti al momento
+# della lettura, o pid riusati). Stampa "demone=N altri=N ignoti=N" e, per
+# ogni gruppo, le righe "gruppo|padre > comando|numero" ordinate in ./attrib.$$
+# se FORKS_ATTRIB_FILE e' impostato. Ignoti e altri non provano che il demone
+# sia a riposo: chi chiama decide la soglia.
+attribuisci() {
+	local fine u last cur p l c r pp pc d dem=0 alt=0 ign=0 k g f=${FORKS_ATTRIB_FILE:-}
+	[ -z "$f" ] || : > "$f"
+	read -r u _ < /proc/uptime
+	fine=$(( ${u%%.*} + $1 ))
+	read -r _ _ _ _ last _ < "$PROC/loadavg"
+	while :; do
+		read -r u _ < /proc/uptime
+		[ "${u%%.*}" -lt "$fine" ] || break
+		read -r _ _ _ _ cur _ < "$PROC/loadavg"
+		[ "$cur" != "$last" ] || continue
+		p=$last
+		while [ "$p" -lt "$cur" ]; do
+			p=$((p + 1))
+			if { read -r l < "$PROC/$p/stat"; } 2>/dev/null; then
+				c=${l#*(}; c=${c%)*}
+				r=${l##*) }; r=${r#* }; pp=${r%% *}
+				g=altri; d=0; k=$pp
+				while [ "$d" -lt 12 ] && [ "$k" -gt 1 ]; do
+					if [ "$k" = "$2" ]; then g=demone; break; fi
+					if { read -r l < "$PROC/$k/stat"; } 2>/dev/null; then
+						r=${l##*) }; r=${r#* }; k=${r%% *}
+					else
+						break
+					fi
+					d=$((d + 1))
+				done
+				if { read -r l < "$PROC/$pp/stat"; } 2>/dev/null; then pc=${l#*(}; pc=${pc%)*}; else pc='?'; fi
+				case "$g" in demone) dem=$((dem + 1)) ;; *) alt=$((alt + 1)) ;; esac
+				[ -z "$f" ] || echo "$g|$pc > $c" >> "$f"
+			else
+				ign=$((ign + 1))
+				[ -z "$f" ] || echo "ignoti|? > ?" >> "$f"
+			fi
+		done
+		last=$cur
+	done
+	echo "demone=$dem altri=$alt ignoti=$ign"
+}
+if [ "$1" = --attribuisci ]; then
+	attribuisci "${2:-10}" "${3:-0}"
+	exit 0
+fi
+
 # Solo la classifica: sh forks-riposo.sh --dettaglio [secondi]
 if [ "$1" = --dettaglio ]; then
 	echo "Classifica dei processi nati in ${2:-10} s (padre > comando: numero):"
