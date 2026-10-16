@@ -26,10 +26,11 @@ def ancestors(job):
     return set(needs).union(*(ancestors(dep) for dep in needs))
 
 
-def eligible(job, ref, results):
+def eligible(job, ref, results, compila="true"):
     """Evaluate the narrow release expression plus Actions' success default."""
     expression = str(WORKFLOW["jobs"][job].get("if", "success()"))
     expression = expression.removeprefix("${{").removesuffix("}}").strip()
+    expression = expression.replace("needs.modifiche.outputs.compila", repr(compila))
     success = all(results[dep] == "success" for dep in ancestors(job))
     if not re.search(r"\b(?:always|success|failure|cancelled)\s*\(", expression):
         expression = "success() && (" + expression + ")"
@@ -141,6 +142,47 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("pacchetti.txt", choose["run"])
         # Tags never reuse packages: modifiche compiles on every non-PR event.
         self.assertIn("needs.build.result == 'success'", jobs["release"]["if"])
+
+    def test_lyrion_runs_only_when_there_are_packages_to_prove(self):
+        good = {"modifiche": "success", "test": "success", "build": "success"}
+        cases = ((good, "true", True),
+                 # One board failed: the other one is still proven.
+                 ({**good, "build": "failure"}, "true", True),
+                 # Build due but skipped (tests failed): nothing of this run to prove.
+                 ({**good, "test": "failure", "build": "skipped"}, "true", False),
+                 # No build needed: main's packages are proven, even if tests failed.
+                 ({**good, "build": "skipped"}, "false", True),
+                 ({**good, "test": "failure", "build": "skipped"}, "false", True),
+                 ({**good, "build": "cancelled"}, "true", False),
+                 ({**good, "modifiche": "failure", "build": "skipped"}, "true", False))
+        for results, compila, expected in cases:
+            with self.subTest(results=results, compila=compila):
+                self.assertEqual(eligible("lyrion", "refs/heads/x", results, compila), expected)
+
+    def test_lyrion_reports_a_missing_build_once(self):
+        choose = next(step for step in WORKFLOW["jobs"]["lyrion"]["steps"] if step.get("id") == "pacchetti")
+        for artifacts, code in (("sweetspot-rpi-aggiornamento.tar\n", 1),
+                                ("sweetspot-x86_64-aggiornamento.tar\nsweetspot.img.xz\n", 0)):
+            with self.subTest(artifacts=artifacts), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                tools = root / "bin"
+                tools.mkdir()
+                (tools / "gh").write_text("#!/bin/sh\nprintf '%s'\n" % artifacts)
+                (tools / "gh").chmod(0o755)
+                env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"], "COMPILA": "true",
+                       "SCHEDA": "x86_64", "GITHUB_RUN_ID": "42", "GITHUB_REF": "refs/pull/1/merge",
+                       "GITHUB_REPOSITORY": "o/r", "GITHUB_SERVER_URL": "https://x",
+                       "GITHUB_OUTPUT": str(root / "output"), "RUNNER_TEMP": str(root)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", choose["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                evidence = (root / "sweetspot-audio-evidence" / "pacchetti.txt").read_text()
+                if code:
+                    self.assertIn("non riuscita", evidence)
+                    self.assertEqual(result.stdout.count("::error::"), 1)
+                else:
+                    self.assertEqual((root / "output").read_text(), "id=42\n")
+                    self.assertIn("ricompilato in questa esecuzione: true", evidence)
 
     def test_x86_alsa_proof_boots_the_image_and_keeps_evidence(self):
         steps = WORKFLOW["jobs"]["lyrion"]["steps"]

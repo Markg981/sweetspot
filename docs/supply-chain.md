@@ -52,16 +52,32 @@ Copertura reale e limiti, da non nascondere:
   (binario Rust senza metadati), firmware; solo la build x86_64, non ARM;
 - l'inventario di `scripts/inventario.sh` (hash e versioni) NON e' questo SBOM e
   non sostituisce una scansione;
-- per esiti della build corrente serve la CI sulla build completa (`build`
-  oggi e' saltata sui rami): ripetere i due comandi sull'artifact.
+- questi due file sono un'istantanea di main: per la build corrente vale
+  l'artifact della CI (sotto).
 
 Riproduzione: `syft dir:ROOTFS -o cyclonedx-json=sbom.json` poi
 `grype sbom:sbom.json -o json`.
 
+### In CI, a ogni compilazione
+
+Il job `build` esegue gli stessi due comandi su `output/target` di **entrambe**
+le schede (x86_64 e Raspberry Pi), con syft 1.54.1 e grype 0.120.1 scaricati
+dalle release di Anchore e verificati con il loro `checksums.txt`. L'artifact
+`sbom-<scheda>` contiene `sbom-<scheda>.cdx.json`, `grype-<scheda>.json` e
+`grype-<scheda>.txt`; il riepilogo dell'esecuzione riporta il numero di
+componenti e le corrispondenze per gravita', con la data del giorno.
+
+Limiti: il passo non blocca la compilazione (`continue-on-error`: e'
+un'evidenza senza triage, e un database di grype irraggiungibile non deve
+fermare l'immagine); valgono le stesse lacune di copertura elencate sopra
+(tranne "solo x86_64"). Nelle pull request che non toccano l'immagine non si
+compila, quindi non c'e' un SBOM nuovo: vale quello dell'ultima build di main.
+
 ## Vulnerabilita' (CVE)
 
-Non e' incluso alcun esito di scansione: dipende dalla data e dal database.
-Per ottenerlo, sulla stessa build:
+Nel repository c'e' solo l'istantanea di main descritta sopra; l'esito
+aggiornato e' nell'artifact `sbom-<scheda>` di ogni compilazione e dipende
+dalla data e dal database. In alternativa, con le fonti di Buildroot:
 
     make O=/percorso/output pkg-stats
 
