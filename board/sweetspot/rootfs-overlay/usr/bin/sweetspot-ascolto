@@ -89,10 +89,12 @@ cg_of() {
 }
 
 # Limita sul posto un gruppo proprio; i valori originali restano annotati.
-# Riuscito solo se il gruppo accetta i limiti di CPU.
+# Riuscito solo se il gruppo accetta i limiti di CPU. Con "nuovo" il gruppo e'
+# appena stato creato: si prova comunque a scrivere (senza controller cpu la
+# scrittura fallisce) e i valori originali sono quelli predefiniti.
 slow_group() {
 	local d=$CGROOT/$1 max weight
-	[ -f "$d/cpu.max" ] && [ -f "$d/cpu.weight" ] || return 1
+	[ "$2" = nuovo ] || { [ -f "$d/cpu.max" ] && [ -f "$d/cpu.weight" ]; } || return 1
 	if ! grep -q "^$1|" "$CGSAVED" 2>/dev/null; then
 		max=$(cat "$d/cpu.max" 2>/dev/null); weight=$(cat "$d/cpu.weight" 2>/dev/null)
 		echo "$1|${max:-max 100000}|${weight:-100}" >> "$CGSAVED" || return 1
@@ -117,7 +119,7 @@ slow_pids() {
 			"$CG_LYRION")
 				mkdir -p "$CGROOT/$CG_SCANNER" 2>/dev/null
 				echo "$pid" >> "$CGROOT/$CG_SCANNER/cgroup.procs" 2>/dev/null || continue
-				slow_group "$CG_SCANNER" || continue ;;
+				slow_group "$CG_SCANNER" nuovo || continue ;;
 			sweetspot-*) continue ;;
 			*) echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue ;;
 		esac
