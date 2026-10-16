@@ -369,6 +369,7 @@ run_round() {
 	LAST_ROUND=$NOW
 	DL_BEAT=$((NOW + BATTITO))
 	PUB_LYR=$LV_LYR_STATO
+	[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "$NOW giro concluso" >> "$RUN/stato.debug"
 }
 
 # Un passo del precarico (la coda di Lyrion e' cambiata).

@@ -71,13 +71,47 @@ cg_ready() {
 	return 0
 }
 
+# In cgroup v2 un processo sta in un solo gruppo. Chi e' gia' in un gruppo
+# proprio di Sweetspot (lo scanner in sweetspot-scanner, con i suoi tetti di
+# memoria e I/O) non viene spostato: i limiti di CPU dell'ascolto si applicano
+# a quel gruppo e alla fine si ripristinano i valori di prima.
+CGSAVED=$RUN/ascolto.cgsalvati
+
+# Gruppo del processo, relativo a $CGROOT; vuoto = radice o sconosciuto.
+cg_of() {
+	local p
+	p=$(sed -n 's/^0:://p' "${SWEETSPOT_PROCFS:-/proc}/$1/cgroup" 2>/dev/null | head -n 1)
+	p=${p#/}
+	case "$p" in ''|*..*) return 0 ;; esac
+	echo "$p"
+}
+
+# Limita sul posto un gruppo proprio; i valori originali restano annotati.
+# Riuscito solo se il gruppo accetta i limiti di CPU.
+slow_group() {
+	local d=$CGROOT/$1 max weight
+	[ -f "$d/cpu.max" ] && [ -f "$d/cpu.weight" ] || return 1
+	if ! grep -q "^$1|" "$CGSAVED" 2>/dev/null; then
+		max=$(cat "$d/cpu.max" 2>/dev/null); weight=$(cat "$d/cpu.weight" 2>/dev/null)
+		echo "$1|${max:-max 100000}|${weight:-100}" >> "$CGSAVED" || return 1
+	fi
+	echo "5000 100000" > "$d/cpu.max" 2>/dev/null || return 1
+	echo 1 > "$d/cpu.weight" 2>/dev/null
+	return 0
+}
+
 # Sposta nel cgroup lento i PID dati e li mette in I/O idle. Riuscito = almeno
-# uno spostato.
+# uno rallentato.
 slow_pids() {
-	local pid ok=1
+	local pid ok=1 cur
 	while read -r pid; do
 		[ -n "$pid" ] || continue
-		echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue
+		cur=$(cg_of "$pid")
+		case "$cur" in
+			''|sweetspot-ascolto) echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue ;;
+			sweetspot-*) slow_group "$cur" || continue ;;
+			*) echo "$pid" >> "$CG/cgroup.procs" 2>/dev/null || continue ;;
+		esac
 		ok=0
 		command -v ionice >/dev/null 2>&1 && ionice -c 3 -p "$pid" 2>/dev/null
 	done <<EOF
@@ -87,9 +121,22 @@ EOF
 }
 
 # Rimette nel gruppo radice quanto e' nel cgroup lento (compresi i figli nati
-# dopo) e torna alla classe I/O normale. I limiti restano nel cgroup vuoto.
+# dopo), ripristina i limiti dei gruppi propri e torna alla classe I/O
+# normale. I limiti restano nel cgroup vuoto.
 unslow_all() {
-	local pid
+	local pid g max weight
+	if [ -s "$CGSAVED" ]; then
+		while IFS='|' read -r g max weight; do
+			[ -n "$g" ] || continue
+			[ -d "$CGROOT/$g" ] || continue
+			echo "$max" > "$CGROOT/$g/cpu.max" 2>/dev/null
+			echo "$weight" > "$CGROOT/$g/cpu.weight" 2>/dev/null
+			for pid in $(cat "$CGROOT/$g/cgroup.procs" 2>/dev/null); do
+				command -v ionice >/dev/null 2>&1 && ionice -c 2 -n 4 -p "$pid" 2>/dev/null
+			done
+		done < "$CGSAVED"
+		: > "$CGSAVED"
+	fi
 	[ -f "$CG/cgroup.procs" ] || return 0
 	for pid in $(cat "$CG/cgroup.procs" 2>/dev/null); do
 		echo "$pid" >> "$CGROOT/cgroup.procs" 2>/dev/null

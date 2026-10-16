@@ -1990,6 +1990,19 @@ expect "cache oltre il tetto: non migrata" "no" "$([ -s "$CC/archivio/.sweetspot
 printf 'CACHE_COPERTINE=disco\nCACHE_COPERTINE_DISCO=../x\n' > "$CC/run/sweetspot.conf"
 CC_MOUNT=$CC/bin/finto-mount SWEETSPOT_PROCFS=$CC/proc lmsfn link_caches
 expect "nome del disco con percorso: rifiutato, ripiego" "ram|disco per le copertine non indicato" "$(cc_stato)"
+# Fault injection: la copia verso il nuovo disco fallisce (cp finto), le cache
+# e il WAL devono restare dove stanno, con lo stato che lo dichiara.
+rm -f "$CC/run/sweetspot.conf" "$CC/lms/cache"/* "$CC/archivio/.sweetspot-cache"/*
+echo prezioso > "$CC/lms/cache/artwork.db"; echo wal-prezioso > "$CC/lms/cache/artwork.db-wal"
+lmsfn 'cp() { return 1; }; link_caches'
+expect "copia fallita: cache e WAL restano dove sono" "prezioso|wal-prezioso|no" \
+	"$(cat "$CC/lms/cache/artwork.db")|$(cat "$CC/lms/cache/artwork.db-wal")|$([ -L "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+expect "copia fallita: nessun file provvisorio in destinazione" "0" "$(ls -A "$CC/archivio/.sweetspot-cache" | grep -c artwork)"
+case "$(cc_stato)" in *"migrazione non riuscita"*) ok "copia fallita: lo stato lo dichiara" ;; *) ko "stato dopo migrazione fallita" "migrazione non riuscita" "$(cc_stato)" ;; esac
+lmsfn link_caches
+expect "dopo il guasto la migrazione riesce, WAL compreso" "prezioso|wal-prezioso|si" \
+	"$(cat "$CC/archivio/.sweetspot-cache/artwork.db")|$(cat "$CC/archivio/.sweetspot-cache/artwork.db-wal")|$([ -L "$CC/lms/cache/artwork.db" ] && echo si || echo no)"
+rm -f "$CC/run/sweetspot.conf"
 rm -f "$CC/run/sweetspot.conf"
 # Il tetto della cache in RAM rientra nella quota servizi del budget RAM unificato.
 mkdir -p "$CC/q/run" "$CC/q/proc"
@@ -3012,6 +3025,23 @@ ascrun "$ASC/cg" "resume_work"
 expect "ascolto: cgroup, a fine ascolto tornano nel gruppo radice" "701 702 800" "$(tr '\n' ' ' < "$ASC/cg/cgroup.procs" | sed 's/ $//')"
 expect "ascolto: cgroup, ionice di nuovo normale" "ionice -c 2 -n 4 -p 701|ionice -c 2 -n 4 -p 702|ionice -c 2 -n 4 -p 800" "$(tr '\n' '|' < "$ASC/calls" | sed 's/|$//')"
 expect "ascolto: cgroup, elenco dei rallentati svuotato" "0" "$(grep -c . "$ASC/run/ascolto.lenti")"
+# e) composizione: lo scanner sta in sweetspot-scanner (tetti di memoria e I/O):
+# l'ascolto non lo sposta, limita la CPU di quel gruppo e poi ripristina.
+rm -rf "$ASC/cg2"; mkdir -p "$ASC/cg2/sweetspot-scanner" "$ASC/proc/800"
+printf 'cpu io memory\n' > "$ASC/cg2/cgroup.controllers"; : > "$ASC/cg2/cgroup.subtree_control"
+printf 'max 100000\n' > "$ASC/cg2/sweetspot-scanner/cpu.max"; echo 100 > "$ASC/cg2/sweetspot-scanner/cpu.weight"
+echo 3435973800 > "$ASC/cg2/sweetspot-scanner/memory.max"; echo 800 > "$ASC/cg2/sweetspot-scanner/cgroup.procs"
+echo '0::/sweetspot-scanner' > "$ASC/proc/800/cgroup"
+rm -f "$ASC/calls" "$ASC/run/ascolto.lenti"; rm -rf "$ASC/run/sospendibili"/*
+ascrun "$ASC/cg2" "pause_work"
+expect "ascolto: scanner con tetti propri, CPU limitata sul posto" "5000 100000|1|3435973800|800" \
+	"$(cat "$ASC/cg2/sweetspot-scanner/cpu.max")|$(cat "$ASC/cg2/sweetspot-scanner/cpu.weight")|$(cat "$ASC/cg2/sweetspot-scanner/memory.max")|$(tr '\n' ' ' < "$ASC/cg2/sweetspot-scanner/cgroup.procs" | sed 's/ $//')"
+expect "ascolto: scanner non spostato nel gruppo dell'ascolto" "no" "$([ -s "$ASC/cg2/sweetspot-ascolto/cgroup.procs" ] && echo si || echo no)"
+ascrun "$ASC/cg2" "pause_work"
+ascrun "$ASC/cg2" "resume_work"
+expect "ascolto: a fine ascolto CPU e peso originali" "max 100000|100|3435973800" \
+	"$(cat "$ASC/cg2/sweetspot-scanner/cpu.max")|$(cat "$ASC/cg2/sweetspot-scanner/cpu.weight")|$(cat "$ASC/cg2/sweetspot-scanner/memory.max")"
+rm -f "$ASC/proc/800/cgroup"
 
 echo "Prova dell'ascolto puro: letture dal disco e rete durante l'ascolto"
 # Disco sdb con la musica (partizione sdb1 montata da sweetspot-dischi), una

@@ -255,25 +255,39 @@ art_used_mb() {
 # copia in un file provvisorio e solo a copia riuscita si toglie l'originale.
 # Se il file supera il tetto non si porta dietro (si rifa').
 art_move() { # origine destinazione tetto_mb
-	local sz
+	local sz s dest_dir
 	[ -f "$1" ] || return 0
 	[ "$1" = "$2" ] && return 0
-	[ -f "$2" ] && return 0
+	if [ -f "$2" ]; then
+		log "lyrion: cache $2 gia' presente, vale quella; $1 non migrata"
+		return 0
+	fi
 	sz=$(wc -c < "$1") || sz=0
 	if [ $((${sz:-0} / 1048576)) -ge "$3" ]; then
 		log "lyrion: cache $1 oltre il tetto di $3 MB, non migrata (si ricostruisce)"
-		rm -f "$1"; return 0
+		rm -f "$1" "$1-wal" "$1-shm"; return 0
 	fi
-	if cp "$1" "$2.tmp.$$" 2>/dev/null && mv "$2.tmp.$$" "$2" 2>/dev/null; then
-		rm -f "$1"
-	else
-		rm -f "$2.tmp.$$"
-		log "lyrion: spostamento di $1 non riuscito, resta dov'e'"
+	# Il database e il suo giornale (-wal/-shm) viaggiano insieme: il WAL puo'
+	# contenere scritture non ancora riportate nel file principale.
+	dest_dir=${2%/*}
+	for s in "" -wal -shm; do
+		[ -f "$1$s" ] || continue
+		cp "$1$s" "$2$s.tmp.$$" 2>/dev/null || { rm -f "$2.tmp.$$" "$2-wal.tmp.$$" "$2-shm.tmp.$$"; log "lyrion: copia di $1$s in $dest_dir non riuscita, la cache resta dov'e'"; return 1; }
+	done
+	for s in -wal -shm; do
+		[ -f "$2$s.tmp.$$" ] && { mv "$2$s.tmp.$$" "$2$s" 2>/dev/null || { rm -f "$2.tmp.$$" "$2-wal.tmp.$$" "$2-shm.tmp.$$" "$2-wal" "$2-shm"; log "lyrion: spostamento di $1$s non riuscito, la cache resta dov'e'"; return 1; }; }
+	done
+	if ! mv "$2.tmp.$$" "$2" 2>/dev/null; then
+		rm -f "$2.tmp.$$" "$2-wal" "$2-shm"
+		log "lyrion: spostamento di $1 non riuscito, la cache resta dov'e'"
+		return 1
 	fi
+	rm -f "$1" "$1-wal" "$1-shm"
+	return 0
 }
 
 link_caches() {
-	local t pos dir motivo f old cap used
+	local t pos dir motivo f old cap used oldpos olddir
 	t=$(art_target)
 	pos=${t%%|*}; dir=${t#*|}
 	motivo=
@@ -290,10 +304,20 @@ link_caches() {
 			old=
 			if [ -L "$CACHE/$f" ]; then old=$(readlink "$CACHE/$f")
 			elif [ -f "$CACHE/$f" ]; then old=$CACHE/$f; fi
-			# Cambio di posizione: migrazione sicura.
-			[ -n "$old" ] && [ "${old%/*}" != "$dir" ] && art_move "$old" "$dir/$f" "$cap"
-			rm -f "$CACHE/$f-wal" "$CACHE/$f-shm"
-			# Un file vero non migrato o un collegamento vecchio si sostituiscono.
+			# Cambio di posizione: migrazione sicura. Se non riesce non si
+			# tocca nulla: cache, giornale e collegamento restano dove sono e
+			# lo stato dichiara la posizione reale.
+			if [ -n "$old" ] && [ "${old%/*}" != "$dir" ] && ! art_move "$old" "$dir/$f" "$cap"; then
+				olddir=${old%/*}
+				if [ "$olddir" = "$CACHE" ] || [ "$olddir" = "$ART_RAM" ]; then oldpos=ram; else oldpos=disco; fi
+				pos=$oldpos; dir=$olddir
+				[ "$oldpos" = ram ] && cap=$(art_ram_mb) || cap=$(art_disk_mb)
+				motivo="migrazione non riuscita: cache lasciata in $olddir"
+				log "lyrion: $motivo"
+				break
+			fi
+			# Con la cache ora altrove si tolgono gli avanzi e si ricollega.
+			[ -L "$CACHE/$f" ] || rm -f "$CACHE/$f-wal" "$CACHE/$f-shm"
 			rm -f "$CACHE/$f"
 			ln -s "$dir/$f" "$CACHE/$f"
 		done
