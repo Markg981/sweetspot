@@ -6,6 +6,7 @@
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
+stato_richiedi
 if [ -s "$RUN/stato.json" ]; then
 	printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n'
 	sec_headers

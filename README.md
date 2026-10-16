@@ -112,7 +112,7 @@ le protezioni contro l'incorporamento da siti esterni restano attive.
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
 | **Sistema** | nome, modalità, profilo del processore, modalità ascolto, renderer UPnP/DLNA, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
-| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto. Non rifà i controlli a ogni visita: legge la cache del demone `sweetspot-stato` (ogni 10 secondi, ogni 45 durante l'ascolto; core di sistema, `nice 19`) e avvisa se è assente o vecchia. Lo stesso stato in JSON, in sola lettura: `/cgi-bin/stato.json` (stessa password del pannello) e, da Lyrion o Material via JSON-RPC, `["sweetspot","stato"]` |
+| **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto. Non rifà i controlli a ogni visita: legge la cache del demone a eventi `sweetspot-stato` (core di sistema, `nice 19`), che la aggiorna quando succede qualcosa (CLI di Lyrion, udev per sound/block/net, inotify sulla configurazione), quando qualcuno la legge ed è più vecchia di 10 secondi (40 durante l'ascolto) e come battito di sicurezza ogni 15 minuti; a riposo non lancia processi (meno di 100 fork al minuto in tutto il sistema, misurati da `tests/forks-riposo.sh`; gli altri cicli di servizio attendono con `read -t` su una FIFO senza scrittori (`nap` in `common.sh`) invece di `sleep`, e a riposo, con il DAC fermo, la sorveglianza del player gira ogni 60 s, la sonda Bluetooth ogni 5 s (30 s senza adattatore) e il diario ogni 30 s; mentre il DAC riproduce i ritmi di prima restano). Avvisa se è assente o vecchia. Lo stesso stato in JSON, in sola lettura: `/cgi-bin/stato.json` (stessa password del pannello) e, da Lyrion o Material via JSON-RPC, `["sweetspot","stato"]` |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
 anche con il Blocco note).
@@ -127,11 +127,27 @@ settings as text*) si incolla in *Audio → Correzione ambientale*, uno per il
 diffusore sinistro e uno per il destro.
 
 - I filtri li applica **CamillaDSP** in virgola mobile a 64 bit, alla
-  frequenza di ogni brano (il plugin ALSA *cdsp* lo riavvia a ogni cambio di
-  frequenza): i suoi **thread audio** (cattura dal plugin, elaborazione,
-  riproduzione ALSA) sul core dedicato all'audio con priorità real-time
-  (`SCHED_FIFO` 70, `PRIORITA_DSP`, sotto il player a 80 che lo alimenta), gli
-  altri (principale, segnali, websocket e le connessioni di
+  frequenza di ogni brano. Un'**unica istanza per sessione**: la avvia il
+  player (non il thread real-time di Squeezelite), sui core di sistema, con i
+  campioni da una pipe (`/run/sweetspot/camilladsp.fifo`, aperta in lettura e
+  scrittura, quindi senza fine del file tra un brano e l'altro). Il plugin ALSA
+  *cdsp* (patch `package/alsa-cdsp/0002-session-mode.patch`) scrive nella pipe
+  e, a ogni cambio di frequenza, chiede al websocket di CamillaDSP
+  (`SetConfigFilePath` e `Reload`) la configurazione di quella frequenza,
+  `camilladsp-FREQUENZA.yml`, scritta da `sweetspot-dsp`: il processo (e il suo
+  PID) resta lo stesso, cambia solo la frequenza sul DAC. A fine stream il
+  plugin scrive il silenzio della coda dei filtri (`extra_samples`) fino a un
+  blocco intero, così il suono ancora dentro i filtri arriva al DAC. Se
+  CamillaDSP muore il player lo riavvia. Il DAC resta aperto da CamillaDSP per
+  tutta la sessione, anche tra un brano e l'altro. I suoi **thread audio**
+  (cattura dalla pipe, elaborazione, riproduzione ALSA) stanno sul core
+  dedicato all'audio con priorità real-time sotto il player (`SCHED_FIFO`,
+  `PRIORITA_DSP`, 70, sotto il player a 80 che lo alimenta), per ruolo: la
+  riproduzione al DAC ha la più alta (70), l'elaborazione una in meno (69),
+  la cattura due in meno (68), così il thread che serve il DAC non è mai più
+  basso di quello che lo alimenta. La misura della latenza in ascolto
+  (`LATENZA_ASCOLTO=si`, cyclictest) gira un gradino sotto il player (79), mai
+  sopra. Gli altri (principale, segnali, websocket e le connessioni di
   `sweetspot-camilla`) sui core di sistema con la priorità normale, così sul
   core isolato gira solo l'audio. Il thread di elaborazione si riconosce dal
   nome grazie alla patch `patches/camilladsp/0001-name-processing-thread.patch`;
@@ -156,18 +172,31 @@ diffusore sinistro e uno per il destro.
   `diretto` suona senza correzione e lo stesso avviso resta visibile.
 - **Filtri FIR** (convoluzione): impulsi WAV esportati da rePhase, Acourate o
   REW, copiati dal computer nella cartella `correzione-ambientale` della
-  chiavetta come `fir-sinistro.wav` e, se diverso, `fir-destro.wav` (un file
-  stereo da solo vale per i due canali; mono o stereo, fino a 16 MB, stessa
-  frequenza). Si applicano dopo i filtri di REW, con la correzione accesa.
-  CamillaDSP lavora alla frequenza degli impulsi e ricampiona i brani a
-  frequenze diverse (ricampionatore `Synchronous`; con la stessa frequenza il
-  ricampionamento si spegne da solo); il DAC deve accettarla. Attenuazione in
+  chiavetta, **uno per ogni frequenza di campionamento** con la frequenza nel
+  nome: `fir-44100.wav`, `fir-48000.wav`, `fir-96000.wav`... (un file per i due
+  canali: mono per entrambi, stereo canale 0 al sinistro e 1 al destro) oppure
+  `fir-sinistro-44100.wav` e `fir-destro-44100.wav` (il destro senza file usa il
+  sinistro). I nomi `fir-sinistro.wav` e `fir-destro.wav`, senza frequenza,
+  valgono per la frequenza scritta nel file. Mono o stereo, fino a 16 MB; la
+  frequenza del file deve essere quella del nome, e a ogni frequenza i due
+  canali hanno gli stessi canali. Si applicano dopo i filtri di REW, con la
+  correzione accesa. Ogni brano usa il FIR della sua frequenza: CamillaDSP
+  lavora a quella frequenza e **non ricampiona**. Le frequenze del DAC senza
+  FIR seguono `CORREZIONE_SE_ASSENTE`: `blocca` (predefinito) non le offre a
+  Squeezelite, quei brani non suonano e lo Stato e la pagina Correzione
+  elencano le frequenze (`avviso` in `dsp.stato`); `diretto` le suona senza
+  FIR (solo filtri di REW e attenuazione), con lo stesso avviso. Solo con
+  `FIR_RICAMPIONA=si` il brano si ricampiona al FIR più vicino, di preferenza
+  della stessa famiglia 44,1/48 kHz (ricampionatore `Synchronous`). Con i soli
+  FIR a frequenze che il DAC non accetta la correzione non si applica (vale la
+  politica). Attenuazione in
   più `FIR_MARGINE_DB` (3 dB): i FIR di rePhase e Acourate sono di solito già
   normalizzati, la voce "Clipping di CamillaDSP" della pagina Stato dice se
   basta. La coda di ogni brano non viene tagliata: quando lo stream si chiude
   (stop, cambio di frequenza, pausa lunga) CamillaDSP legge ancora tanti
-  campioni di silenzio quanti i tap dei FIR più due blocchi
-  (`extra_samples`), così il suono ancora dentro i filtri arriva al DAC.
+  campioni di silenzio quanti i tap del FIR di quella frequenza più due
+  blocchi (`extra_samples`), così il suono ancora dentro i filtri arriva al
+  DAC.
 - **Confronto a pari volume**: "esclusa" passa per CamillaDSP con la sola
   attenuazione, così il confronto con la correzione accesa non è falsato dal
   volume.
@@ -175,6 +204,8 @@ diffusore sinistro e uno per il destro.
 - I filtri restano sulla chiavetta, nella cartella `correzione-ambientale`
   (testo di REW, leggibile anche dal computer). Il salvataggio prepara e verifica
   una nuova generazione prima di pubblicarla; i FIR esistenti sono conservati.
+  Salvataggio e ripristino includono anche tutti i FIR con la frequenza nel
+  nome; la copia in RAM resta leggibile dal pannello senza concedergli scrittura.
   La generazione precedente resta in `correzione-ambientale.vecchio` e viene
   usata all'avvio se un'interruzione ha lasciato assente la cartella principale.
   Se la chiavetta manca o la scrittura fallisce, il pannello avvisa che i nuovi
@@ -581,13 +612,14 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `CONDIVISIONE_n`, `_UTENTE`, `_PASSWORD`, `_SMB1` | cartelle di rete (fino a 9): `//server/cartella` (SMB) o `nfs://server/cartella` (NFS); `_SMB1=si` ammette SMB1, insicuro | vuoto |
 | `DAC` | DAC principale: `auto` (il primo DAC USB trovato; con le zone resta lui per tutto l'avvio), nome ALSA (es. `R26`) o `VID:PID`. Nella pagina Audio si sceglie tra i DAC collegati | auto |
 | `ALTRI_DAC` | `si`: ogni altro DAC USB con un'uscita ha il suo Squeezelite, cioè un player separato in Lyrion ("Sweetspot - nome del DAC", MAC stabile per DAC da identificativo USB e numero di serie), da raggruppare e sincronizzare in Lyrion. Il DAC principale resta com'è (core isolato, correzione, volume a 64 bit); gli altri suonano sui core di sistema con priorità un po' più bassa, uscita diretta, mixer a 0 dB e volume da Lyrion. Si avviano e fermano da soli con il collegamento del DAC, anche mentre il DAC principale manca: se il principale si spegne il player lo aspetta e non passa mai a una zona; pagina Stato, voce "Altri DAC (zone)" | no |
-| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite arrotonda con dither TPDF, patch 0006, senza troncare: non bit-perfect, peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. Ogni CamillaDSP parte già al volume giusto (`vol_file` del plugin cdsp: se manca, silenzio e non volume massimo). Solo in modalità completa; se CamillaDSP non parte si usa il volume software | fisso |
+| `VOLUME` | `fisso`, `dac`, `software` (Squeezelite arrotonda con dither TPDF, patch 0006, senza troncare: non bit-perfect, peggiore del fisso, segnalato in Audio e Stato), `dsp`: volume a 64 bit in CamillaDSP con dither TPDF alla risoluzione del DAC (24 o 16 bit, sempre presente, anche al 100%: per il percorso bit-perfect scegli `fisso`); Squeezelite lascia i campioni invariati (opzione `-F`, patch di Sweetspot) mentre Lyrion tiene il controllo digitale del volume, così Material e le app mostrano il cursore, che `sweetspot-volume` segue dalla CLI con la stessa scala di Lyrion per Squeezelite (100 = 0 dB, 50 = −24,7 dB, 25 = −37 dB, 1 = −72,5 dB, 0 = sordina; mai sopra 0 dB), riletto anche a ogni ricollegamento del player. I file DSD si convertono in PCM. L'unica istanza di CamillaDSP della sessione parte già al volume giusto (`-g`/`-m` dal file di volume, che se manca dà silenzio e non volume massimo; il cursore poi la regola dal websocket). In modalità player serve anche `SERVER` (il volume si legge da quel Lyrion; senza, volume software, e lo Stato e la pagina Audio dicono perché); se CamillaDSP non parte si usa il volume software | fisso |
 | `DSD` | `auto`, `nativo`, `dop`, `no`. Con il volume software (`VOLUME=software`, o il ripiego software di `dac`/`dsp`) il DSD si converte sempre in PCM, anche con `nativo` o `dop`: Squeezelite non applica il volume al DSD nativo e dopo un brano PCM attenuato un DSF suonerebbe al 100% (circa 30 dB più forte), un rischio per orecchie e diffusori. Vale anche per le zone (`ALTRI_DAC`), il cui volume è software | auto |
 | `DSD_PCM_MARGINE_DB` | margine in dB della conversione DSD → PCM, da -24 a 0 (mai sopra 0). I DSD "over" superano 0 dBFS fino a +3 dB (il 50% di modulazione oltre lo standard) e senza margine la conversione a 32 bit li taglierebbe; con -3 dB tutto il DSD convertito suona 3 dB più piano (il volume lo compensa). 0 = nessun margine. Non vale per il DSD nativo né per il DoP. Pagine Audio e Stato | -3 |
 | `RICAMPIONAMENTO`, `FILTRO` | `no`/`sincrono`/`asincrono`, `lineare`/`intermedio`/`minimo`. Il ricampionatore abbassa il segnale di 1 dB (dichiarato in Stato e Audio, anche per il ricampionamento di ripiego `FREQUENZA_NON_SUPPORTATA=ricampiona`, anche sulle zone). Stato dichiara anche l'uscita a 16 bit, dove i brani a 24 bit si riducono con dither TPDF (patch 0006 di Squeezelite, anche con il volume software; i blocchi di silenzio digitale restano silenzio e le sorgenti a 16 bit a volume pieno restano bit-perfect) e il ricampionamento di Lyrion con sox quando il brano in riproduzione supera la frequenza massima dichiarata dal player (probe del DAC o `FREQUENZA_MAX`) | no, lineare |
+| `CORREZIONE_SE_ASSENTE`, `FIR_RICAMPIONA` | `blocca`/`diretto` (correzione o FIR di una frequenza mancanti: non si suona / si suona senza); `no`/`si` (ricampiona al FIR più vicino invece) | blocca, no |
 | `FREQUENZA_MAX` | Hz, 0 = quella del DAC | 0 |
 | `PAUSA_DSD_MS`, `PAUSA_FREQUENZA_MS` | pause per i DAC che perdono l'inizio; la pausa al cambio di frequenza non scende mai sotto il buffer ALSA | 500, 0 |
-| `LIVENESS` | `si`: liveness applicativa nel demone dello stato (nessun processo in più). Lyrion deve rispondere a una richiesta JSON-RPC `serverstatus` entro `LIVENESS_LYRION_TIMEOUT` s; dopo `LIVENESS_LYRION_FALLIMENTI` fallimenti consecutivi viene riavviato. Se Lyrion dice "play" ma nessun PCM ALSA è RUNNING da `LIVENESS_PLAYER_SECONDI` s, il player risulta "bloccato" e Squeezelite viene riavviato. I riavvii hanno un backoff (da `LIVENESS_BACKOFF_MIN` a `LIVENESS_BACKOFF_MAX` s) e compaiono nel log, nella pagina Stato e in `stato.json` (`liveness`) | si, 8, 3, 20, 60, 900 |
+| `LIVENESS` | `si`: liveness applicativa nel demone dello stato (nessun processo in più, guidata dagli eventi). Ogni `LIVENESS_LYRION_PING` s (45) il demone scrive `version ?` nella connessione CLI di Lyrion (porta 9090, già aperta per gli eventi) e deve avere la risposta entro `LIVENESS_LYRION_TIMEOUT` s, senza lanciare processi; se manca la conferma con il JSON-RPC `serverstatus` e dopo `LIVENESS_LYRION_FALLIMENTI` fallimenti consecutivi Lyrion viene riavviato. Il modo (play/pausa/stop) arriva dagli eventi playlist; se Lyrion dice "play" i PCM ALSA si guardano ogni 5 s con la sola shell (nessun fork mentre suonano) e, se nessuno è RUNNING da `LIVENESS_PLAYER_SECONDI` s (rilevato entro circa 20 s), il player risulta "bloccato" e Squeezelite viene riavviato. I riavvii hanno un backoff (da `LIVENESS_BACKOFF_MIN` a `LIVENESS_BACKOFF_MAX` s) e compaiono nel log, nella pagina Stato e in `stato.json` (`liveness`) | si, 8, 3, 20, 60, 900 |
 | `NOME_RETE` | nome in rete (`http://NOME.local`) | sweetspot |
 | `WIFI_NOME`, `WIFI_PASSWORD` | rete Wi-Fi, solo senza cavo | vuoto |
 | `HOTSPOT`, `HOTSPOT_ATTESA`, `HOTSPOT_PROVA`, `HOTSPOT_PASSWORD` | hotspot di configurazione del primo avvio (vedi [sotto](#hotspot-di-configurazione-wi-fi)): `si`/`no`, secondi di attesa senza rete prima di accenderlo, secondi concessi alla rete scelta prima che riparta, password scelta da te (8-63 caratteri; vuoto = casuale a ogni accensione, mostrata sullo schermo) | si, 60, 40, vuoto |

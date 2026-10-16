@@ -1,32 +1,64 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Sweetspot - demone dello stato: ogni pochi secondi calcola gli esiti di
+# Sweetspot - demone a eventi dello stato. Calcola gli esiti di
 # sweetspot-check e il traffico di rete e li lascia in cache, cosi' la pagina
 # Stato, l'endpoint JSON e il comando "sweetspot stato" di Lyrion leggono un
 # file invece di rifare i controlli a ogni richiesta.
 #
 #   sweetspot-stato aggiorna    un solo giro (scrive la cache e basta)
-#   sweetspot-stato sorveglia   giri ripetuti, piu' lenti durante l'ascolto
+#   sweetspot-stato sorveglia   il demone: aspetta eventi, non fa polling
+#
+# Il demone e' un solo processo shell che dorme in read -t su una FIFO
+# ($RUN/stato.eventi) dove tre ascoltatori di lunga durata, avviati una volta,
+# scrivono una riga per evento:
+#   L  CLI di Lyrion (nc sulla porta 9090, "subscribe playlist,mixer,
+#      prefset,client,rescan"): modo di ascolto, coda, client, scansioni, e
+#      la risposta a "version ?" che fa da liveness di Lyrion
+#   U  udev (udevadm monitor su sound, block, net): DAC e dischi collegati
+#      o scollegati, rete
+#   I  inotify (inotifyd su $RUN): configurazione, pid, player.mac, ...
+# Piu' le richieste (FIFO stato.richiesta, da pagina Stato, stato.json e
+# plugin di Lyrion) e pochi timer. Il resto del tempo il demone non lancia
+# alcun processo: meno di 100 fork al minuto a riposo (tests/forks-riposo.sh).
+#
+# Quando si calcola lo stato (do_round, un giro del check completo):
+#   - a un evento udev o inotify, o a un client/prefset di Lyrion (con
+#     1 s di raccolta e almeno STATO_MIN s dal giro precedente);
+#   - su richiesta di chi legge la cache piu' vecchia di 10 s (40 s durante
+#     l'ascolto);
+#   - come battito di sicurezza ogni STATO_BATTITO s (predefinito 900).
+# Il precarico (sweetspot-precarico) e' guidato dallo stesso demone: step()
+# sugli eventi playlist, senza il giro ogni 5 s con "status 0 1000".
+# La scansione della libreria (evento rescan) porta lo scanner a +500
+# nell'OOM killer senza un processo che controlla ogni 20 s.
+# La cache dei risultati di aplay del DAC (dac_cached) vale finche' udev
+# non segnala un evento sound.
 #
 # In $RUN (scritti in modo atomico, leggibili da tutti: li legge anche lms):
 #   stato.dati   righe "ESITO|voce|dettaglio", come sweetspot-check --dati,
 #                con in coda la riga del traffico di rete
 #   stato.json   gli stessi dati in JSON
-#   stato.ts     "momento intervallo" dell'ultimo giro (secondi)
+#   stato.ts     "momento tolleranza" dell'ultimo giro (secondi); la pagina
+#                avvisa se il dato e' piu' vecchio di 3 volte la tolleranza
 #   liveness.*   contatori della liveness applicativa (vedi sotto)
 #
-# Liveness applicativa, nello stesso giro (nessun nuovo poller):
-#   - Lyrion (solo modalita' completa): una richiesta JSON-RPC "serverstatus"
-#     deve rispondere entro LIVENESS_LYRION_TIMEOUT secondi; dopo
-#     LIVENESS_LYRION_FALLIMENTI fallimenti consecutivi si ferma Lyrion e il
-#     servizio (sweetspot-lms servizio) lo riavvia.
-#   - Player: se Lyrion dice "play" ma nessun PCM ALSA e' RUNNING da piu' di
-#     LIVENESS_PLAYER_SECONDI, lo stato e' "bloccato" e si ferma squeezelite;
-#     il supervisore (sweetspot-player) lo riavvia.
+# Liveness applicativa (nel demone, guidata dagli eventi):
+#   - Lyrion (solo modalita' completa): ogni LIVENESS_LYRION_PING s (45) il
+#     demone scrive "version ?" nella connessione CLI aperta: se la risposta
+#     arriva entro LIVENESS_LYRION_TIMEOUT s e' vivo, senza alcun processo. Se
+#     manca (o la CLI non e' collegata) si conferma con la richiesta
+#     JSON-RPC "serverstatus" (come prima); dopo LIVENESS_LYRION_FALLIMENTI
+#     fallimenti consecutivi si ferma Lyrion e il servizio (sweetspot-lms
+#     servizio) lo riavvia. Sospetto: si riprova ogni 15 s.
+#   - Player: il modo di Lyrion arriva dagli eventi playlist. Con "play" il
+#     demone guarda i PCM ALSA ogni 5 s con la sola shell (nessun fork); se
+#     nessuno e' RUNNING parte il conto, ogni 2 s, e dopo
+#     LIVENESS_PLAYER_SECONDI (20) un'ultima richiesta a Lyrion conferma e lo
+#     stato e' "bloccato": si ferma squeezelite, il supervisore
+#     (sweetspot-player) lo riavvia.
 # I riavvii hanno un backoff (LIVENESS_BACKOFF_MIN, raddoppia fino a
-# LIVENESS_BACKOFF_MAX) e finiscono nel log e nello stato. Durante l'ascolto
-# il giro e' piu' lungo: le soglie scattano al giro successivo.
+# LIVENESS_BACKOFF_MAX) e finiscono nel log e nello stato.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -34,15 +66,47 @@ DATI=$RUN/stato.dati
 JSON=$RUN/stato.json
 TS=$RUN/stato.ts
 NET=$RUN/stato.rete
-# Intervallo normale e durante l'ascolto (il check non e' leggero).
-EVERY=${SWEETSPOT_STATO_OGNI:-10}
-EVERY_LISTEN=${SWEETSPOT_STATO_OGNI_ASCOLTO:-45}
+# Tolleranza scritta in stato.ts: chi legge ne chiede un giro nuovo se il dato
+# ha piu' di 10 s, quindi oltre 3 volte questo valore il demone e' fermo.
+# Numero dalle variabili SWEETSPOT_STATO_*: se non e' un numero si usa il
+# predefinito e si scrive una riga nel log, senza spegnere il demone.
+num_env() { # valore predefinito nome
+	case "$1" in
+		''|*[!0-9]*) log "stato: $3='$1' non e' un numero, uso $2"; printf '%s' "$2" ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
+EVERY=$(num_env "${SWEETSPOT_STATO_TOLLERANZA:-20}" 20 SWEETSPOT_STATO_TOLLERANZA)
 
 net_bytes() { awk 'NR>2 && $1 !~ /^lo:/ {sub(/^[^:]*:/, ""); split($0, a, " "); t += a[1] + a[9]} END {print t+0}' "$PROC/net/dev"; }
 
 # Testo sicuro dentro una stringa JSON.
 json_esc() {
 	printf '%s' "$1" | tr '\001-\037' ' ' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# Lo stesso, con la sola shell: il risultato resta in JE. Un giro del check
+# chiama json_esc centinaia di volte, ognuna con tre processi.
+# shellcheck disable=SC2034
+json_esc_v() {
+	local s=$1 o='' r c
+	# Caratteri di controllo: uno spazio.
+	while :; do
+		case "$s" in *[[:cntrl:]]*) ;; *) break ;; esac
+		r=${s%%[[:cntrl:]]*}
+		s="$r ${s#"$r"?}"
+	done
+	# Barra e virgolette: una barra davanti.
+	while :; do
+		case "$s" in *[\\\"]*) ;; *) break ;; esac
+		r=${s%%[\\\"]*}
+		o="$o$r"
+		s=${s#"$r"}
+		c=${s%"${s#?}"}
+		s=${s#?}
+		o="$o\\$c"
+	done
+	JE="$o$s"
 }
 
 # Traffico in KB/s dall'ultimo giro: nessuno sleep, la misura e' la
@@ -99,11 +163,17 @@ lv_lyrion() { # momento
 	[ -r "$LV_LMS" ] && read -r fails last bo rpid nrest < "$LV_LMS"
 	tmo=$(lv_num LIVENESS_LYRION_TIMEOUT 8)
 	k=$(lv_num LIVENESS_LYRION_FALLIMENTI 3)
-	if LMS_TIMEOUT=$tmo lms_json '' serverstatus 0 0 > /dev/null 2>&1; then
+	# LV_CLI_OK=1: il demone ha appena avuto la risposta di Lyrion sulla
+	# connessione CLI (version ?), non serve il JSON-RPC.
+	if [ "${LV_CLI_OK:-0}" = 1 ] || LMS_TIMEOUT=$tmo lms_json '' serverstatus 0 0 > /dev/null 2>&1; then
 		[ "${fails:-0}" -gt 0 ] && log "liveness: Lyrion risponde di nuovo dopo $fails fallimenti"
 		lv_save "$LV_LMS" "0 ${last:-0} 0 ${rpid:-0} ${nrest:-0}"
 		LV_LYR_STATO=ok
-		lv_row OK "Lyrion risponde" "JSON-RPC serverstatus entro $tmo s (riavvii per liveness: ${nrest:-0})"
+		if [ "${LV_CLI_OK:-0}" = 1 ]; then
+			lv_row OK "Lyrion risponde" "CLI version ? entro $tmo s (riavvii per liveness: ${nrest:-0})"
+		else
+			lv_row OK "Lyrion risponde" "JSON-RPC serverstatus entro $tmo s (riavvii per liveness: ${nrest:-0})"
+		fi
 		return 0
 	fi
 	# Appena avviato (il servizio riscrive lms.pid a ogni avvio): si aspetta.
@@ -197,7 +267,7 @@ liveness_round() { # momento
 }
 
 do_round() {
-	local every=$1 kbs esito now listening=false rows sep='' e v d
+	local every=$1 kbs esito now listening=false rows sep='' e v d je jv
 	mkdir -p "$RUN"
 	now=$(date +%s)
 	kbs=$(traffic_kbs)
@@ -214,7 +284,8 @@ do_round() {
 		printf '{"ts":%s,"intervallo":%s,"ascolto":%s,"traffico_kbs":%s,%s,"voci":[' "$now" "$every" "$listening" "$kbs" "$LV_JSON"
 		while IFS='|' read -r e v d; do
 			[ -n "$v" ] || continue
-			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$(json_esc "$e")" "$(json_esc "$v")" "$(json_esc "$d")"
+			json_esc_v "$e"; je=$JE; json_esc_v "$v"; jv=$JE; json_esc_v "$d"
+			printf '%s{"esito":"%s","voce":"%s","dettaglio":"%s"}' "$sep" "$je" "$jv" "$JE"
 			sep=,
 		done < "$DATI.nuovo"
 		printf ']}\n'
@@ -226,14 +297,482 @@ do_round() {
 	mv "$DATI.nuovo" "$DATI"; mv "$JSON.nuovo" "$JSON"; mv "$TS.nuovo" "$TS"
 }
 
+
+# --- Demone a eventi -----------------------------------------------------------
+
+EV=$RUN/stato.eventi         # FIFO: una riga per evento (L, U, I, C, R)
+CLIF=$RUN/stato.cli          # FIFO verso la connessione CLI di Lyrion (nc)
+REQ=$RUN/stato.richiesta     # FIFO scrivibile da tutti: chiede un giro
+SOSTA=$RUN/stato.sosta       # FIFO mai scritta: serve a "dormire" senza fork
+ALLARME=$RUN/stato.allarme   # FIFO: secondi alla prossima scadenza, per l'allarme
+ATTIVA=$RUN/dac.cache.attiva # esiste finche' il demone gira (cache del DAC)
+# Porta CLI di Lyrion (la stessa di sweetspot-volume) e strumenti di ascolto
+# (sostituibili nelle prove: BusyBox preferisce i suoi applet al PATH).
+LMS_CLI_PORT=${SWEETSPOT_LMS_CLI_PORT:-9090}
+NC=${SWEETSPOT_NC:-nc}
+UDEVADM=${SWEETSPOT_UDEVADM:-udevadm}
+INOTIFYD=${SWEETSPOT_INOTIFYD:-inotifyd}
+BATTITO=$(num_env "${SWEETSPOT_STATO_BATTITO:-900}" 900 SWEETSPOT_STATO_BATTITO)
+MIN_GAP=$(num_env "${SWEETSPOT_STATO_MIN:-5}" 5 SWEETSPOT_STATO_MIN)
+PRE_GAP=5
+# Secondi dopo l'avvio di Lyrion in cui si cerca lo scanner anche senza evento.
+SCAN_WIN=$(num_env "${SWEETSPOT_STATO_SCAN:-120}" 120 SWEETSPOT_STATO_SCAN)
+
+# Secondi dall'avvio del computer, senza lanciare date (non salta con NTP).
+up_now() {
+	local u
+	read -r u _ < /proc/uptime 2>/dev/null && NOW=${u%%.*}
+}
+
+# Dorme in secondi senza fork: legge una FIFO che nessuno scrive.
+# (read -t c'e' nell'ash di BusyBox, non in dash: shellcheck non lo sa.)
+# shellcheck disable=SC3045
+nap() { read -r -t "$1" _ <&7; }
+
+# Impostazioni usate dal demone, lette dal file solo all'avvio e quando
+# cambia (ogni conf e' un processo).
+cfg_load() {
+	CFG_COMPLETA=0; [ "$(mode)" = completa ] && CFG_COMPLETA=1
+	CFG_LIVE=0; is_yes "$(conf LIVENESS si)" && CFG_LIVE=1
+	CFG_TMO=$(lv_num LIVENESS_LYRION_TIMEOUT 8)
+	CFG_PLY=$(lv_num LIVENESS_PLAYER_SECONDI 20)
+	LIVE_EVERY=$(lv_num LIVENESS_LYRION_PING 45)
+	[ "$LIVE_EVERY" -ge 5 ] || LIVE_EVERY=5
+	[ "$CFG_TMO" -ge 1 ] || CFG_TMO=1
+	CLI_USER=$(lms_user)
+	CLI_PASS=$(conf LYRION_PASSWORD)
+}
+
+# MAC del player in forma URL-encoded, come lo scrive la CLI di Lyrion.
+mac_load() {
+	local m=''
+	MAC_RAW=''; MAC_ENC=''
+	read -r m < "$RUN/player.mac" 2>/dev/null
+	MAC_RAW=$m
+	[ -z "$m" ] || MAC_ENC=$(printf '%s' "$m" | sed 's/:/%3A/g')
+}
+
+# Un giro nuovo del check completo: raccoglie gli eventi ravvicinati (1 s) e
+# rispetta MIN_GAP dal giro precedente.
+want_round() {
+	[ "$DIRTY" = 1 ] && return 0
+	DIRTY=1
+	DL_ROUND=$((NOW + 1))
+	[ "$DL_ROUND" -ge $((LAST_ROUND + MIN_GAP)) ] || DL_ROUND=$((LAST_ROUND + MIN_GAP))
+}
+
+run_round() {
+	DIRTY=0; DL_ROUND=0
+	do_round "$EVERY"
+	lms_scanner_step
+	up_now
+	LAST_ROUND=$NOW
+	DL_BEAT=$((NOW + BATTITO))
+	PUB_LYR=$LV_LYR_STATO
+}
+
+# Un passo del precarico (la coda di Lyrion e' cambiata).
+pre_want() {
+	[ "$PRE_OK" = 1 ] || return 0
+	[ "$PRE_DIRTY" = 1 ] && return 0
+	PRE_DIRTY=1
+	DL_PRE=$((NOW + 1))
+	[ "$DL_PRE" -ge $((PRE_LAST + PRE_GAP)) ] || DL_PRE=$((PRE_LAST + PRE_GAP))
+}
+
+pre_tick() {
+	DL_PRE=0; PRE_DIRTY=0
+	step
+	up_now
+	PRE_LAST=$NOW
+	# Con il caricamento in corso o la coda in RAM il passo si ripete ogni
+	# minuto (disco svegliato da altro, standby da ritentare); senza coda no.
+	if holder_running; then DL_PRETICK=$((NOW + 60)); else DL_PRETICK=0; fi
+}
+
+# Scanner di Lyrion: a +500 per l'OOM killer. Si controlla solo durante una
+# scansione (evento rescan) e nei due minuti dopo l'avvio di Lyrion.
+# Cgroup di memoria dello scanner e tmpfs delle copertine (sweetspot-lms
+# scanner, ex oom_watch): durante le scansioni e a ogni giro dello stato.
+# SWEETSPOT_LMS vuoto = non farlo (prove).
+lms_scanner_step() {
+	local cmd=${SWEETSPOT_LMS-${0%/*}/sweetspot-lms}
+	[ "$CFG_COMPLETA" = 1 ] && [ -n "$cmd" ] && [ -x "$cmd" ] && "$cmd" scanner
+	return 0
+}
+
+scan_window() {
+	[ "$SCAN_WIN" -gt 0 ] || return 0
+	SCAN_UNTIL=$((NOW + SCAN_WIN))
+	DL_SCAN=$((NOW + 10))
+}
+
+scan_tick() {
+	local lp=''
+	read -r lp < "$RUN/lms.pid" 2>/dev/null
+	[ -z "$lp" ] || oom_adj_cmd 500 scanner.pl "$lp"
+	lms_scanner_step
+	DL_SCAN=0
+	if [ "$SCANNING" = 1 ] || [ "$NOW" -lt "$SCAN_UNTIL" ]; then DL_SCAN=$((NOW + 20)); fi
+}
+
+# --- Liveness guidata dagli eventi ---------------------------------------------
+
+# Conferma con il JSON-RPC (come prima): aggiorna i contatori, puo' riavviare
+# Lyrion e chiede un giro se lo stato pubblicato e' cambiato.
+lms_probe() {
+	local lp=''
+	LV_CLI_OK=0
+	read -r lp < "$RUN/lms.pid" 2>/dev/null
+	[ -n "$lp" ] && kill -0 "$lp" 2>/dev/null || return 0
+	liveness_round "$(date +%s)"
+	[ "$LV_LYR_STATO" = "$PUB_LYR" ] || want_round
+	[ "$LV_LYR_STATO" = ok ] || DL_LIVE=$((NOW + 15))
+}
+
+# "version ?" sulla connessione CLI: la risposta arriva come riga L (REPLY_AT).
+live_tick() {
+	DL_LIVE=0
+	[ "$CFG_LIVE" = 1 ] && [ "$CFG_COMPLETA" = 1 ] || return 0
+	DL_LIVE=$((NOW + LIVE_EVERY))
+	if [ "$CLI_UP" = 1 ]; then
+		[ "$DL_PINGCHK" -gt 0 ] && return 0
+		echo "version ?" >&5
+		PING_AT=$NOW
+		DL_PINGCHK=$((NOW + CFG_TMO))
+	else
+		lms_probe
+	fi
+}
+
+ping_check() {
+	DL_PINGCHK=0
+	if [ "$REPLY_AT" -ge "$PING_AT" ]; then
+		LV_CLI_OK=1
+		if [ "$LV_SUSP" = 1 ]; then LV_SUSP=0; want_round; fi
+	else
+		LV_SUSP=1
+		lms_probe
+	fi
+}
+
+mode_resolve() {
+	local m=''
+	[ -z "$MAC_RAW" ] || m=$(LMS_TIMEOUT=$CFG_TMO lms_get '._mode' "$MAC_RAW" mode '?' 2>/dev/null)
+	LMS_MODE=${m:-x}
+}
+
+# Verdetto del player (lv_player: conferma il modo con Lyrion, applica soglia
+# e backoff, tiene i contatori).
+ply_call() {
+	lv_player "$(date +%s)"
+	case "$LV_PLY_STATO" in bloccato) PLY_SUSP=0; want_round ;; esac
+}
+
+# Con "play" il PCM deve essere RUNNING: lo si guarda con la sola shell. Se
+# non lo e' si conta, ogni 2 s, fino a LIVENESS_PLAYER_SECONDI (~20 s).
+player_tick() {
+	local pid='' s=0
+	DL_PLAYER=0
+	[ "$CFG_LIVE" = 1 ] && [ "$CFG_COMPLETA" = 1 ] || return 0
+	[ -n "$LMS_MODE" ] || mode_resolve
+	if [ "$LMS_MODE" = play ]; then
+		read -r pid < "$RUN/squeezelite.pid" 2>/dev/null
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			if dac_playing; then
+				if [ "$PLY_SUSP" = 1 ]; then PLY_SUSP=0; ply_call; fi
+				DL_PLAYER=$((NOW + 5))
+			elif [ "$PLY_SUSP" = 0 ]; then
+				PLY_SUSP=1; PLY_T0=$NOW
+				ply_call
+				DL_PLAYER=$((NOW + 2))
+			elif [ $((NOW - PLY_T0)) -ge "$CFG_PLY" ]; then
+				ply_call
+				if [ "$PLY_SUSP" = 1 ]; then
+					read -r s _ < "$LV_PLY" 2>/dev/null
+					if [ "${s:-0}" = 0 ]; then
+						# Lyrion non dice piu' "play": l'evento era vecchio.
+						PLY_SUSP=0; LMS_MODE=''
+					else
+						DL_PLAYER=$((NOW + 2))
+					fi
+				fi
+			else
+				DL_PLAYER=$((NOW + 2))
+			fi
+			return 0
+		fi
+	fi
+	if [ "$PLY_SUSP" = 1 ]; then PLY_SUSP=0; ply_call; fi
+	return 0
+}
+
+# --- Eventi --------------------------------------------------------------------
+
+# Righe della CLI: "<mac> playlist pause 1", "<mac> client new", "rescan done",
+# "version 9.1.1" (risposta al ping)...
+cli_line() {
+	local a b c d cmd arg
+	set -f; set -- $1; set +f
+	a=${1:-}; b=${2:-}; c=${3:-}; d=${4:-}
+	case "$a" in
+		version) REPLY_AT=$NOW; return 0 ;;
+		rescan)
+			case "$b" in
+				done) SCANNING=0; want_round ;;
+				*) SCANNING=1; DL_SCAN=$((NOW + 2)) ;;
+			esac
+			return 0 ;;
+		prefset)
+			# Lyrion scrive preferenze di continuo: solo quelle che cambiano
+			# la libreria rifanno il precarico e lo stato.
+			case "$c" in audiodir|playlistdir) pre_want; want_round ;; esac
+			return 0 ;;
+		login|subscribe|listen) return 0 ;;
+	esac
+	case "$b" in
+		client)
+			want_round
+			if [ -z "$MAC_ENC" ] || [ "$a" = "$MAC_ENC" ]; then
+				LMS_MODE=''; DL_PLAYER=$NOW; pre_want
+			fi
+			return 0 ;;
+	esac
+	[ -z "$MAC_ENC" ] || [ "$a" = "$MAC_ENC" ] || return 0
+	case "$b" in
+		playlist) cmd=$c; arg=$d ;;
+		play|pause|stop) cmd=$b; arg=$c ;;
+		*) return 0 ;;
+	esac
+	case "$cmd" in
+		play|newsong) LMS_MODE=play ;;
+		stop) LMS_MODE=stop ;;
+		pause)
+			case "$arg" in
+				1) LMS_MODE=pause ;;
+				0) LMS_MODE=play ;;
+				*) LMS_MODE='' ;;
+			esac ;;
+	esac
+	DL_PLAYER=$NOW
+	pre_want
+}
+
+# Righe di udevadm monitor: "UDEV  [123.456] add /devices/... (sound)".
+udev_line() {
+	case "$1" in
+		"UDEV  ["*"(sound)") dac_cache_purge; want_round ;;
+		"UDEV  ["*"(block)"|"UDEV  ["*"(net)") want_round ;;
+	esac
+}
+
+# Righe di inotifyd: "w<TAB>/run/sweetspot/sweetspot.conf".
+ino_line() {
+	local name=${1##*	}
+	name=${name##*/}
+	case "$name" in
+		sweetspot.conf) cfg_load; mac_load; want_round; pre_want ;;
+		player.mac) mac_load; LMS_MODE=''; DL_PLAYER=$NOW; pre_want ;;
+		squeezelite.pid) PLY_SUSP=0; DL_PLAYER=$NOW; want_round ;;
+		lms.pid) scan_window; want_round ;;
+		volume.effettivo|volume.modo|correzione.filtri|correzione.attiva) want_round ;;
+		precarico.stato) pre_want ;;
+	esac
+}
+
+# La connessione CLI e' pronta: login (se serve), iscrizione agli eventi e
+# un primo ping.
+cli_hello() {
+	CLI_UP=1
+	if [ -n "$CLI_USER" ]; then echo "login $CLI_USER $CLI_PASS" >&5; fi
+	echo "subscribe playlist,mixer,prefset,client,rescan" >&5
+	echo "version ?" >&5
+	PING_AT=$NOW; DL_PINGCHK=$((NOW + CFG_TMO))
+	LMS_MODE=''; DL_PLAYER=$NOW
+	pre_want
+}
+
+# La FIFO si rifa a ogni caduta: i comandi non consumati non finiscono nella
+# connessione successiva.
+cli_down() {
+	CLI_UP=0; LV_CLI_OK=0; DL_PINGCHK=0; LMS_MODE=''
+	rm -f "$CLIF"
+	mkfifo -m 600 "$CLIF"
+	exec 5<>"$CLIF"
+	DL_LIVE=$((NOW + 5))
+}
+
+handle() {
+	# Diagnosi: SWEETSPOT_STATO_DEBUG=1 annota ogni evento con il momento.
+	[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "$NOW $1" >> "$RUN/stato.debug"
+	case "$1" in
+		"L "*) cli_line "${1#L }" ;;
+		"U "*) udev_line "${1#U }" ;;
+		"I "*) ino_line "${1#I }" ;;
+		"C su") cli_hello ;;
+		"C giu") cli_down ;;
+		R) want_round ;;
+	esac
+}
+
+# --- Ascoltatori: processi di lunga durata, avviati una sola volta -------------
+
+start_feeders() {
+	rm -f "$EV" "$CLIF" "$REQ" "$SOSTA" "$ALLARME"
+	mkfifo -m 600 "$EV" "$CLIF" "$SOSTA" "$ALLARME" || return 1
+	mkfifo -m 622 "$REQ" || return 1
+	exec 3<>"$EV" 5<>"$CLIF" 6<>"$REQ" 7<>"$SOSTA" 8<>"$ALLARME"
+	FEEDERS=''
+	# L'allarme: attende i secondi scritti nella FIFO e poi scrive T.
+	(
+		w=3600
+		while :; do
+			# shellcheck disable=SC3045
+			if read -r -t "$w" a <&8; then
+				[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "allarme: comando [$a] (era $w)" >> "$RUN/stato.debug"
+				case "$a" in ''|*[!0-9]*) ;; *) w=$a ;; esac
+			else
+				[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "allarme: T dopo $w s" >> "$RUN/stato.debug"
+				echo T >&3
+				w=3600
+			fi
+		done
+	) &
+	FEEDERS="$FEEDERS $!"
+	# Richieste di chi legge la cache: qualunque riga vale "R".
+	(
+		while IFS= read -r _; do echo R; done <&6 >&3
+	) &
+	FEEDERS="$FEEDERS $!"
+	if command -v "$UDEVADM" >/dev/null 2>&1; then
+		(
+			while :; do
+				"$UDEVADM" monitor --udev -s sound -s block -s net 2>/dev/null |
+					while IFS= read -r l; do echo "U $l"; done >&3
+				nap 30
+			done
+		) &
+		FEEDERS="$FEEDERS $!"
+	fi
+	if command -v "$INOTIFYD" >/dev/null 2>&1; then
+		(
+			while :; do
+				"$INOTIFYD" -"$RUN:wyn" 2>/dev/null |
+					while IFS= read -r l; do echo "I $l"; done >&3
+				nap 30
+			done
+		) &
+		FEEDERS="$FEEDERS $!"
+	fi
+	if [ "$CFG_COMPLETA" = 1 ] && command -v "$NC" >/dev/null 2>&1; then
+		(
+			wait_s=5
+			while :; do
+				p=''
+				read -r p < "$RUN/lms.pid" 2>/dev/null
+				if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then nap 15; continue; fi
+				t0=$(read -r u _ < /proc/uptime && echo "${u%%.*}")
+				echo "C su" >&3
+				"$NC" "$LMS_HOST" "$LMS_CLI_PORT" < "$CLIF" 2>/dev/null |
+					while IFS= read -r l; do echo "L $l"; done >&3
+				echo "C giu" >&3
+				read -r u _ < /proc/uptime
+				if [ $(( ${u%%.*} - ${t0:-0} )) -gt 60 ]; then wait_s=5; fi
+				nap "$wait_s"
+				wait_s=$((wait_s * 2)); [ "$wait_s" -le 60 ] || wait_s=60
+			done
+		) &
+		FEEDERS="$FEEDERS $!"
+	fi
+}
+
+daemon_stop() {
+	local p
+	trap '' TERM INT
+	for p in $FEEDERS; do
+		pkill -P "$p" 2>/dev/null
+		kill "$p" 2>/dev/null
+	done
+	if [ "$PRE_OK" = 1 ]; then release; write_summary spento; fi
+	rm -f "$ATTIVA" "$EV" "$CLIF" "$REQ" "$SOSTA" "$ALLARME"
+	exit 0
+}
+
+# Il tempo che passa arriva come riga T, scritta da un solo allarme di lunga
+# durata (subshell avviata una volta, vedi start_feeders): attende con read -t
+# sulla FIFO dell'allarme i secondi che il demone gli scrive (la scadenza piu'
+# vicina), poi scrive T. Si riarma solo quando e' scattato o se una scadenza
+# nuova e' piu' vicina: nessun processo per scadenza, nessun ticker. Se il
+# comando di riarmo si perdesse a meta' riga, l'allarme scatta comunque col
+# vecchio tempo e il demone lo riarma.
+arm_alarm() {
+	local m=0 d w
+	for d in $DL_ROUND $DL_BEAT $DL_LIVE $DL_PINGCHK $DL_PLAYER $DL_PRE $DL_PRETICK $DL_SCAN; do
+		[ "$d" -gt 0 ] || continue
+		if [ "$m" -eq 0 ] || [ "$d" -lt "$m" ]; then m=$d; fi
+	done
+	[ "$m" -gt 0 ] || return 0
+	w=$((m - NOW))
+	[ "$w" -ge 1 ] || w=1
+	if [ "$ALARM_FIRE" -le "$NOW" ] || [ $((NOW + w)) -lt "$ALARM_FIRE" ]; then
+		ALARM_FIRE=$((NOW + w))
+		[ -z "$SWEETSPOT_STATO_DEBUG" ] || echo "$NOW arma $w (fire $ALARM_FIRE)" >> "$RUN/stato.debug"
+		echo "$w" >&8
+	fi
+}
+
+timers() {
+	[ "$TIMEDOUT" = 1 ] && [ "$DL_PINGCHK" -gt 0 ] && [ "$NOW" -ge "$DL_PINGCHK" ] && ping_check
+	[ "$DL_LIVE" -gt 0 ] && [ "$NOW" -ge "$DL_LIVE" ] && live_tick
+	[ "$DL_PLAYER" -gt 0 ] && [ "$NOW" -ge "$DL_PLAYER" ] && player_tick
+	[ "$DL_SCAN" -gt 0 ] && [ "$NOW" -ge "$DL_SCAN" ] && scan_tick
+	[ "$DL_PRETICK" -gt 0 ] && [ "$NOW" -ge "$DL_PRETICK" ] && { DL_PRETICK=0; pre_want; }
+	[ "$DL_PRE" -gt 0 ] && [ "$NOW" -ge "$DL_PRE" ] && pre_tick
+	[ "$DL_BEAT" -gt 0 ] && [ "$NOW" -ge "$DL_BEAT" ] && { DL_BEAT=0; want_round; }
+	[ "$DL_ROUND" -gt 0 ] && [ "$NOW" -ge "$DL_ROUND" ] && run_round
+	return 0
+}
+
 do_watch() {
-	local every
-	trap 'exit 0' TERM INT
-	while true; do
-		every=$EVERY
-		is_yes "$(conf MODALITA_ASCOLTO si)" && dac_playing && every=$EVERY_LISTEN
-		do_round "$every"
-		sleep "$every"
+	local line pre
+	mkdir -p "$RUN"
+	NOW=0; up_now
+	DIRTY=0; DL_ROUND=0; DL_BEAT=0; DL_LIVE=0; DL_PINGCHK=0; DL_PLAYER=0
+	DL_PRE=0; DL_PRETICK=0; DL_SCAN=0
+	LAST_ROUND=$((NOW - MIN_GAP)); PRE_LAST=$((NOW - PRE_GAP)); PRE_DIRTY=0
+	CLI_UP=0; LV_CLI_OK=0; LV_SUSP=0; PUB_LYR=''; PING_AT=0; REPLY_AT=0
+	LMS_MODE=''; PLY_SUSP=0; PLY_T0=0; SCANNING=0; SCAN_UNTIL=0; TIMEDOUT=0
+	FEEDERS=''; PRE_OK=0; ALARM_FIRE=0
+	cfg_load; mac_load
+	trap daemon_stop TERM INT
+	: > "$ATTIVA"
+	dac_cache_purge
+	pre=${SWEETSPOT_PRECARICO:-${0%/*}/sweetspot-precarico}
+	[ -r "$pre" ] || pre=/usr/bin/sweetspot-precarico
+	if [ -r "$pre" ]; then
+		SWEETSPOT_TEST=1
+		# shellcheck disable=SC1090
+		. "$pre"
+		unset SWEETSPOT_TEST
+		PRE_OK=1
+	fi
+	start_feeders || { log "stato: FIFO degli eventi non create"; exit 1; }
+	[ "$CFG_COMPLETA" = 1 ] && [ -s "$RUN/lms.pid" ] && scan_window
+	run_round
+	DL_LIVE=$((NOW + LIVE_EVERY))
+	pre_want
+	while :; do
+		TIMEDOUT=0
+		arm_alarm
+		# Lettura bloccante, senza -t: un timeout che scade a meta' riga
+		# butta via i primi byte (la riga dopo arriva troncata).
+		read -r line <&3
+		up_now
+		case "$line" in
+			T) TIMEDOUT=1 ;;
+			*) handle "$line" ;;
+		esac
+		timers
 	done
 }
 

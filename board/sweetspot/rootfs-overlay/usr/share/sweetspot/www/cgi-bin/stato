@@ -7,9 +7,11 @@
 # La pagina legge solo la cache del demone sweetspot-stato (esiti e traffico
 # di rete): niente attese e niente controlli a ogni richiesta.
 CACHE_DATI=$RUN/stato.dati
-read -r st_ts st_every < "$RUN/stato.ts" 2>/dev/null || { st_ts=0; st_every=10; }
+# Cache piu' vecchia di qualche secondo: il demone fa un giro nuovo adesso.
+stato_richiedi
+read -r st_ts st_every < "$RUN/stato.ts" 2>/dev/null || { st_ts=0; st_every=20; }
 case "$st_ts" in ''|*[!0-9]*) st_ts=0 ;; esac
-case "$st_every" in ''|*[!0-9]*) st_every=10 ;; esac
+case "$st_every" in ''|*[!0-9]*) st_every=20 ;; esac
 st_age=$(( $(date +%s) - st_ts ))
 
 page_start "Stato" stato 15

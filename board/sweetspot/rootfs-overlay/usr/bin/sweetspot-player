@@ -19,6 +19,7 @@
 
 SQLOG=/var/log/squeezelite.log
 DSPLOG=${SWEETSPOT_DSPLOG:-/var/log/camilladsp.log}
+CAMILLADSP=${SWEETSPOT_CAMILLADSP:-/usr/bin/camilladsp}
 STATE=$RUN/player.stato
 
 # Ritardo prima di riavviare squeezelite terminato da solo: raddoppia
@@ -180,12 +181,33 @@ pin_output_thread() {
 }
 
 # Priorita' real-time di CamillaDSP: sotto quella del player (che lo
-# alimenta) e delle interruzioni USB, mai fuori da 1..98.
+# alimenta) e delle interruzioni USB, mai fuori da 1..98. E' quella del
+# thread di riproduzione, il piu' vicino al DAC.
 dsp_priority() {
 	local p
 	p=$(num_conf PRIORITA_DSP 70)
 	[ "$p" -ge 1 ] || p=1
 	[ "$p" -le 98 ] || p=98
+	printf '%s' "$p"
+}
+
+# Priorita' di un thread audio di CamillaDSP, per ruolo (con i thread dai
+# nomi della nostra patch): la riproduzione sul DAC ha la piu' alta
+# (PRIORITA_DSP), l'elaborazione una in meno, la cattura due in meno. Il
+# thread di riproduzione non deve mai avere meno di quello che lo alimenta:
+# se e' piu' basso, sotto carico l'elaborazione lo affama e il DAC va in
+# underrun. Senza i nomi (named=0) tutti i thread hanno PRIORITA_DSP.
+dsp_thread_priority() { # comm named
+	local p
+	p=$(dsp_priority)
+	if [ "$2" = 1 ]; then
+		case "$1" in
+			AlsaPlayback|AlsaPlaybackInner) ;;
+			Processing) p=$((p - 1)) ;;
+			*) p=$((p - 2)) ;;
+		esac
+	fi
+	[ "$p" -ge 1 ] || p=1
 	printf '%s' "$p"
 }
 
@@ -202,19 +224,19 @@ dsp_audio_thread() { # comm
 thread_cpus() { sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' "$1/status" 2>/dev/null; }
 thread_sched() { sed 's/.*) //' "$1/stat" 2>/dev/null | cut -d' ' -f38,39; }
 
-# CamillaDSP (correzione ambientale o volume a 64 bit): lo avvia il plugin
-# ALSA a ogni brano, dal thread real-time di Squeezelite, quindi nasce con
-# la sua priorita' (80) sul core della riproduzione. I suoi thread audio
-# restano li', in real-time sotto il player (SCHED_FIFO, PRIORITA_DSP); gli
-# altri (principale, segnali, websocket, connessioni di sweetspot-camilla)
-# vanno sui core di sistema con la priorita' normale: sul core isolato
-# gira solo l'audio. Senza thread "Processing" (CamillaDSP senza la nostra
-# patch) si trattano tutti come audio, come prima. Un thread gia' a posto
-# non si tocca; si controlla a ogni giro.
+# CamillaDSP (correzione ambientale o volume a 64 bit): una sola istanza per
+# sessione, avviata da questo supervisore (start_dsp) con i core di sistema.
+# Qui i suoi thread audio passano sul core della riproduzione in real-time
+# sotto il player (SCHED_FIFO, PRIORITA_DSP e i gradini di
+# dsp_thread_priority); gli altri (principale, segnali, websocket,
+# connessioni di sweetspot-camilla) restano sui core di sistema con la
+# priorita' normale: sul core isolato gira solo l'audio. Senza thread
+# "Processing" (CamillaDSP senza la nostra patch) si trattano tutti come
+# audio, come prima. Un thread gia' a posto non si tocca; si controlla a
+# ogni giro.
 pin_dsp() {
 	local p t tid prio comm named audio
 	[ -f "$RUN/correzione.attiva" ] || return 0
-	prio=$(dsp_priority)
 	for p in $(pidof camilladsp 2>/dev/null); do
 		oom_adj -1000 "$p"
 		named=0
@@ -227,6 +249,7 @@ pin_dsp() {
 			comm=$(cat "$t/comm" 2>/dev/null)
 			if [ "$named" = 1 ] && ! dsp_audio_thread "$comm"; then audio=0; else audio=1; fi
 			if [ "$audio" = 1 ]; then
+				prio=$(dsp_thread_priority "$comm" "$named")
 				[ "$PIN" = 1 ] && [ "$(thread_cpus "$t")" != "$LAYOUT_AUDIO" ] &&
 					taskset -p -c "$LAYOUT_AUDIO" "$tid" >/dev/null 2>&1
 				[ "$(thread_sched "$t")" = "$prio 1" ] || chrt -f -p "$prio" "$tid" >/dev/null 2>&1
@@ -239,12 +262,93 @@ pin_dsp() {
 		if [ "$(cat "$RUN/dsp.pid" 2>/dev/null)" != "$p" ]; then
 			echo "$p" > "$RUN/dsp.pid"
 			if [ "$PIN" = 1 ]; then
-				log "player: CamillaDSP $p, thread audio in real-time (priorita' $prio) sul core $LAYOUT_AUDIO, gli altri sui core $HK"
+				log "player: CamillaDSP $p, thread audio in real-time (priorita' $(dsp_priority), elaborazione e cattura sotto) sul core $LAYOUT_AUDIO, gli altri sui core $HK"
 			else
-				log "player: CamillaDSP $p, thread audio in real-time (priorita' $prio)"
+				log "player: CamillaDSP $p, thread audio in real-time (priorita' $(dsp_priority))"
 			fi
 		fi
 	done
+}
+
+# Un'unica istanza di CamillaDSP per sessione. La avvia il supervisore (non
+# il thread real-time di Squeezelite) sui core di sistema; legge i campioni
+# dalla pipe $DSP_FIFO, aperta in lettura e scrittura cosi' non vede mai
+# la fine del file tra un brano e l'altro. Il plugin cdsp vi scrive i
+# campioni e, a ogni cambio di frequenza, fa caricare al websocket la
+# configurazione della nuova frequenza (camilladsp-FREQ.yml): il processo
+# resta lo stesso, sul DAC cambia solo la frequenza. Se muore, il
+# supervisore lo riavvia.
+DSPPROC=""
+DSP_RIPROVA=0
+
+# Vivo: il processo esiste e non e' uno zombie (un figlio morto resta
+# zombie finche' la shell non lo raccoglie con wait).
+dsp_alive() {
+	local st
+	[ -n "$DSPPROC" ] && kill -0 "$DSPPROC" 2>/dev/null || return 1
+	st=$(sed 's/.*) //' "/proc/$DSPPROC/stat" 2>/dev/null | cut -c1)
+	[ "$st" != Z ]
+}
+
+stop_dsp() {
+	local wd
+	if [ -n "$DSPPROC" ]; then
+		if dsp_alive; then
+			kill "$DSPPROC" 2>/dev/null
+			# Se non esce entro 4 secondi lo si forza; wait lo raccoglie e
+			# il DAC e' libero prima che il prossimo processo lo riapra.
+			( sleep 4; kill -9 "$DSPPROC" 2>/dev/null ) &
+			wd=$!
+			wait "$DSPPROC" 2>/dev/null
+			kill "$wd" 2>/dev/null
+		else
+			wait "$DSPPROC" 2>/dev/null
+		fi
+	fi
+	DSPPROC=""
+	rm -f "$DSP_FIFO" "$RUN/dsp.pid"
+}
+
+start_dsp() {
+	local args i=0
+	stop_dsp
+	args=$(sweetspot-dsp avvio) || { echo "configurazione di CamillaDSP mancante" > "$RUN/correzione.motivo"; return 1; }
+	rm -f "$DSP_FIFO"
+	mkfifo -m 600 "$DSP_FIFO" || { echo "pipe di CamillaDSP non creata" > "$RUN/correzione.motivo"; return 1; }
+	# shellcheck disable=SC2086
+	taskset -c "$HK" "$CAMILLADSP" $args <> "$DSP_FIFO" > /dev/null 2>&1 &
+	DSPPROC=$!
+	# Pronto quando risponde al websocket: se esce prima, non parte.
+	while [ "$i" -lt 10 ]; do
+		dsp_alive || break
+		sweetspot-camilla "$DSP_PORTA" GetState > /dev/null 2>&1 && break
+		sleep 1
+		i=$((i + 1))
+	done
+	if ! dsp_alive || ! sweetspot-camilla "$DSP_PORTA" GetState > /dev/null 2>&1; then
+		echo "CamillaDSP non si avvia (vedi $DSPLOG)" > "$RUN/correzione.motivo"
+		stop_dsp
+		return 1
+	fi
+	oom_adj -1000 "$DSPPROC"
+	log "player: CamillaDSP $DSPPROC avviato per la sessione ($args)"
+	return 0
+}
+
+# Riavvia l'istanza se e' morta (al massimo una volta ogni 10 secondi).
+dsp_session_check() {
+	[ -f "$RUN/correzione.attiva" ] || return 0
+	dsp_alive && return 0
+	[ "$(date +%s)" -ge "$DSP_RIPROVA" ] || return 0
+	DSP_RIPROVA=$(( $(date +%s) + 10 ))
+	log "player: CamillaDSP terminato, riavvio"
+	if start_dsp; then
+		# La nuova istanza parte dal file di volume: si riallinea al volume
+		# richiesto e volume.applicato torna quello confermato dalla nuova istanza.
+		[ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ] && sweetspot-volume risincronizza
+	else
+		log "player: CamillaDSP non riparte: $(cat "$RUN/correzione.motivo" 2>/dev/null)"
+	fi
 }
 
 # Inizio della sessione del player: da qui si contano XRUN, interruzioni
@@ -333,7 +437,7 @@ dsp_stato_poll() {
 	{
 		printf 'percorso=%s\npolitica=%s\nerrore=%s\nprocesso=%s\nstato=%s\n' "$via" "$pol" "$err" "${p:-}" "$st"
 		printf 'picco_ingresso=%s\npicco_uscita=%s\ncampioni_tagliati=%s\naggiornato=%s\n' "$pin" "$pout" "${clip:-0}" "$(date +%s)"
-		printf 'underrun=%s\n' "${und:-0}"
+		printf 'underrun=%s\navviso=%s\n' "${und:-0}" "$(cat "$RUN/correzione.avviso" 2>/dev/null)"
 	} > "$RUN/dsp.stato.tmp" && mv "$RUN/dsp.stato.tmp" "$RUN/dsp.stato"
 }
 
@@ -726,7 +830,8 @@ run_player() {
 	# correzione.attiva: CamillaDSP e' nel percorso; correzione.filtri: con i
 	# filtri della stanza; volume.modo: dsp (volume a 64 bit) o riserva.
 	dsp=""
-	rm -f "$RUN/correzione.attiva" "$RUN/correzione.filtri" "$RUN/correzione.errore" "$RUN/correzione.motivo" "$RUN/volume.modo"
+	rm -f "$RUN/correzione.attiva" "$RUN/correzione.filtri" "$RUN/correzione.errore" "$RUN/correzione.motivo" "$RUN/volume.modo" "$RUN/volume.motivo"
+	stop_dsp
 	# Correzione chiesta ma file mancanti, illeggibili, malformati o
 	# incoerenti: errore visibile in Stato e, con la politica blocca, niente
 	# riproduzione. Mai suono senza correzione in silenzio.
@@ -734,7 +839,7 @@ run_player() {
 	if [ -n "$problema" ]; then
 		correzione_non_applicabile "$problema" || return 1
 	elif sweetspot-dsp attiva; then
-		if dsp=$(sweetspot-dsp prepara "$card"); then
+		if dsp=$(sweetspot-dsp prepara "$card") && start_dsp; then
 			echo "$dsp" > "$RUN/correzione.attiva"
 			if sweetspot-dsp correzione; then
 				touch "$RUN/correzione.filtri"
@@ -746,6 +851,7 @@ run_player() {
 			fi
 		else
 			dsp=""
+			stop_dsp
 			if sweetspot-dsp richiesta; then
 				problema=$(cat "$RUN/correzione.motivo" 2>/dev/null)
 				correzione_non_applicabile "${problema:-preparazione di CamillaDSP non riuscita}" || return 1
@@ -756,7 +862,16 @@ run_player() {
 	# player): il volume resta regolabile dal software, mai fisso al massimo.
 	if [ "$(lower "$(conf VOLUME fisso)")" = dsp ] && [ ! -f "$RUN/volume.modo" ]; then
 		echo riserva > "$RUN/volume.modo"
-		log "player: volume a 64 bit non disponibile, uso il volume software"
+		# Il perche' va in Stato e nella pagina Audio, oltre che nel registro.
+		if [ "$(mode)" != completa ] && [ -z "$(conf SERVER)" ]; then
+			problema="modalita' player senza SERVER: il volume si legge da Lyrion e il suo indirizzo non e' noto (indica SERVER)"
+		elif [ -s "$RUN/correzione.motivo" ]; then
+			problema="CamillaDSP non preparato: $(cat "$RUN/correzione.motivo")"
+		else
+			problema="CamillaDSP non disponibile"
+		fi
+		echo "$problema" > "$RUN/volume.motivo"
+		log "player: volume a 64 bit non disponibile ($problema), uso il volume software"
 	fi
 	if [ -n "$dsp" ]; then
 		set -- -o "$dsp" -O "hw:CARD=$id" -a "$alsa:$periods::0"
@@ -863,6 +978,7 @@ EOF
 # divergono li reimposta e, se non ci riesce, lo scrive in
 # $RUN/fedelta.stato e nel log (una volta per cambio di stato).
 PREFS_OGNI=${SWEETSPOT_PREFS_OGNI:-15}
+PREFS_ATTIVO=$PREFS_OGNI
 
 prefs_stato() { # testo
 	[ "$(cat "$RUN/fedelta.stato" 2>/dev/null)" = "$1" ] && return 0
@@ -937,13 +1053,32 @@ apply_player_prefs() {
 	fi
 }
 
+# Istanza del DAC senza processi: id ALSA e, per USB, busnum:devnum del
+# dispositivo (come dac_instance, ma con la sola shell; il percorso USB si
+# ricava una volta per sessione con inst_fast_start).
+inst_fast_start() { # scheda
+	INSTP=$(dac_usb_device "$1" 2>/dev/null)
+	inst_fast "$1"
+}
+inst_fast() { # scheda
+	local id='' bus='' dev=''
+	read -r id < "$PROC/asound/card$1/id" 2>/dev/null
+	if [ -n "$INSTP" ] && [ -f "$INSTP/devnum" ]; then
+		read -r bus < "$INSTP/busnum" 2>/dev/null
+		read -r dev < "$INSTP/devnum" 2>/dev/null
+	fi
+	IFAST="$id $bus:$dev"
+}
+SORVEGLIA_LUNGO=${SWEETSPOT_SORVEGLIA_LUNGO:-60}
+SORVEGLIA_RIPOSO=${SWEETSPOT_SORVEGLIA_RIPOSO:-300}
+
 player_loop() {
 	BACKOFF=0
 	while true; do
 		# DAC in uso dal Bluetooth: nessuno riapre Squeezelite finche' non lo restituisce.
 		if bt_dac_busy; then
 			[ "$(cat "$STATE" 2>/dev/null)" = "DAC in uso dal Bluetooth" ] || say "DAC in uso dal Bluetooth"
-			sleep 2
+			nap 2
 			continue
 		fi
 		card=$(dac_find)
@@ -951,18 +1086,17 @@ player_loop() {
 			[ "$(cat "$STATE" 2>/dev/null)" = "in attesa del DAC" ] || say "in attesa del DAC"
 			# Le zone continuano anche senza il DAC principale.
 			zones_sync ""
-			sleep 3
+			nap 3
 			continue
 		fi
-		inst=$(dac_instance "$card")
 		remember_main_dac "$card"
 		setup_usb_irq "$card"
 		run_player "$card" || {
 			if [ -s "$RUN/correzione.errore" ] && [ "$(dsp_politica)" = blocca ]; then
 				[ "$(cat "$STATE" 2>/dev/null)" = "bloccato: correzione non disponibile" ] || say "bloccato: correzione non disponibile"
-				sleep 10
+				nap 10
 			else
-				sleep 2
+				nap 2
 			fi
 			continue
 		}
@@ -974,42 +1108,86 @@ player_loop() {
 		start_volume_watch
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
 		rm -f "$RUN/audio.tid"
+		# Il DAC e la sua istanza si guardano a ogni giro con la sola shell
+		# (nessun processo); il resto (zone, preferenze, rotazione del
+		# registro, stato di CamillaDSP) a riposo ogni SORVEGLIA_LUNGO s: a
+		# ogni giro costava decine di processi, la fonte principale dei fork
+		# a riposo. Con la correzione attiva, o finche' il thread audio non
+		# e' agganciato, il giro completo resta ogni 2 s.
+		inst_fast_start "$card"
+		inst_ref=$IFAST
+		prossimo=0
+		ripr=0
+		read -r ini_s _ < /proc/uptime
+		ini_s=${ini_s%%.*}
 		while kill -0 "$PID" 2>/dev/null; do
 			# Con CamillaDSP nel percorso si guarda piu' spesso: ogni nuovo
 			# processo nasce con la priorita' del player e va sistemato.
-			if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then sleep 5; else sleep 2; fi
-			pin_output_thread "$PID"
-			pin_dsp
-			dsp_clip_poll
-			dsp_underrun_poll
-			dsp_stato_poll
-			sqlog_rotate "$SQLOG"
-			log_quota_tick
-			zones_sync "$card"
-			apply_player_prefs
-			sync_poll "$PLAYER_MAC"
-			if [ ! -d "$PROC/asound/card$card" ] || [ "$(dac_instance "$card")" != "$inst" ]; then
+			# A riposo (nessuna riproduzione sul DAC) il giro e' sempre lento.
+			if dac_playing; then
+				if [ "$ripr" = 0 ]; then ripr=1; prossimo=0; fi
+				if [ -f "$RUN/audio.tid" ] && [ ! -f "$RUN/correzione.attiva" ]; then nap 5; else nap 2; fi
+			else
+				ripr=0
+				nap 5
+			fi
+			inst_fast "$card"
+			if [ ! -d "$PROC/asound/card$card" ] || [ "$IFAST" != "$inst_ref" ]; then
 				log "player: DAC scollegato o ricollegato"
 				LOST=1
 				kill "$PID" 2>/dev/null
+				break
+			fi
+			read -r adesso_s _ < /proc/uptime
+			adesso_s=${adesso_s%%.*}
+			# Giro completo ogni 2 s solo mentre il DAC riproduce (correzione
+			# attiva o thread audio non agganciato); a riposo ogni SORVEGLIA_LUNGO.
+			# Nei primi 30 s un gruppo di sincronizzazione da ripristinare si guarda ogni 5 s.
+			pend=0
+			if [ "$adesso_s" -lt $((ini_s + 30)) ]; then
+				for f in "$SYNC_DIR"/*.pendente; do [ -f "$f" ] && pend=1; done
+			fi
+			if [ "$adesso_s" -ge "$prossimo" ] || [ "$pend" = 1 ] || { [ "$ripr" = 1 ] && { [ -f "$RUN/correzione.attiva" ] || [ ! -f "$RUN/audio.tid" ]; }; }; then
+				if [ "$ripr" = 1 ]; then
+					prossimo=$((adesso_s + SORVEGLIA_LUNGO))
+					PREFS_OGNI=$PREFS_ATTIVO
+					pin_output_thread "$PID"
+					pin_dsp
+					dsp_clip_poll
+					dsp_underrun_poll
+				else
+					# A riposo (nessuna riproduzione) contano solo le cose che
+					# non dipendono dal flusso: il giro costa decine di
+					# processi (jq, wget, sottoshell) e si fa raramente.
+					prossimo=$((adesso_s + SORVEGLIA_RIPOSO))
+					PREFS_OGNI=$SORVEGLIA_RIPOSO
+				fi
+				dsp_session_check
+				dsp_stato_poll
+				sqlog_rotate "$SQLOG"
+				log_quota_tick
+				zones_sync "$card"
+				apply_player_prefs
+				sync_poll "$PLAYER_MAC"
 			fi
 		done
 		wait "$PID" 2>/dev/null
 		stop_watch "$LATPID"
 		stop_watch "$VOLPID"
+		stop_dsp
 		rm -f "$RUN/audio.tid"
 		if [ "$LOST" = 1 ]; then
 			BACKOFF=0
 			say "riavvio del player"
-			sleep 2
+			nap 2
 		else
 			BACKOFF=$(backoff_next "$BACKOFF" $(( $(date +%s) - t0 )))
 			if [ "$BACKOFF" -gt 0 ]; then
 				say "squeezelite terminato subito, nuovo tentativo tra $BACKOFF s"
-				sleep "$BACKOFF"
+				nap "$BACKOFF"
 			else
 				say "riavvio del player"
-				sleep 2
+				nap 2
 			fi
 		fi
 	done
@@ -1019,9 +1197,12 @@ player_loop() {
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
 
 mkdir -p "$RUN" /var/log
+nap_init
 # Supervisore appena partito: il DAC principale si sceglie di nuovo e le
 # zone rimaste senza processo (fermate con il supervisore) non contano.
 rm -f "$RUN/dac.principale"
+# Un CamillaDSP rimasto da un supervisore finito male terrebbe occupato il DAC.
+killall camilladsp 2>/dev/null
 for f in "$ZONE_DIR"/*; do
 	[ -f "$f" ] || continue
 	read -r zpid _ < "$f"

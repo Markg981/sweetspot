@@ -24,13 +24,17 @@
 #   sweetspot-dsp salva SX DX       conserva i filtri (file di testo di REW)
 #                                   sulla chiavetta e in memoria
 #   sweetspot-dsp ripristina DIR    carica la generazione salvata, o la precedente
+#   sweetspot-dsp fir-frequenze     frequenze dei FIR presenti (se validi)
+#   sweetspot-dsp frequenze         "FREQ MODO FIR" dell'ultima preparazione
+#   sweetspot-dsp avvio             argomenti di CamillaDSP per la sessione
 #
 # Come funziona: squeezelite suona sul dispositivo ALSA sweetspot_correzione
-# (plugin cdsp). A ogni brano il plugin avvia CamillaDSP con la frequenza, il
-# formato e i canali del brano; CamillaDSP applica i filtri in virgola mobile
-# a 64 bit e suona sul DAC con il formato migliore che accetta. Con la
-# correzione spenta niente di tutto questo e' in mezzo: il percorso resta
-# bit-perfect.
+# (plugin cdsp). Il player avvia una sola istanza di CamillaDSP per sessione
+# (stdin da una pipe); a ogni cambio di frequenza il plugin le fa caricare,
+# dal websocket, la configurazione di quella frequenza (camilladsp-FREQ.yml)
+# senza riavviarla. CamillaDSP applica i filtri in virgola mobile a 64 bit e
+# suona sul DAC con il formato migliore che accetta. Con la correzione
+# spenta niente di tutto questo e' in mezzo: il percorso resta bit-perfect.
 #
 # Filtri: l'esportazione "Filter settings as text" dell'equalizzatore
 # "Generic" di REW (PK, LS/HS, LSC/HSC, HP/LP, HPQ/LPQ, NO, BP, AP), uno per
@@ -146,12 +150,31 @@ correction_active() {
 # --- Filtri FIR (convoluzione) ------------------------------------------------
 #
 # Impulsi WAV esportati da rePhase, Acourate o REW, nella cartella della
-# correzione: fir-sinistro.wav e, facoltativo, fir-destro.wav (senza, il
-# destro usa il sinistro; un file stereo da solo vale per i due canali).
-# CamillaDSP lavora alla frequenza dei file: ogni brano viene ricampionato
-# (Synchronous) a quella frequenza, salvo che sia gia' la stessa.
+# correzione. Un FIR vale per la sua frequenza di campionamento: CamillaDSP
+# lavora alla frequenza del brano e usa il FIR di quella frequenza, senza
+# ricampionare. Nomi (FREQ e' la frequenza in Hz, per esempio 44100):
+#   fir-sinistro-FREQ.wav, fir-destro-FREQ.wav   un impulso per canale
+#   fir-FREQ.wav                                 un file per i due canali (mono:
+#                                                per entrambi; stereo: canale 0 a
+#                                                sinistra, canale 1 a destra)
+#   fir-sinistro.wav, fir-destro.wav             senza frequenza nel nome: valgono
+#                                                per la frequenza scritta nel file
+# Il destro senza file proprio usa quello del sinistro; la frequenza scritta
+# nel nome deve essere quella del file.
+# Frequenza senza FIR: decide la politica CORREZIONE_SE_ASSENTE (blocca: il
+# brano non suona e lo Stato lo dice; diretto: suona senza FIR, con avviso).
+# Solo con FIR_RICAMPIONA=si il brano si ricampiona alla frequenza del FIR
+# piu' vicino (della stessa famiglia, 44,1 o 48 kHz, se c'e').
 # Attenuazione in piu' per i FIR: FIR_MARGINE_DB (predefinito 3 dB).
 FIR_MAX_KB=16384
+
+# Politica per le frequenze senza FIR: blocca (predefinito) o diretto.
+fir_politica() {
+	case "$(lower "$(conf CORREZIONE_SE_ASSENTE blocca)")" in
+		diretto) echo diretto ;;
+		*) echo blocca ;;
+	esac
+}
 
 # "FREQUENZA CANALI" di un WAV (intestazione standard: fmt subito dopo RIFF).
 wav_info() { # file
@@ -165,23 +188,58 @@ wav_info() { # file
 	echo "$rate $ch"
 }
 
-# File FIR di un canale (il destro ricade sul sinistro).
-fir_file() { # sinistro|destro
-	local f=$DSP_DIR/fir-$1.wav
-	[ "$1" = destro ] && [ ! -s "$f" ] && f=$DSP_DIR/fir-sinistro.wav
-	echo "$f"
+# File FIR presenti (con la frequenza nel nome o senza), uno per riga.
+fir_list() { # [cartella]
+	local f dir=${1:-$DSP_DIR}
+	for f in "$dir"/fir-sinistro.wav "$dir"/fir-destro.wav \
+		"$dir"/fir-sinistro-[0-9]*.wav "$dir"/fir-destro-[0-9]*.wav "$dir"/fir-[0-9]*.wav; do
+		[ -e "$f" ] && echo "$f"
+	done
 }
 
-# Canale del file da usare: 1 solo per il destro letto da un file stereo unico.
-fir_channel() { # sinistro|destro
-	local info
-	[ "$1" = destro ] || { echo 0; return; }
-	[ -s "$DSP_DIR/fir-destro.wav" ] && { echo 0; return; }
-	info=$(wav_info "$DSP_DIR/fir-sinistro.wav")
-	if [ "${info#* }" = 2 ]; then echo 1; else echo 0; fi
+# Frequenza di un file FIR: quella del nome o, per fir-sinistro.wav e
+# fir-destro.wav, quella scritta nel file.
+fir_file_rate() { # file
+	local b=${1##*/}
+	b=${b%.wav}
+	case "$b" in
+		fir-sinistro|fir-destro) wav_info "$1" 2>/dev/null | cut -d' ' -f1 ;;
+		*) echo "${b##*-}" ;;
+	esac
 }
 
-fir_rate() { wav_info "$DSP_DIR/fir-sinistro.wav" | cut -d' ' -f1; }
+# Frequenze con almeno un FIR, in ordine crescente.
+fir_rates() {
+	local f r
+	for f in $(fir_list); do
+		r=$(fir_file_rate "$f")
+		case "$r" in ''|*[!0-9]*) continue ;; esac
+		echo "$r"
+	done | sort -un
+}
+
+# File FIR di un canale a una frequenza: il suo, quello stereo della
+# frequenza, i file senza frequenza nel nome se hanno quella frequenza; il
+# destro ricade sul sinistro. Niente e uscita 1 se non c'e'.
+fir_side_file() { # frequenza sinistro|destro
+	local r=$1 s=$2 f
+	for f in "$DSP_DIR/fir-$s-$r.wav" "$DSP_DIR/fir-$r.wav"; do
+		[ -s "$f" ] && { echo "$f"; return 0; }
+	done
+	[ "$s" = destro ] && [ -s "$DSP_DIR/fir-sinistro-$r.wav" ] && { echo "$DSP_DIR/fir-sinistro-$r.wav"; return 0; }
+	for f in "$DSP_DIR/fir-$s.wav" "$DSP_DIR/fir-sinistro.wav"; do
+		[ -s "$f" ] && [ "$(fir_file_rate "$f")" = "$r" ] && { echo "$f"; return 0; }
+		[ "$s" = sinistro ] && break
+	done
+	return 1
+}
+
+# Canale del file da usare: 1 solo per il destro letto da un file stereo che
+# non e' il suo.
+fir_side_channel() { # file sinistro|destro
+	case "${1##*/}" in fir-destro*) echo 0; return ;; esac
+	if [ "$2" = destro ] && [ "$(wav_info "$1" | cut -d' ' -f2)" = 2 ]; then echo 1; else echo 0; fi
+}
 
 # Campioni (per canale) di un impulso WAV: dalla dimensione del file, con
 # l'intestazione standard di 44 byte (per difetto, mai in meno).
@@ -195,10 +253,10 @@ wav_frames() { # file
 	echo $(( (size - 44) / (ch * bps / 8) ))
 }
 
-# Il FIR piu' lungo dei due canali, in campioni alla sua frequenza.
+# Il FIR piu' lungo fra tutti i file, in campioni alla sua frequenza.
 fir_taps() {
 	local f n max=0
-	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
+	for f in $(fir_list); do
 		[ -s "$f" ] || continue
 		n=$(wav_frames "$f")
 		[ "$n" -gt "$max" ] && max=$n
@@ -206,17 +264,19 @@ fir_taps() {
 	echo "$max"
 }
 
-fir_ok() {
-	local l r f
-	for f in "$DSP_DIR/fir-sinistro.wav" "$DSP_DIR/fir-destro.wav"; do
-		[ -s "$f" ] || continue
-		[ "$(( $(wc -c < "$f") / 1024 ))" -le "$FIR_MAX_KB" ] || return 1
+# Il FIR piu' lungo dei due canali a una frequenza.
+fir_taps_rate() { # frequenza
+	local f n s max=0
+	for s in sinistro destro; do
+		f=$(fir_side_file "$1" "$s") || continue
+		n=$(wav_frames "$f")
+		[ "$n" -gt "$max" ] && max=$n
 	done
-	l=$(wav_info "$DSP_DIR/fir-sinistro.wav") || return 1
-	[ -s "$DSP_DIR/fir-destro.wav" ] || return 0
-	r=$(wav_info "$DSP_DIR/fir-destro.wav") || return 1
-	# Stessa frequenza per i due canali.
-	[ "${l% *}" = "${r% *}" ]
+	echo "$max"
+}
+
+fir_ok() {
+	[ -n "$(fir_rates)" ] && fir_problem > /dev/null
 }
 
 # Problema di un file di filtri REW: una riga di spiegazione, esce con 1.
@@ -234,30 +294,52 @@ rew_problem() { # file nome
 }
 
 # Problema dei file FIR presenti: leggibili, WAV validi, sotto il limite di
-# dimensione, stessa frequenza e stesso numero di canali nei due file.
+# dimensione, con la frequenza del nome, e per ogni frequenza stessi canali nei
+# due file (e frequenza uguale nei file senza frequenza nel nome).
 fir_problem() {
-	local f side l r
-	for side in sinistro destro; do
-		f=$DSP_DIR/fir-$side.wav
-		[ -e "$f" ] || continue
-		[ -r "$f" ] || { echo "fir-$side.wav illeggibile"; return 1; }
-		[ -s "$f" ] || { echo "fir-$side.wav vuoto"; return 1; }
+	local f b n r l d s ls ld
+	for f in $(fir_list); do
+		b=${f##*/}
+		[ -r "$f" ] || { echo "$b illeggibile"; return 1; }
+		[ -s "$f" ] || { echo "$b vuoto"; return 1; }
 		[ "$(( $(wc -c < "$f") / 1024 ))" -le "$FIR_MAX_KB" ] ||
-			{ echo "fir-$side.wav supera $((FIR_MAX_KB / 1024)) MB"; return 1; }
+			{ echo "$b supera $((FIR_MAX_KB / 1024)) MB"; return 1; }
 		wav_info "$f" > /dev/null ||
-			{ echo "fir-$side.wav non e' un WAV valido (mono o stereo, almeno 8000 Hz)"; return 1; }
+			{ echo "$b non e' un WAV valido (mono o stereo, almeno 8000 Hz)"; return 1; }
+		case "$b" in fir-sinistro.wav|fir-destro.wav) continue ;; esac
+		n=${b%.wav}
+		n=${n##*-}
+		case "$n" in
+			''|*[!0-9]*) echo "$b: la frequenza nel nome deve essere un numero (per esempio fir-44100.wav)"; return 1 ;;
+		esac
+		r=$(wav_info "$f" | cut -d' ' -f1)
+		[ "$r" = "$n" ] ||
+			{ echo "$b ha frequenza $r Hz, non $n Hz come nel nome"; return 1; }
 	done
-	if [ ! -s "$DSP_DIR/fir-sinistro.wav" ]; then
-		echo "c'e' fir-destro.wav ma manca fir-sinistro.wav"
-		return 1
+	if [ -e "$DSP_DIR/fir-sinistro.wav" ] || [ -e "$DSP_DIR/fir-destro.wav" ]; then
+		if [ ! -s "$DSP_DIR/fir-sinistro.wav" ]; then
+			echo "c'e' fir-destro.wav ma manca fir-sinistro.wav"
+			return 1
+		fi
+		if [ -s "$DSP_DIR/fir-destro.wav" ]; then
+			l=$(wav_info "$DSP_DIR/fir-sinistro.wav")
+			d=$(wav_info "$DSP_DIR/fir-destro.wav")
+			[ "${l% *}" = "${d% *}" ] ||
+				{ echo "i FIR hanno frequenze diverse (sinistro ${l% *} Hz, destro ${d% *} Hz)"; return 1; }
+			[ "${l#* }" = "${d#* }" ] ||
+				{ echo "i FIR hanno canali diversi (sinistro ${l#* }, destro ${d#* })"; return 1; }
+		fi
 	fi
-	[ -s "$DSP_DIR/fir-destro.wav" ] || return 0
-	l=$(wav_info "$DSP_DIR/fir-sinistro.wav")
-	r=$(wav_info "$DSP_DIR/fir-destro.wav")
-	[ "${l% *}" = "${r% *}" ] ||
-		{ echo "i FIR hanno frequenze diverse (sinistro ${l% *} Hz, destro ${r% *} Hz)"; return 1; }
-	[ "${l#* }" = "${r#* }" ] ||
-		{ echo "i FIR hanno canali diversi (sinistro ${l#* }, destro ${r#* })"; return 1; }
+	for r in $(fir_rates); do
+		s=$(fir_side_file "$r" sinistro) ||
+			{ echo "a $r Hz c'e' il FIR del destro ma manca quello del sinistro (fir-sinistro-$r.wav o fir-$r.wav)"; return 1; }
+		d=$(fir_side_file "$r" destro)
+		[ "$s" = "$d" ] && continue
+		ls=$(wav_info "$s")
+		ld=$(wav_info "$d")
+		[ "${ls#* }" = "${ld#* }" ] ||
+			{ echo "i FIR a $r Hz hanno canali diversi (sinistro ${ls#* }, destro ${ld#* })"; return 1; }
+	done
 	return 0
 }
 
@@ -274,7 +356,7 @@ correction_problem() {
 			msg=$(rew_problem "$DSP_DIR/$side.txt" "$side.txt") || { echo "$msg"; return 1; }
 		done
 	fi
-	if [ -e "$DSP_DIR/fir-sinistro.wav" ] || [ -e "$DSP_DIR/fir-destro.wav" ]; then
+	if [ -n "$(fir_list)" ]; then
 		have=1
 		msg=$(fir_problem) || { echo "$msg"; return 1; }
 	fi
@@ -294,10 +376,14 @@ fir_margin() {
 fir_in_use() { correction_active && fir_ok; }
 
 # VOLUME=dsp: il volume di Lyrion lo applica CamillaDSP a 64 bit, con il
-# dither all'uscita, invece del troncamento di Squeezelite. Solo nella
-# modalita' completa: il player deve poter fissare Squeezelite al 100%.
+# dither all'uscita, invece del troncamento di Squeezelite. Il volume si
+# legge da Lyrion (sweetspot-volume): in modalita' completa e' quello locale,
+# in modalita' player serve SERVER, l'indirizzo del Lyrion esterno (con la
+# ricerca automatica non si sa dove sia: volume software, e lo Stato dice
+# perche').
 volume_dsp() {
-	[ "$(lower "$(conf VOLUME fisso)")" = dsp ] && [ "$(mode)" = completa ]
+	[ "$(lower "$(conf VOLUME fisso)")" = dsp ] || return 1
+	[ "$(mode)" = completa ] || [ -n "$(conf SERVER)" ]
 }
 
 # CamillaDSP serve per la correzione, per il volume o per entrambi.
@@ -488,23 +574,22 @@ filter_names() { # prefisso canale
 	active_filters "$2" | awk -v pre="$1" '{ printf "      - %s_%d\n", pre, NR }'
 }
 
-write_config() { # scheda
-	local card=$1 id dev fmt gain=0.0 ch pre side bits fir="" rate=44100 alsafmt extra=8192
+# Configurazione di CamillaDSP per una frequenza del brano. Modo:
+#   fir         il FIR di quella frequenza (FIRFREQ e' la stessa)
+#   ricampiona  il FIR di FIRFREQ: il brano e' ricampionato a quella frequenza
+#   senza       nessun FIR: solo l'attenuazione, i filtri di REW e il volume
+write_config() { # scheda frequenza modo frequenza_fir file
+	local card=$1 rate=$2 mode=$3 firrate=$4 out=$5 id dev fmt gain=0.0 ch pre side bits fir="" proc=$2 extra=8192 f
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	fmt=$(dsp_out_format "$card") || { fail_reason "formato PCM del playback non disponibile"; return 1; }
-	correction_active && gain=$(do_gain)
-	# Con i FIR CamillaDSP lavora (e suona sul DAC) alla frequenza dei file.
-	if fir_in_use; then
+	if [ -n "${PREP_GUADAGNO+x}" ]; then gain=$PREP_GUADAGNO; else correction_active && gain=$(do_gain); fi
+	# Con un FIR CamillaDSP lavora (e suona sul DAC) alla frequenza del FIR.
+	if [ "$mode" != senza ]; then
 		fir=1
-		rate=$(fir_rate)
-		case "$fmt" in S24_3_LE) alsafmt=S24_3LE ;; S24_4_RJ_LE) alsafmt=S24_LE ;; *) alsafmt=$fmt ;; esac
-		if ! printf ' %s ' "$(dac_rates "$card" "$alsafmt" 2 | tr '\n' ' ')" | grep -q " $rate "; then
-			fail_reason "il DAC non accetta $rate Hz, la frequenza dei filtri FIR"
-			return 1
-		fi
+		proc=$firrate
 		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
-		extra=$(( $(fir_taps) + 8192 ))
+		extra=$(( $(fir_taps_rate "$firrate") + 8192 ))
 	fi
 	# Dither TPDF alla risoluzione dell'uscita: CamillaDSP modifica sempre i
 	# campioni (attenuazione, filtri o volume), quindi il passaggio da 64 bit
@@ -519,13 +604,18 @@ write_config() { # scheda
 	{
 		echo "---"
 		echo "# Generato da Sweetspot (sweetspot-dsp): non modificare."
-		echo "# Frequenza, formato e canali in ingresso li passa il plugin cdsp."
+		echo "# Una sola istanza per sessione: il plugin cdsp cambia configurazione"
+		echo "# (questa, camilladsp-FREQUENZA.yml) a ogni cambio di frequenza."
 		echo "devices:"
-		echo "  samplerate: $rate"
+		echo "  samplerate: $proc"
 		echo "  chunksize: 4096"
+		if [ "$mode" = ricampiona ]; then
+			# Il brano arriva a $rate e si ricampiona alla frequenza del FIR.
+			echo "  capture_samplerate: $rate"
+		fi
 		if [ -n "$fir" ]; then
-			# La frequenza del brano (dal plugin) diventa quella d'ingresso; se
-			# coincide con quella dei FIR il ricampionatore si spegne da solo.
+			# Se la frequenza d'ingresso coincide con quella dei FIR il
+			# ricampionatore si spegne da solo.
 			echo "  resampler:"
 			echo "    type: Synchronous"
 		fi
@@ -537,12 +627,10 @@ write_config() { # scheda
 		echo "    channels: 2"
 		echo "    format: S32_LE"
 		# Coda del brano: quando il plugin chiude lo stream (stop, cambio di
-		# frequenza, chiusura dopo la pausa) CamillaDSP esce appena finiscono
-		# i blocchi letti e taglia il suono ancora dentro i filtri. Con gli
-		# extra_samples legge altri campioni di silenzio: due blocchi per la
-		# coda dei biquad e, con i FIR, tutta la loro lunghezza (alla
-		# frequenza di questa configurazione: CamillaDSP li scala quando il
-		# plugin cambia la frequenza).
+		# frequenza) scrive nella pipe tanto silenzio quanto extra_samples
+		# (il plugin lo legge da qui), cosi' CamillaDSP finisce i blocchi e la
+		# coda dei filtri: due blocchi per la coda dei biquad e, con i FIR,
+		# tutta la loro lunghezza.
 		echo "    extra_samples: $extra"
 		echo "  playback:"
 		echo "    type: Alsa"
@@ -554,16 +642,21 @@ write_config() { # scheda
 		echo "    type: Gain"
 		echo "    parameters:"
 		echo "      gain: $gain"
-		write_filters_yaml sx sinistro
-		write_filters_yaml dx destro
+		if [ -n "${PREP_GUADAGNO+x}" ]; then
+			printf '%s' "$PREP_YAML_SX$PREP_YAML_DX"
+		else
+			write_filters_yaml sx sinistro
+			write_filters_yaml dx destro
+		fi
 		if [ -n "$fir" ]; then
 			for side in sinistro destro; do
+				f=$(fir_side_file "$firrate" "$side")
 				echo "  fir_$side:"
 				echo "    type: Conv"
 				echo "    parameters:"
 				echo "      type: Wav"
-				echo "      filename: \"$(fir_file "$side")\""
-				echo "      channel: $(fir_channel "$side")"
+				echo "      filename: \"$f\""
+				echo "      channel: $(fir_side_channel "$f" "$side")"
 			done
 		fi
 		echo "  dither:"
@@ -579,11 +672,15 @@ write_config() { # scheda
 			echo "    channels: [$ch]"
 			echo "    names:"
 			echo "      - attenuazione"
-			filter_names "$pre" "$side"
+			if [ -n "${PREP_GUADAGNO+x}" ]; then
+				if [ $ch = 0 ]; then printf '%s' "$PREP_NOMI_SX"; else printf '%s' "$PREP_NOMI_DX"; fi
+			else
+				filter_names "$pre" "$side"
+			fi
 			[ -n "$fir" ] && [ "$(dsp_mode)" = si ] && echo "      - fir_$side"
 			echo "      - dither"
 		done
-	} > "$DSP_YML.nuovo" && mv "$DSP_YML.nuovo" "$DSP_YML"
+	} > "$out.nuovo" && mv "$out.nuovo" "$out"
 }
 
 # Frequenze offerte a squeezelite: quelle del DAC fino a 384 kHz.
@@ -598,9 +695,70 @@ dsp_rates() {
 	printf '%s' "${out# }"
 }
 
-write_asound() { # scheda
-	local rates
+fir_rate_has() { fir_side_file "$1" sinistro > /dev/null; }
+
+# Frequenza di un elenco ("44100 96000") piu' vicina a $1, di preferenza della
+# stessa famiglia (multipli di 44100 o di 48000).
+fir_nearest() { # frequenza elenco
+	awk -v r="$1" -v list="$2" 'BEGIN {
+		n = split(list, a, " "); best = ""; bd = 1e18
+		for (i = 1; i <= n; i++) {
+			d = (a[i] > r ? a[i] - r : r - a[i])
+			if ((a[i] % 44100 == 0) != (r % 44100 == 0)) d += 1e9
+			if (d < bd) { bd = d; best = a[i] }
+		}
+		print best }'
+}
+
+# Come si tratta ogni frequenza del DAC, una per riga "FREQ MODO FIRFREQ":
+#   fir         il FIR della frequenza
+#   ricampiona  ricampionata alla frequenza del FIR piu' vicino (FIR_RICAMPIONA=si)
+#   senza       nessun FIR: nessun FIR in uso, oppure politica diretto
+#   escluso     non offerta a squeezelite: il brano non suona (politica blocca)
+# Con i FIR in uso ma nessuna frequenza del DAC coperta non c'e' piano (1).
+rate_plan() { # scheda
+	local rates r firs=""
 	rates=$(dsp_rates "$1") || { fail_reason "frequenze PCM del playback non disponibili"; return 1; }
+	if ! fir_in_use; then
+		for r in $rates; do echo "$r senza -"; done
+		return 0
+	fi
+	for r in $rates; do
+		fir_rate_has "$r" && firs="$firs $r"
+	done
+	if [ -z "$firs" ]; then
+		fail_reason "il DAC non accetta nessuna delle frequenze dei filtri FIR ($(fir_rates | tr '\n' ' ' | sed 's/ $//') Hz)"
+		return 1
+	fi
+	for r in $rates; do
+		if fir_rate_has "$r"; then
+			echo "$r fir $r"
+		elif is_yes "$(conf FIR_RICAMPIONA no)"; then
+			echo "$r ricampiona $(fir_nearest "$r" "$firs")"
+		elif [ "$(fir_politica)" = diretto ]; then
+			echo "$r senza -"
+		else
+			echo "$r escluso -"
+		fi
+	done
+}
+
+# Avviso per le frequenze senza FIR (dal piano su stdin); nulla se ogni
+# frequenza ha il suo.
+plan_warning() {
+	awk '
+		$2 == "escluso" { e = e " " $1 }
+		$2 == "senza" { n = n " " $1 }
+		$2 == "ricampiona" { r = r " " $1 ">" $3 }
+		function add(t) { out = out (out == "" ? "" : "; ") t }
+		END {
+			if (e != "") add("nessun FIR a" e " Hz: i brani a queste frequenze non vengono riprodotti (CORREZIONE_SE_ASSENTE=blocca)")
+			if (n != "") add("nessun FIR a" n " Hz: suonano senza FIR (CORREZIONE_SE_ASSENTE=diretto)")
+			if (r != "") add("nessun FIR, brani ricampionati alla frequenza del FIR piu'"'"' vicino (FIR_RICAMPIONA=si):" r)
+			if (out != "") print out }'
+}
+
+write_asound() { # scheda frequenze_offerte
 	{
 		echo "# Generato da Sweetspot (sweetspot-dsp): correzione ambientale."
 		echo "pcm.$DSP_PCM {"
@@ -609,8 +767,15 @@ write_asound() { # scheda
 		echo "	config_out \"$DSP_YML\""
 		echo "	config_cdsp 1"
 		echo "	channels 2"
-		echo "	rates = [ $rates ]"
-		# Websocket solo locale: il player ne legge i campioni tagliati.
+		echo "	rates = [ $2 ]"
+		# Una sola istanza di CamillaDSP per sessione, avviata dal player: il
+		# plugin scrive i campioni nella pipe e, a ogni cambio di frequenza,
+		# carica camilladsp-FREQUENZA.yml dal websocket (solo locale).
+		echo "	fifo \"$DSP_FIFO\""
+		echo "	ws_port $DSP_PORTA"
+		echo "	config_rate_prefix \"$RUN/camilladsp-\""
+		echo "	chunk_frames 4096"
+		echo "	tail_frames 8192"
 		echo "	cargs [ -l \"warn\" -o \"/var/log/camilladsp.log\" -p \"$DSP_PORTA\" -a \"127.0.0.1\" ]"
 		echo "	vol_file \"$DSP_VOLUME\""
 		echo "}"
@@ -618,23 +783,72 @@ write_asound() { # scheda
 }
 
 do_prepare() { # scheda
+	local plan rates r mode fr first warn
 	active || return 1
 	mkdir -p "$RUN"
-	rm -f "$RUN/correzione.motivo"
-	write_config "$1" && write_asound "$1" || return 1
+	rm -f "$RUN/correzione.motivo" "$RUN/correzione.avviso" "$RUN/correzione.frequenze" "$RUN"/camilladsp-[0-9]*.yml
+	plan=$(rate_plan "$1") || return 1
+	rates=$(printf '%s\n' "$plan" | awk '$2 != "escluso" { printf "%s%s", (n++ ? " " : ""), $1 }')
+	[ -n "$rates" ] || { fail_reason "nessuna frequenza utilizzabile"; return 1; }
+	first=${rates%% *}
+	# Gli stessi filtri e la stessa attenuazione per ogni frequenza: si leggono
+	# una volta sola (le sostituzioni di comando tolgono l'ultimo a capo).
+	PREP_GUADAGNO=0.0
+	correction_active && PREP_GUADAGNO=$(do_gain)
+	PREP_YAML_SX=$(write_filters_yaml sx sinistro; echo .)
+	PREP_YAML_SX=${PREP_YAML_SX%.}
+	PREP_YAML_DX=$(write_filters_yaml dx destro; echo .)
+	PREP_YAML_DX=${PREP_YAML_DX%.}
+	PREP_NOMI_SX=$(filter_names sx sinistro; echo .)
+	PREP_NOMI_SX=${PREP_NOMI_SX%.}
+	PREP_NOMI_DX=$(filter_names dx destro; echo .)
+	PREP_NOMI_DX=${PREP_NOMI_DX%.}
+	printf '%s\n' "$plan" | while read -r r mode fr; do
+		[ "$mode" = escluso ] && continue
+		write_config "$1" "$r" "$mode" "$fr" "$RUN/camilladsp-$r.yml" || exit 1
+	done || return 1
+	unset PREP_GUADAGNO PREP_YAML_SX PREP_YAML_DX PREP_NOMI_SX PREP_NOMI_DX
+	printf '%s\n' "$plan" > "$RUN/correzione.frequenze"
+	# Configurazione di partenza dell'istanza: quella della prima frequenza.
+	cp "$RUN/camilladsp-$first.yml" "$DSP_YML.nuovo" && mv "$DSP_YML.nuovo" "$DSP_YML" || return 1
+	write_asound "$1" "$rates" || return 1
+	if fir_in_use; then
+		warn=$(printf '%s\n' "$plan" | plan_warning)
+		if [ -n "$warn" ]; then
+			echo "$warn" > "$RUN/correzione.avviso"
+			log "correzione: $warn"
+		fi
+	fi
 	dsp_state_prepare
-	if [ -x "$CAMILLADSP" ] && ! "$CAMILLADSP" -c "$DSP_YML" > "$RUN/camilladsp.verifica" 2>&1; then
-		fail_reason "configurazione rifiutata da CamillaDSP: $(tail -n 1 "$RUN/camilladsp.verifica")"
-		return 1
+	if [ -x "$CAMILLADSP" ]; then
+		for r in $rates; do
+			"$CAMILLADSP" -c "$RUN/camilladsp-$r.yml" > "$RUN/camilladsp.verifica" 2>&1 && continue
+			fail_reason "configurazione a $r Hz rifiutata da CamillaDSP: $(tail -n 1 "$RUN/camilladsp.verifica")"
+			return 1
+		done
 	fi
 	echo "$DSP_PCM"
+}
+
+# Argomenti con cui il player avvia l'unica istanza di CamillaDSP della
+# sessione (stdin dalla pipe $DSP_FIFO): registro, websocket solo locale,
+# volume di partenza e configurazione della prima frequenza offerta.
+do_start_args() {
+	local gain=-30.0 mute=0 first
+	[ -s "$DSP_VOLUME" ] && read -r gain mute < "$DSP_VOLUME"
+	case "$gain" in -[0-9]*|0|0.0) ;; *) gain=-30.0 ;; esac
+	first=$(awk '$2 != "escluso" { print $1; exit }' "$RUN/correzione.frequenze" 2>/dev/null)
+	[ -n "$first" ] || return 1
+	printf -- '-l warn -o /var/log/camilladsp.log -p %s -a 127.0.0.1 -g%s' "$DSP_PORTA" "$gain"
+	[ "$mute" = 1 ] && printf ' -m'
+	printf ' %s\n' "$RUN/camilladsp-$first.yml"
 }
 
 # --- Salvataggio -------------------------------------------------------------------
 
 # Sulla chiavetta i filtri stanno in una cartella propria, leggibile anche
 # dal computer: correzione-ambientale/sinistro.txt e destro.txt, e gli
-# impulsi FIR fir-sinistro.wav e fir-destro.wav (copiati dal computer).
+# impulsi FIR di tutte le frequenze (copiati dal computer).
 STICK_DSP_DIR=correzione-ambientale
 
 filters_source() {
@@ -644,14 +858,21 @@ filters_source() {
 	fi
 }
 
+saved_filter_files() { # cartella
+	printf '%s\n' "$1/sinistro.txt" "$1/destro.txt"
+	fir_list "$1"
+}
+
 ram_filter_permissions() {
 	local f owner
 	owner="$(id -u):$(id -g)"
 	chown "$owner" "$1" && chmod 755 "$1" || return 1
-	for f in sinistro.txt destro.txt fir-sinistro.wav fir-destro.wav; do
-		[ -f "$1/$f" ] && [ ! -L "$1/$f" ] || continue
-		chown "$owner" "$1/$f" && chmod 644 "$1/$f" || return 1
-	done
+	while IFS= read -r f; do
+		[ -f "$f" ] && [ ! -L "$f" ] || continue
+		chown "$owner" "$f" && chmod 644 "$f" || return 1
+	done <<EOF
+$(saved_filter_files "$1")
+EOF
 	return 0
 }
 
@@ -681,10 +902,12 @@ do_restore() (
 	flock -n 8 || { log "correzione: ripristino rimandato, salvataggio in corso"; return 1; }
 	tmp=$(mktemp -d "$RUN/correzione.ripristino.XXXXXX") || return 1
 	trap 'rm -rf "$tmp"' EXIT
-	for f in sinistro.txt destro.txt fir-sinistro.wav fir-destro.wav; do
-		[ -f "$src/$f" ] || continue
-		cp "$src/$f" "$tmp/$f" || { log "correzione: ripristino di $f non riuscito"; return 1; }
-	done
+	while IFS= read -r f; do
+		[ -f "$f" ] || continue
+		cp "$f" "$tmp/${f##*/}" || { log "correzione: ripristino di ${f##*/} non riuscito"; return 1; }
+	done <<EOF
+$(saved_filter_files "$src")
+EOF
 	ram_filter_permissions "$tmp" && publish_filters "$tmp" "$DSP_DIR" ||
 		{ log "correzione: ripristino non riuscito"; return 1; }
 	rm -rf "$DSP_DIR.vecchio"
@@ -763,11 +986,17 @@ case "$1" in
 	richiesta) correction_requested ;;
 	problema) correction_problem; exit 0 ;;
 	fir)
+		# Primo FIR (frequenza piu' bassa):
 		# "FREQUENZA CANALI DESTRO(proprio|sinistro) MARGINE_DB"
 		fir_ok || exit 1
+		r=$(fir_rates | head -n 1)
+		f=$(fir_side_file "$r" sinistro)
 		d=sinistro
-		[ -s "$DSP_DIR/fir-destro.wav" ] && d=proprio
-		echo "$(wav_info "$DSP_DIR/fir-sinistro.wav") $d $(fir_margin)" ;;
+		[ "$(fir_side_file "$r" destro)" != "$f" ] && d=proprio
+		echo "$(wav_info "$f") $d $(fir_margin)" ;;
+	fir-frequenze) fir_ok && fir_rates ;;
+	frequenze) cat "$RUN/correzione.frequenze" 2>/dev/null ;;
+	avvio) do_start_args ;;
 	volume) volume_dsp ;;
 	stato) dsp_state_write "$2" "$3" ;;
 	guadagno) do_gain ;;
@@ -775,5 +1004,5 @@ case "$1" in
 	prepara) do_prepare "$2" ;;
 	salva) do_save "$2" "$3" ;;
 	ripristina) do_restore "$2" ;;
-	*) echo "uso: $0 leggi FILE|attiva|guadagno|risposta|prepara SCHEDA|salva SX DX|ripristina DIR" >&2; exit 1 ;;
+	*) echo "uso: $0 leggi FILE|attiva|guadagno|risposta|prepara SCHEDA|salva SX DX|ripristina DIR|fir-frequenze|frequenze|avvio" >&2; exit 1 ;;
 esac

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 OVERLAY = ROOT / "board/sweetspot/rootfs-overlay"
@@ -170,6 +171,56 @@ do_save "$TEST_ROOT/left" "$RIGHT"
             path.chmod(0o600)
         result = self.save(mask="077")
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_readable_by_web()
+
+    def create_rate_filters(self, folder):
+        files = {
+            "fir-sinistro.wav": (48000, 1),
+            "fir-44100.wav": (44100, 2),
+            "fir-sinistro-96000.wav": (96000, 1),
+            "fir-destro-96000.wav": (96000, 1),
+        }
+        for name, (rate, channels) in files.items():
+            path = folder / name
+            with wave.open(str(path), "wb") as wav:
+                wav.setnchannels(channels)
+                wav.setsampwidth(2)
+                wav.setframerate(rate)
+                wav.writeframes(b"\x01\x00" * channels * 16)
+            path.chmod(0o600)
+        return {name: (folder / name).read_bytes() for name in files}
+
+    def test_restore_preserves_all_rate_filters_and_recovers_previous_generation(self):
+        expected = self.create_rate_filters(self.disk)
+        for previous in (False, True):
+            with self.subTest(previous=previous):
+                if previous:
+                    self.disk.rename(self.disk.with_name(self.disk.name + ".vecchio"))
+                for path in self.ram.iterdir():
+                    path.unlink()
+                result = subprocess.run(
+                    ["busybox", "sh", str(OVERLAY / "usr/bin/sweetspot-dsp"), "ripristina", str(self.disk)],
+                    env=dict(self.env, SWEETSPOT_TEST=""), text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for name, data in expected.items():
+                    path = self.ram / name
+                    self.assertTrue(path.is_file(), name)
+                    self.assertEqual(path.read_bytes(), data, name)
+                self.assert_readable_by_web()
+                rates = subprocess.run(
+                    ["busybox", "sh", str(OVERLAY / "usr/bin/sweetspot-dsp"), "fir-frequenze"],
+                    env=dict(self.env, SWEETSPOT_TEST=""), text=True, capture_output=True, timeout=10)
+                self.assertEqual(rates.returncode, 0, rates.stderr)
+                self.assertEqual(rates.stdout.splitlines(), ["44100", "48000", "96000"])
+
+    def test_save_preserves_rate_filters_and_makes_them_readable_by_web(self):
+        expected = self.create_rate_filters(self.ram)
+        self.create_rate_filters(self.disk)
+        result = self.save(mask="077")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for folder in (self.ram, self.disk):
+            for name, data in expected.items():
+                self.assertEqual((folder / name).read_bytes(), data, name)
         self.assert_readable_by_web()
 
 
