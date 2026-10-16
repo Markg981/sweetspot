@@ -45,6 +45,13 @@ my $SSDP_ADDR = '239.255.255.250';
 my $LOGFILE   = $ENV{SWEETSPOT_LOG} // '/var/log/sweetspot.log';
 my $SERVER_ID = 'Linux/6 UPnP/1.0 Sweetspot/1';
 my $MAX_AGE   = 1800;
+# Limiti GENA: un abbonato lento o ostile non deve poter consumare memoria o processi.
+my $MAX_SUBS      = ($ENV{SWEETSPOT_RENDERER_MAX_ABBONATI} // 0) =~ /^[1-9]\d*$/ ? $ENV{SWEETSPOT_RENDERER_MAX_ABBONATI} + 0 : 32;
+my $MAX_SUBS_HOST = 8;       # abbonamenti per indirizzo di callback
+my $MAX_CALLBACKS = 3;       # URL per abbonamento
+my $MAX_CB_LEN    = 512;
+my $MAX_NOTIFY    = 8;       # invii NOTIFY contemporanei (processi figli)
+my $MAX_FAILS     = 3;       # invii falliti di fila prima di rimuovere l'abbonato
 
 my $json = JSON::PP->new->utf8->allow_nonref;
 my $http = HTTP::Tiny->new(timeout => 5, agent => 'Sweetspot-renderer/1');
@@ -458,6 +465,7 @@ sub action {
 		}
 		if ($name eq 'SetNextAVTransportURI') {
 			my $uri = xml_unesc($in->{NextURI} // '');
+			return (undef, 714, 'Illegal MIME-type') if $uri ne '' && $uri !~ m{^https?://}i;
 			@S{qw(next_uri next_meta)} = ($uri, xml_unesc($in->{NextURIMetaData}));
 			if ($S{owned} && $uri ne '' && $mac ne '') {
 				my $title = title_from_meta($S{next_meta});
@@ -515,6 +523,16 @@ sub action {
 				return [];
 			}
 			return (undef, 710, 'Seek mode not supported') unless $unit eq 'TRACK_NR';
+			# Le tracce note sono la corrente (1) e, se gia' in coda, la successiva (2).
+			my $t = $in->{Target} // '';
+			return (undef, 711, 'Illegal seek target') unless $t =~ /^\d+$/;
+			if ($t == 1) {
+				$lms_ok->('time', 0) or return (undef, 501, 'Action Failed');
+			} elsif ($t == 2 && $S{tracks_added}) {
+				$lms_ok->('playlist', 'index', '+1') or return (undef, 501, 'Action Failed');
+			} else {
+				return (undef, 711, 'Illegal seek target');
+			}
 			return [];
 		}
 		if ($name eq 'Next') {
@@ -650,21 +668,77 @@ sub event_body {
 	return $x . '</e:propertyset>';
 }
 
+my %CHILD;   # pid => sid, invii NOTIFY in corso
+
+sub cb_host {
+	my ($url) = @_;
+	return lc(($url =~ m{^https?://(?:[^/@]*@)?(\[[^\]]+\]|[^/:?#]+)}i)[0] // '');
+}
+
+# L'invio non blocca mai il ciclo (SOAP e SSDP restano reattivi): lo fa un
+# processo figlio con tempo limite. Per ogni abbonato c'e' al piu' un invio in
+# corso; se nel frattempo lo stato cambia, a invio concluso ne parte uno solo
+# con lo stato piu' recente (LastChange e' uno stato, non un registro).
 sub send_event {
 	my ($sid) = @_;
 	my $sub = $SUBS{$sid} or return;
-	my $body = event_body($sub->{svc});
-	for my $url (@{ $sub->{urls} }) {
-		my $r = eval {
-			HTTP::Tiny->new(timeout => 2, agent => 'Sweetspot-renderer/1')->request('NOTIFY', $url, {
-				headers => { NT => 'upnp:event', NTS => 'upnp:propchange', SID => $sid, SEQ => $sub->{seq},
-					'Content-Type' => 'text/xml; charset="utf-8"' },
-				content => $body,
-			});
-		};
-		last if $r && $r->{status} && $r->{status} < 400;
+	if ($sub->{pid} || keys(%CHILD) >= $MAX_NOTIFY) {
+		$sub->{dirty} = 1;
+		return;
 	}
-	$sub->{seq}++;
+	$sub->{dirty} = 0;
+	my $body = event_body($sub->{svc});
+	my $seq = $sub->{seq}++;
+	my @urls = @{ $sub->{urls} };
+	my $pid = fork();
+	if (!defined $pid) {
+		$sub->{fails}++;
+		return;
+	}
+	if (!$pid) {
+		$SIG{TERM} = 'DEFAULT';
+		my $ok = 0;
+		for my $url (@urls) {
+			my $r = eval {
+				HTTP::Tiny->new(timeout => 2, agent => 'Sweetspot-renderer/1')->request('NOTIFY', $url, {
+					headers => { NT => 'upnp:event', NTS => 'upnp:propchange', SID => $sid, SEQ => $seq,
+						'Content-Type' => 'text/xml; charset="utf-8"' },
+					content => $body,
+				});
+			};
+			if ($r && $r->{status} && $r->{status} < 400) { $ok = 1; last }
+		}
+		POSIX::_exit($ok ? 0 : 1);
+	}
+	$sub->{pid} = $pid;
+	$CHILD{$pid} = $sid;
+}
+
+sub reap_events {
+	for my $pid (keys %CHILD) {
+		my $r = waitpid($pid, POSIX::WNOHANG());
+		next if $r == 0;
+		my $sid = delete $CHILD{$pid};
+		my $sub = $SUBS{$sid} or next;
+		$sub->{pid} = 0;
+		if ($r > 0 && $? == 0) {
+			$sub->{fails} = 0;
+		} elsif (++$sub->{fails} >= $MAX_FAILS) {
+			logm("abbonato $sid rimosso: callback non raggiungibile");
+			delete $SUBS{$sid};
+			next;
+		}
+		send_event($sid) if $sub->{dirty};
+	}
+	# Invii rimasti in attesa del limite di processi.
+	for my $sid (keys %SUBS) {
+		send_event($sid) if $SUBS{$sid}{dirty} && !$SUBS{$sid}{pid};
+	}
+}
+
+sub expire_subs {
+	my $now = time;
+	for my $sid (keys %SUBS) { delete $SUBS{$sid} if $SUBS{$sid}{expires} < $now }
 }
 
 sub notify_services {
@@ -781,7 +855,7 @@ sub join_multicast {
 sub http_reply {
 	my ($c, $status, $ctype, $body, %extra) = @_;
 	my %text = (200 => 'OK', 400 => 'Bad Request', 404 => 'Not Found', 405 => 'Method Not Allowed',
-		412 => 'Precondition Failed', 500 => 'Internal Server Error');
+		412 => 'Precondition Failed', 500 => 'Internal Server Error', 503 => 'Service Unavailable');
 	my $head_only = delete $extra{HEAD};
 	my $h = "HTTP/1.1 $status " . ($text{$status} // 'OK') . "\r\n";
 	$h .= "Content-Type: $ctype\r\n" if defined $ctype;
@@ -880,9 +954,16 @@ sub handle_http {
 			}
 			my @urls = defined $cb ? ($cb =~ /<(https?:\/\/[^>]+)>/g) : ();
 			return http_reply($c, 412, 'text/plain', "CALLBACK mancante\n") unless @urls;
+			return http_reply($c, 412, 'text/plain', "CALLBACK troppo lungo\n") if grep { length $_ > $MAX_CB_LEN } @urls;
+			splice @urls, $MAX_CALLBACKS if @urls > $MAX_CALLBACKS;
+			my $host = cb_host($urls[0]);
+			if (keys(%SUBS) >= $MAX_SUBS || (grep { cb_host($_->{urls}[0]) eq $host } values %SUBS) >= $MAX_SUBS_HOST) {
+				logm("SUBSCRIBE rifiutato: troppi abbonamenti");
+				return http_reply($c, 503, 'text/plain', "troppi abbonamenti\n", 'Retry-After' => 30);
+			}
 			my $h = md5_hex(time . rand() . $$ . scalar(keys %SUBS));
 			my $new = 'uuid:' . join('-', substr($h, 0, 8), substr($h, 8, 4), substr($h, 12, 4), substr($h, 16, 4), substr($h, 20, 12));
-			$SUBS{$new} = { svc => $svc, urls => \@urls, seq => 0, expires => time + $to };
+			$SUBS{$new} = { svc => $svc, urls => \@urls, seq => 0, expires => time + $to, pid => 0, dirty => 0, fails => 0 };
 			http_reply($c, 200, undef, '', SID => $new, TIMEOUT => "Second-$to");
 			close $c;
 			send_event($new);
@@ -997,13 +1078,14 @@ while (!$stop_requested) {
 		}
 	}
 	flush_ssdp($ssdp);
+	reap_events();
+	expire_subs();
 
 	my $now = time;
 	if ($now >= $next_poll) {
 		$next_poll = $now + 2;
 		my $changed = poll_player();
 		notify_services('AVTransport', 'RenderingControl') if $changed;
-		for my $sid (keys %SUBS) { delete $SUBS{$sid} if $SUBS{$sid}{expires} < $now }
 		# Il nome cambiato dal pannello vale subito per gli annunci.
 		my $name = friendly_name() . '|' . device_uuid();
 		if ($last_name ne '' && $name ne $last_name) { announce('alive'); $next_alive = $now + 600 }

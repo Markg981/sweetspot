@@ -497,6 +497,74 @@ def run(args):
         if fake:
             check("Seek arriva a Lyrion come 'time 2'", any(c[0] == "time" and str(c[1]) == "2" for c in fake.calls), fake.calls)
 
+        if fake:
+            print("== Seek per traccia e NextURI")
+            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "ftp://192.0.2.10/x.flac"), ("NextURIMetaData", "")])
+            check("SetNextAVTransportURI non http(s): errore 714 come CurrentURI", st == 500 and out.get("errorCode") == "714", (st, out))
+            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "file:///etc/passwd"), ("NextURIMetaData", "")])
+            check("SetNextAVTransportURI file://: errore 714", st == 500 and out.get("errorCode") == "714", (st, out))
+            check("un NextURI rifiutato non arriva a Lyrion", not any(c[:2] == ["playlist", "add"] for c in fake.calls), fake.calls)
+            st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "TRACK_NR"), ("Target", "2")])
+            check("Seek TRACK_NR 2 senza traccia successiva: errore 711", st == 500 and out.get("errorCode") == "711", (st, out))
+            st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "TRACK_NR"), ("Target", "x")])
+            check("Seek TRACK_NR non numerico: errore 711", st == 500 and out.get("errorCode") == "711", (st, out))
+            st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "TRACK_NR"), ("Target", "1")])
+            check("Seek TRACK_NR 1 riparte dall'inizio ('time 0' a Lyrion)", st == 200 and any(c[0] == "time" and str(c[1]) == "0" for c in fake.calls), (st, out))
+            st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "FRAME"), ("Target", "1")])
+            check("Seek con unita' non supportata: errore 710", st == 500 and out.get("errorCode") == "710", (st, out))
+            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "http://192.0.2.10:8200/MediaItems/43.wav"), ("NextURIMetaData", "")])
+            check("SetNextAVTransportURI http valido: accettato e messo in coda", st == 200 and any(c[:2] == ["playlist", "add"] for c in fake.calls), (st, out))
+            st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "TRACK_NR"), ("Target", "2")])
+            check("Seek TRACK_NR 2 con traccia in coda: salta alla successiva", st == 200 and any(c[:3] == ["playlist", "index", "+1"] for c in fake.calls), (st, out))
+
+            print("== Abbonati lenti e limiti")
+            slow = socket.socket()
+            slow.bind(("127.0.0.1", 0))
+            slow.listen(1)       # accetta la connessione nel backlog ma non risponde mai
+            slow_port = slow.getsockname()[1]
+            st, sid_slow, _ = subscribe(base, "RenderingControl", "http://127.0.0.1:%d/ev" % slow_port)
+            check("SUBSCRIBE di un abbonato lento accettato", st == 200 and bool(sid_slow))
+            worst = 0.0
+            for v in (10, 20, 30, 40):
+                t0 = time.time()
+                soap(base, "RenderingControl", "SetVolume", [("InstanceID", 0), ("Channel", "Master"), ("DesiredVolume", v)])
+                soap(base, "AVTransport", "GetTransportInfo", [("InstanceID", 0)])
+                worst = max(worst, time.time() - t0)
+                time.sleep(0.5)
+            check("un abbonato che non risponde non blocca il SOAP (peggiore %.2f s, limite 1,2 s)" % worst, worst < 1.2, worst)
+
+            def subs_count():
+                try:
+                    return json.loads((run_dir / "renderer.json").read_text()).get("abbonati")
+                except (OSError, ValueError):
+                    return None
+            gone = None
+            end = time.time() + 40
+            while time.time() < end and not gone:
+                soap(base, "RenderingControl", "SetVolume", [("InstanceID", 0), ("Channel", "Master"), ("DesiredVolume", 41)])
+                time.sleep(2.5)
+                gone = wait_for(lambda: subs_count() == 1, 6, 0.5)
+            check("l'abbonato che non risponde viene rimosso dopo ripetuti fallimenti (resta solo quello sano)", bool(gone), subs_count())
+            slow.close()
+
+            made, refused = [], None
+            for i in range(20):
+                try:
+                    made.append(subscribe(base, "ConnectionManager", "http://127.0.0.1:%d/e%d" % (sink.port, i))[1])
+                except urllib.error.HTTPError as e:
+                    refused = e.code
+                    break
+            check("troppi abbonamenti dallo stesso indirizzo: 503 oltre il limite (%d accettati)" % len(made), refused == 503 and 0 < len(made) <= 8, (refused, len(made)))
+            try:
+                subscribe(base, "AVTransport", "http://127.0.0.1:%d/%s" % (sink.port, "a" * 600))
+                long_ok = True
+            except urllib.error.HTTPError as e:
+                long_ok = e.code
+            check("CALLBACK troppo lungo rifiutato (412)", long_ok == 412, long_ok)
+            for s_id in made:
+                urllib.request.urlopen(urllib.request.Request(base + "/evt/ConnectionManager", method="UNSUBSCRIBE", headers={"SID": s_id}), timeout=5).close()
+            check("dopo UNSUBSCRIBE si puo' di nuovo sottoscrivere", subscribe(base, "ConnectionManager", "http://127.0.0.1:%d/z" % sink.port)[0] == 200)
+
         st, out = soap(base, "RenderingControl", "SetVolume", [("InstanceID", 0), ("Channel", "Master"), ("DesiredVolume", 37)])
         check("SetVolume accettato", st == 200, (st, out))
         st, out = soap(base, "RenderingControl", "GetVolume", [("InstanceID", 0), ("Channel", "Master")])
