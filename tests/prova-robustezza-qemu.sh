@@ -179,7 +179,7 @@ while [ $i -lt 60 ] && guest 'pgrep -f scanner.pl' > /dev/null 2>&1; do
 	sleep 5
 done
 [ $i -lt 60 ] || echo "  (controllo della libreria ancora in corso dopo 300 s)"
-if guest 'FORKS_CACCIA=1 FORKS_PRIMA=18 FORKS_QUIETO=65 sh -s 60 100'< "$TEST_DIR/forks-riposo.sh" > "$OUT/forks-riposo.txt" 2>&1; then
+if guest 'FORKS_PRIMA=18 FORKS_QUIETO=65 sh -s 60 100'< "$TEST_DIR/forks-riposo.sh" > "$OUT/forks-riposo.txt" 2>&1; then
 	esito OK "fork a riposo: $(head -n 1 "$OUT/forks-riposo.txt")"
 else
 	esito NO "fork a riposo: $(tr '\n' ' ' < "$OUT/forks-riposo.txt")"
