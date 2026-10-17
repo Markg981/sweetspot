@@ -377,6 +377,30 @@ niente OpenHome (le app lo usano solo se c'e', altrimenti ripiegano su
 AVTransport); un'app alla volta controlla il renderer, e la musica avviata da
 Lyrion non viene fermata da un `Stop` UPnP.
 
+### Media server UPnP/DLNA
+
+Con `SERVER_UPNP=si` (pagina Sistema, spento di serie) la libreria compare come
+archivio (MediaServer) negli streamer e nei DAC di rete che leggono i file da
+soli: per esempio un Gustard con streamer integrato, guidato da BubbleUPnP,
+mconnect o dall'app del produttore. Il PC con i dischi puo' stare in un'altra
+stanza e il DAC accanto all'impianto, senza altri apparecchi in mezzo.
+
+Il server e' MiniDLNA (`sweetspot-mediaserver`, avviato da
+`S71sweetspot-mediaserver`): i file partono cosi' come sono, mai convertiti, e
+DSF e DFF arrivano al renderer in DSD alla frequenza del file (fino a DSD512, se
+il renderer li accetta in rete: lo dice il display del DAC). In questo percorso
+Lyrion, il player e la correzione ambientale non intervengono: il suono lo fa
+il renderer. Gira senza privilegi (utente `dlna`), sui core di sistema con la
+priorita' piu' bassa e non viene mai sospeso dalla modalita' ascolto, per non
+interrompere uno stream in corso. Lo stato e' in Stato ("Media server
+UPnP/DLNA").
+
+Il database sta in RAM e si ricostruisce a ogni avvio; dischi e cartelle di
+rete collegati dopo entrano da soli. Limiti: i file aggiunti alle cartelle di
+rete da altri computer compaiono dopo aver spento e riacceso il server dalla
+pagina Sistema; con librerie molto grandi il database occupa qualche decina di
+MB di RAM; serve `MODALITA=completa`.
+
 ### Servizi in streaming e ingressi: stato e qualificazione
 
 "Disponibile come plugin" non significa "integrazione verificata". La pagina
@@ -392,6 +416,7 @@ a oggi, nessuno è stato qualificato con un account reale.
 | AirPlay in ingresso | `ShairTunes2W` | disponibile come plugin; non verificato | AirPlay 2 non dimostrato. |
 | UPnP/DLNA verso altri diffusori | `UPnPBridge` | disponibile come plugin; non verificato | Invia a renderer esterni: non rende SweetSpot un renderer. |
 | UPnP/DLNA in ingresso | integrato (`RENDERER_UPNP=si`, vedi sopra) | su main, di serie spento; coperto dalla CI, non provato con app reali | Un'app alla volta; l'audio passa da Lyrion. |
+| Libreria verso streamer e DAC di rete | integrato (`SERVER_UPNP=si`, MiniDLNA, vedi sopra) | di serie spento; coperto dalla CI, non provato con renderer reali | DSF/DFF inviati senza conversione: il DSD in rete dipende dal renderer. |
 | Chromecast, AirPlay verso altri diffusori, gruppi | `CastBridge`, `RaopBridge`, `Groups` | disponibile come plugin; non verificato | La sincronia fra più uscite non è dimostrata. |
 | RAAT / Roon | assente | non supportato | Roon Ready richiede l'SDK e la certificazione ufficiali di Roon Labs. |
 | WASAPI / CoreAudio | non applicabile | fuori ambito | SweetSpot è un'appliance Linux con ALSA diretto. |
@@ -653,6 +678,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | credenziali di Lyrion, sempre attive (`authorize`): HTTP 9000 (anche Material e `/jsonrpc.js`) risponde 401 senza Basic e la CLI 9090 vuole `login`. Se mancano, al primo avvio Sweetspot genera una password casuale (utente `sweetspot`) e la salva qui; la pagina Sistema la mostra (blocco *Accesso a Lyrion*): va inserita una volta nelle app (Material, iPeng, Squeezer, UPnP/DLNA con credenziali, ecc.). Sweetspot le usa per volume, precarico, pagine, prova DoP e impostazioni del player. Credenziali Lyrion **preesistenti** non vengono sovrascritte: restano valide e vanno scritte qui perche' Sweetspot le usi. Scrivendo qui una password propria la si applica a ogni avvio; togliendo `LYRION_PASSWORD` se ne genera una nuova (rotazione). Sono in chiaro in `sweetspot.txt`, come `WIFI_PASSWORD`. Slimproto (3483) non ha autenticazione nativa: i player non sono toccati, ma quella porta e' protetta solo dalla rete locale | generate |
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `RENDERER_UPNP` | `si`: Sweetspot compare come diffusore UPnP/DLNA (MediaRenderer) per BubbleUPnP, JPlay, mconnect e simili; l'audio passa da Lyrion e dal player, vedi [Renderer UPnP/DLNA](#renderer-upnpdlna-in-entrata). Solo con `MODALITA=completa` | no |
+| `SERVER_UPNP` | `si`: la libreria compare come media server UPnP/DLNA (MiniDLNA) per streamer e DAC di rete; DSF e DFF partono senza conversioni, vedi [Media server UPnP/DLNA](#media-server-upnpdlna). Solo con `MODALITA=completa` | no |
 | `SSH`, `SSH_PASSWORD`, `SSH_UTENTE` | accesso remoto per l'assistenza. `SSH_UTENTE` è `root` (predefinito) oppure `assistenza`, un utente senza privilegi (con `assistenza` il login di root è disattivato). Dalla pagina Sistema queste tre chiavi aprono il sistema come amministratore e si cambiano solo con la **conferma forte**: serve avere `PASSWORD_WEB`, riscriverla nel campo di conferma e un gettone monouso (valido 10 minuti) emesso da root; la verifica la fa l'helper privilegiato, non la pagina, e un tentativo sbagliato conta come un errore di accesso. Senza `PASSWORD_WEB` da web non si cambiano: si scrivono in `sweetspot.txt` con il computer | no |
 | `HTTPS`, `HTTPS_REINDIRIZZA` | connessione protetta delle pagine (porta 443) con `stunnel` davanti all'httpd di BusyBox; certificato autofirmato creato al primo avvio con `HTTPS=si` e salvato sulla chiavetta (`sweetspot-https.pem`), impronta SHA-256 nella pagina Sistema. Con HTTPS il cookie di accesso è `Secure`. `HTTPS_REINDIRIZZA=si` fa rimandare a https le pagine richieste in chiaro (non `/cgi-bin/vivo` né le richieste dal computer stesso). Lyrion (porta 9000) resta in chiaro, anche se con password | no |
 | `DIARIO`, `DIARIO_ORE`, `DIARIO_KB` | diario di bordo sulla chiavetta (cartella `diagnostica`): `si`/`no`; ogni quante ore (1-24, 2 predefinite) si salvano registro e timeline; dimensione massima in KB di ogni file prima della rotazione (256 predefiniti, tre generazioni). Vedi [Diagnostica](#diagnostica-registro-persistente-timeline-e-crash-dump) | si, 2, 256 |

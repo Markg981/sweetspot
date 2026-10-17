@@ -56,7 +56,7 @@ else
 	B=$WORK/bin
 	W=$WORK/web
 	mkdir -p "$B" "$W"
-	for s in config lms rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https diario bluetooth; do
+	for s in config lms mediaserver rete dischi nas copia cd spazio aggiorna installa dsp accesso check rapporto hotspot https diario bluetooth; do
 		printf '#!/bin/sh\nprintf "%%s" "sweetspot-%s" > "%s/chiamata"\nfor a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done\nprintf "\\n" >> "%s/chiamata"\n' "$s" "$WORK" "$WORK" "$WORK" > "$B/sweetspot-$s"
 		chmod +x "$B/sweetspot-$s"
 	done
@@ -279,6 +279,9 @@ nameserver 6.6.6.6')"
 		expect "CACHE_COPERTINE: chiavi ammesse dalle pagine" "sweetspot-config|imposta|CACHE_COPERTINE|disco|CACHE_COPERTINE_DISCO|SSD veloce|CACHE_COPERTINE_MB|2048" \
 			"$(priv sweetspot-config imposta CACHE_COPERTINE disco CACHE_COPERTINE_DISCO 'SSD veloce' CACHE_COPERTINE_MB 2048)"
 		expect "CACHE_COPERTINE: valori con metacaratteri rifiutati" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta CACHE_COPERTINE 'ram;id')|$(priv sweetspot-config imposta CACHE_COPERTINE_MB '1;id')"
+		expect "SERVER_UPNP: ammesso dalle pagine (si/no)" "sweetspot-config|imposta|SERVER_UPNP|si|sweetspot-config|imposta|SERVER_UPNP|no" 			"$(priv sweetspot-config imposta SERVER_UPNP si)|$(priv sweetspot-config imposta SERVER_UPNP no)"
+		expect "SERVER_UPNP: solo si/no" "NIENTE(126)|NIENTE(126)" "$(priv sweetspot-config imposta SERVER_UPNP 'si;id')|$(priv sweetspot-config imposta SERVER_UPNP forse)"
+		expect "sweetspot-mediaserver: solo riavvia, senza argomenti" "sweetspot-mediaserver|riavvia|NIENTE(126)|NIENTE(126)" 			"$(priv sweetspot-mediaserver riavvia)|$(priv sweetspot-mediaserver riavvia altro)|$(priv sweetspot-mediaserver conf /etc)"
 		expect "sweetspot-https applica ammesso" "sweetspot-https|applica" "$(priv sweetspot-https applica)"
 		expect "sweetspot-https httpd non ammesso" "NIENTE(126)" "$(priv sweetspot-https httpd)"
 		expect "BLUETOOTH: solo si/no" "sweetspot-config|imposta|BLUETOOTH|si NIENTE(126) NIENTE(126)" "$(priv sweetspot-config imposta BLUETOOTH si) $(priv sweetspot-config imposta BLUETOOTH 'si;id') $(priv sweetspot-config imposta BLUETOOTH forse)"

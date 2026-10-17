@@ -1,0 +1,90 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - la libreria come media server UPnP/DLNA (MiniDLNA), per gli
+# streamer e i DAC di rete che leggono i file da soli (renderer guidati da
+# BubbleUPnP, mconnect o dall'app del produttore). I file partono cosi' come
+# sono, mai convertiti: DSF e DFF arrivano al renderer in DSD, alla
+# frequenza del file, se il renderer li accetta.
+#
+#   sweetspot-mediaserver avvia     avvia il server, se attivo
+#   sweetspot-mediaserver ferma     lo ferma
+#   sweetspot-mediaserver riavvia   ferma e riavvia (rilegge la libreria)
+#   sweetspot-mediaserver conf      stampa la configurazione (per i test)
+#
+# Impostazione: SERVER_UPNP=si (pagina Sistema, spento di serie), solo in
+# modalita' completa. Il database sta in RAM e si ricostruisce a ogni avvio;
+# dischi e cartelle di rete collegati dopo entrano da soli (inotify su
+# /musica). Il server gira senza privilegi (utente dlna), sui core di sistema
+# e con la priorita' piu' bassa: mai sui core dell'audio.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+DLNA_DIR=${SWEETSPOT_DLNA_DIR:-/var/lib/minidlna}
+DLNA_USER=dlna
+DLNA_PORT=8200
+PIDFILE=$RUN/mediaserver.pid
+
+# Nome in rete: quello del player, distinto dal renderer (RENDERER_UPNP).
+dlna_name() {
+	printf '%s (libreria)' "$(safe_name "$(conf NOME_PLAYER Sweetspot)")" | cut -c1-64
+}
+
+dlna_conf() { # cartella-musica
+	cat <<EOF
+media_dir=A,$1
+wide_links=yes
+root_container=M
+friendly_name=$(dlna_name)
+port=$DLNA_PORT
+db_dir=$DLNA_DIR
+log_dir=$DLNA_DIR
+inotify=yes
+enable_tivo=no
+strict_dlna=no
+notify_interval=900
+album_art_names=cover.jpg/Cover.jpg/folder.jpg/Folder.jpg/front.jpg/Front.jpg/album.jpg/Album.jpg/AlbumArt.jpg/cover.png/folder.png
+user=$DLNA_USER
+EOF
+}
+
+enabled() {
+	is_yes "$(conf SERVER_UPNP no)" && [ "$(mode)" = completa ]
+}
+
+start() {
+	local hk
+	if ! enabled; then
+		is_yes "$(conf SERVER_UPNP no)" && log "mediaserver: serve la modalita' completa, non avviato"
+		return 0
+	fi
+	mkdir -p "$DLNA_DIR" "$RUN"
+	chown "$DLNA_USER" "$DLNA_DIR" 2>/dev/null
+	dlna_conf "$MUSIC_DIR" > "$RUN/minidlna.conf"
+	cpu_layout
+	hk=$(join_list "$LAYOUT_HK")
+	[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
+	# I/O best-effort basso, non idle: uno stream verso il renderer non deve
+	# fermarsi dietro alla lettura della libreria di Lyrion.
+	taskset -c "$hk" nice -n 19 ionice -c 2 -n 7 \
+		minidlnad -f "$RUN/minidlna.conf" -P "$PIDFILE" -r > /dev/null 2>&1 ||
+		{ log "mediaserver: minidlnad non avviato"; return 1; }
+	log "mediaserver: libreria in rete come \"$(dlna_name)\" (porta $DLNA_PORT)"
+}
+
+stop() {
+	# TERM: il server annuncia l'uscita (ssdp:byebye) e ferma la lettura in corso.
+	start-stop-daemon -K -s TERM -p "$PIDFILE" > /dev/null 2>&1
+	rm -f "$PIDFILE"
+	return 0
+}
+
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+case "$1" in
+	avvia) start ;;
+	ferma) stop ;;
+	riavvia) stop; sleep 1; start ;;
+	conf) dlna_conf "${2:-$MUSIC_DIR}" ;;
+	*) echo "uso: $0 avvia|ferma|riavvia|conf" >&2; exit 1 ;;
+esac

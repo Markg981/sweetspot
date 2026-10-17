@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - libreria in rete come media server UPnP/DLNA (se attivato).
+
+case "$1" in
+	start) /usr/bin/sweetspot-mediaserver avvia ;;
+	stop) /usr/bin/sweetspot-mediaserver ferma ;;
+	restart) /usr/bin/sweetspot-mediaserver riavvia ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac

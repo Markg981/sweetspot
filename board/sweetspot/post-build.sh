@@ -24,6 +24,13 @@ rm -rf "${TARGET_DIR:?}/boot"
 # SSH parte solo se attivato in sweetspot.txt (S45sweetspot-ssh).
 rm -f "$TARGET_DIR/etc/init.d/S50dropbear"
 
+# Media server UPnP/DLNA: parte solo se attivato (S71sweetspot-mediaserver).
+rm -f "$TARGET_DIR/etc/init.d/S60minidlnad"
+if [ ! -x "$TARGET_DIR/usr/sbin/minidlnad" ]; then
+	echo "post-build: manca minidlnad (minidlna nel defconfig?)" >&2
+	exit 1
+fi
+
 # Bluetooth: parte solo se attivato (S58sweetspot-bluetooth). D-Bus non deve
 # partire da solo all'avvio: lo avvia il servizio Bluetooth, per cui lo script
 # di Buildroot perde il prefisso S e resta richiamabile a mano.

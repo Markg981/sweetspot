@@ -828,6 +828,27 @@ check_renderer() {
 	esac
 }
 
+check_mediaserver() {
+	local pid
+	if ! is_yes "$(conf SERVER_UPNP no)"; then
+		emit INFO "Media server UPnP/DLNA" "spento (SERVER_UPNP=no): acceso dalla pagina Sistema, streamer e DAC di rete leggono la libreria"
+		return
+	fi
+	if [ "$(mode)" = player ]; then
+		emit ATTENZIONE "Media server UPnP/DLNA" "serve la libreria su questo Sweetspot: non funziona in modalità solo player"
+		return
+	fi
+	pid=$(cat "$RUN/mediaserver.pid" 2>/dev/null)
+	case "$pid" in
+		''|*[!0-9]*) pid="" ;;
+	esac
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		emit OK "Media server UPnP/DLNA" "acceso (porta 8200): DSF e DFF partono senza conversioni"
+	else
+		emit ATTENZIONE "Media server UPnP/DLNA" "acceso nelle impostazioni ma non in esecuzione: spegnilo e riaccendilo dalla pagina Sistema"
+	fi
+}
+
 check_system() {
 	local srv ip disks b t st wd
 	emit INFO "Classe del computer" "$(machine_class) - $(cpu_model) - $(( $(mem_total_kb) / 1024 )) MB di RAM"
@@ -903,6 +924,7 @@ check_bluetooth
 check_listening
 [ "$(mode)" = completa ] && check_preload
 check_renderer
+check_mediaserver
 check_system
 
 if [ "$1" = "--dati" ]; then
