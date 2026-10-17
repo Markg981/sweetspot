@@ -213,6 +213,14 @@ HTTPS_REINDIRIZZA=no
 # Solo con MODALITA=completa. Si accende anche dalla pagina Sistema.
 RENDERER_UPNP=no
 
+# Media server UPnP/DLNA: la libreria compare come archivio negli streamer e
+# nei DAC di rete (es. Gustard, guidati da BubbleUPnP o mconnect), che leggono
+# i file da soli. I file partono senza conversioni: DSF e DFF arrivano in DSD,
+# alla frequenza del file, se il renderer li accetta. Il PC puo' stare in
+# un'altra stanza. Solo con MODALITA=completa. Si accende anche dalla pagina
+# Sistema.
+SERVER_UPNP=no
+
 # Password delle pagine di Sweetspot (utente admin). Obbligatoria: se e' vuota,
 # al prossimo avvio il dispositivo mostra un codice univoco (console e file
 # PRIMO-ACCESSO.txt su questa chiavetta) con cui scegliere la password dalla

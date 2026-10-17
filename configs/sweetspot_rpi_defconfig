@@ -86,6 +86,7 @@ BR2_PACKAGE_CIFS_UTILS=y
 # Musica da cartelle condivise in rete (NFS, mount.nfs)
 BR2_PACKAGE_NFS_UTILS=y
 BR2_PACKAGE_KSMBD_TOOLS=y
+BR2_PACKAGE_MINIDLNA=y
 
 # Copia dei CD con un lettore USB
 BR2_PACKAGE_LIBCDIO_PARANOIA=y

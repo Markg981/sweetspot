@@ -745,6 +745,9 @@ exit 0
 FINTO
 printf '#!/bin/sh\nexit 0\n' > "$WEB/actionbin/sweetspot-nas"
 cp "$WEB/actionbin/sweetspot-nas" "$WEB/actionbin/sweetspot-lms"
+printf '#!/bin/sh
+printf "%%s\n" "$*" >> "$SWEETSPOT_RUN/mediaserver.call"
+' > "$WEB/actionbin/sweetspot-mediaserver"
 chmod +x "$WEB/actionbin/"*
 archive_action() {
 	local body
@@ -806,6 +809,29 @@ sistema_out=$(page sistema)
 expect "sistema: intestazioni di sicurezza anche con il selettore del renderer" "DENY|nosniff" \
 	"$(printf '%s' "$sistema_out" | sed -n 's/^X-Frame-Options: *//p' | tr -d '\r')|$(printf '%s' "$sistema_out" | sed -n 's/^X-Content-Type-Options: *//p' | tr -d '\r')"
 case "$(page sistema RENDERER_UPNP=si)" in *'name="renderer_upnp"'*'<option value="si" selected'*) ok "sistema: renderer UPnP acceso" ;; *) ko "sistema renderer acceso" "si selezionato" "-" ;; esac
+
+# Media server UPnP/DLNA: spento di serie, acceso dal pannello, riavviato solo se cambia.
+dlna_action() { # valore-del-campo [impostazione-precedente] [nome]
+	local body
+	printf '%s
+' "${2:-}" > "$WEB/run/sweetspot.conf"
+	rm -f "$WEB/run/mediaserver.call"
+	body="t=$(cat "$WEB/run/web.token")&a=sistema&nome=${3:-Sweetspot}&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si${1:+&server_upnp=$1}"
+	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run 		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf 		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} 		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione" > /dev/null
+	printf '%s|%s' "$(grep -o 'SERVER_UPNP [a-z]*' "$WEB/run/config.call")" "$(cat "$WEB/run/mediaserver.call" 2>/dev/null)"
+	rm -f "$WEB/run/sweetspot.conf" "$WEB/run/mediaserver.call"
+}
+expect "media server: acceso dal pannello, riavviato" "SERVER_UPNP si|riavvia" "$(dlna_action si)"
+expect "media server: spento dal pannello, riavviato" "SERVER_UPNP no|riavvia" "$(dlna_action no SERVER_UPNP=si)"
+expect "media server: valore sconosciuto = resta com'e', niente riavvio" "SERVER_UPNP si|" "$(dlna_action xyz SERVER_UPNP=si)"
+expect "media server: campo assente = resta com'e'" "SERVER_UPNP no|" "$(dlna_action '')"
+expect "media server: nome nuovo con il server acceso, riavviato" "SERVER_UPNP si|riavvia" "$(dlna_action si SERVER_UPNP=si Salotto)"
+expect "media server: nome nuovo con il server spento, niente riavvio" "SERVER_UPNP no|" "$(dlna_action no '' Salotto)"
+expect "media server: di serie spento" "no" "$(grep '^SERVER_UPNP=' "$OVERLAY/etc/sweetspot/defaults.conf" | cut -d= -f2)"
+expect "media server: spento anche nel modello di sweetspot.txt" "SERVER_UPNP=no" "$(grep '^SERVER_UPNP=' "$ROOT/board/sweetspot/stick/sweetspot.txt")"
+expect "media server: chiave e comando ammessi all'helper privilegiato" "1|1" 	"$(grep -c '"SERVER_UPNP"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")|$(grep -c '"sweetspot-mediaserver", "riavvia"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
+case "$(page sistema)" in *'name="server_upnp"'*'<option value="no" selected'*) ok "sistema: media server spento di serie" ;; *) ko "sistema media server" "no selezionato" "-" ;; esac
+case "$(page sistema SERVER_UPNP=si)" in *'name="server_upnp"'*'<option value="si" selected'*) ok "sistema: media server acceso" ;; *) ko "sistema media server acceso" "si selezionato" "-" ;; esac
 
 
 echo "Password delle pagine e impostazioni iniziali"
@@ -2833,6 +2859,20 @@ expect "stato: renderer UPnP con la porta occupata" "ATTENZIONE|Renderer UPnP/DL
 printf 'RENDERER_UPNP=si\nMODALITA=player\n' > "$DSP/run/sweetspot.conf"
 expect "stato: renderer UPnP in modalita' solo player" "ATTENZIONE|Renderer UPnP/DLNA|serve Lyrion su questo Sweetspot: non funziona in modalità solo player" "$(livecheck 'Renderer UPnP/DLNA')"
 rm -f "$DSP/run/sweetspot.conf" "$DSP/run/renderer.json"
+printf 'MODALITA=completa
+' > "$DSP/run/sweetspot.conf"
+expect "stato: media server spento di serie" "INFO|Media server UPnP/DLNA|spento (SERVER_UPNP=no): acceso dalla pagina Sistema, streamer e DAC di rete leggono la libreria" "$(livecheck 'Media server UPnP/DLNA')"
+printf 'SERVER_UPNP=si
+' > "$DSP/run/sweetspot.conf"
+expect "stato: media server acceso ma non in esecuzione" "ATTENZIONE|Media server UPnP/DLNA|acceso nelle impostazioni ma non in esecuzione: spegnilo e riaccendilo dalla pagina Sistema" "$(livecheck 'Media server UPnP/DLNA')"
+printf '%s
+' "$$" > "$DSP/run/mediaserver.pid"
+expect "stato: media server in esecuzione" "OK|Media server UPnP/DLNA|acceso (porta 8200): DSF e DFF partono senza conversioni" "$(livecheck 'Media server UPnP/DLNA')"
+printf 'SERVER_UPNP=si
+MODALITA=player
+' > "$DSP/run/sweetspot.conf"
+expect "stato: media server in modalita' solo player" "ATTENZIONE|Media server UPnP/DLNA|serve la libreria su questo Sweetspot: non funziona in modalità solo player" "$(livecheck 'Media server UPnP/DLNA')"
+rm -f "$DSP/run/sweetspot.conf" "$DSP/run/mediaserver.pid"
 expect "stato: nessuna interruzione di dispositivi" "OK|Interruzioni sul core audio|nessuna da dispositivi in 2 minuti sul core 3" \
 	"$(livecheck 'Interruzioni sul core audio')"
 irqs 2 7600 12700 > "$DSP/proc/interrupts"
@@ -3622,6 +3662,24 @@ if command -v perl >/dev/null; then
 else
 	echo "  (perl non installato, saltato)"
 fi
+echo "Media server UPnP/DLNA"
+MSD=$WEB/mediaserver
+mkdir -p "$MSD/run"
+printf 'NOME_PLAYER=Salotto;rm
+' > "$MSD/run/sweetspot.conf"
+msconf=$(SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf 	$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica")
+expect "media server: tutta la libreria, anche dietro i collegamenti" "1|1|1" 	"$(printf '%s
+' "$msconf" | grep -c '^media_dir=A,/musica$')|$(printf '%s
+' "$msconf" | grep -c '^wide_links=yes$')|$(printf '%s
+' "$msconf" | grep -c '^inotify=yes$')"
+expect "media server: senza privilegi, nome del player ripulito" "1|1" 	"$(printf '%s
+' "$msconf" | grep -c '^user=dlna$')|$(printf '%s
+' "$msconf" | grep -c '^friendly_name=Salotto_rm (libreria)$')"
+INIT=$OVERLAY/etc/init.d/S71sweetspot-mediaserver
+expect "media server: avviato dall'init, sui core di sistema con nice" "si|1|1" 	"$([ -x "$INIT" ] && grep -q 'sweetspot-mediaserver avvia' "$INIT" && echo si || echo no)|$(grep -c 'taskset.*nice -n 19' "$OVERLAY/usr/bin/sweetspot-mediaserver")|$(grep -c '^dlna ' "$ROOT/board/sweetspot/users.txt")"
+expect "media server: MiniDLNA in entrambe le immagini, l'init di Buildroot tolto" "1|1|1" 	"$(grep -c '^BR2_PACKAGE_MINIDLNA=y' "$ROOT/configs/sweetspot_x86_64_defconfig")|$(grep -c '^BR2_PACKAGE_MINIDLNA=y' "$ROOT/configs/sweetspot_rpi_defconfig")|$(grep -c 'S60minidlnad' "$ROOT/board/sweetspot/post-build.sh")"
+expect "media server: mai sospeso dalla modalita' ascolto" "0" "$(grep -c 'sospendibili' "$OVERLAY/usr/bin/sweetspot-mediaserver")"
+rm -rf "$MSD"
 echo "Cartelle di rete: SMB 2.1 o piu', hard, NFS"
 RV=$WORK/retever
 mkdir -p "$RV/bin" "$RV/run" "$RV/proc" "$RV/media" "$RV/musica"

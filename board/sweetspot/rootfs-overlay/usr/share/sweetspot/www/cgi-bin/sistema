@@ -66,6 +66,13 @@ $(option si "Acceso: BubbleUPnP, JPlay, mconnect e le altre app UPnP/DLNA vedono
 </select>
 <p class="sub">L'audio passa da Lyrion e dal player, come la musica della libreria: nessun altro programma apre il DAC. Solo con la modalità completa.</p>
 
+<label for="dlna">Media server UPnP/DLNA <span>(vale subito)</span></label>
+<select id="dlna" name="server_upnp">
+$(option no "Spento" "$(conf SERVER_UPNP no)")
+$(option si "Acceso: streamer e DAC di rete (es. Gustard, con BubbleUPnP o mconnect) leggono la libreria" "$(conf SERVER_UPNP no)")
+</select>
+<p class="sub">I file partono senza conversioni: DSF e DFF arrivano al renderer in DSD, alla frequenza del file, se il renderer li accetta. I file aggiunti alle cartelle di rete da altri computer compaiono dopo aver spento e riacceso il server. Solo con la modalità completa.</p>
+
 <label for="cop">Cache delle copertine <span>(vale dal prossimo avvio)</span></label>
 <select id="cop" name="cache_copertine">
 $(option auto "Automatica: sull'archivio musicale se c'è, altrimenti in RAM" "$(conf CACHE_COPERTINE auto)")
