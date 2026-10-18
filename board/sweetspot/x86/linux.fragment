@@ -3,6 +3,13 @@
 # Sweetspot - frammento del kernel per i PC x86 a 64 bit (sopra
 # x86_64_defconfig e common/linux.fragment, kernel LTS 6.18).
 
+# --- Controller degli interrupt (x2APIC) -----------------------------------
+# I PC recenti (es. Intel Lunar Lake) partono con x2APIC gia' acceso dal
+# BIOS. Senza il rimappamento degli interrupt il kernel prova a tornare in
+# modalita' xAPIC e il computer si riavvia di colpo subito dopo GRUB, senza
+# messaggi. x86_64_defconfig non lo attiva: le distribuzioni si'.
+CONFIG_IRQ_REMAP=y
+
 # --- Frequenza e stati di risparmio della CPU ------------------------------
 CONFIG_X86_INTEL_PSTATE=y
 CONFIG_X86_ACPI_CPUFREQ=y
