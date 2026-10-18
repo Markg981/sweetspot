@@ -546,7 +546,7 @@ Compute Module 4/5: si scrive sulla scheda SD (o su una chiavetta USB, se il Pi
 parte da USB) come per il PC, con Raspberry Pi Imager senza personalizzazioni.
 
 - **Kernel**: quello della Raspberry Pi Foundation nella serie LTS più recente
-  (6.18, la stessa del PC e di Raspberry Pi OS) con PREEMPT_RT e pagine da 4 KB,
+  (6.18, la stessa di Raspberry Pi OS) con PREEMPT_RT e pagine da 4 KB,
   uguale per il Pi 4 e il Pi 5. Firmware dall'ultima release della Raspberry Pi
   Foundation; gli overlay delle schede DAC li compila il kernel stesso.
   Programmi compilati per Cortex-A72, che girano identici sul Cortex-A76 del
@@ -868,8 +868,9 @@ tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per A
 tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
-Basato su Buildroot 2026.08 e sul kernel LTS 6.18 con PREEMPT_RT: 6.18.56 sul
-PC, il ramo rpi-6.18.y della Raspberry Pi Foundation sul Raspberry Pi.
+Basato su Buildroot 2026.08 e sul kernel con PREEMPT_RT: l'ultimo stabile
+(7.2.11) sul PC, il ramo LTS rpi-6.18.y della Raspberry Pi Foundation sul
+Raspberry Pi.
 
 ## Licenza
 
