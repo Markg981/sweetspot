@@ -25,6 +25,9 @@ echo "Utente web e httpd senza privilegi"
 expect "utente web nella tabella degli utenti" "1" "$(grep -c '^web -1 web -1 ' "$ROOT/board/sweetspot/users.txt")"
 expect "httpd con -u web:web" "1" "$(grep -c -- '^HTTPD_ARGS=.*-u web:web' "$OVERLAY/etc/default/httpd")"
 expect "httpd riscritto da S03 con -u web:web" "1" "$(grep -c -- "-u web:web" "$OVERLAY/etc/init.d/S03sweetspot-early")"
+for d in x86_64 rpi; do
+	expect "script di avvio dell'httpd installato ($d)" "1" "$(grep -c '^BR2_PACKAGE_BUSYBOX_HTTPD=y' "$ROOT/configs/sweetspot_${d}_defconfig")"
+done
 expect "BusyBox con httpd -u" "1" "$(grep -c '^CONFIG_FEATURE_HTTPD_SETUID=y' "$ROOT/board/sweetspot/common/busybox.fragment")"
 expect "helper setuid installato (4755)" "1" "$(grep -c 'sweetspot-priv f 4755 0 0' "$ROOT/package/sweetspot-tools/sweetspot-tools.mk")"
 
