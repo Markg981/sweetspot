@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Sweetspot - frammento del kernel per i PC x86 a 64 bit (sopra
-# x86_64_defconfig e common/linux.fragment, kernel LTS 6.18).
+# x86_64_defconfig e common/linux.fragment, kernel stabile 7.x).
 
 # --- Frequenza e stati di risparmio della CPU ------------------------------
 CONFIG_X86_INTEL_PSTATE=y

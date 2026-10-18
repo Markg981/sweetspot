@@ -9,8 +9,8 @@
 #
 # Regole: Buildroot, Lyrion, Material, CamillaDSP, firmware del Raspberry Pi,
 # azioni di GitHub, server di GitHub e Debian alla versione piu' recente;
-# kernel all'ultima versione della serie LTS (longterm) piu' recente, sia
-# sul PC sia sul Raspberry Pi; moduli di Lyrion per ARM dall'ultimo commit
+# kernel del PC all'ultima versione stabile, quello del Raspberry Pi
+# all'ultima della serie LTS (longterm) piu' recente; moduli di Lyrion per ARM dall'ultimo commit
 # del ramo di slimserver-vendor della versione di Lyrion in uso. Fedora,
 # dove si compilano i moduli di Lyrion per ARM, e' solo indicata: deve
 # avere la stessa glibc della toolchain di Buildroot, non la piu' recente.
@@ -75,8 +75,7 @@ stable=$(printf '%s' "$rel" | jq -r '.latest_stable.version' 2>/dev/null)
 [ "$lts" = null ] && lts=""
 [ "$stable" = null ] && stable=""
 pc=$(valore "$ROOT/configs/sweetspot_x86_64_defconfig" BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE)
-riga "Kernel del PC (LTS)" "$pc" "$lts"
-[ -n "$stable" ] && info "Kernel stabile (non LTS)" "-" "$stable" "solo indicazione: si usa la serie LTS"
+riga "Kernel del PC (stabile)" "$pc" "$stable"
 
 # Kernel del Raspberry Pi: ramo rpi-<serie LTS>.y della Raspberry Pi Foundation.
 rpi_def=$ROOT/configs/sweetspot_rpi_defconfig

@@ -24,10 +24,11 @@ BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/pos
 # Scheda: x86_64 (avvio con GRUB)
 BR2_ROOTFS_POST_SCRIPT_ARGS="x86_64"
 
-# Kernel LTS con PREEMPT_RT
+# Kernel stabile piu' recente con PREEMPT_RT: i PC nuovi (Intel Lunar Lake,
+# Samsung Galaxy Book 5) si riavviano subito con 6.18 e 6.12 e partono con 7.x
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
-BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.56"
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="7.2.11"
 BR2_LINUX_KERNEL_USE_DEFCONFIG=y
 BR2_LINUX_KERNEL_DEFCONFIG="x86_64"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/common/linux.fragment $(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/x86/linux.fragment"
