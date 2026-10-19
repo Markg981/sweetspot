@@ -52,6 +52,9 @@ CONFIG_DRM_SIMPLEDRM=y
 CONFIG_SYSFB_SIMPLEFB=y
 CONFIG_DRM_FBDEV_EMULATION=y
 CONFIG_FRAMEBUFFER_CONSOLE=y
+# /dev/fb0 per la schermata grafica (sweetspot-schermo): senza CONFIG_FB il
+# kernel non lo crea, anche con l'emulazione fbdev attiva.
+CONFIG_FB_DEVICE=y
 # i915 non e' compatibile con PREEMPT_RT: lo schermo resta sul framebuffer
 # di base (simpledrm) e la retroilluminazione si spegne via ACPI, dove c'e'.
 CONFIG_ACPI_VIDEO=m

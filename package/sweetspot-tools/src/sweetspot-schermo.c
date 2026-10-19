@@ -14,7 +14,9 @@
 // FILE ha righe CHIAVE=VALORE in UTF-8, gia' pronte da sweetspot-display:
 //   occhiello titolo_prefisso titolo alt_etichetta alt riga1 riga2 qr qr_nota
 //   stato stato_tipo (ok|attesa|errore) tasto tasto_nota
-// Le chiavi mancanti non si disegnano. Senza "qr" a destra va il marchio.
+//   codice_etichetta codice codice_nota
+// Le chiavi mancanti non si disegnano. Senza "qr" a destra va il marchio;
+// con "codice" (primo accesso) il codice prende il posto di riga1 e riga2.
 //
 // La console resta in modo testo: lo spegnimento dopo SCHERMO_MINUTI e il
 // cambio di console li gestisce il kernel come prima. Esce con 1 se non
@@ -71,6 +73,7 @@ typedef struct { int w, h; float *px; } Tela; // RGB in virgola mobile 0..1
 typedef struct {
 	const char *occhiello, *titolo_prefisso, *titolo, *alt_etichetta, *alt, *riga1, *riga2;
 	const char *qr, *qr_nota, *stato, *stato_tipo, *tasto, *tasto_nota;
+	const char *codice_etichetta, *codice, *codice_nota;
 } Testi;
 
 static FT_Library ft;
@@ -257,10 +260,11 @@ static void disegna(Tela *t, const Testi *x)
 	} else
 		marchio(t, kx, ky, 11 * s);
 
-	// Sinistra: l'indirizzo da aprire e due righe di spiegazione, centrate
-	// in altezza (senza l'indirizzo alternativo il blocco e' piu' basso).
+	// Sinistra: l'indirizzo da aprire e due righe di spiegazione (o il
+	// codice di primo accesso), centrate in altezza: senza l'indirizzo
+	// alternativo il blocco e' piu' basso, con il codice piu' alto.
 	float largo = (kx - cw / 2) - 6 * s - sx;
-	float y = oy + (x->alt ? 35 : 38.5f) * s;
+	float y = oy + ((x->alt ? 35 : 38.5f) - (x->codice ? 4 : 0)) * s;
 	if (x->occhiello)
 		testo(t, f_bold, (int)(1.8f * s), sx, y, x->occhiello, C_ORO, 1, 0.3f * s);
 	y += 10 * s;
@@ -286,9 +290,26 @@ static void disegna(Tela *t, const Testi *x)
 	}
 	rett(t, sx + 2.5f * s, y + 5.5f * s, 2.5f * s, 0.2f * s, 0.2f * s, C_ORO, 1, 0, 0);
 	y += 12 * s;
-	if (x->riga1)
+	if (x->codice) {
+		// Il codice in una targhetta dorata: si ricopia lettera per lettera.
+		if (x->codice_etichetta)
+			testo(t, f_bold, (int)(1.6f * s), sx, y - 1.5f * s, x->codice_etichetta, C_ORO, 1, 0.25f * s);
+		float sp = 0.3f * s;
+		int px = (int)(4.6f * s);
+		float w;
+		while ((w = testo(NULL, f_bold, px, 0, 0, x->codice, 0, 0, sp)) > largo - 6 * s && px > 8)
+			px = (int)(px * (largo - 6 * s) / w);
+		float cy = y + 5.5f * s, hw = w / 2 + 3 * s;
+		rett(t, sx + hw, cy, hw, 4.2f * s, 1.6f * s, C_ORO, 0.08f, 0, 0);
+		rett(t, sx + hw, cy, hw, 4.2f * s, 1.6f * s, C_ORO, 0.9f, fmaxf(0.18f * s, 1), 0);
+		testo(t, f_bold, px, sx + 3 * s, cy + 0.36f * px, x->codice, C_TESTO, 1, sp);
+		if (x->codice_nota)
+			testo(t, f_reg, adatta(f_reg, (int)(2.1f * s), x->codice_nota, largo), sx, cy + 8.6f * s,
+			      x->codice_nota, C_SPENTO, 1, 0);
+	}
+	if (x->riga1 && !x->codice)
 		testo(t, f_reg, adatta(f_reg, (int)(2.3f * s), x->riga1, largo), sx, y, x->riga1, C_SPENTO, 1, 0);
-	if (x->riga2)
+	if (x->riga2 && !x->codice)
 		testo(t, f_reg, adatta(f_reg, (int)(2.3f * s), x->riga2, largo), sx, y + 4.2f * s, x->riga2, C_SPENTO, 1, 0);
 
 	// Piede: stato del player in una pillola, scorciatoia a destra.
@@ -333,6 +354,7 @@ static int leggi(const char *path, Testi *x)
 #define K(n) { #n, offsetof(Testi, n) }
 		K(occhiello), K(titolo_prefisso), K(titolo), K(alt_etichetta), K(alt), K(riga1), K(riga2),
 		K(qr), K(qr_nota), K(stato), K(stato_tipo), K(tasto), K(tasto_nota),
+		K(codice_etichetta), K(codice), K(codice_nota),
 #undef K
 	};
 	for (char *l = strtok(buf, "\n"); l; l = strtok(NULL, "\n")) {
@@ -484,6 +506,7 @@ int main(int argc, char **argv)
 	// Cursore nascosto, schermo pulito.
 	if (write(fd_tty, "\033[?25l\033[2J\033[H", 13) < 0) {}
 	if (schermo(argv[1])) {
+		fprintf(stderr, "sweetspot-schermo: framebuffer /dev/fb0 non disponibile\n");
 		if (write(fd_tty, "\033[?25h", 6) < 0) {}
 		if (ha_termios) tcsetattr(fd_tty, TCSANOW, &prima);
 		return 1;
