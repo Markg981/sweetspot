@@ -24,5 +24,8 @@ CONFIG_SND_DESIGNWARE_I2S=m
 # frammento comune (moduli, spento di serie).
 # CONFIG_MEDIA_SUPPORT is not set
 
+# /dev/fb0 per la schermata grafica sul monitor (sweetspot-schermo).
+CONFIG_FB_DEVICE=y
+
 # Watchdog del SoC (Pi 4 e Pi 5).
 CONFIG_BCM2835_WDT=y

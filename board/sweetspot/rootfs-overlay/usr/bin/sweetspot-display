@@ -12,12 +12,25 @@
 
 TTY=/dev/tty1
 TESTI=$RUN/schermo.testi
+PRIMO_ATTIVO=$RUN/primo-accesso.attivo
+PRIMO_CODICE=$RUN/primo-accesso.codice
+
+# Codice di primo accesso finche' non c'e' la password (sweetspot-accesso):
+# deve restare sullo schermo, le pagine lo chiedono. Lo mette in $codice
+# senza processi in piu' (gira nel ciclo): il segnale lo toglie
+# sweetspot-accesso quando si sceglie la password.
+primo_codice() {
+	codice=''
+	[ -f "$PRIMO_ATTIVO" ] && read -r codice < "$PRIMO_CODICE" 2>/dev/null
+	return 0
+}
 
 # Testi della schermata grafica, CHIAVE=VALORE (vedi sweetspot-schermo).
 testi() {
-	local ip=$1 srv host pst tipo
+	local ip=$1 srv host pst tipo codice
 	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 	pst=$(cat "$RUN/player.stato" 2>/dev/null)
+	primo_codice
 	if [ -z "$ip" ]; then
 		echo "occhiello=IN ATTESA DELLA RETE"
 		echo "titolo=Rete non collegata"
@@ -43,6 +56,12 @@ testi() {
 			fi
 		fi
 	fi
+	if [ -n "$codice" ]; then
+		[ -n "$ip" ] && echo "occhiello=PRIMO ACCESSO: APRI L'INDIRIZZO"
+		echo "codice_etichetta=CODICE DI PRIMO ACCESSO"
+		echo "codice=$codice"
+		echo "codice_nota=Le pagine lo chiedono una volta sola, per scegliere la password."
+	fi
 	case "$pst" in
 		attivo*) tipo=ok ;;
 		''|bloccato*|*terminato*) tipo=errore ;;
@@ -56,7 +75,7 @@ testi() {
 
 # Ripiego in solo testo (nessun framebuffer o caratteri mancanti).
 draw() {
-	local ip=$1 srv host
+	local ip=$1 srv host codice
 	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 	printf '\033[2J\033[H'
 	echo
@@ -81,6 +100,12 @@ draw() {
 		srv=$(lms_server_ip)
 		[ -n "$srv" ] && echo "   Musica: apri http://$srv:9000/ o la tua app Lyrion"
 	fi
+	primo_codice
+	if [ -n "$codice" ]; then
+		echo
+		echo "   PRIMO ACCESSO - codice: $codice"
+		echo "   Le pagine lo chiedono una volta sola, per scegliere la password."
+	fi
 	echo
 	echo "   Player: $(cat "$RUN/player.stato" 2>/dev/null)"
 	echo
@@ -98,10 +123,13 @@ testi "$IPV4" > "$TESTI" 2>/dev/null
 pittore=""
 if command -v sweetspot-schermo >/dev/null 2>&1; then
 	# Esce subito se non c'e' il framebuffer: dopo un secondo si sa.
-	sweetspot-schermo "$TESTI" "$TTY" 2>/dev/null &
+	sweetspot-schermo "$TESTI" "$TTY" 2>"$RUN/schermo.err" &
 	pittore=$!
 	sleep 1
-	kill -0 "$pittore" 2>/dev/null || pittore=""
+	if ! kill -0 "$pittore" 2>/dev/null; then
+		pittore=""
+		log "schermata grafica non disponibile, resta il testo: $(head -n 1 "$RUN/schermo.err" 2>/dev/null)"
+	fi
 fi
 
 last=""
@@ -112,8 +140,11 @@ while true; do
 	read -r pst < "$RUN/player.stato" 2>/dev/null
 	# Anche il framebuffer: quando arriva il driver grafico (i915,
 	# amdgpu...) la console ridisegna il suo testo sopra la schermata.
-	fb=$(cat "$SYS/class/graphics/fb0/name" "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null)
-	now="$ip|$pst|$(lms_server_ip)|$fb"
+	fbn='' fbd=''
+	read -r fbn < "$SYS/class/graphics/fb0/name" 2>/dev/null
+	read -r fbd < "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null
+	primo_codice
+	now="$ip|$pst|$(lms_server_ip)|$fbn $fbd|$codice"
 	if [ -n "$pittore" ] && ! kill -0 "$pittore" 2>/dev/null; then
 		pittore=""
 		last=""
