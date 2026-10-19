@@ -10,7 +10,7 @@ l'impronta non torna. `BR_NO_CHECK_HASH_FOR` non e' piu' usato.
 |---|---|---|
 | lms | archivio del tag 9.1.1 di slimserver | sha256 calcolato dall'archivio generato da GitHub |
 | lms (moduli ARM) | release `dipendenze-lyrion` del progetto | sha256 |
-| lms-material | zip della release 6.4.13 | sha1 del repository dei plugin + sha256 |
+| lms-material | zip della release 6.4.14 | sha1 del repository dei plugin + sha256 |
 | camilladsp | archivio del tag v4.1.3 | dipendenze Rust fissate da `Cargo.lock` con i checksum del registro (`cargo --locked`) |
 | alsa-cdsp | archivio del commit fissato | sha256 |
 

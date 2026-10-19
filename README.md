@@ -869,7 +869,7 @@ tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
 Basato su Buildroot 2026.08 e sul kernel con PREEMPT_RT: l'ultimo stabile
-(7.2.11) sul PC, il ramo LTS rpi-6.18.y della Raspberry Pi Foundation sul
+(7.3) sul PC, il ramo LTS rpi-6.18.y della Raspberry Pi Foundation sul
 Raspberry Pi.
 
 ## Licenza
