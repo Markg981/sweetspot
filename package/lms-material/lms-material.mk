@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-LMS_MATERIAL_VERSION = 6.4.13
+LMS_MATERIAL_VERSION = 6.4.14
 LMS_MATERIAL_SOURCE = lms-material-$(LMS_MATERIAL_VERSION).zip
 LMS_MATERIAL_SITE = https://github.com/CDrummond/lms-material/releases/download/$(LMS_MATERIAL_VERSION)
 LMS_MATERIAL_LICENSE = MIT, GPL-2.0 (parti)
