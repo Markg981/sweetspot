@@ -4,11 +4,57 @@
 # Sweetspot - schermata sul monitor del computer: indirizzo da aprire dal
 # telefono, QR code e stato. Si aggiorna solo quando qualcosa cambia e lo
 # schermo si spegne dopo SCHERMO_MINUTI (un tasto lo riaccende).
+#
+# La disegna sweetspot-schermo sul framebuffer con i testi preparati qui
+# ($RUN/schermo.testi, poi SIGHUP). Senza framebuffer resta il testo.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 TTY=/dev/tty1
+TESTI=$RUN/schermo.testi
 
+# Testi della schermata grafica, CHIAVE=VALORE (vedi sweetspot-schermo).
+testi() {
+	local ip=$1 srv host pst tipo
+	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
+	pst=$(cat "$RUN/player.stato" 2>/dev/null)
+	if [ -z "$ip" ]; then
+		echo "occhiello=IN ATTESA DELLA RETE"
+		echo "titolo=Rete non collegata"
+		echo "riga1=Controlla il cavo di rete."
+		echo "riga2=La schermata si aggiorna da sola appena c'è la connessione."
+	else
+		echo "titolo_prefisso=http://"
+		echo "titolo=$host.local"
+		echo "alt_etichetta=oppure"
+		echo "alt=$ip"
+		echo "qr=http://$ip/"
+		echo "qr_nota=Inquadra con la fotocamera"
+		if [ "$(mode)" = completa ]; then
+			echo "occhiello=DAL TELEFONO O DAL COMPUTER"
+			echo "riga1=Musica, plugin e impostazioni sono tutti lì."
+			echo "riga2=Funzionano anche le app per Lyrion: iPeng, Squeezer, Material."
+		else
+			echo "occhiello=STATO E IMPOSTAZIONI"
+			srv=$(lms_server_ip)
+			if [ -n "$srv" ]; then
+				echo "riga1=Musica: apri http://$srv:9000/"
+				echo "riga2=oppure la tua app Lyrion (iPeng, Squeezer, Material)."
+			fi
+		fi
+	fi
+	case "$pst" in
+		attivo*) tipo=ok ;;
+		''|bloccato*|*terminato*) tipo=errore ;;
+		*) tipo=attesa ;;
+	esac
+	echo "stato=Player ${pst:-non avviato}"
+	echo "stato_tipo=$tipo"
+	echo "tasto=Alt+F2"
+	echo "tasto_nota=per il terminale"
+}
+
+# Ripiego in solo testo (nessun framebuffer o caratteri mancanti).
 draw() {
 	local ip=$1 srv host
 	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
@@ -46,15 +92,39 @@ case "$min" in ''|*[!0-9]*) min=2 ;; esac
 # Spegnimento del monitor gestito dalla console: un tasto lo riaccende.
 { printf '\033[9;%s]\033[14;%s]' "$min" "$min" > "$TTY"; } 2>/dev/null
 
+mkdir -p "$RUN" 2>/dev/null
+net_ipv4_v
+testi "$IPV4" > "$TESTI" 2>/dev/null
+pittore=""
+if command -v sweetspot-schermo >/dev/null 2>&1; then
+	# Esce subito se non c'e' il framebuffer: dopo un secondo si sa.
+	sweetspot-schermo "$TESTI" "$TTY" 2>/dev/null &
+	pittore=$!
+	sleep 1
+	kill -0 "$pittore" 2>/dev/null || pittore=""
+fi
+
 last=""
 nap_init
 while true; do
 	net_ipv4_v; ip=$IPV4
 	pst=''
 	read -r pst < "$RUN/player.stato" 2>/dev/null
-	now="$ip|$pst|$(lms_server_ip)"
+	# Anche il framebuffer: quando arriva il driver grafico (i915,
+	# amdgpu...) la console ridisegna il suo testo sopra la schermata.
+	fb=$(cat "$SYS/class/graphics/fb0/name" "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null)
+	now="$ip|$pst|$(lms_server_ip)|$fb"
+	if [ -n "$pittore" ] && ! kill -0 "$pittore" 2>/dev/null; then
+		pittore=""
+		last=""
+	fi
 	if [ "$now" != "$last" ]; then
-		{ draw "$ip" > "$TTY"; } 2>/dev/null
+		if [ -n "$pittore" ]; then
+			testi "$ip" > "$TESTI.nuovo" 2>/dev/null && mv -f "$TESTI.nuovo" "$TESTI"
+			kill -HUP "$pittore" 2>/dev/null
+		else
+			{ draw "$ip" > "$TTY"; } 2>/dev/null
+		fi
 		last=$now
 	fi
 	# Il testo cambia di rado (rete, stato del player): ogni 20 s bastano.

@@ -8,6 +8,7 @@ SWEETSPOT_TOOLS_VERSION = 1.0
 SWEETSPOT_TOOLS_SITE = $(BR2_EXTERNAL_SWEETSPOT_PATH)/package/sweetspot-tools/src
 SWEETSPOT_TOOLS_SITE_METHOD = local
 SWEETSPOT_TOOLS_LICENSE = GPL-3.0+
+SWEETSPOT_TOOLS_DEPENDENCIES = freetype libqrencode
 
 define SWEETSPOT_TOOLS_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall \
@@ -26,6 +27,10 @@ define SWEETSPOT_TOOLS_BUILD_CMDS
 		-o $(@D)/sweetspot-camilla $(@D)/sweetspot-camilla.c
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall -Wextra \
 		-o $(@D)/sweetspot-priv $(@D)/sweetspot-priv.c
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -Wall -Wextra \
+		-I$(STAGING_DIR)/usr/include/freetype2 -pthread \
+		-o $(@D)/sweetspot-schermo $(@D)/sweetspot-schermo.c \
+		-lqrencode -lfreetype -lm
 endef
 
 define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
@@ -37,6 +42,7 @@ define SWEETSPOT_TOOLS_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-prova-dop $(TARGET_DIR)/usr/sbin/sweetspot-prova-dop
 	$(INSTALL) -D -m 0755 $(@D)/sweetspot-camilla $(TARGET_DIR)/usr/sbin/sweetspot-camilla
 	$(INSTALL) -D -m 4755 $(@D)/sweetspot-priv $(TARGET_DIR)/usr/sbin/sweetspot-priv
+	$(INSTALL) -D -m 0755 $(@D)/sweetspot-schermo $(TARGET_DIR)/usr/bin/sweetspot-schermo
 endef
 
 # Helper privilegiato del pannello web: setuid root, parte solo per root e

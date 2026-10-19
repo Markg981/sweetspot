@@ -1,7 +1,10 @@
 config BR2_PACKAGE_SWEETSPOT_TOOLS
 	bool "sweetspot-tools"
+	select BR2_PACKAGE_FREETYPE
+	select BR2_PACKAGE_LIBQRENCODE
 	help
 	  Programmi di Sweetspot scritti in C: firme AccurateRip per
-	  la verifica delle copie dei CD (sweetspot-arcrc).
+	  la verifica delle copie dei CD (sweetspot-arcrc), schermata
+	  di benvenuto sul monitor (sweetspot-schermo).
 
 	  https://github.com/Markg981/sweetspot
