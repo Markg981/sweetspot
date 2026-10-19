@@ -1216,7 +1216,7 @@ lms_posto_prendi() {
 
 # lms_json_diretto TIMEOUT PLAYER PAROLA...: la richiesta vera, senza cache.
 lms_json_diretto() {
-	local tmo=$1 player=$2 args="" w out auth rc posto="" t0 t1
+	local tmo=$1 player=$2 args="" w out auth rc posto="" t0 t1 errf werr
 	shift 2
 	for w in "$@"; do json_q_v "$w"; args="$args${args:+,}\"$JQV\""; done
 	json_q_v "$player"
@@ -1229,20 +1229,32 @@ lms_json_diretto() {
 	fi
 	# Secondi dall'avvio (solo per misurare la durata), senza date.
 	read -r t0 _ < /proc/uptime; t0=${t0%%.*}
+	errf=${TMPDIR:-/tmp}/sweetspot-wget.$$
 	out=$("${SWEETSPOT_WGET:-wget}" -q -T "$tmo" -O - --header 'Content-Type: application/json' \
 		${auth:+--header "$auth"} \
 		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[\"$JQV\",[$args]]}" \
-		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>/dev/null)
+		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>"$errf")
 	rc=$?
 	read -r t1 _ < /proc/uptime; t1=${t1%%.*}
 	[ -z "$posto" ] || rm -rf "$RUN/lms-posti/$posto"
 	if [ "$rc" -ne 0 ]; then
-		# wget non distingue i motivi: li deduciamo dal tempo impiegato (tempo
-		# scaduto) e dal servizio (connessione rifiutata mentre parte o ferma).
+		werr=$(cat "$errf" 2>/dev/null)
+		rm -f "$errf"
+		# wget ha un solo codice d'uscita: i motivi si deducono dal tempo
+		# impiegato (tempo scaduto), dal servizio (fermo) e dal messaggio.
 		[ $((t1 - t0)) -ge "$tmo" ] && return 4
-		lms_in_esecuzione && return 3
-		return 2
+		lms_in_esecuzione || return 2
+		# Connessione accettata ma nessuna risposta valida: Lyrion chiude la
+		# connessione senza rispondere quando il comando fallisce (per esempio
+		# una ricerca), o risponde con un errore HTTP. Non e' "in avvio".
+		case "$werr" in
+			*'error getting response'*|*'server returned error'*)
+				log "lyrion: richiesta $1 fallita (${werr#wget: })"
+				return 5 ;;
+		esac
+		return 3
 	fi
+	rm -f "$errf"
 	[ -n "$out" ] || return 5
 	# HTTP 200 puo' contenere un errore RPC o una pagina del proxy. Accetta
 	# una sola risposta JSON con il risultato di Lyrion, senza errore.

@@ -50,6 +50,7 @@ case "$(cat "$STUBDIR/modo")" in
 	assente) exit 1 ;;
 	errore) echo '{"id":1,"error":"boom"}' ;;
 	muto) sleep "$T"; exit 1 ;;
+	chiuso) echo 'wget: error getting response' >&2; exit 1 ;;
 esac
 EOF
 chmod +x "$STUB/wget"
@@ -119,6 +120,8 @@ echo $! > "$WORK/lms.pid"
 cp "$WORK/lms.pid" "$RUNDIR/lms.pid"
 rm -rf "$RUNDIR/lms-cache"
 expect "servizio vivo ma senza risposta: in avvio, codice 3" 3 "$(rc_di web "lms_json '' serverstatus 0 0")"
+modo chiuso; rm -rf "$RUNDIR/lms-cache"
+expect "connessione chiusa senza risposta: applicativo, codice 5 (non in avvio)" 5 "$(rc_di web "lms_json '' albums 0 12 search:The")"
 modo muto; rm -rf "$RUNDIR/lms-cache"
 expect "nessuna risposta entro il tempo: timeout, codice 4" 4 "$(rc_di env LMS_TIMEOUT_LETTURA=1 sh -c "LMS_WEB=1; export LMS_WEB; . $OVERLAY/usr/lib/sweetspot/common.sh; lms_json '' serverstatus 0 0")"
 modo errore; rm -rf "$RUNDIR/lms-cache"

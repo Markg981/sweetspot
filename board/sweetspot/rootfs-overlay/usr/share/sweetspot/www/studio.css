@@ -58,9 +58,11 @@ body.st { margin: 0; background: var(--studio-bg); color: var(--studio-ink); fon
 .st-chip { padding: .45rem .8rem; min-height: 36px; border: 1px solid var(--studio-line); border-radius: 999px; text-decoration: none; color: var(--studio-ink) !important; background: var(--studio-surface); }
 .st-chip[aria-pressed="true"] { background: var(--studio-accent); color: var(--studio-accent-ink) !important; border-color: var(--studio-accent); }
 .st-tools { display: flex; gap: .5rem; align-items: center; }
-.st-pager { display: flex; gap: 1rem; justify-content: center; align-items: center; margin: 1.25rem 0; flex-wrap: wrap; }
+.st-pager { display: flex; gap: .5rem; justify-content: center; align-items: center; margin: 1.25rem 0; flex-wrap: wrap; }
 .st-pager a, .st-pager span[aria-disabled] { padding: .6rem .9rem; border: 1px solid var(--studio-line); border-radius: 10px; text-decoration: none; }
 .st-pager span[aria-disabled] { color: var(--studio-muted); opacity: .6; }
+.st-pager a, .st-pager span[aria-disabled] { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.st-pager .st-tot { color: var(--studio-muted); }
 
 .st-list, .st-tracks { list-style: none; margin: 0; padding: 0; }
 .st-list li, .st-track { display: flex; gap: .6rem; align-items: center; padding: .5rem .6rem; border-bottom: 1px solid var(--studio-line); flex-wrap: wrap; }

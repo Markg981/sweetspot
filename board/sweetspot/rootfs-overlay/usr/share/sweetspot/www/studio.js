@@ -201,16 +201,34 @@
 			h('button', { type: 'button', text: 'Riprova', on: { click: render } })])]);
 	}
 
+	// Con molte pagine si salta: prima e ultima, dieci pagine alla volta e un
+	// selettore per andare direttamente a una pagina.
 	function pager(p, n, total, v) {
-		var pg = Number(p.p) || 0, last = Math.max(0, Math.ceil(total / PAGE) - 1);
-		if (total <= PAGE) return null;
-		var q1 = {}, q2 = {}, k;
-		for (k in p) { q1[k] = p[k]; q2[k] = p[k]; }
-		q1.p = pg - 1; q2.p = pg + 1;
+		var pg = Number(p.p) || 0, last = Math.max(0, Math.ceil(total / n) - 1), opts = [], i;
+		if (total <= n) return null;
+		function page(i) {
+			var q = {}, k;
+			for (k in p) q[k] = p[k];
+			q.p = i;
+			return link(v, q);
+		}
+		function to(i, text, label) {
+			i = Math.max(0, Math.min(last, i));
+			return i !== pg ? h('a', { href: page(i), text: text, 'aria-label': label || null })
+				: h('span', { text: text, 'aria-label': label || null, 'aria-disabled': 'true' });
+		}
+		for (i = 0; i <= last; i++) opts.push(h('option', { value: i, text: 'Pagina ' + (i + 1) + ' di ' + (last + 1), selected: i === pg }));
+		var sel = h('select', { class: 'mono', 'aria-label': 'Vai alla pagina', on: { change: function () { location.hash = page(Number(this.value) || 0); } } }, opts);
+		var far = last >= 10;
 		return h('nav', { class: 'st-pager', 'aria-label': 'Pagine' }, [
-			pg > 0 ? h('a', { href: link(v, q1), text: '← Precedenti' }) : h('span', { text: '← Precedenti', 'aria-disabled': 'true' }),
-			h('span', { class: 'mono', text: (pg + 1) + ' / ' + (last + 1) + ' · ' + total }),
-			pg < last ? h('a', { href: link(v, q2), text: 'Successivi →' }) : h('span', { text: 'Successivi →', 'aria-disabled': 'true' })
+			to(0, '⏮', 'Prima pagina'),
+			far ? to(pg - 10, '−10', 'Indietro di 10 pagine') : null,
+			to(pg - 1, '← Precedenti'),
+			sel,
+			to(pg + 1, 'Successivi →'),
+			far ? to(pg + 10, '+10', 'Avanti di 10 pagine') : null,
+			to(last, '⏭', 'Ultima pagina'),
+			h('span', { class: 'mono st-tot', text: total + ' in tutto' })
 		]);
 	}
 
@@ -312,18 +330,58 @@
 		}).catch(retry);
 	}
 
+	// Testo per il confronto: minuscole e senza accenti ("è" trova "e").
+	function norm(s) {
+		s = String(s || '').toLowerCase();
+		return s.normalize ? s.normalize('NFD').replace(/[̀-ͯ]/g, '') : s;
+	}
+	// Ripiego quando Lyrion non esegue la ricerca (chiude la connessione senza
+	// risposta, per esempio con l'indice di ricerca assente o rovinato): si legge
+	// l'elenco completo a blocchi e si filtra qui, fino a max risultati.
+	function filterAll(op, loop, fields, q, max) {
+		var words = norm(q).split(/\s+/).filter(Boolean), found = [], BLOCK = 500;
+		function step(start) {
+			return api({ op: op, start: start, count: BLOCK, sort: op === 'albums' ? 'album' : undefined }).then(function (r) {
+				var list = r[loop] || [], total = Number(r.count) || 0;
+				list.forEach(function (x) {
+					var t = norm(fields.map(function (f) { return x[f]; }).join(' '));
+					if (found.length < max && words.every(function (w) { return t.indexOf(w) >= 0; })) found.push(x);
+				});
+				return found.length < max && list.length && start + BLOCK < total ? step(start + BLOCK) : found;
+			});
+		}
+		return step(0);
+	}
+	// Le tre ricerche partono una dopo l'altra (Lyrion le esegue comunque in
+	// sequenza) e una che fallisce non nasconde i risultati delle altre.
+	var searchId = 0;
 	function vSearch(r) {
-		var q = r.p.q || '';
+		var q = r.p.q || '', id = ++searchId, res = {}, errs = [], simple = false;
+		var steps = [
+			['al', { op: 'albums', search: q, count: 12, sort: 'album' }, 'albums_loop', ['album', 'artist']],
+			['ar', { op: 'artists', search: q, count: 12 }, 'artists_loop', ['artist']],
+			['ti', { op: 'titles', search: q, count: 20 }, 'titles_loop', null]];
 		loading();
-		Promise.all([api({ op: 'albums', search: q, count: 12, sort: 'album' }), api({ op: 'artists', search: q, count: 12 }), api({ op: 'titles', search: q, count: 20 })]).then(function (res) {
-			var al = res[0].albums_loop || [], ar = res[1].artists_loop || [], ti = res[2].titles_loop || [];
+		steps.reduce(function (pr, s) {
+			return pr.then(function () {
+				return api(s[1]).then(function (x) { res[s[0]] = x[s[2]] || []; }, function (e) {
+					if (!s[3] || (e && (e.status === 401 || e.status === 409))) { errs.push(e); return; }
+					return filterAll(s[1].op, s[2], s[3], q, s[1].count).then(function (x) { res[s[0]] = x; simple = true; }, function (e2) { errs.push(e2); });
+				});
+			});
+		}, Promise.resolve()).then(function () {
+			if (id !== searchId || route().v !== 'search') return;
+			var al = res.al || [], ar = res.ar || [], ti = res.ti || [];
+			if (errs.length === steps.length) { retry(errs[0]); return; }
 			var kids = [h('h1', { text: 'Risultati per “' + q + '”' })];
+			if (simple || errs.length) kids.push(h('p', { class: 'st-hint', text: 'Lyrion non ha eseguito la ricerca completa: ' + (simple ? 'album e artisti sono cercati solo nei titoli e nei nomi' : 'alcuni risultati mancano') + (res.ti ? '.' : ', i brani non sono disponibili.') }));
+			errs.forEach(function (e) { if (e && (e.status === 401 || e.status === 409)) failure(e); });
 			if (!al.length && !ar.length && !ti.length) { kids.push(empty('Nessun risultato.', 'Controlla l’ortografia o prova una parola più corta.')); setMain(kids, 'Ricerca'); return; }
-			if (al.length) kids.push(h('h2', { text: 'Album' }), h('ul', { class: 'st-grid' }, al.map(albumCard)), h('p', {}, [h('a', { href: link('albums', { q: q }), text: 'Tutti gli album trovati' })]));
+			if (al.length) kids.push(h('h2', { text: 'Album' }), h('ul', { class: 'st-grid' }, al.map(albumCard)), simple ? null : h('p', {}, [h('a', { href: link('albums', { q: q }), text: 'Tutti gli album trovati' })]));
 			if (ar.length) kids.push(h('h2', { text: 'Artisti' }), h('ul', { class: 'st-list' }, ar.map(function (a) { return h('li', {}, [h('a', { href: link('albums', { artist: a.id, n: a.artist }), text: a.artist })]); })));
 			if (ti.length) kids.push(h('h2', { text: 'Brani' }), h('ol', { class: 'st-tracks' }, ti.map(function (t, i) { return trackRow(t, i + 1); })));
 			setMain(kids, 'Ricerca');
-		}).catch(retry);
+		});
 	}
 
 	function techLine(t) {

@@ -74,7 +74,9 @@ fi
 if [ "$REQUEST_METHOD" != POST ]; then
 	P_start=${P_start:-0} P_count=${P_count:-48}
 	num "$P_start" || errore 400 parametro "start non valido"
-	num "$P_count" && [ "$P_count" -ge 1 ] && [ "$P_count" -le 200 ] || errore 400 parametro "count non valido"
+	# Fino a 500 (come sweetspot-priv): la ricerca di ripiego di studio.js
+	# legge gli elenchi completi a blocchi.
+	num "$P_count" && [ "$P_count" -ge 1 ] && [ "$P_count" -le 500 ] || errore 400 parametro "count non valido"
 	[ -z "$P_player" ] || mac_ok "$P_player" || errore 400 parametro "player non valido"
 	set --
 	if [ -n "$P_search" ]; then
