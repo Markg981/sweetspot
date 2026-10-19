@@ -65,5 +65,9 @@ expect "uscita ferma: nessuna riproduzione" "in riproduzione: 0" "$(riga "$out" 
 SWEETSPOT_PROCFS=$WORK sh "$TOOL" -c 9 >/dev/null 2>&1; expect "scheda assente: esito 1" 1 "$?"
 SWEETSPOT_PROCFS=$WORK sh "$TOOL" -c x >/dev/null 2>&1; expect "scheda non valida: esito 2" 2 "$?"
 
+# xrun_counter esiste solo con SND_PCM_XRUN_DEBUG, che senza SND_DEBUG il
+# kernel scarta.
+expect "kernel: XRUN_DEBUG con la sua dipendenza SND_DEBUG" "2" "$(grep -c '^CONFIG_SND_\(DEBUG\|PCM_XRUN_DEBUG\)=y$' "$ROOT/board/sweetspot/common/linux.fragment")"
+
 echo "alsa-misura: superati $PASS, falliti $FAIL"
 [ "$FAIL" -eq 0 ]

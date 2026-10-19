@@ -63,6 +63,8 @@ CONFIG_SND_VERBOSE_PROCFS=y
 # XRUN_DEBUG: contatore cumulativo di XRUN per substream (xrun_counter) e
 # xrun_debug in /proc/asound; li leggono sweetspot-energia e alsa-misura per
 # contare anche gli XRUN recuperati entro un intervallo di campionamento.
+# Senza SND_DEBUG il kernel scarta XRUN_DEBUG senza avvisare.
+CONFIG_SND_DEBUG=y
 CONFIG_SND_PCM_XRUN_DEBUG=y
 CONFIG_SND_USB=y
 CONFIG_SND_USB_AUDIO=y
