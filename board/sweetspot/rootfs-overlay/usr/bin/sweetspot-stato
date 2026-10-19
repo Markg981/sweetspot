@@ -1042,9 +1042,10 @@ daemon_stop() {
 # durata (subshell avviata una volta, vedi start_feeders): attende con read -t
 # sulla FIFO dell'allarme i secondi che il demone gli scrive (la scadenza piu'
 # vicina), poi scrive T. Si riarma solo quando e' scattato o se una scadenza
-# nuova e' piu' vicina: nessun processo per scadenza, nessun ticker. Se il
-# comando di riarmo si perdesse a meta' riga, l'allarme scatta comunque col
-# vecchio tempo e il demone lo riarma.
+# nuova e' piu' vicina: nessun processo per scadenza, nessun ticker. Dopo ogni
+# T l'allarme torna a 3600 s, quindi il demone lo considera scarico: se un
+# riarmo arriva mentre il read -t scade, il timeout ne consuma meta' riga e la
+# T che arriva e' quella vecchia, ma il demone lo riarma comunque.
 arm_alarm() {
 	local m=0 d w
 	for d in $DL_ROUND $DL_BEAT $DL_LIVE $DL_PINGCHK $DL_PLAYER $DL_FUNC $DL_PRE $DL_PRETICK $DL_SCAN; do
@@ -1111,7 +1112,7 @@ do_watch() {
 		read -r line <&3
 		up_now
 		case "$line" in
-			T) TIMEDOUT=1 ;;
+			T) TIMEDOUT=1; ALARM_FIRE=0 ;;
 			*) handle "$line" ;;
 		esac
 		timers
