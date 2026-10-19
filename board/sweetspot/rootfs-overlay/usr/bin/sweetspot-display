@@ -16,10 +16,13 @@ PRIMO_ATTIVO=$RUN/primo-accesso.attivo
 PRIMO_CODICE=$RUN/primo-accesso.codice
 
 # Codice di primo accesso finche' non c'e' la password (sweetspot-accesso):
-# deve restare sullo schermo, le pagine lo chiedono.
+# deve restare sullo schermo, le pagine lo chiedono. Lo mette in $codice
+# senza processi in piu' (gira nel ciclo): il segnale lo toglie
+# sweetspot-accesso quando si sceglie la password.
 primo_codice() {
-	[ -f "$PRIMO_ATTIVO" ] && [ -z "$(conf PASSWORD_WEB)" ] &&
-		head -n 1 "$PRIMO_CODICE" 2>/dev/null
+	codice=''
+	[ -f "$PRIMO_ATTIVO" ] && read -r codice < "$PRIMO_CODICE" 2>/dev/null
+	return 0
 }
 
 # Testi della schermata grafica, CHIAVE=VALORE (vedi sweetspot-schermo).
@@ -27,7 +30,7 @@ testi() {
 	local ip=$1 srv host pst tipo codice
 	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 	pst=$(cat "$RUN/player.stato" 2>/dev/null)
-	codice=$(primo_codice)
+	primo_codice
 	if [ -z "$ip" ]; then
 		echo "occhiello=IN ATTESA DELLA RETE"
 		echo "titolo=Rete non collegata"
@@ -97,7 +100,7 @@ draw() {
 		srv=$(lms_server_ip)
 		[ -n "$srv" ] && echo "   Musica: apri http://$srv:9000/ o la tua app Lyrion"
 	fi
-	codice=$(primo_codice)
+	primo_codice
 	if [ -n "$codice" ]; then
 		echo
 		echo "   PRIMO ACCESSO - codice: $codice"
@@ -137,8 +140,11 @@ while true; do
 	read -r pst < "$RUN/player.stato" 2>/dev/null
 	# Anche il framebuffer: quando arriva il driver grafico (i915,
 	# amdgpu...) la console ridisegna il suo testo sopra la schermata.
-	fb=$(cat "$SYS/class/graphics/fb0/name" "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null)
-	now="$ip|$pst|$(lms_server_ip)|$fb|$(primo_codice)"
+	fbn='' fbd=''
+	read -r fbn < "$SYS/class/graphics/fb0/name" 2>/dev/null
+	read -r fbd < "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null
+	primo_codice
+	now="$ip|$pst|$(lms_server_ip)|$fbn $fbd|$codice"
 	if [ -n "$pittore" ] && ! kill -0 "$pittore" 2>/dev/null; then
 		pittore=""
 		last=""
