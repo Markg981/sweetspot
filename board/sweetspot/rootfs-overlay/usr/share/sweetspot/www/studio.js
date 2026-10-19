@@ -97,6 +97,15 @@
 		var l = S.st && S.st.playlist_loop;
 		return (l && l[0]) || null;
 	}
+	// Nella pagina di un album evidenzia il brano in riproduzione, senza ridisegnare la vista.
+	function markNow() {
+		var t = cur(), rows = document.querySelectorAll('.st-track[data-id]');
+		for (var i = 0; i < rows.length; i++) {
+			var on = !!t && rows[i].getAttribute('data-id') === String(t.id);
+			rows[i].classList.toggle('on', on);
+			if (on) rows[i].setAttribute('aria-current', 'true'); else rows[i].removeAttribute('aria-current');
+		}
+	}
 	function elapsed() {
 		if (!S.st) return 0;
 		var t = Number(S.st.time) || 0;
@@ -132,7 +141,7 @@
 		return api({ op: 'stato', player: S.player }).then(function (r) {
 			if (id !== S.reqId) return;
 			var before = cur() && cur().id + '/' + S.st.mode, was = !!S.st;
-			S.st = r; S.stAt = Date.now(); paintBar();
+			S.st = r; S.stAt = Date.now(); paintBar(); markNow();
 			// La vista si ridisegna solo se cambia il brano o il modo.
 			if ((view === 'home' || view === 'audio') && (!was || before !== (cur() && cur().id + '/' + r.mode))) render();
 		}).catch(function (e) { failure(e); });
@@ -185,6 +194,7 @@
 		for (k in (p || {})) if (p[k] !== '' && p[k] !== undefined) q.push(enc(k) + '=' + enc(p[k]));
 		return '#/' + v + (q.length ? '?' + q.join('&') : '');
 	}
+	function albumHref(id, name) { return '#/album/' + enc(id) + '?n=' + enc(name || ''); }
 	function setMain(kids, title) {
 		main.textContent = '';
 		kids.forEach(function (k) { if (k) main.appendChild(k); });
@@ -234,7 +244,7 @@
 
 	function albumCard(a) {
 		return h('li', { class: 'st-card' }, [
-			h('a', { href: '#/album/' + enc(a.id) + '?n=' + enc(a.album || '') }, [
+			h('a', { href: albumHref(a.id, a.album) }, [
 				cover(a.artwork_track_id, 200, ''),
 				h('strong', { text: a.album || 'Senza titolo' }),
 				h('span', { text: [a.artist, a.year && a.year !== '0' ? a.year : ''].filter(Boolean).join(' · ') })
@@ -292,7 +302,7 @@
 	function trackRow(t, n) {
 		var cols = [h('span', { class: 'mono st-n', text: n }), h('span', { class: 'st-t' }, [h('strong', { text: t.title || 'Senza titolo' }), h('small', { text: [t.artist, t.album].filter(Boolean).join(' · ') })]),
 			h('span', { class: 'mono', text: fmt(t.duration) })];
-		return h('li', { class: 'st-track' }, cols.concat([
+		return h('li', { class: 'st-track', 'data-id': t.id }, cols.concat([
 			h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Riproduci ' + (t.title || ''), text: '\u25B6', on: { click: function () { load('track', t.id, 'load'); } } }),
 			h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Aggiungi alla coda ' + (t.title || ''), text: '+', on: { click: function () { load('track', t.id, 'add'); } } })]));
 	}
@@ -310,6 +320,7 @@
 			if (!list.length) kids.push(empty('L’album non ha brani leggibili.'));
 			else kids.push(h('ol', { class: 'st-tracks' }, list.map(function (t, i) { return trackRow(t, t.tracknum || i + 1); })));
 			setMain(kids, t0.album || 'Album');
+			markNow();
 		}).catch(retry);
 	}
 
@@ -403,7 +414,8 @@
 				h('div', {}, [h('p', { class: 'st-eyebrow', text: S.st && S.st.mode === 'play' ? 'In ascolto' : 'In pausa' }), h('h1', { text: t.title || 'Senza titolo' }),
 					h('p', { text: [t.artist, t.album].filter(Boolean).join(' · ') }),
 					tl.length ? h('dl', { class: 'st-tech mono' }, tl.reduce(function (a, x) { return a.concat([h('dt', { text: x[0] }), h('dd', { text: x[1] })]); }, [])) : null,
-					h('p', {}, [h('a', { href: '#/audio', text: 'Vedi il percorso audio' })])])]));
+					h('p', { class: 'st-actions' }, [t.album_id ? h('a', { href: albumHref(t.album_id, t.album), text: 'Vedi tutto l’album' }) : null,
+						h('a', { href: '#/audio', text: 'Vedi il percorso audio' })])])]));
 		}
 		setMain(kids, 'Ascolta');
 		var box = h('section', { 'aria-labelledby': 'st-new' }, [h('h2', { id: 'st-new', text: 'Aggiunti di recente' }), h('p', { class: 'st-vuoto', text: 'Caricamento…' })]);
@@ -430,7 +442,8 @@
 					var idx = start + i, on = idx === now;
 					return h('li', { class: 'st-track' + (on ? ' on' : ''), 'aria-current': on ? 'true' : null }, [
 						h('span', { class: 'mono st-n', text: idx + 1 }),
-						h('span', { class: 'st-t' }, [h('strong', { text: t.title || 'Senza titolo' }), h('small', { text: [t.artist, t.album].filter(Boolean).join(' · ') })]),
+						h('span', { class: 'st-t' }, [h('strong', { text: t.title || 'Senza titolo' }), h('small', {}, [t.artist, t.artist && t.album ? ' · ' : '',
+							t.album && t.album_id ? h('a', { href: albumHref(t.album_id, t.album), text: t.album }) : t.album])]),
 						h('span', { class: 'mono', text: fmt(t.duration) }),
 						h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Suona ' + (t.title || ''), text: '\u25B6', on: { click: function () { act('salta', { v: idx }); } } }),
 						h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Togli ' + (t.title || ''), text: '×', on: { click: function () { act('togli', { v: idx }).then(render); } } })]);
