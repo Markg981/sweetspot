@@ -3394,7 +3394,7 @@ chmod +x "$HS/bin/"* "$HS/net-init"
 
 # hs_env APMODE: computer finto con cavo scollegato e Wi-Fi spento (rfkill).
 hs_env() {
-	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console" "$HS/stick" "$HS/qrtesti"
+	rm -rf "$HS/log" "$HS/sys" "$HS/run" "$HS/calls" "$HS/n" "$HS/onsleep" "$HS/ipok" "$HS/console" "$HS/stick" "$HS/qrtesti" "$HS/pw.visto"
 	mkdir -p "$HS/stick" "$HS/run" "$HS/sys/class/net/eth0/device" "$HS/sys/class/net/wlan0/device" \
 		"$HS/sys/class/net/wlan0/wireless" "$HS/sys/class/rfkill/rfkill0" "$HS/sys/class/phy"
 	echo 1 > "$HS/sys/class/net/eth0/type"; echo 0 > "$HS/sys/class/net/eth0/carrier"
@@ -3440,8 +3440,11 @@ expect "hotspot: arrivato il cavo si spegne e le radio tornano spente" "1|0|1" \
 hs_env ap
 echo 'HOTSPOT_PASSWORD=la-mia-password' >> "$HS/run/sweetspot.conf"
 echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+echo 'cp "$HS_DIR/run/hotspot.password" "$HS_DIR/pw.visto" 2>/dev/null' >> "$HS/onsleep"
 hs_run
 expect "hotspot: HOTSPOT_PASSWORD scelta dall'utente" "1" "$(grep -c '^Password: la-mia-password$' "$HS/console")"
+expect "hotspot: password per la schermata grafica finche' e' acceso, poi tolta" "la-mia-password|0" \
+	"$(cat "$HS/pw.visto" 2>/dev/null)|$([ -e "$HS/run/hotspot.password" ] && echo 1 || echo 0)"
 
 # 2b. Senza schermo: nome, password e codice QR sulla partizione di avvio; la
 # password resta la stessa alle accensioni successive.
