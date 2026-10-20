@@ -25,17 +25,55 @@ primo_codice() {
 	return 0
 }
 
+# Hotspot di configurazione (sweetspot-hotspot) acceso: nome e password in
+# $hs_ssid e $hs_pass, anche questi senza processi in piu'.
+hotspot_rete() {
+	hs_ssid='' hs_pass=''
+	[ -f "$RUN/hotspot.attivo" ] || return 0
+	IFS= read -r hs_ssid < "$RUN/hotspot.ssid" 2>/dev/null
+	IFS= read -r hs_pass < "$RUN/hotspot.password" 2>/dev/null
+	return 0
+}
+
+# C'e' una scheda Wi-Fi (per dire che senza cavo arriva l'hotspot)?
+ha_wifi() {
+	local n
+	is_yes "$(conf HOTSPOT si)" || return 1
+	for n in "$SYS"/class/net/*; do
+		[ -d "$n/wireless" ] || [ -d "$n/phy80211" ] && return 0
+	done
+	return 1
+}
+
+# Valore per il codice QR del Wi-Fi: \ ; , : " si proteggono con la barra.
+qr_esc() { printf '%s' "$1" | sed 's/[\\;,:"]/\\&/g'; }
+
 # Testi della schermata grafica, CHIAVE=VALORE (vedi sweetspot-schermo).
 testi() {
 	local ip=$1 srv host pst tipo codice
 	host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 	pst=$(cat "$RUN/player.stato" 2>/dev/null)
 	primo_codice
-	if [ -z "$ip" ]; then
+	hotspot_rete
+	if [ -n "$hs_ssid" ]; then
+		echo "occhiello=COLLEGA IL TELEFONO A QUESTA RETE WI-FI"
+		echo "titolo=$hs_ssid"
+		echo "alt_etichetta=password"
+		echo "alt=$hs_pass"
+		echo "qr=WIFI:T:WPA;S:$(qr_esc "$hs_ssid");P:$(qr_esc "$hs_pass");;"
+		echo "qr_nota=Inquadra per collegarti"
+		echo "riga1=Poi apri http://192.168.4.1/ e scegli la rete di casa."
+		echo "riga2=Con il cavo di rete collegato questa rete si spegne da sola."
+	elif [ -z "$ip" ]; then
 		echo "occhiello=IN ATTESA DELLA RETE"
 		echo "titolo=Rete non collegata"
-		echo "riga1=Controlla il cavo di rete."
-		echo "riga2=La schermata si aggiorna da sola appena c'è la connessione."
+		if ha_wifi; then
+			echo "riga1=Collega il cavo, oppure attendi la rete Wi-Fi Sweetspot."
+			echo "riga2=Senza cavo si accende entro un paio di minuti dall'avvio."
+		else
+			echo "riga1=Controlla il cavo di rete."
+			echo "riga2=La schermata si aggiorna da sola appena c'è la connessione."
+		fi
 	else
 		echo "titolo_prefisso=http://"
 		echo "titolo=$host.local"
@@ -57,10 +95,15 @@ testi() {
 		fi
 	fi
 	if [ -n "$codice" ]; then
-		[ -n "$ip" ] && echo "occhiello=PRIMO ACCESSO: APRI L'INDIRIZZO"
 		echo "codice_etichetta=CODICE DI PRIMO ACCESSO"
 		echo "codice=$codice"
-		echo "codice_nota=Le pagine lo chiedono una volta sola, per scegliere la password."
+		if [ -n "$hs_ssid" ]; then
+			# Il codice prende il posto di riga1 e riga2: l'indirizzo va qui.
+			echo "codice_nota=Dal telefono apri http://192.168.4.1/: lo chiede per la password."
+		else
+			[ -n "$ip" ] && echo "occhiello=PRIMO ACCESSO: APRI L'INDIRIZZO"
+			echo "codice_nota=Le pagine lo chiedono una volta sola, per scegliere la password."
+		fi
 	fi
 	case "$pst" in
 		attivo*) tipo=ok ;;
@@ -82,7 +125,15 @@ draw() {
 	echo "   SWEETSPOT"
 	echo "   ---------"
 	echo
-	if [ -z "$ip" ]; then
+	hotspot_rete
+	if [ -n "$hs_ssid" ]; then
+		echo "   Collega il telefono alla rete Wi-Fi:   $hs_ssid"
+		echo "   Password:   $hs_pass"
+		echo
+		echo "   Poi apri http://192.168.4.1/ e scegli la rete di casa."
+		echo
+		qrencode -t ANSI -m 2 "WIFI:T:WPA;S:$(qr_esc "$hs_ssid");P:$(qr_esc "$hs_pass");;" 2>/dev/null | sed 's/^/   /'
+	elif [ -z "$ip" ]; then
 		echo "   Rete non collegata: controlla il cavo."
 	elif [ "$(mode)" = completa ]; then
 		echo "   Dal telefono o dal computer apri:"
@@ -144,7 +195,8 @@ while true; do
 	read -r fbn < "$SYS/class/graphics/fb0/name" 2>/dev/null
 	read -r fbd < "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null
 	primo_codice
-	now="$ip|$pst|$(lms_server_ip)|$fbn $fbd|$codice"
+	hotspot_rete
+	now="$ip|$pst|$(lms_server_ip)|$fbn $fbd|$codice|$hs_ssid"
 	if [ -n "$pittore" ] && ! kill -0 "$pittore" 2>/dev/null; then
 		pittore=""
 		last=""

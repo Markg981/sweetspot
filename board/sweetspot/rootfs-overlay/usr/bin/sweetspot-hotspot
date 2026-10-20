@@ -248,6 +248,8 @@ UDHCPD
 	echo $! > "$AP_PID.dnsd.pid"
 	echo "$i" > "$RUN/hotspot.attivo"
 	echo "$ssid" > "$RUN/hotspot.ssid"
+	# Per la schermata grafica (sweetspot-display), che copre il testo di announce.
+	( umask 077; printf '%s\n' "$pass" > "$RUN/hotspot.password" )
 	log "hotspot: acceso su $i, rete $ssid"
 	announce "$ssid" "$pass"
 	ap_info "$ssid" "$pass"
@@ -261,7 +263,7 @@ ap_stop() {
 		[ -n "$p" ] && kill "$p" 2>/dev/null
 		rm -f "$f"
 	done
-	rm -f "$AP_PID".dns.conf "$AP_PID".udhcpd.conf "$AP_PID".leases "$RUN/hotspot.attivo" "$RUN/hotspot.ssid"
+	rm -f "$AP_PID".dns.conf "$AP_PID".udhcpd.conf "$AP_PID".leases "$RUN/hotspot.attivo" "$RUN/hotspot.ssid" "$RUN/hotspot.password"
 	if [ -n "$i" ]; then
 		"$IPC" addr flush dev "$i" 2>/dev/null
 		log "hotspot: spento"
