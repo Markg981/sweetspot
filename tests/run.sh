@@ -3102,6 +3102,12 @@ blacklist() { # impostazioni
 }
 expect "watchdog acceso: i moduli del chipset non sono in blacklist" "0|1" "$(blacklist '')|$(grep -c 'blacklist pcspkr' "$Q/modprobe.d/sweetspot-run.conf")"
 expect "watchdog spento: i moduli del chipset restano in blacklist" "2" "$(blacklist 'WATCHDOG=no')"
+# Wi-Fi: senza WIFI_NOME i moduli servono all'hotspot di primo accesso,
+# fuori solo con HOTSPOT=no.
+wifi_bl() { blacklist "$1" >/dev/null; grep -c 'blacklist iwlwifi' "$Q/modprobe.d/sweetspot-run.conf"; }
+expect "wifi: moduli caricabili per l'hotspot, in blacklist solo senza rete e senza hotspot" "0|0|1" \
+	"$(wifi_bl '')|$(wifi_bl 'WIFI_NOME=casa
+HOTSPOT=no')|$(wifi_bl 'HOTSPOT=no')"
 # S21: tempo limitato al massimo del dispositivo (Raspberry Pi: 15 s),
 # riavvio precedente del watchdog segnalato.
 echo 15 > "$Q/sys/class/watchdog/watchdog0/max_timeout"
