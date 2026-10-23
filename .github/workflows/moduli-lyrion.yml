@@ -117,12 +117,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 5 }}
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: registro-moduli-${{ matrix.piattaforma }}
           path: vendor/CPAN/build*.log
       - uses: actions/upload-artifact@v7
         with:
-          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 5 }}
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: ${{ steps.pacchetto.outputs.nome }}
           path: ${{ steps.pacchetto.outputs.nome }}.tar.xz*
           compression-level: 0
