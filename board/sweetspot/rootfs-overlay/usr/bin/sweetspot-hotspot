@@ -23,6 +23,7 @@ AP_IP=192.168.4.1
 AP_PID=$RUN/hotspot
 LIST=$RUN/wifi-scan.list
 RICHIESTA=$RUN/hotspot.richiesta
+ATTESA=$RUN/hotspot.attesa
 NET_INIT=${SWEETSPOT_NET_INIT:-/etc/init.d/S40sweetspot-net}
 # Sostituibili nei test: la shell di BusyBox preferisce le sue applet al PATH.
 IW=${SWEETSPOT_IW:-iw}
@@ -171,14 +172,30 @@ ap_info() { # nome password
 
 # La password si legge sullo schermo del player (nel registro non compare),
 # con il codice QR in caratteri se qrencode c'e'.
+#
+# Con la schermata grafica (sweetspot-display) nome, password e QR sono gia'
+# li': il testo sulle console del monitor ci finirebbe sopra.
 announce() { # nome password
-	local msg t qr
+	local msg t qr a='' con=${SWEETSPOT_CONSOLE:-/dev/console} tty=${SWEETSPOT_TTY:-/dev/tty1}
+	if [ -f "$RUN/schermo.grafico" ]; then
+		tty=''
+		read -r a < "$SYS/class/tty/console/active" 2>/dev/null
+		case " $a" in *" tty"[0-9]*) con='' ;; esac
+	fi
 	msg=$(printf '\n=== Sweetspot: configurazione Wi-Fi ===\nCollega il telefono alla rete Wi-Fi: %s\nPassword: %s\nPoi apri http://%s/\n' "$1" "$2" "$AP_IP")
 	qr=$("$QRENCODE" -t UTF8 -m 1 "WIFI:T:WPA;S:$(qr_esc "$1");P:$(qr_esc "$2");;" 2>/dev/null)
 	[ -n "$qr" ] && msg=$(printf '%s\nOppure inquadra il codice:\n%s\n' "$msg" "$qr")
-	for t in "${SWEETSPOT_CONSOLE:-/dev/console}" "${SWEETSPOT_TTY:-/dev/tty1}"; do
-		[ -w "$t" ] && printf '%s\n' "$msg" > "$t" 2>/dev/null
+	for t in "$con" "$tty"; do
+		[ -n "$t" ] && [ -w "$t" ] && printf '%s\n' "$msg" > "$t" 2>/dev/null
 	done
+	return 0
+}
+
+# La schermata si ridisegna subito, senza aspettare il suo giro di 20 s.
+schermo_sveglia() {
+	local p=''
+	read -r p < "$RUN/schermo.pid" 2>/dev/null
+	[ -n "$p" ] && kill -USR1 "$p" 2>/dev/null
 	return 0
 }
 
@@ -248,9 +265,10 @@ UDHCPD
 	echo $! > "$AP_PID.dnsd.pid"
 	echo "$i" > "$RUN/hotspot.attivo"
 	echo "$ssid" > "$RUN/hotspot.ssid"
-	# Per la schermata grafica (sweetspot-display), che copre il testo di announce.
+	# Per la schermata grafica (sweetspot-display).
 	( umask 077; printf '%s\n' "$pass" > "$RUN/hotspot.password" )
 	log "hotspot: acceso su $i, rete $ssid"
+	schermo_sveglia
 	announce "$ssid" "$pass"
 	ap_info "$ssid" "$pass"
 }
@@ -267,6 +285,7 @@ ap_stop() {
 	if [ -n "$i" ]; then
 		"$IPC" addr flush dev "$i" 2>/dev/null
 		log "hotspot: spento"
+		schermo_sveglia
 	fi
 	return 0
 }
@@ -282,6 +301,16 @@ wait_ip() {
 	return 1
 }
 
+# Per la schermata (sweetspot-display): secondo di /proc/uptime entro cui si
+# accende l'hotspot (avvio) o finisce la prova della rete scelta (prova).
+attesa_scrivi() { # secondi avvio|prova
+	local up=''
+	read -r up _ < "$PROC/uptime" 2>/dev/null
+	up=${up%%.*}
+	echo "$(( ${up:-0} + $1 )) $2" > "$ATTESA"
+	schermo_sveglia
+}
+
 sorveglia() {
 	local attesa prova i t=0 step=3
 	is_yes "$(conf HOTSPOT si)" || exit 0
@@ -295,6 +324,8 @@ sorveglia() {
 	case "$prova" in ''|*[!0-9]*) prova=40 ;; esac
 
 	# 1. Attesa: appena c'e' una connessione non serve altro.
+	trap 'rm -f "$ATTESA"' EXIT
+	attesa_scrivi "$attesa" avvio
 	while [ $t -lt "$attesa" ]; do
 		connected && exit 0
 		"$SLEEP" $step
@@ -304,7 +335,7 @@ sorveglia() {
 	i=$(ap_iface) || { log "hotspot: nessun adattatore Wi-Fi capace di fare da access point"; exit 0; }
 
 	# 2. Hotspot acceso finche' non arriva una connessione.
-	rm -f "$RICHIESTA"
+	rm -f "$RICHIESTA" "$ATTESA"
 	ap_start "$i" || { log "hotspot: avvio non riuscito su $i"; ap_stop; radio_off; exit 0; }
 	while :; do
 		if wired_up; then
@@ -318,11 +349,13 @@ sorveglia() {
 			"$SLEEP" 4	# il tempo di consegnare la risposta al telefono
 			ap_stop
 			log "hotspot: provo la rete Wi-Fi salvata"
+			attesa_scrivi "$prova" prova
 			"$NET_INIT" wifi "$i"
 			if wait_ip "$i" "$prova"; then
 				log "hotspot: collegato alla rete Wi-Fi"
 				exit 0
 			fi
+			rm -f "$ATTESA"
 			log "hotspot: la rete Wi-Fi non risponde, riaccendo l'hotspot"
 			ap_start "$i" || { ap_stop; exit 0; }
 		fi

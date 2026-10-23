@@ -35,6 +35,21 @@ hotspot_rete() {
 	return 0
 }
 
+# Hotspot in arrivo (sweetspot-hotspot): $hs_fase "avvio" o "prova" e $hs_tra,
+# i secondi che mancano arrotondati a 10 (il ciclo gira ogni 20 s).
+hotspot_attesa() {
+	local entro='' up=''
+	hs_fase='' hs_tra=''
+	read -r entro hs_fase < "$RUN/hotspot.attesa" 2>/dev/null
+	case "$entro" in ''|*[!0-9]*) hs_fase=''; return 0 ;; esac
+	read -r up _ < "$PROC/uptime" 2>/dev/null
+	up=${up%%.*}
+	hs_tra=$(( (entro - ${up:-0} + 9) / 10 * 10 ))
+	[ "$hs_tra" -gt 0 ] || hs_tra=0
+	return 0
+}
+tra_circa() { if [ "$hs_tra" -gt 0 ]; then echo "tra circa $hs_tra secondi"; else echo "tra pochi secondi"; fi; }
+
 # C'e' una scheda Wi-Fi (per dire che senza cavo arriva l'hotspot)?
 ha_wifi() {
 	local n
@@ -55,6 +70,7 @@ testi() {
 	pst=$(cat "$RUN/player.stato" 2>/dev/null)
 	primo_codice
 	hotspot_rete
+	hotspot_attesa
 	if [ -n "$hs_ssid" ]; then
 		echo "occhiello=COLLEGA IL TELEFONO A QUESTA RETE WI-FI"
 		echo "titolo=$hs_ssid"
@@ -64,6 +80,17 @@ testi() {
 		echo "qr_nota=Inquadra per collegarti"
 		echo "riga1=Poi apri http://192.168.4.1/ e scegli la rete di casa."
 		echo "riga2=Con il cavo di rete collegato questa rete si spegne da sola."
+	elif [ -z "$ip" ] && [ "$hs_fase" = avvio ]; then
+		# Il tempo sta nel titolo: con il codice riga1 e riga2 non si vedono.
+		echo "occhiello=SENZA CAVO ARRIVA LA RETE WI-FI SWEETSPOT"
+		echo "titolo=Wi-Fi $(tra_circa)"
+		echo "riga1=Qui compariranno nome, password e QR per il telefono."
+		echo "riga2=Con il cavo di rete collegato Sweetspot si collega da solo."
+	elif [ -z "$ip" ] && [ "$hs_fase" = prova ]; then
+		echo "occhiello=PROVO LA RETE WI-FI SCELTA"
+		echo "titolo=Risposta $(tra_circa)"
+		echo "riga1=Se si collega, qui compare l'indirizzo da aprire."
+		echo "riga2=Altrimenti la rete Wi-Fi Sweetspot si riaccende da sola."
 	elif [ -z "$ip" ]; then
 		echo "occhiello=IN ATTESA DELLA RETE"
 		echo "titolo=Rete non collegata"
@@ -100,6 +127,10 @@ testi() {
 		if [ -n "$hs_ssid" ]; then
 			# Il codice prende il posto di riga1 e riga2: l'indirizzo va qui.
 			echo "codice_nota=Dal telefono apri http://192.168.4.1/: lo chiede per la password."
+		elif [ -z "$ip" ] && [ "$hs_fase" = avvio ]; then
+			echo "codice_nota=Dal telefono, collegato alla rete Wi-Fi, apri http://192.168.4.1/: lo chiede."
+		elif [ -z "$ip" ] && [ "$hs_fase" = prova ]; then
+			echo "codice_nota=Se non si collega torna la rete Wi-Fi Sweetspot: riprova da lì."
 		else
 			[ -n "$ip" ] && echo "occhiello=PRIMO ACCESSO: APRI L'INDIRIZZO"
 			echo "codice_nota=Le pagine lo chiedono una volta sola, per scegliere la password."
@@ -126,6 +157,7 @@ draw() {
 	echo "   ---------"
 	echo
 	hotspot_rete
+	hotspot_attesa
 	if [ -n "$hs_ssid" ]; then
 		echo "   Collega il telefono alla rete Wi-Fi:   $hs_ssid"
 		echo "   Password:   $hs_pass"
@@ -133,6 +165,11 @@ draw() {
 		echo "   Poi apri http://192.168.4.1/ e scegli la rete di casa."
 		echo
 		qrencode -t ANSI -m 2 "WIFI:T:WPA;S:$(qr_esc "$hs_ssid");P:$(qr_esc "$hs_pass");;" 2>/dev/null | sed 's/^/   /'
+	elif [ -z "$ip" ] && [ "$hs_fase" = avvio ]; then
+		echo "   Senza cavo arriva la rete Wi-Fi Sweetspot, $(tra_circa):"
+		echo "   qui compariranno nome, password e QR per il telefono."
+	elif [ -z "$ip" ] && [ "$hs_fase" = prova ]; then
+		echo "   Provo la rete Wi-Fi scelta, risposta $(tra_circa)."
 	elif [ -z "$ip" ]; then
 		echo "   Rete non collegata: controlla il cavo."
 	elif [ "$(mode)" = completa ]; then
@@ -163,12 +200,17 @@ draw() {
 	echo "   Alt+F2 per il terminale."
 }
 
+[ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
+
+# USR1 (sweetspot-hotspot) interrompe l'attesa del ciclo: si ridisegna subito.
+trap : USR1
 min=$(conf SCHERMO_MINUTI 2)
 case "$min" in ''|*[!0-9]*) min=2 ;; esac
 # Spegnimento del monitor gestito dalla console: un tasto lo riaccende.
 { printf '\033[9;%s]\033[14;%s]' "$min" "$min" > "$TTY"; } 2>/dev/null
 
 mkdir -p "$RUN" 2>/dev/null
+rm -f "$RUN/schermo.grafico"
 net_ipv4_v
 testi "$IPV4" > "$TESTI" 2>/dev/null
 pittore=""
@@ -177,7 +219,10 @@ if command -v sweetspot-schermo >/dev/null 2>&1; then
 	sweetspot-schermo "$TESTI" "$TTY" 2>"$RUN/schermo.err" &
 	pittore=$!
 	sleep 1
-	if ! kill -0 "$pittore" 2>/dev/null; then
+	if kill -0 "$pittore" 2>/dev/null; then
+		# sweetspot-hotspot non scrive sulla console del monitor finche' c'e'.
+		echo "$pittore" > "$RUN/schermo.grafico"
+	else
 		pittore=""
 		log "schermata grafica non disponibile, resta il testo: $(head -n 1 "$RUN/schermo.err" 2>/dev/null)"
 	fi
@@ -196,10 +241,12 @@ while true; do
 	read -r fbd < "$SYS/class/graphics/fb0/virtual_size" 2>/dev/null
 	primo_codice
 	hotspot_rete
-	now="$ip|$pst|$(lms_server_ip)|$fbn $fbd|$codice|$hs_ssid"
+	hotspot_attesa
+	now="$ip|$pst|$(lms_server_ip)|$fbn $fbd|$codice|$hs_ssid|$hs_fase $hs_tra"
 	if [ -n "$pittore" ] && ! kill -0 "$pittore" 2>/dev/null; then
 		pittore=""
 		last=""
+		rm -f "$RUN/schermo.grafico"
 	fi
 	if [ "$now" != "$last" ]; then
 		if [ -n "$pittore" ]; then

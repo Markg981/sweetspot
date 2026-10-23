@@ -3540,6 +3540,69 @@ expect "defaults.conf: HOTSPOT acceso di serie" "si" "$(sed -n 's/^HOTSPOT=//p' 
 for cfg in sweetspot_x86_64 sweetspot_rpi; do
 	expect "$cfg: hostapd e iw nel defconfig" "2" "$(grep -c '^BR2_PACKAGE_\(HOSTAPD\|IW\)=y$' "$ROOT/configs/${cfg}_defconfig")"
 done
+# 10. Attesa per la schermata: quando si accende l'hotspot o finisce la prova,
+# in secondi di /proc/uptime; tolta quando la sorveglianza finisce.
+hs_env ap
+mkdir -p "$HS/proc"; echo "100.42 5.00" > "$HS/proc/uptime"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && cp "$HS_DIR/run/hotspot.attesa" "$HS_DIR/attesa.visto"
+[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"
+EOF
+hs_run 60
+expect "hotspot: attesa per la schermata (avvio), tolta alla fine" "160 avvio|0" \
+	"$(cat "$HS/attesa.visto" 2>/dev/null)|$([ -e "$HS/run/hotspot.attesa" ] && echo 1 || echo 0)"
+hs_env ap
+mkdir -p "$HS/proc"; echo "100.42 5.00" > "$HS/proc/uptime"
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+cat > "$HS/onsleep" <<'EOF'
+[ "$n" -eq 1 ] && cp "$HS_DIR/run/hotspot.attesa" "$HS_DIR/attesa.avvio" 2>/dev/null
+[ "$n" -eq 1 ] && : > "$HS_DIR/run/hotspot.richiesta"
+[ "$n" -eq 3 ] && cp "$HS_DIR/run/hotspot.attesa" "$HS_DIR/attesa.visto" && : > "$HS_DIR/ipok"
+EOF
+hs_run
+expect "hotspot: attesa della prova della rete scelta, nessuna con l'hotspot acceso" "140 prova|no|0" \
+	"$(cat "$HS/attesa.visto" 2>/dev/null)|$([ -e "$HS/attesa.avvio" ] && echo si || echo no)|$([ -e "$HS/run/hotspot.attesa" ] && echo 1 || echo 0)"
+
+# 11. Con la schermata grafica l'annuncio non scrive sul monitor (tty1, console
+# su ttyN); con la console sulla seriale li' resta.
+hs_ann() { # console attiva
+	hs_env ap
+	: > "$HS/run/schermo.grafico"
+	mkdir -p "$HS/sys/class/tty/console"; echo "$1" > "$HS/sys/class/tty/console/active"
+	echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+	hs_run
+	grep -c '^Password: ' "$HS/console"
+}
+expect "hotspot: schermata grafica, niente testo sul monitor; seriale si'" "0|1" \
+	"$(hs_ann tty0)|$(hs_ann ttyS0)"
+
+# Schermata (sweetspot-display): in attesa dell'hotspot il tempo che manca sta
+# nel titolo, visibile anche con il codice di primo accesso.
+SD=$WORK/schermo
+mkdir -p "$SD/run" "$SD/proc/sys/kernel" "$SD/sys/class/net/wlan0/wireless"
+echo sweetspot > "$SD/proc/sys/kernel/hostname"
+echo "100.42 5.00" > "$SD/proc/uptime"
+cp "$OVERLAY/etc/sweetspot/defaults.conf" "$SD/run/sweetspot.conf"
+sd_testi() { # chiave [IP]
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$SD/run SWEETSPOT_PROCFS=$SD/proc SWEETSPOT_SYSFS=$SD/sys SWEETSPOT_LOG=$SD/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-display; testi '${2:-}'" 2>/dev/null | sed -n "s/^$1=//p"
+}
+echo "160 avvio" > "$SD/run/hotspot.attesa"
+expect "schermata: hotspot in arrivo, secondi arrotondati a 10" "SENZA CAVO ARRIVA LA RETE WI-FI SWEETSPOT|Wi-Fi tra circa 60 secondi" \
+	"$(sd_testi occhiello)|$(sd_testi titolo)"
+echo "95 avvio" > "$SD/run/hotspot.attesa"
+expect "schermata: tempo scaduto, tra pochi secondi" "Wi-Fi tra pochi secondi" "$(sd_testi titolo)"
+touch "$SD/run/primo-accesso.attivo"; echo ABCD-EFGH-IJKL > "$SD/run/primo-accesso.codice"
+expect "schermata: con il codice la nota porta al Wi-Fi e a 192.168.4.1" "1" "$(sd_testi codice_nota | grep -c '192.168.4.1')"
+echo "130 prova" > "$SD/run/hotspot.attesa"
+expect "schermata: prova della rete scelta" "PROVO LA RETE WI-FI SCELTA|Risposta tra circa 30 secondi" \
+	"$(sd_testi occhiello)|$(sd_testi titolo)"
+rm -f "$SD/run/hotspot.attesa"
+expect "schermata: senza attesa resta 'Rete non collegata'" "Rete non collegata" "$(sd_testi titolo)"
+echo "160 avvio" > "$SD/run/hotspot.attesa"
+expect "schermata: con l'indirizzo l'attesa non conta" "sweetspot.local" "$(sd_testi titolo 192.168.1.20)"
+
 expect "BusyBox: udhcpd e dnsd" "2" "$(grep -c '^CONFIG_\(UDHCPD\|DNSD\)=y$' "$ROOT/board/sweetspot/common/busybox.fragment")"
 
 echo "Codifica UTF-8 delle pagine e portale dell'hotspot"

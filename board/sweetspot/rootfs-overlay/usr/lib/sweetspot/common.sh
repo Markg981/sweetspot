@@ -181,11 +181,14 @@ confv() { # chiave [predefinito]
 # Attesa senza fork. nap_init apre (una volta, nel servizio) una FIFO che
 # nessuno scrive sul descrittore 4; nap legge con timeout. Era "sleep": un
 # processo nuovo a ogni giro di ogni ciclo, la meta' dei fork a riposo.
-# Senza FIFO ripiega su sleep. Solo secondi interi.
+# Senza FIFO ripiega su sleep. Solo secondi interi. La shell di BusyBox esce
+# con 1 sia allo scadere sia a un segnale con trap (che cosi' sveglia il
+# ciclo): nessun ripiego su sleep dopo la read, raddoppierebbe l'attesa.
 # shellcheck disable=SC3045
 nap() { # secondi
 	if [ "${NAP_OK:-0}" = 1 ]; then
-		read -r -t "$1" _ <&4 || [ $? -gt 128 ] || sleep "$1"
+		read -r -t "$1" _ <&4
+		return 0
 	else
 		sleep "$1"
 	fi
