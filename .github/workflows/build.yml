@@ -120,6 +120,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: registro-compilazione-${{ matrix.scheda }}
           path: build.log
       - name: Salva la cache
@@ -135,21 +136,25 @@ jobs:
       - name: Pubblica l'immagine
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/${{ matrix.immagine }}.xz
           archive: false
           if-no-files-found: error
       # La stessa immagine come disco per VMware (Workstation, Player, Fusion).
+      # Non nelle pull request: per provarle basta l'immagine, e lo spazio degli
+      # artifact e' poco.
       - name: Disco per VMware
-        if: matrix.scheda == 'x86_64'
+        if: matrix.scheda == 'x86_64' && github.event_name != 'pull_request'
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-utils
           qemu-img convert -f raw -O vmdk -o adapter_type=lsilogic,subformat=monolithicSparse \
             output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
       - name: Pubblica il disco per VMware
-        if: matrix.scheda == 'x86_64'
+        if: matrix.scheda == 'x86_64' && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/sweetspot-vmware.vmdk
           archive: false
           if-no-files-found: error
@@ -160,6 +165,7 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           archive: false
           if-no-files-found: error
@@ -167,6 +173,7 @@ jobs:
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: da-firmare-${{ matrix.scheda }}
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           if-no-files-found: error
@@ -204,6 +211,7 @@ jobs:
         if: ${{ steps.sbom.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: sbom-${{ matrix.scheda }}
           path: sbom
           if-no-files-found: error
@@ -270,6 +278,7 @@ jobs:
       - name: Pubblica il pacchetto firmato
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           archive: false
           if-no-files-found: error
@@ -383,6 +392,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: verifica-audio-${{ matrix.scheda }}
           path: ${{ runner.temp }}/sweetspot-audio-evidence
           if-no-files-found: error

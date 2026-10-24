@@ -106,6 +106,7 @@ jobs:
         if: ${{ always() && inputs.qemu && matrix.scheda == 'x86_64' }}
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: prova-qemu-${{ matrix.scheda }}
           path: ${{ runner.temp }}/sweetspot-audio-evidence
           if-no-files-found: ignore
