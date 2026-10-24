@@ -1347,6 +1347,50 @@ class DsdPcmContentTests(unittest.TestCase):
             result = self.av.analyze_dsd_pcm_capture(path, capture_format="s32_le", rate=176400, spec=spec, margin_db=-6)
             self.assertEqual(result["status"], "fail")
 
+class LoopbackCaptureStopTests(unittest.TestCase):
+    """Registrazione fermata dalla prova: l'ultimo frame a meta' si scarta, solo quello."""
+
+    class Target:
+        def __init__(self, data, linger):
+            self.script = ("import sys,time;sys.stdout.buffer.write(%r);sys.stdout.flush();time.sleep(%s)"
+                           % (data, linger))
+
+        def command(self, _args):
+            return [sys.executable, "-c", self.script]
+
+    def capture(self, temp, data, linger):
+        path = Path(temp) / "capture.raw"
+        with open(os.devnull, "wb") as stderr:
+            capture = DRIVER.LoopbackCapture(self.Target(data, linger), path,
+                                             params={"format": "S24_3LE", "rate": 96000},
+                                             seconds=40, wall_seconds=55,
+                                             process_factory=subprocess.Popen, stderr=stderr)
+            capture.start()
+        return capture, path
+
+    def test_fermata_a_meta_frame_tiene_solo_i_frame_interi(self):
+        with tempfile.TemporaryDirectory() as temp:
+            capture, path = self.capture(temp, bytes(range(64)), 30)
+            deadline = time.monotonic() + 10
+            while path.stat().st_size < 64 and time.monotonic() < deadline:
+                time.sleep(.02)
+            capture.stop()
+            capture.join()
+            self.assertEqual((capture.dropped_bytes, capture.bytes_written), (4, 60))
+            self.assertEqual(path.read_bytes(), bytes(range(60)))
+
+    def test_uscita_da_sola_con_frame_a_meta_resta_un_errore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            capture, path = self.capture(temp, bytes(64), 0)
+            self.assertTrue(capture.finished.wait(10))
+            capture.stop()
+            capture.join()
+            self.assertEqual((capture.stopped, capture.dropped_bytes, capture.bytes_written), (False, 0, 64))
+            from tools.audio_verification import _raw_info
+            with self.assertRaisesRegex(ValueError, "partial stereo frame"):
+                _raw_info(path, "s24_3le", 96000)
+
+
 class AlsaTransitionTailTests(unittest.TestCase):
     """Parti pure della prova 44,1 k -> 96 k: coda del brano, ricerca, evidenze."""
 

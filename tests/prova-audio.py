@@ -603,6 +603,8 @@ class LoopbackCapture:
         self.bytes_written = 0
         self.reason = None
         self.error = None
+        self.stopped = False
+        self.dropped_bytes = 0
         self.finished = threading.Event()
         self.thread = threading.Thread(target=self._wait, name="alsa-capture")
 
@@ -636,13 +638,21 @@ class LoopbackCapture:
 
     def stop(self):
         if self.process is not None:
+            self.stopped = self.process.poll() is None
             stop_process(self.process, owned_group=os.name == "posix")
 
     def join(self):
         self.thread.join(3)
         if self.thread.is_alive():
             raise AudioError("ALSA capture did not stop after termination")
-        self.bytes_written = self.path.stat().st_size
+        size = self.path.stat().st_size
+        # Stopped by a signal, aplay can leave the last frame half written on the
+        # SSH pipe: only that trailing fragment is dropped, never a whole frame.
+        if self.stopped:
+            self.dropped_bytes = size % self.frame_bytes
+            if self.dropped_bytes:
+                os.truncate(self.path, size - self.dropped_bytes)
+        self.bytes_written = size - self.dropped_bytes
 
 
 def alsa_output_evidence(log, destination, capture_stderr):
