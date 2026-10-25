@@ -124,7 +124,9 @@ pacchetto, versione (esatta o `*`), decisione e motivo.
   defconfig tengono solo quei decoder e demuxer e tolgono rete, protocolli,
   codificatori, muxer, parser, filtri, bsf, accelerazioni hardware e il
   programma `ffmpeg`. MiniDLNA usa libavformat solo per i video, che non
-  indicizza (`media_dir=A`).
+  indicizza (`media_dir=A`). Per curl 8.22.0 (CVE-2026-92392, HTTP/2): nessun
+  defconfig abilita nghttp2, quindi libcurl e' compilata senza HTTP/2;
+  `tests/triage-cve.py` si ferma se un defconfig lo abilita.
 - `accettata`: rischio residuo consapevole, con `rivedere-entro` obbligatoria;
   a quella data la CI torna a fermarsi finche' la decisione non viene
   rivista. Oggi: le tre CVE di busybox 1.38.0 (awk, ash), senza versione
