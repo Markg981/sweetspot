@@ -735,6 +735,7 @@ mkdir -p "$WEB/actionbin"
 cat > "$WEB/actionbin/sweetspot-config" <<'FINTO'
 #!/bin/sh
 printf '%s\n' "$*" > "$SWEETSPOT_RUN/config.call"
+printf '%s\n' "$*" >> "$SWEETSPOT_RUN/config.log"
 exit "${ARCHIVE_CONFIG_RC:-0}"
 FINTO
 cat > "$WEB/actionbin/sweetspot-dischi" <<'FINTO'
@@ -903,7 +904,7 @@ expect "CSRF Lyrion: primo avvio a livello 1" "csrfProtectionLevel: 1|" "$(lmspr
 expect "CSRF Lyrion: assente nelle preferenze esistenti -> 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'language: IT')"
 expect "CSRF Lyrion: livello 0 riportato a 1" "csrfProtectionLevel: 1|" "$(lmsprefs 'csrfProtectionLevel: 0')"
 expect "CSRF Lyrion: livello 2 scelto dall'utente resta" "csrfProtectionLevel: 2|" "$(lmsprefs 'csrfProtectionLevel: 2')"
-printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
+printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\n[ "$1" = verifica ] && { read -r pw; [ "$pw" = vecchia-password ] || exit 1; }\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
 	local body
@@ -936,9 +937,24 @@ for v in 2 1 -25 -3.55 abc; do
 done
 rm -f "$WEB/run/config.call"
 rm -f "$WEB/run/config.call"
-web_action "a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta-lunga-1" > /dev/null
+# La password delle pagine si cambia solo con quella attuale: una sessione
+# rubata non basta a prendere il pannello per sempre.
+cp "$WEB/run/sweetspot.conf" "$WORK/sweetspot.conf.prima" 2> /dev/null || : > "$WORK/sweetspot.conf.prima"
+printf 'PASSWORD_WEB=$1$vecchia$impronta\n' >> "$WEB/run/sweetspot.conf"
+SISTEMA_WEB="a=sistema&nome=Sweetspot&modalita=completa&profilo=bilanciato&ascolto=si&ssh=no&ottimizzazioni=si&web_password=segreta-lunga-1"
+rm -f "$WEB/run/config.log"
+out=$(web_action "$SISTEMA_WEB")
+expect "sistema: senza la vecchia password non si cambia" '0' "$(cat "$WEB/run/config.log" 2> /dev/null | grep -c PASSWORD_WEB)"
+case "$out" in *"Location: /cgi-bin/sistema?msg="*) ok "sistema: senza la vecchia password torna alla pagina" ;; *) ko "sistema senza vecchia password" "torna a sistema" "$out" ;; esac
+rm -f "$WEB/run/config.log"
+web_action "$SISTEMA_WEB&ct=prova&conferma_password=sbagliata" > /dev/null
+expect "sistema: con la vecchia password sbagliata non si cambia" '0' "$(cat "$WEB/run/config.log" 2> /dev/null | grep -c PASSWORD_WEB)"
+rm -f "$WEB/run/config.log"
+web_action "$SISTEMA_WEB&ct=prova&conferma_password=vecchia-password" > /dev/null
 expect "sistema: si salva l'impronta, non la password" '1|0' \
-	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.call")|$(grep -c segreta-lunga "$WEB/run/config.call")"
+	"$(grep -c 'PASSWORD_WEB $1$prova$impronta' "$WEB/run/config.log")|$(grep -c segreta-lunga "$WEB/run/config.log")"
+cp "$WORK/sweetspot.conf.prima" "$WEB/run/sweetspot.conf"
+rm -f "$WEB/run/config.log"
 out=$(web_action "a=ripristina")
 case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
 expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"

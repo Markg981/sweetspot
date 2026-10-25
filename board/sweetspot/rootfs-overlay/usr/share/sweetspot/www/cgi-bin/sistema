@@ -101,16 +101,16 @@ $(option root "root: accesso completo al sistema" "$(lower "$(conf SSH_UTENTE ro
 </select>
 <label for="sshp">Password SSH <span>(lascia vuoto per non cambiarla)</span></label>
 <input id="sshp" name="ssh_password" type="password" autocomplete="new-password">
-$(if [ -n "$(conf PASSWORD_WEB)" ]; then
-	printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
-	echo '<label for="cpw">Conferma con la password di queste pagine <span>(serve solo se cambi accesso SSH, utente o password SSH)</span></label>'
-	echo '<input id="cpw" name="conferma_password" type="password" autocomplete="current-password">'
-else
-	echo '<p class="sub">Per cambiare l'"'"'accesso SSH da qui imposta prima una password per queste pagine: SSH apre il sistema come amministratore e la modifica richiede di riscriverla. In alternativa scrivi SSH nel file sweetspot.txt con il computer.</p>'
-fi)
+$([ -n "$(conf PASSWORD_WEB)" ] ||
+	echo '<p class="sub">Per cambiare l'"'"'accesso SSH da qui imposta prima una password per queste pagine: SSH apre il sistema come amministratore e la modifica richiede di riscriverla. In alternativa scrivi SSH nel file sweetspot.txt con il computer.</p>')
 <label for="webp">Password di queste pagine <span>(utente admin; lascia vuoto per non cambiarla)</span></label>
 <input id="webp" name="web_password" type="password" autocomplete="new-password">
 <p class="sub">Ogni pagina chiede la password; vale subito e non si può togliere da qui (minimo 10 caratteri). Se la dimentichi, togli la riga PASSWORD_WEB da sweetspot.txt sulla chiavetta: al riavvio il codice di primo accesso (file PRIMO-ACCESSO.txt) permette di sceglierne una nuova.</p>
+$(if [ -n "$(conf PASSWORD_WEB)" ]; then
+	printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
+	echo '<label for="cpw">Conferma con la password attuale di queste pagine <span>(serve solo se cambi accesso SSH, utente o password SSH, o la password di queste pagine)</span></label>'
+	echo '<input id="cpw" name="conferma_password" type="password" autocomplete="current-password">'
+fi)
 $(lyr=$(priv sweetspot-lms credenziali 2>/dev/null)
 lyr_st=$(printf '%s\n' "$lyr" | sed -n 's/^stato=//p')
 lyr_u=$(printf '%s\n' "$lyr" | sed -n 's/^utente=//p')
@@ -213,7 +213,16 @@ if [ "$jstate" != scarica ] && [ "$jstate" != controlla ] && [ "$jstate" != pron
 	fi
 	priv sweetspot-aggiorna pacchetti | while IFS= read -r f; do
 		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">Pacchetto di aggiornamento su disco</div><div class="v">%s</div></div>' "$(esc "${f#"$MEDIA_DIR"/}")"
-		button aggiorna_file "Installa" file "$f"
+		# Sostituisce il sistema: conferma forte (password attuale + gettone).
+		if [ -n "$(conf PASSWORD_WEB)" ]; then
+			printf '<form method="post" action="/cgi-bin/azione" class="inline">'
+			printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="aggiorna_file">' "$(token)"
+			printf '<input type="hidden" name="file" value="%s"><input type="hidden" name="ct" value="%s">' "$(esc "$f")" "$(esc "$(confirm_token)")"
+			echo '<input name="conferma_password" type="password" autocomplete="current-password" required placeholder="Password di queste pagine" aria-label="Conferma con la password attuale di queste pagine">'
+			echo '<button>Installa</button></form>'
+		else
+			echo '<div class="v">Per installarlo da qui imposta prima una password per queste pagine.</div>'
+		fi
 		echo '</div>'
 	done
 	other=$(sv altra_versione)

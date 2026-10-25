@@ -41,16 +41,17 @@ fi
 # crea root all'avvio con il proprietario "web"; qui solo se manca.
 mkdir -p "$WEBDIR/correzione" 2>/dev/null
 
-# Conferma forte (SSH, pacchetti da disco): serve la password di queste pagine,
-# quindi serve averla impostata; i tentativi sbagliati contano come quelli
-# dell'accesso (stesso limite per indirizzo).
-confirm_or_stop() { # pagina cosa
+# Conferma forte (SSH, password delle pagine, pacchetti da disco): serve la
+# password attuale di queste pagine, quindi serve averla impostata; i
+# tentativi sbagliati contano come quelli dell'accesso (stesso limite per
+# indirizzo; root ne tiene un altro, vedi sweetspot-accesso verifica).
+confirm_or_stop() { # pagina "cambiare cosa"
 	local w
-	auth_enabled || done_to "$1" "Per cambiare $2 imposta prima una password per queste pagine (Sistema, Opzioni per esperti), oppure scrivi l'impostazione in sweetspot.txt con il computer."
+	auth_enabled || done_to "$1" "Per $2 imposta prima una password per queste pagine (Sistema, Opzioni per esperti), oppure scrivi l'impostazione in sweetspot.txt con il computer."
 	w=$(login_wait ip "$LOGIN_FREE")
 	[ "$w" -gt 0 ] && done_to "$1" "Troppi tentativi: riprova tra $w secondi."
 	[ -n "$F_ct" ] && [ -n "$F_conferma_password" ] && valid_value "$F_conferma_password" ||
-		done_to "$1" "Per cambiare $2 riscrivi la password di queste pagine nel campo di conferma."
+		done_to "$1" "Per $2 riscrivi la password attuale di queste pagine nel campo di conferma. Niente e' stato cambiato."
 }
 
 confirm_refused() { # pagina
@@ -513,25 +514,44 @@ case "$F_a" in
 		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=root ;; esac
 		case "$F_https" in si|no) ;; *) F_https=no ;; esac
 		case "$F_https_reindirizza" in si|no) ;; *) F_https_reindirizza=no ;; esac
-		# SSH e la sua password aprono root: si cambiano solo con la conferma
-		# forte (password di queste pagine, riscritta, e gettone monouso), non
-		# con la sola sessione. Lo verifica l'helper, che gira come root.
+		# Password delle pagine: si salva solo l'impronta MD5-crypt.
+		valid_value "$F_web_password" || done_to sistema "Password non valida."
+		[ -z "$F_web_password" ] || [ ${#F_web_password} -ge 10 ] || done_to sistema "La password delle pagine ha almeno 10 caratteri. Niente e' stato cambiato."
+		web_hash=""
+		if [ -n "$F_web_password" ]; then
+			web_hash=$(priv sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
+		fi
+		# SSH e la sua password aprono root, la password delle pagine il
+		# pannello (e chi la cambia tiene fuori il proprietario): si cambiano
+		# solo con la conferma forte (password attuale di queste pagine,
+		# riscritta, e gettone monouso), non con la sola sessione. Lo verifica
+		# l'helper, che gira come root. Un solo gettone: una sola conferma.
 		cur_ssh=no
 		is_yes "$(conf SSH no)" && cur_ssh=si
 		ssh_change=""
 		[ "$F_ssh" != "$cur_ssh" ] && ssh_change=1
 		[ -n "$F_ssh_password" ] && ssh_change=1
 		[ "$F_ssh_utente" != "$(lower "$(conf SSH_UTENTE root)")" ] && ssh_change=1
-		if [ -n "$ssh_change" ]; then
-			confirm_or_stop sistema "l'accesso SSH"
-			set -- SSH "$F_ssh" SSH_UTENTE "$F_ssh_utente"
-			[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
+		if [ -n "$ssh_change" ] || [ -n "$web_hash" ]; then
+			set --
+			what=""
+			if [ -n "$ssh_change" ]; then
+				set -- SSH "$F_ssh" SSH_UTENTE "$F_ssh_utente"
+				[ -n "$F_ssh_password" ] && set -- "$@" SSH_PASSWORD "$F_ssh_password"
+				what="l'accesso SSH"
+			fi
+			if [ -n "$web_hash" ]; then
+				set -- "$@" PASSWORD_WEB "$web_hash"
+				what="${what:+$what e }la password di queste pagine"
+			fi
+			confirm_or_stop sistema "cambiare $what"
 			priv_confirm "$F_ct" "$F_conferma_password" sweetspot-config imposta "$@"
 			rc=$?
 			if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then
 				confirm_refused sistema
 			fi
-			log "sistema: accesso SSH cambiato con conferma forte da $(client_ip)"
+			[ -n "$ssh_change" ] && log "sistema: accesso SSH cambiato con conferma forte da $(client_ip)"
+			[ -n "$web_hash" ] && log "sistema: password delle pagine cambiata con conferma forte da $(client_ip)"
 		fi
 		old_mode=$(mode)
 		old_name=$(conf NOME_PLAYER Sweetspot)
@@ -539,13 +559,6 @@ case "$F_a" in
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
 			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" RENDERER_UPNP "$F_renderer_upnp" SERVER_UPNP "$F_server_upnp" \
 				CACHE_COPERTINE "$F_cache_copertine" CACHE_COPERTINE_MB "$F_cache_copertine_mb" CACHE_COPERTINE_DISCO "$F_cache_copertine_disco" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
-		# Password delle pagine: si salva solo l'impronta MD5-crypt.
-		valid_value "$F_web_password" || done_to sistema "Password non valida."
-		[ -z "$F_web_password" ] || [ ${#F_web_password} -ge 10 ] || done_to sistema "La password delle pagine ha almeno 10 caratteri. Niente e' stato cambiato."
-		if [ -n "$F_web_password" ]; then
-			h=$(priv sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
-			set -- "$@" PASSWORD_WEB "$h"
-		fi
 		# Password di Lyrion: in chiaro in sweetspot.txt come quella generata;
 		# senza spazi ne' % (la CLI la riceve URL-decodificata). Senza utente
 		# (credenziali preesistenti) Sweetspot usa il suo, sweetspot.
@@ -667,7 +680,14 @@ case "$F_a" in
 		done_to sistema "Aggiornamento avviato: Sweetspot continua a suonare, la nuova versione si usa dopo il riavvio." ;;
 
 	aggiorna_file)
-		out=$(priv sweetspot-aggiorna file "$F_file") || done_to sistema "Aggiornamento non avviato: $out."
+		# Un pacchetto qualsiasi del disco sostituisce il sistema (anche uno
+		# firmato ma vecchio): conferma forte, come per SSH.
+		confirm_or_stop sistema "installare un pacchetto dal disco"
+		out=$(priv_confirm "$F_ct" "$F_conferma_password" sweetspot-aggiorna file "$F_file")
+		rc=$?
+		[ $rc -eq 126 ] && confirm_refused sistema
+		[ $rc -eq 0 ] || done_to sistema "Aggiornamento non avviato: $out."
+		log "sistema: aggiornamento dal disco avviato con conferma forte da $(client_ip)"
 		done_to sistema "Aggiornamento dal disco avviato." ;;
 
 	aggiorna_annulla)

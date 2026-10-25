@@ -10,8 +10,9 @@
 #   sweetspot-accesso verifica         legge la password dall'ingresso
 #                                      standard (non compare tra gli
 #                                      argomenti) e risponde 0 se e' quella
-#                                      di PASSWORD_WEB, 1 se no
-#   sweetspot-accesso avvio            all'avvio: senza PASSWORD_WEB prepara
+#                                      di PASSWORD_WEB, 1 se no (o se ci
+#                                      sono stati troppi errori di fila)
+#   sweetspot-accesso avvio           all'avvio: senza PASSWORD_WEB prepara
 #                                      il primo accesso (codice casuale)
 #   sweetspot-accesso primo            legge dall'ingresso standard il codice
 #                                      e la password scelta (due righe):
@@ -88,12 +89,49 @@ apply() {
 	return 0
 }
 
-# Password in ingresso contro PASSWORD_WEB: impronta MD5-crypt ($1$sale$...),
-# rifatta con la stessa sale; se in sweetspot.txt e' in chiaro (e l'avvio non
-# l'ha ancora trasformata) si confronta com'e'.
+# Limite dei tentativi tenuto da root. Le pagine contano i loro (per
+# indirizzo) in una cartella che l'utente web puo' scrivere, e "verifica" si
+# puo' chiamare anche direttamente dall'helper: qui le verifiche passano una
+# alla volta, ogni errore costa una pausa e, dopo VERIFICA_LIBERI errori di
+# fila, si rifiuta senza guardare la password finche' non passa l'attesa
+# (30 secondi per errore in piu', al massimo 15 minuti, come in web.sh).
+# L'ambiente lo ripulisce l'helper: le variabili valgono solo per i test.
+VERIFICA_ERRORI=$RUN/accesso.errori
+VERIFICA_LIBERI=${SWEETSPOT_VERIFICA_LIBERI:-20}
+VERIFICA_PAUSA=${SWEETSPOT_VERIFICA_PAUSA:-2}
+
 verify() {
-	local pw stored salt calc
+	local pw n last w
 	IFS= read -r pw
+	mkdir -p "$RUN"
+	exec 8> "$RUN/accesso.verifica.lock"
+	flock 8
+	n="" last=""
+	[ -f "$VERIFICA_ERRORI" ] && read -r n last < "$VERIFICA_ERRORI"
+	case "$n" in *[!0-9]*|'') n=0 ;; esac
+	case "$last" in *[!0-9]*|'') last=0 ;; esac
+	if [ "$n" -ge "$VERIFICA_LIBERI" ]; then
+		w=$(( (n - VERIFICA_LIBERI + 1) * 30 ))
+		[ "$w" -gt 900 ] && w=900
+		if [ $((last + w)) -gt "$(date +%s)" ]; then
+			sleep "$VERIFICA_PAUSA"
+			return 1
+		fi
+	fi
+	if verify_password "$pw"; then
+		rm -f "$VERIFICA_ERRORI"
+		return 0
+	fi
+	printf '%s %s\n' "$((n + 1))" "$(date +%s)" > "$VERIFICA_ERRORI"
+	sleep "$VERIFICA_PAUSA"
+	return 1
+}
+
+# Password contro PASSWORD_WEB: impronta MD5-crypt ($1$sale$...), rifatta
+# con la stessa sale; se in sweetspot.txt e' in chiaro (e l'avvio non l'ha
+# ancora trasformata) si confronta com'e'.
+verify_password() {
+	local pw=$1 stored salt calc
 	stored=$(conf PASSWORD_WEB)
 	[ -n "$stored" ] && [ -n "$pw" ] || return 1
 	case "$stored" in

@@ -15,9 +15,11 @@
 //   sweetspot-priv @conferma GETTONE SCRIPT ARGOMENTI...   (password del
 //                                            pannello sull'ingresso standard)
 //
-// Le operazioni che aprono root (SSH, il suo utente e la sua password)
-// non passano dall'elenco normale: servono @conferma,
-// con un gettone monouso e la password del pannello verificata da root.
+// Le operazioni che aprono root o il pannello per sempre (SSH, il suo utente
+// e la sua password, la password del pannello, un pacchetto di aggiornamento
+// da disco) non passano dall'elenco normale: servono @conferma, con un
+// gettone monouso e la password del pannello (quella attuale) verificata da
+// root. Una sessione rubata da sola non basta.
 //
 // Esce con 126 se la richiesta non e' nell'elenco (nulla viene eseguito).
 
@@ -84,7 +86,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-aggiorna", "altra", "", "", 0},
 	{"sweetspot-aggiorna", "annulla", "", "", 0},
 	{"sweetspot-aggiorna", "cerca", "", "", 0},
-	{"sweetspot-aggiorna", "file", "s", "", 0},
+	{"sweetspot-aggiorna", "file", "s", "", 1}, // installa un pacchetto qualsiasi del disco: solo con @conferma
 	{"sweetspot-aggiorna", "libera", "", "", 0},
 	{"sweetspot-aggiorna", "pacchetti", "", "", 0},
 	{"sweetspot-aggiorna", "predefinita", "", "", 0},
@@ -185,12 +187,14 @@ static const struct chiave CHIAVI[] = {
 	{"RENDERER_UPNP", 'b', 0},
 	{"SERVER_UPNP", 'b', 0},
 	{"CACHE_COPERTINE", 'w', 0}, {"CACHE_COPERTINE_DISCO", 'l', 0}, {"CACHE_COPERTINE_MB", 'w', 0},
-	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
+	{"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
 	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
 	{"BLUETOOTH", 'b', 0}, {"BLUETOOTH_NOME", 'm', 0},
 	{"LYRION_UTENTE", 'w', 0}, {"LYRION_PASSWORD", 'y', 0},
 	// Aprono root (login SSH come root o come utente di assistenza): solo con @conferma.
 	{"SSH", 'w', 1}, {"SSH_PASSWORD", 's', 1}, {"SSH_UTENTE", 'w', 1},
+	// Cambiarla senza conoscere quella attuale terrebbe fuori il proprietario: solo con @conferma.
+	{"PASSWORD_WEB", 's', 1},
 	{NULL, 0, 0},
 };
 

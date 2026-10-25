@@ -225,6 +225,11 @@ SSH=si")"
 		done
 		expect "config SSH insieme a chiavi normali: tutto rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta VOLUME fisso SSH si)"
 		expect "config SSH_PASSWORD in coda: rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta NOME_PLAYER x SSH_PASSWORD segreta)"
+		# La password del pannello e i pacchetti da disco: una sessione rubata non basta.
+		expect "config PASSWORD_WEB senza conferma: rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta PASSWORD_WEB '$1$x$y')"
+		expect "config PASSWORD_WEB in coda: rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta NOME_PLAYER x PASSWORD_WEB '$1$x$y')"
+		expect "config rimuovi PASSWORD_WEB senza conferma: rifiutata" "NIENTE(126)" "$(priv sweetspot-config rimuovi PASSWORD_WEB)"
+		expect "aggiorna file senza conferma: rifiutato" "NIENTE(126)" "$(priv sweetspot-aggiorna file /media/USB/pacchetto.tar)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "gettone: 32 cifre esadecimali" "1" "$(printf '%s' "$tok" | grep -cE '^[0-9a-f]{32}$')"
 		expect "gettone: file nella cartella di root" "si" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
@@ -246,6 +251,12 @@ SSH=si")"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma vale anche l'utente di assistenza" "sweetspot-config|imposta|SSH_UTENTE|assistenza" \
 			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH_UTENTE assistenza)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma vale la password delle pagine" 'sweetspot-config|imposta|PASSWORD_WEB|$1$x$y' \
+			"$(sconf segreta @conferma "$tok" sweetspot-config imposta PASSWORD_WEB '$1$x$y')"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma vale il pacchetto dal disco" "sweetspot-aggiorna|file|/media/USB/pacchetto.tar" \
+			"$(sconf segreta @conferma "$tok" sweetspot-aggiorna file /media/USB/pacchetto.tar)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma non basta con l'a capo nel valore" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH_PASSWORD "a
 SSH=si")"
@@ -319,6 +330,7 @@ case "\$1 \$2" in
 	"sweetspot-dsp leggi") echo "PK 100 -3 Q 2" ;;
 	"sweetspot-dsp salva") exit "\${DSP_SAVE_RC:-0}" ;;
 	"sweetspot-aggiorna"*) echo "versione=9" ;;
+	"sweetspot-accesso hash") echo '\$1\$nuovo\$hash' ;;
 esac
 exit 0
 EOF
@@ -401,6 +413,24 @@ expect "utente SSH inventato: ignorato, resta root" "1" "$(grep -c '^@conferma g
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_password=a%0aSSH%3dsi&ct=g4&conferma_password=segreta" > /dev/null
 expect "password SSH con a capo: non arriva all'helper" "0" "$(grep -c 'SSH' "$A/priv.log")"
+# La password delle pagine: senza la vecchia una sessione rubata non la cambia.
+: > "$A/priv.log"
+act "$SISTEMA&ssh=no&ssh_password=&web_password=nuovissima123" > /dev/null
+expect "cambio password delle pagine senza la vecchia: rifiutato" "0" "$(grep -c 'PASSWORD_WEB' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=no&ssh_password=&web_password=nuovissima123&ct=g5&conferma_password=segreta" > /dev/null
+expect "cambio password delle pagine con la vecchia: conferma forte" "1" "$(grep -c '^@conferma g5 sweetspot-config imposta PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
+expect "la password delle pagine non va con le impostazioni normali" "0" "$(grep '^sweetspot-config imposta NOME_PLAYER' "$A/priv.log" | grep -c 'PASSWORD_WEB')"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_password=nuova&web_password=nuovissima123&ct=g6&conferma_password=segreta" > /dev/null
+expect "SSH e password delle pagine insieme: una sola conferma" "1|1" "$(grep -c '@conferma' "$A/priv.log")|$(grep -c '^@conferma g6 sweetspot-config imposta SSH si SSH_UTENTE root SSH_PASSWORD nuova PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
+# Un pacchetto dal disco, anche firmato ma vecchio, sostituisce il sistema.
+: > "$A/priv.log"
+act "a=aggiorna_file&file=%2Fmedia%2FUSB%2Fpacchetto.tar" > /dev/null
+expect "pacchetto dal disco senza conferma: non parte" "0" "$(grep -c 'sweetspot-aggiorna' "$A/priv.log")"
+: > "$A/priv.log"
+act "a=aggiorna_file&file=%2Fmedia%2FUSB%2Fpacchetto.tar&ct=g7&conferma_password=segreta" > /dev/null
+expect "pacchetto dal disco con conferma: conferma forte" "1" "$(grep -c '^@conferma g7 sweetspot-aggiorna file /media/USB/pacchetto.tar$' "$A/priv.log")"
 
 # Con l'helper le pagine leggono la copia senza password.
 printf 'PASSWORD_WEB=*\nNOME_PLAYER=Visibile\n' > "$A/run/sweetspot.web"
