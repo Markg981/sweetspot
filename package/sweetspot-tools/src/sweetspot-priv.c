@@ -462,7 +462,7 @@ static int numero_ok(const char *s, int segno)
 static int opzione_ok(const char *s)
 {
 	static const char *const num[] = {"artist_id:", "album_id:", "genre_id:",
-	    "track_id:", "playlist_id:", "year:", "compilation:", NULL};
+	    "track_id:", "playlist_id:", "folder_id:", "year:", "compilation:", NULL};
 	size_t i, n;
 	for (i = 0; num[i]; i++)
 		if (!strncmp(s, num[i], strlen(num[i])))
@@ -481,13 +481,14 @@ static int opzione_ok(const char *s)
 	return 0;
 }
 
-// Comandi del Reference Studio: elenchi (albums, artists...), stato e coda,
-// trasporto, volume, posizione, riproduzione di un elemento, zone (sync).
+// Comandi del Reference Studio: elenchi (albums, artists..., musicfolder per
+// sfogliare i dischi: Lyrion li legge soltanto), stato e coda, trasporto,
+// volume, posizione, riproduzione di un elemento, zone (sync).
 static int studio_ok(int argc, char **argv)
 {
 	const char *player = argv[0], *c = argv[1];
 	static const char *const elenchi[] = {"albums", "artists", "genres",
-	    "titles", "playlists", "players", NULL};
+	    "titles", "playlists", "players", "musicfolder", NULL};
 	int i, j;
 	for (i = 0; elenchi[i]; i++)
 		if (!strcmp(c, elenchi[i])) {
@@ -536,7 +537,8 @@ static int studio_ok(int argc, char **argv)
 			    strcmp(argv[2], "cmd:insert"))
 				return 0;
 			return (!strncmp(argv[3], "album_id:", 9) || !strncmp(argv[3], "track_id:", 9) ||
-			    !strncmp(argv[3], "artist_id:", 10) || !strncmp(argv[3], "playlist_id:", 12)) &&
+			    !strncmp(argv[3], "artist_id:", 10) || !strncmp(argv[3], "playlist_id:", 12) ||
+			    !strncmp(argv[3], "folder_id:", 10)) &&
 			    opzione_ok(argv[3]);
 		}
 	}

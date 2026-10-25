@@ -10,6 +10,7 @@
 #
 #   GET  ?op=albums|artists|genres|titles|playlists  [start count search sort genre_id artist_id album_id]
 #   GET  ?op=players
+#   GET  ?op=cartella  [folder_id start count]  contenuto di una cartella dei dischi (sola lettura)
 #   GET  ?op=stato&player=MAC            brano in ascolto, volume, tempo
 #   GET  ?op=coda&player=MAC&start=N     coda del player
 #   POST op=play|pausa|stop|avanti|indietro|salta|togli|svuota|volume|seek|carica|zona
@@ -65,6 +66,7 @@ elif [ "$REQUEST_METHOD" = GET ] || [ "$REQUEST_METHOD" = HEAD ]; then
 	P_op=$(query_param op) P_player=$(query_param player) P_start=$(query_param start)
 	P_count=$(query_param count) P_search=$(query_param search) P_sort=$(query_param sort)
 	P_genre=$(query_param genre_id) P_artist=$(query_param artist_id) P_album=$(query_param album_id)
+	P_folder=$(query_param folder_id)
 else
 	errore 405 metodo "Metodo non consentito."
 fi
@@ -106,6 +108,10 @@ if [ "$REQUEST_METHOD" != POST ]; then
 			out=$(lms_json "" playlists "$P_start" "$P_count" "$@") ;;
 		players)
 			out=$(lms_json "" players 0 100) ;;
+		cartella)
+			# Senza folder_id: la radice, cioe' i dischi e le cartelle della libreria.
+			[ -z "$P_folder" ] || num "$P_folder" || errore 400 parametro "folder_id non valido"
+			out=$(lms_json "" musicfolder "$P_start" "$P_count" ${P_folder:+"folder_id:$P_folder"}) ;;
 		stato)
 			[ -n "$P_player" ] || errore 400 parametro "player mancante"
 			out=$(lms_json "$P_player" status - 1 "$JT") ;;
@@ -145,7 +151,7 @@ case "$P_op" in
 		out=$(lms_json "$P_player" time "$P_v") ;;
 	carica)
 		num "$P_id" || errore 400 parametro "id non valido"
-		case "$P_kind" in album|track|artist|playlist) ;; *) errore 400 parametro "tipo non valido" ;; esac
+		case "$P_kind" in album|track|artist|playlist|folder) ;; *) errore 400 parametro "tipo non valido" ;; esac
 		case "$P_mode" in load|add|insert) ;; *) errore 400 parametro "modo non valido" ;; esac
 		out=$(lms_json "$P_player" playlistcontrol "cmd:$P_mode" "${P_kind}_id:$P_id") ;;
 	zona)

@@ -212,8 +212,18 @@ esac
                 self.assertIn("[search:Pink Floyd è]", argv)
                 self.assertNotIn("[Floyd", argv)
 
+    def test_folder_browsing_uses_musicfolder(self):
+        status, _, body = self.cgi("studio-api.json", query="op=cartella")
+        self.assertEqual(status, 200, body)
+        self.assertIn("sweetspot-lms json  musicfolder 0 48", self.calls()[0])
+        self.assertNotIn("folder_id", self.calls()[0])
+        status, _, body = self.cgi("studio-api.json", query="op=cartella&folder_id=12&count=200")
+        self.assertEqual(status, 200, body)
+        self.assertIn("musicfolder 0 200 folder_id:12", self.calls()[1])
+
     def test_invalid_parameters_are_rejected_before_lyrion(self):
-        for q in ("op=albums&count=0", "op=albums&count=999", "op=albums&start=x",
+        for q in ("op=cartella&folder_id=x", "op=cartella&folder_id=1%20url:file:///etc",
+                  "op=albums&count=0", "op=albums&count=999", "op=albums&start=x",
                   "op=albums&sort=evil", "op=albums&genre_id=1;2", "op=stato",
                   "op=stato&player=zz zz", "op=nope"):
             with self.subTest(q=q):
@@ -246,6 +256,8 @@ esac
         self.cgi("studio-api.json", "POST", body="op=carica&kind=album&id=7&mode=add&" + mac, token="tok123")
         self.assertIn("mixer volume 40", self.calls()[0])
         self.assertIn("playlistcontrol cmd:add album_id:7", self.calls()[1])
+        self.cgi("studio-api.json", "POST", body="op=carica&kind=folder&id=12&mode=load&" + mac, token="tok123")
+        self.assertIn("playlistcontrol cmd:load folder_id:12", self.calls()[2])
 
     def test_priv_refusal_and_bad_json_are_distinct_errors(self):
         status, _, body = self.cgi("studio-api.json", query="op=albums")
