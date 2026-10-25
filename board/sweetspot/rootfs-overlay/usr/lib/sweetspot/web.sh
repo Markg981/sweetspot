@@ -100,7 +100,7 @@ token() {
 
 # --- Autenticazione dell'amministratore ------------------------------------------
 # Con PASSWORD_WEB le pagine chiedono l'accesso (/cgi-bin/accesso): password
-# verificata da root (sweetspot-accesso verifica, impronta salata MD5-crypt),
+# verificata da root (sweetspot-accesso verifica, impronta salata SHA-512-crypt),
 # poi una sessione con cookie HttpOnly e SameSite=Strict. Il gettone anti-CSRF
 # resta richiesto a ogni azione: la sessione dice CHI e', il gettone che la
 # richiesta viene dalle nostre pagine. Senza PASSWORD_WEB (predefinito, come

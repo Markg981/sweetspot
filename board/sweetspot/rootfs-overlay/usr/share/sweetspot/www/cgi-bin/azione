@@ -539,7 +539,7 @@ case "$F_a" in
 		set -- NOME_PLAYER "$nome" MODALITA "$F_modalita" PROFILO "$F_profilo" MODALITA_ASCOLTO "$F_ascolto" \
 			PRECARICO "$precarico" OTTIMIZZAZIONI "$F_ottimizzazioni" RENDERER_UPNP "$F_renderer_upnp" SERVER_UPNP "$F_server_upnp" \
 				CACHE_COPERTINE "$F_cache_copertine" CACHE_COPERTINE_MB "$F_cache_copertine_mb" CACHE_COPERTINE_DISCO "$F_cache_copertine_disco" HTTPS "$F_https" HTTPS_REINDIRIZZA "$F_https_reindirizza"
-		# Password delle pagine: si salva solo l'impronta MD5-crypt.
+		# Password delle pagine: si salva solo l'impronta SHA-512-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
 		[ -z "$F_web_password" ] || [ ${#F_web_password} -ge 10 ] || done_to sistema "La password delle pagine ha almeno 10 caratteri. Niente e' stato cambiato."
 		if [ -n "$F_web_password" ]; then

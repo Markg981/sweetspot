@@ -318,18 +318,38 @@ vrun() { # PASSWORD_WEB password
 	printf '%s\n' "$2" | SWEETSPOT_RUN="$V/run" SWEETSPOT_LOG="$V/log" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" \
 		sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $V/s.txt; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; verify && echo si || echo no"
 }
+# sweetspot-config finto: annota l'impronta riscritta dalla migrazione.
+printf '#!/bin/sh\nprintf "%%s\\n" "$3" > "%s/riscritta"\n' "$V" > "$V/sweetspot-config"
+chmod +x "$V/sweetspot-config"
+PATH=$V:$PATH
+riscritta() { sed -n 1p "$V/riscritta" 2>/dev/null; rm -f "$V/riscritta"; }
 expect "password in chiaro in sweetspot.txt: giusta" "si" "$(vrun segreta segreta)"
+rm -f "$V/riscritta"
 expect "password in chiaro in sweetspot.txt: sbagliata" "no" "$(vrun segreta altra)"
 expect "senza password impostata: sempre no" "no" "$(vrun '' x)"
-if [ -n "$BB" ] && "$BB" mkpasswd -m md5 -S ab test 2>/dev/null | grep -q '^\$1\$ab\$'; then
+expect "impronta di altro tipo: non vale come password in chiaro" "no" "$(vrun '$5$sale$impronta' '$5$sale$impronta')"
+expect "BusyBox con le impronte SHA-512-crypt" "1" "$(grep -c '^CONFIG_USE_BB_CRYPT_SHA=y' "$ROOT/board/sweetspot/common/busybox.fragment")"
+expect "l'impronta nuova non e' piu' quella MD5 dell'httpd" "0" "$(grep -c 'httpd -m' "$OVERLAY/usr/bin/sweetspot-accesso")"
+if [ -n "$BB" ] && "$BB" mkpasswd -m sha512 -S abcdefgh test 2>/dev/null | grep -q '^\$6\$abcdefgh\$'; then
 	ln -sf "$BB" "$V/mkpasswd"
-	PATH=$V:$PATH
 	h=$("$BB" mkpasswd -m md5 -S sale1234 segreta)
-	expect "impronta salata: password giusta" "si" "$(vrun "$h" segreta)"
-	expect "impronta salata: password sbagliata" "no" "$(vrun "$h" segreta2)"
-	expect "impronta salata: la sale e' nell'impronta" '$1$sale1234$' "$(printf '%s' "$h" | cut -c1-12)"
+	expect "impronta MD5-crypt: password sbagliata" "no" "$(vrun "$h" segreta2)"
+	expect "impronta MD5-crypt: con la password sbagliata non si riscrive" "" "$(riscritta)"
+	expect "impronta MD5-crypt: password giusta" "si" "$(vrun "$h" segreta)"
+	h6=$(riscritta)
+	expect "impronta MD5-crypt: riscritta come SHA-512-crypt" '$6$' "$(printf '%s' "$h6" | cut -c1-3)"
+	expect "impronta riscritta: password giusta" "si" "$(vrun "$h6" segreta)"
+	expect "impronta riscritta: non si riscrive di nuovo" "" "$(riscritta)"
+	expect "impronta riscritta: password sbagliata" "no" "$(vrun "$h6" segreta2)"
+	expect "password in chiaro: riscritta come SHA-512-crypt" '$6$' "$(vrun segreta segreta >/dev/null; riscritta | cut -c1-3)"
+	hrun() { sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; hash segreta"; }
+	h=$(hrun)
+	expect "hash: impronta SHA-512-crypt" '$6$' "$(printf '%s' "$h" | cut -c1-3)"
+	expect "hash: sale casuale (due impronte diverse)" "no" "$([ "$h" = "$(hrun)" ] && echo si || echo no)"
+	expect "hash: password giusta" "si" "$(vrun "$h" segreta)"
+	expect "hash: password sbagliata" "no" "$(vrun "$h" segreta2)"
 else
-	echo "  (mkpasswd di BusyBox non disponibile: verifica dell'impronta salata saltata)"
+	echo "  (mkpasswd di BusyBox con SHA-512 non disponibile: verifica delle impronte saltata)"
 fi
 
 echo
