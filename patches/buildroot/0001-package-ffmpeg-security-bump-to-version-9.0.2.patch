@@ -1,9 +1,10 @@
-From b5a83ca44592701f3a840725d611fcdd75b1564e Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marco Oliva <ingmarco.oliva@gmail.com>
 Date: Sun, 25 Oct 2026 19:48:58 +0100
 Subject: [PATCH] package/ffmpeg: security bump to version 9.0.2
 
 ---
+ ...-x86-yuv2rgb-Fix-build-without-SSSE3.patch | 43 -----------
  .../0003-libavutil-Fix-mips-build.patch       | 75 -------------------
  ...igure-add-extralibs-to-extralibs_xxx.patch | 47 ------------
  ...0005-avcodec-mmaldec-Fix-build-error.patch | 32 --------
@@ -11,13 +12,63 @@ Subject: [PATCH] package/ffmpeg: security bump to version 9.0.2
  ...hwcontext-vaapi-use-the-correct-type.patch | 28 -------
  package/ffmpeg/ffmpeg.hash                    |  4 +-
  package/ffmpeg/ffmpeg.mk                      | 13 +---
- 7 files changed, 4 insertions(+), 247 deletions(-)
+ 8 files changed, 4 insertions(+), 290 deletions(-)
+ delete mode 100644 package/ffmpeg/0001-swscale-x86-yuv2rgb-Fix-build-without-SSSE3.patch
  delete mode 100644 package/ffmpeg/0003-libavutil-Fix-mips-build.patch
  delete mode 100644 package/ffmpeg/0004-configure-add-extralibs-to-extralibs_xxx.patch
  delete mode 100644 package/ffmpeg/0005-avcodec-mmaldec-Fix-build-error.patch
  delete mode 100644 package/ffmpeg/0006-avcodec-pcm-bluray-dvd-Use-correct-pointer-types-on-.patch
  delete mode 100644 package/ffmpeg/0007-avutil-hwcontext-vaapi-use-the-correct-type.patch
 
+diff --git a/package/ffmpeg/0001-swscale-x86-yuv2rgb-Fix-build-without-SSSE3.patch b/package/ffmpeg/0001-swscale-x86-yuv2rgb-Fix-build-without-SSSE3.patch
+deleted file mode 100644
+index aa56e5a..0000000
+--- a/package/ffmpeg/0001-swscale-x86-yuv2rgb-Fix-build-without-SSSE3.patch
++++ /dev/null
+@@ -1,43 +0,0 @@
+-From bf8eae2d30a205bb76ac625e04c0351106981b9e Mon Sep 17 00:00:00 2001
+-From: Parker Ernest <@>
+-Date: Sun, 23 Feb 2020 13:22:42 +0100
+-Subject: [PATCH] swscale/x86/yuv2rgb: Fix build without SSSE3
+-
+-commit fc6a5883d6af8cae0e96af84dda0ad74b360a084 breaks build on
+-x86_64 CPUs which do not have SSSE3, e.g. AMD Phenom-II
+-
+-Signed-off-by: Michael Niedermayer <michael@niedermayer.cc>
+-[bernd.kuhls@t-online.de:
+-  - retrieved from upstream patchwork:
+-    https://patchwork.ffmpeg.org/project/ffmpeg/patch/20200223122256.23402-1-michael@niedermayer.cc/
+-]
+-Signed-off-by: Bernd Kuhls <bernd.kuhls@t-online.de>
+-[yann.morin.1998@free.fr: fix reference top patchwork and SoB order]
+-Signed-off-by: Yann E. MORIN <yann.morin.1998@free.fr>
+----
+- libswscale/x86/yuv2rgb.c | 2 ++
+- 1 file changed, 2 insertions(+)
+-
+-diff --git a/libswscale/x86/yuv2rgb.c b/libswscale/x86/yuv2rgb.c
+-index c12e88cbb5..4791e5b93a 100644
+---- a/libswscale/x86/yuv2rgb.c
+-+++ b/libswscale/x86/yuv2rgb.c
+-@@ -70,6 +70,7 @@ av_cold SwsFunc ff_yuv2rgb_init_x86(SwsContext *c)
+- #if HAVE_X86ASM
+-     int cpu_flags = av_get_cpu_flags();
+- 
+-+#if HAVE_SSSE3
+-     if (EXTERNAL_SSSE3(cpu_flags)) {
+-         switch (c->dstFormat) {
+-         case AV_PIX_FMT_RGB32:
+-@@ -98,6 +99,7 @@ av_cold SwsFunc ff_yuv2rgb_init_x86(SwsContext *c)
+-             return yuv420_rgb15_ssse3;
+-         }
+-     }
+-+#endif
+- 
+-     if (EXTERNAL_MMXEXT(cpu_flags)) {
+-         switch (c->dstFormat) {
+--- 
+-2.26.2
+-
 diff --git a/package/ffmpeg/0003-libavutil-Fix-mips-build.patch b/package/ffmpeg/0003-libavutil-Fix-mips-build.patch
 deleted file mode 100644
 index aeb272c..0000000
