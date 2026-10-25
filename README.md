@@ -326,7 +326,9 @@ collegato o nella cartella di rete Musica. Sulla partizione di sistema ci sono
 sistema arriva in fondo all'avvio e risponde, diventa quello in uso; se non
 parte (il kernel si ferma, riavvio automatico dopo 10 secondi) riparte da solo
 quello di prima e la pagina Sistema lo segnala. La versione precedente resta
-installata: si torna indietro con un clic.
+installata: si torna indietro con un clic. Viene sostituita solo quando il
+nuovo pacchetto è scaricato e verificato; se sulla chiavetta non c'è posto per
+tutti e due, la pagina Sistema lo dice e chiede di cancellarla prima.
 
 Gli aggiornamenti sono **firmati**: la compilazione ufficiale firma l'elenco dei
 file del pacchetto con una chiave privata che sta solo nei segreti del

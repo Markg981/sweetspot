@@ -1689,6 +1689,7 @@ upd() {
 		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
 		SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati SWEETSPOT_PATH=${UPD_PATH:-$UPD/jq:$SWEETSPOT_PATH} \
 		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
+		SWEETSPOT_SPAZIO_LIBERO=${UPD_LIBERO:-} SWEETSPOT_RIPROVA_ATTESA=0 \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
 }
 genv() { $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; grubenv_get \"\$1\" \"\$2\"" sh "$UPD/stick/boot/grub/grubenv" "$1"; }
@@ -1784,7 +1785,8 @@ mkpkg v1.3.0 x86_64 rovina
 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
 expect "pacchetto rovinato rifiutato" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
 expect "nessuna prova dopo un pacchetto rovinato" "" "$(genv prova)"
-expect "pacchetto rovinato: copia vuota" "no" "$([ -f "$UPD/stick/bzImage" ] && echo si || echo no)"
+expect "pacchetto rovinato: la copia precedente resta" "kernel v1.2.0|rootfs v1.2.0|v1.2.0" \
+	"$(cat "$UPD/stick/bzImage")|$(cat "$UPD/stick/rootfs.cpio.zst")|$(cat "$UPD/stick/boot/versioni/a")"
 mkpkg v1.3.0 aarch64
 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
 expect "pacchetto di un'altra architettura rifiutato" "errore|pacchetto per un altro tipo di computer (aarch64)" "$(cat "$UPD/run/aggiornamento/stato")"
@@ -1804,6 +1806,41 @@ EOF2
 chmod +x "$UPD/bin/curl"
 expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
 	"$(UPD_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+# Scaricamento che si interrompe a meta' (curl scrive una parte e fallisce):
+# la copia precedente (v1.3.0 nella copia A) resta intatta e avviabile.
+mkdir -p "$UPD/curl-meta"
+cat > "$UPD/curl-meta/curl" <<'EOF2'
+#!/bin/sh
+while [ $# -gt 0 ]; do [ "$1" = -o ] && printf 'meta' > "$2"; shift; done
+exit 18
+EOF2
+chmod +x "$UPD/curl-meta/curl"
+UPD_LIBERO=999999999 UPD_PATH="$UPD/curl-meta:$SWEETSPOT_PATH" upd _lavoro url https://example.com/upd.tar
+expect "scaricamento interrotto segnalato" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+expect "scaricamento interrotto: la copia precedente resta" "kernel v1.3.0|rootfs v1.3.0|v1.3.0" \
+	"$(cat "$UPD/stick/bzImage")|$(cat "$UPD/stick/rootfs.cpio.zst")|$(cat "$UPD/stick/boot/versioni/a")"
+expect "scaricamento interrotto: niente file temporanei" "no|no" \
+	"$([ -e "$UPD/stick/aggiornamento.tar.tmp" ] && echo si || echo no)|$([ -e "$UPD/stick/aggiornamento.tmp" ] && echo si || echo no)"
+upd altra
+expect "scaricamento interrotto: si puo' ancora tornare alla copia precedente" "a" "$(genv prova)"
+setenv prova=
+# Poco spazio: prima di cancellare la copia precedente si avvisa, e la si
+# cancella solo con "libera"; senza copia da cancellare e' un errore.
+head -c 1048576 /dev/zero >> "$UPD/stick/rootfs.cpio.zst"
+mkpkg v1.4.0 x86_64
+UPD_LIBERO=100 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "poco spazio: avviso prima di cancellare" "spazio" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+expect "poco spazio: la copia precedente resta" "kernel v1.3.0|v1.3.0" "$(cat "$UPD/stick/bzImage")|$(cat "$UPD/stick/boot/versioni/a")"
+expect "poco spazio: lavoro=spazio nello stato" "lavoro=spazio" "$(upd stato | grep '^lavoro=' | cut -d'|' -f1)"
+upd libera
+expect "libera: copia precedente cancellata" "no|no|no" \
+	"$([ -f "$UPD/stick/bzImage" ] && echo si || echo no)|$([ -f "$UPD/stick/rootfs.cpio.zst" ] && echo si || echo no)|$([ -f "$UPD/stick/boot/versioni/a" ] && echo si || echo no)"
+expect "libera: resta la copia in uso" "b|" "$(genv slot)|$(genv prova)"
+UPD_LIBERO=1 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "spazio insufficiente senza copia da cancellare" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "dopo libera l'aggiornamento si installa" "pronto|v1.4.0|kernel v1.4.0|a" \
+	"$(cat "$UPD/run/aggiornamento/stato")|$(cat "$UPD/stick/bzImage")|$(genv prova)"
 
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
