@@ -190,7 +190,10 @@ expect "dopo la migrazione vale la stessa password" "si" "$(verifica vecchiapass
 expect "dopo la migrazione il vecchio valore in chiaro non e' l'impronta" "no" "$(verifica "$(sed -n 's/^PASSWORD_WEB=//p' "$STICK/sweetspot.txt")")"
 
 echo "Migrazione: impronta MD5-crypt (\$1\$)"
-printf 'NOME_PLAYER=Prova\nPASSWORD_WEB=%s\n' "$(mkpasswd -m md5 -S sale1234 -- vecchiapass)" > "$STICK/sweetspot.txt"
+# Lo stesso mkpasswd di sweetspot-accesso: con SWEETSPOT_PATH (tests/run.sh)
+# e' quello di BusyBox, non quello finto.
+h1=$(E sh -c ". $SWEETSPOT_LIB/common.sh; mkpasswd -m md5 -S sale1234 -- vecchiapass")
+printf 'NOME_PLAYER=Prova\nPASSWORD_WEB=%s\n' "$h1" > "$STICK/sweetspot.txt"
 boot
 expect "all'avvio l'impronta \$1\$ resta (serve la password)" "1" "$(grep -c '^PASSWORD_WEB=\$1\$sale1234\$' "$STICK/sweetspot.txt")"
 expect "\$1\$: password sbagliata rifiutata" "no" "$(verifica sbagliatapass)"
