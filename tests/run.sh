@@ -2589,6 +2589,32 @@ expect "sessione: avvio unico dal supervisore, riavvio solo se muore, arresto pu
 	"fifo|vivo|stesso-pid|riavviato|pid-nuovo|fifo-rimossa|fermo" \
 	"$(dspfn 1 ". $DSP/sessione.sh" 2>&1 | tr '\n' '|' | sed 's/|$//')"
 rm -f "$DSP/run/dsp.fifo"
+echo "Supervisore: Squeezelite bloccato sulla FIFO di CamillaDSP fermo"
+# CamillaDSP in SIGSTOP non legge piu': la FIFO si riempie e la scrittura
+# resta bloccata; il Squeezelite finto ignora SIGTERM come quello appeso.
+cat > "$DSP/blocco.sh" <<'BLOCCO'
+rm -f "$DSP_T/run/blocco.fifo"
+mkfifo "$DSP_T/run/blocco.fifo"
+sh -c 'exec cat > /dev/null' <> "$DSP_T/run/blocco.fifo" &
+lettore=$!
+kill -STOP "$lettore"
+sh -c 'trap "" TERM; exec cat /dev/zero > "$0"' "$DSP_T/run/blocco.fifo" &
+PID=$!
+sleep 1
+kill -0 "$PID" 2>/dev/null && echo bloccato
+PLAYER_ATTESA=2
+t0=$(date +%s)
+stop_player "$PID"
+[ $(( $(date +%s) - t0 )) -le 4 ] && echo entro-il-limite
+kill -0 "$PID" 2>/dev/null || echo fermo
+kill -9 "$lettore" 2>/dev/null; wait "$lettore" 2>/dev/null
+rm -f "$DSP_T/run/blocco.fifo"
+BLOCCO
+expect "supervisore: lo stop del player non resta appeso al wait (kill -9 dopo PLAYER_ATTESA)" \
+	"bloccato|entro-il-limite|fermo" \
+	"$(dspfn 1 ". $DSP/blocco.sh" 2>&1 | tr '\n' '|' | sed 's/|$//')"
+expect "supervisore: nessun wait senza limite su Squeezelite" "0|1" \
+	"$(grep -c 'wait "\$PID"' "$OVERLAY/usr/bin/sweetspot-player")|$(grep -c 'stop_player "\$PID"' "$OVERLAY/usr/bin/sweetspot-player")"
 expect "CamillaDSP non e' piu' avviato dal plugin con un fork dal thread real-time" "1|1" \
 	"$(grep -c '^start_dsp()' "$OVERLAY/usr/bin/sweetspot-player")|$(grep -c 'taskset -c "\$HK" "\$CAMILLADSP"' "$OVERLAY/usr/bin/sweetspot-player")"
 expect "init: ferma anche l'istanza di CamillaDSP" "1" "$(grep -c 'killall camilladsp' "$OVERLAY/etc/init.d/S60sweetspot-player")"
