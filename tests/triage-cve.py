@@ -62,6 +62,12 @@ class TriageGate(unittest.TestCase):
             "CVE-2026-54873", "CVE-2026-72897", "CVE-2026-84782", "CVE-2026-84784",
         ]))
 
+    def test_curl_without_http2_holds(self):
+        # CVE-2026-92392 is non-affetta only while curl is built without nghttp2
+        for defconfig in sorted(ROOT.glob("configs/*_defconfig")):
+            with self.subTest(defconfig=defconfig.name):
+                self.assertNotIn("BR2_PACKAGE_NGHTTP2=y", defconfig.read_text())
+
     def test_untriaged_high_fails_and_medium_does_not(self):
         rc, err = self.run_gate([match("CVE-1"), match("CVE-2", "Medium")], [])
         self.assertEqual(rc, 1)
