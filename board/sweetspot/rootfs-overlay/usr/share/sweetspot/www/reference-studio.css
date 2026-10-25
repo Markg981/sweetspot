@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 :root {
+	color-scheme: dark;
 	--studio-bg: #10151d;
 	--studio-surface: #18212c;
 	--studio-raised: #202d3c;
@@ -11,10 +12,64 @@
 	--studio-accent: #8abcff;
 	--studio-accent-rgb: 138, 188, 255;
 	--studio-accent-ink: #102842;
+	--studio-accent-hover: #b2d2ff;
 	--studio-primary: #3379b9;
 	--studio-ok: #82dab5;
 	--studio-warn: #f4c179;
 	--studio-focus: #c2dcff;
+	--studio-hover: #29405a;
+	--studio-glow: #19304a70;
+	--studio-heading-from: #1b3048;
+	--studio-heading-to: #162230;
+	--studio-heading-line: #38516d;
+	--studio-heading-text: #b5c8dd;
+	--studio-grid: #8abcff08;
+	--studio-nav-on: #24436570;
+	--studio-nav-on-line: #42648a;
+	--studio-dot: #7589a1;
+	--studio-ok-halo: #82dab510;
+	--studio-warn-halo: #f4c17910;
+	--studio-warn-bg: #2a2316;
+	--studio-overlay: rgba(16, 21, 29, .85);
+	--studio-shadow: #050c1520;
+	--studio-shadow-strong: #0004;
 	--studio-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	--studio-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+/* Tema chiaro di Studio e impostazioni: lo attiva tema.js con la scelta
+   salvata nel browser. Material ha il proprio selettore e non lo usa. */
+:root[data-tema="chiaro"] {
+	color-scheme: light;
+	--studio-bg: #f4f6f9;
+	--studio-surface: #ffffff;
+	--studio-raised: #e8edf3;
+	--studio-input: #ffffff;
+	--studio-ink: #16202c;
+	--studio-muted: #4f6175;
+	--studio-line: #cfd8e3;
+	--studio-control-line: #7d8fa5;
+	--studio-accent: #1d5fa8;
+	--studio-accent-rgb: 29, 95, 168;
+	--studio-accent-ink: #ffffff;
+	--studio-accent-hover: #154a85;
+	--studio-primary: #2a6db0;
+	--studio-ok: #1c7a55;
+	--studio-warn: #9a5b00;
+	--studio-focus: #0b3d78;
+	--studio-hover: #dce6f1;
+	--studio-glow: #c9dcf380;
+	--studio-heading-from: #e3edf8;
+	--studio-heading-to: #f7f9fc;
+	--studio-heading-line: #c3d3e6;
+	--studio-heading-text: #3d4f63;
+	--studio-grid: #1d5fa80d;
+	--studio-nav-on: #dbe8f7;
+	--studio-nav-on-line: #9db8d8;
+	--studio-dot: #6a7d93;
+	--studio-ok-halo: #1c7a5520;
+	--studio-warn-halo: #9a5b0020;
+	--studio-warn-bg: #fdf3e1;
+	--studio-overlay: rgba(255, 255, 255, .9);
+	--studio-shadow: #1a2a3c14;
+	--studio-shadow-strong: #1a2a3c33;
 }

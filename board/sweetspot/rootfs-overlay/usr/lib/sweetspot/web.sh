@@ -402,8 +402,9 @@ page_start() {
 ${refresh:+<meta http-equiv="refresh" content="$refresh">}
 <meta name="theme-color" content="#10151d">
 <title>$(esc "$title") - SweetSpot</title>
-<link rel="stylesheet" href="/reference-studio.css?v=1">
-<link rel="stylesheet" href="/style.css?v=reference-studio-1">
+<link rel="stylesheet" href="/reference-studio.css?v=2">
+<link rel="stylesheet" href="/style.css?v=reference-studio-2">
+<script src="/tema.js?v=1"></script>
 </head>
 <body>
 <a class="skip" href="#contenuto">Vai al contenuto</a>
@@ -427,6 +428,7 @@ HTML
 		printf '<a%s href="/cgi-bin/%s"%s><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/reference-icons.svg#%s"></use></svg>%s</a>\n' \
 			"$current" "${p%%:*}" "$target" "${p%%:*}" "${p#*:}"
 	done
+	echo '<button type="button" class="tema" data-tema-switch hidden>Tema chiaro</button>'
 	if auth_enabled && [ "$active" != accesso ]; then
 		printf '<form method="post" action="/cgi-bin/accesso" class="inline"><input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="esci"><button>Esci</button></form>\n' "$(token)"
 	fi
