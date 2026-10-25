@@ -661,6 +661,10 @@ case "$F_a" in
 		priv sweetspot-aggiorna annulla
 		done_to sistema "Aggiornamento annullato: resta la versione attuale." ;;
 
+	aggiorna_libera)
+		out=$(priv sweetspot-aggiorna libera) || done_to sistema "Non si può: $out."
+		done_to sistema "Versione precedente cancellata: ora puoi aggiornare." ;;
+
 	aggiorna_altra)
 		out=$(priv sweetspot-aggiorna altra) || done_to sistema "Non si può: $out."
 		reboot_later

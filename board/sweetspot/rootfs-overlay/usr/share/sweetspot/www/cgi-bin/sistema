@@ -193,6 +193,10 @@ case "$jstate" in
 		button riavvia "Riavvia ora" "" "" primary
 		echo '</div>' ;;
 	errore) info_row ATTENZIONE "Aggiornamento non riuscito" "$jmsg" ;;
+	spazio)
+		printf '<div class="row ATTENZIONE"><span class="dot"></span><div class="grow"><div class="k">Aggiornamento non avviato: manca spazio</div><div class="v">%s</div></div>' "$(esc "$jmsg")"
+		button aggiorna_libera "Cancella la versione precedente" "" "" danger
+		echo '</div>' ;;
 esac
 if [ "$jstate" != scarica ] && [ "$jstate" != controlla ] && [ "$jstate" != pronto ]; then
 	if [ -n "$avail" ] && [ "$avail" != "$ver" ]; then

@@ -10,6 +10,9 @@
 #   sweetspot-aggiorna file PACCHETTO  installa un pacchetto .tar da un disco
 #   sweetspot-aggiorna pacchetti       pacchetti di aggiornamento sui dischi
 #   sweetspot-aggiorna annulla         interrompe l'aggiornamento in corso
+#   sweetspot-aggiorna libera          cancella la versione non in uso, se
+#                                      non c'e' posto per tenerla durante
+#                                      l'aggiornamento
 #   sweetspot-aggiorna altra           al prossimo avvio prova l'altra versione
 #   sweetspot-aggiorna predefinita     la versione in uso diventa quella predefinita
 #   sweetspot-aggiorna conferma        a fine avvio: questa versione funziona
@@ -139,28 +142,82 @@ do_check() {
 
 # --- Installazione nella copia non in uso -----------------------------------------
 
-# Prepara la copia non in uso: la versione in uso diventa quella
-# predefinita (se era stata scelta a mano dal menu di avvio), la vecchia
-# copia si cancella per fare spazio. Stampa la cartella della copia.
+# Prepara l'aggiornamento: la versione in uso diventa quella predefinita
+# (se era stata scelta a mano dal menu di avvio) e la cartella temporanea si
+# svuota. La copia non in uso resta intatta (e avviabile) finche' il nuovo
+# pacchetto non e' scaricato e verificato. Stampa la cartella della copia.
 prepare_slot() {
-	local slot other env d
+	local slot other env
 	slot=$(running_slot)
 	other=$(other_slot "$slot")
 	env=$(boot_env)
 	grubenv_set "$env" "slot=$slot" prova= tentato= || return 1
-	d=$(slot_dir "$STICK_MNT" "$other")
-	# Raspberry Pi: la copia e' una cartella intera (kernel, albero dei
-	# dispositivi, overlay); con GRUB la copia A sta nella cartella principale.
-	if [ "$(boot_type)" = rpi ]; then rm -rf "$d"; fi
-	mkdir -p "$d" "$STICK_MNT/boot/versioni" || return 1
-	rm -f "$d/$(kernel_file)" "$d/rootfs.cpio.zst" "$STICK_MNT/boot/versioni/$other"
 	rm -rf "$STICK_MNT/aggiornamento.tmp"
 	mkdir -p "$STICK_MNT/aggiornamento.tmp" || return 1
 	sync
-	echo "$d"
+	slot_dir "$STICK_MNT" "$other"
 }
 
-# Controlla il pacchetto estratto in $1 e lo sposta nella copia $2.
+# Cancella la copia $2 (cartella $1). Raspberry Pi: la copia e' una
+# cartella intera (kernel, albero dei dispositivi, overlay); con GRUB la
+# copia A sta nella cartella principale.
+clear_slot() { # cartella_copia copia
+	if [ "$(boot_type)" = rpi ]; then rm -rf "$1"; fi
+	mkdir -p "$1" "$STICK_MNT/boot/versioni" || return 1
+	rm -f "$1/$(kernel_file)" "$1/rootfs.cpio.zst" "$STICK_MNT/boot/versioni/$2"
+}
+
+# Spazio libero sulla chiavetta, in KB (vuoto se non si sa).
+free_kb() {
+	if [ -n "${SWEETSPOT_SPAZIO_LIBERO:-}" ]; then echo "$SWEETSPOT_SPAZIO_LIBERO"; return; fi
+	df -P -k "$STICK_MNT" 2>/dev/null | awk 'NR == 2 { print $4 }'
+}
+
+# KB occupati da kernel e sistema della copia nella cartella $1.
+slot_kb() {
+	local f t=0 k
+	for f in "$1/$(kernel_file)" "$1/rootfs.cpio.zst"; do
+		[ -f "$f" ] || continue
+		k=$(du -k "$f" 2>/dev/null | cut -f1)
+		t=$((t + ${k:-0}))
+	done
+	echo "$t"
+}
+
+# KB del pacchetto da installare (0 se non si sa).
+package_kb() { # url|file SORGENTE
+	local b
+	if [ "$1" = url ]; then
+		b=$(sed -n 's/^dimensione=//p' "$DIR/disponibile" 2>/dev/null)
+		case "$b" in ''|*[!0-9]*) b=0 ;; esac
+		echo $((b / 1024))
+	else
+		b=$(du -k "$2" 2>/dev/null | cut -f1)
+		echo "${b:-0}"
+	fi
+}
+
+# Pacchetto e sua estrazione (circa il doppio della dimensione, piu' 1 MB di
+# margine) devono stare accanto alla copia precedente, che si cancella solo
+# dopo la verifica. Se non c'e' posto lo si dice prima di cancellare:
+# "spazio|..." quando cancellando la copia precedente (sweetspot-aggiorna
+# libera, dalla pagina Sistema) il posto ci sarebbe.
+check_space() { # url|file SORGENTE cartella_copia
+	local need free
+	need=$(package_kb "$1" "$2")
+	[ "$need" -gt 0 ] || return 0
+	need=$((need * 2 + 1024))
+	free=$(free_kb)
+	case "$free" in ''|*[!0-9]*) return 0 ;; esac
+	[ "$free" -lt "$need" ] || return 0
+	if [ -f "$3/$(kernel_file)" ] && [ $((free + $(slot_kb "$3"))) -ge "$need" ]; then
+		state "spazio|sulla chiavetta non c'è posto per la nuova versione accanto a quella precedente (servono $((need / 1024)) MB, liberi $((free / 1024)) MB): per aggiornare cancella la versione precedente, poi non potrai tornare indietro fino al prossimo aggiornamento"
+	else
+		state "errore|spazio insufficiente sulla chiavetta: servono $((need / 1024)) MB, liberi $((free / 1024)) MB"
+	fi
+	return 1
+}
+
 unsigned_fixture() {
 	case "${SWEETSPOT_TEST:-}" in 1|cli) [ "${SWEETSPOT_ALLOW_UNSIGNED:-}" = 1 ] ;; *) return 1 ;; esac
 }
@@ -203,8 +260,10 @@ extract_package() {
 	tar -xf "$archive" -C "$x" 2>/dev/null
 }
 
-verify_and_install() { # cartella_estratta cartella_copia copia
-	local x="$1" d="$2" other="$3" v tc f manifest="$DIR/manifesto" actual="$DIR/file.reali"
+# Controlla il pacchetto estratto in $1 e ne stampa la versione (o il motivo
+# del rifiuto). Non tocca la copia non in uso.
+verify_package() { # cartella_estratta
+	local x="$1" v tc f manifest="$DIR/manifesto" actual="$DIR/file.reali"
 	state "controlla|verifica del pacchetto"
 	[ -f "$x/SHA256SUMS" ] || { echo "pacchetto incompleto"; return 1; }
 	# Firma dell'elenco dei file (SHA256SUMS): prima di tutto il resto. Il
@@ -242,6 +301,14 @@ verify_and_install() { # cartella_estratta cartella_copia copia
 		{ echo "pacchetto rovinato (controllo SHA-256 non superato): riprova"; return 1; }
 	v=$(head -n 1 "$x/versione")
 	valid_value "$v" || { echo "versione non valida"; return 1; }
+	echo "$v"
+}
+
+# Sostituisce la copia $3 (cartella $2) con il pacchetto verificato in $1:
+# solo adesso la versione precedente si cancella.
+install_package() { # cartella_estratta cartella_copia copia versione
+	local x="$1" d="$2" other="$3" v="$4" f
+	clear_slot "$d" "$other" || { echo "scrittura non riuscita"; return 1; }
 	# Tutto il contenuto del pacchetto va nella copia (kernel e sistema; sul
 	# Raspberry Pi anche alberi dei dispositivi e overlay).
 	for f in "$x"/*; do
@@ -287,6 +354,11 @@ install_job() { # url|file SORGENTE
 		release_stick
 		return 1
 	fi
+	if ! check_space "$kind" "$src" "$d"; then
+		rm -rf "$STICK_MNT/aggiornamento.tmp"
+		release_stick
+		return 1
+	fi
 	x=$STICK_MNT/aggiornamento.tmp
 	archive=$STICK_MNT/aggiornamento.tar.tmp
 	state "scarica|$kind|$src"
@@ -301,7 +373,7 @@ install_job() { # url|file SORGENTE
 			fi
 			try=$((try + 1))
 			rm -f "$archive"
-			sleep 10
+			sleep "${SWEETSPOT_RIPROVA_ATTESA:-10}"
 		done
 	else
 		# Il disco sorgente puo' essere condiviso e modificato durante il
@@ -311,10 +383,16 @@ install_job() { # url|file SORGENTE
 	if [ -z "$err" ] && ! extract_package "$archive" "$x"; then
 		err="pacchetto illeggibile, contenuto non ammesso oppure spazio esaurito sulla chiavetta"
 	fi
+	# Scaricamento, estrazione o verifica falliti: la copia precedente e'
+	# ancora tutta al suo posto. Solo un errore durante la sostituzione la
+	# lascia a meta', e allora non deve restare avviabile.
 	if [ -n "$err" ]; then
 		state "errore|$err"
 		rc=1
-	elif v=$(verify_and_install "$x" "$d" "$other"); then
+	elif ! v=$(verify_package "$x"); then
+		state "errore|$v"
+		rc=1
+	elif v=$(install_package "$x" "$d" "$other" "$v"); then
 		state "pronto|$v"
 		log "aggiornamento: versione $v installata nella copia $other, si prova al prossimo avvio"
 	else
@@ -382,6 +460,24 @@ do_cancel() {
 	fi
 	state "annullato|"
 	log "aggiornamento: annullato"
+}
+
+# Cancella la versione non in uso, quando non c'e' posto per tenerla durante
+# l'aggiornamento (dopo l'avviso "spazio" nella pagina Sistema). Si torna a
+# partire sempre da quella in uso.
+do_free() {
+	local slot other
+	running && { echo "c'e' un aggiornamento in corso"; return 1; }
+	slot=$(running_slot)
+	other=$(other_slot "$slot")
+	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
+	grubenv_set "$(boot_env)" "slot=$slot" prova= tentato=
+	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$slot"
+	clear_slot "$(slot_dir "$STICK_MNT" "$other")" "$other"
+	sync
+	stick_umount
+	rm -f "$DIR/stato"
+	log "aggiornamento: versione precedente (copia $other) cancellata per fare spazio"
 }
 
 # L'altra versione installata parte una volta al prossimo avvio; se funziona
@@ -660,11 +756,12 @@ case "$1" in
 	file) do_file "$2" ;;
 	pacchetti) do_packages ;;
 	annulla) do_cancel ;;
+	libera) do_free ;;
 	altra) do_other ;;
 	watchdog) do_watchdog_reset ;;
 	stabile) do_stable ;;
 	predefinita) do_default ;;
 	conferma) do_confirm ;;
 	_lavoro) install_job "$2" "$3"; rc=$?; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"; exit "$rc" ;;
-	*) echo "uso: $0 stato|cerca|scarica|file PACCHETTO|pacchetti|annulla|altra|predefinita|conferma" >&2; exit 1 ;;
+	*) echo "uso: $0 stato|cerca|scarica|file PACCHETTO|pacchetti|annulla|libera|altra|predefinita|conferma" >&2; exit 1 ;;
 esac
