@@ -275,11 +275,20 @@ Il resto del disco può diventare l'archivio musicale, per i CD copiati e la mus
 HTML
 n=0
 disks=$(priv sweetspot-installa dischi)
+# Cancellare un disco chiede la password di queste pagine (conferma forte):
+# senza password impostata si installa solo dopo averla scelta.
+webpw=""
+[ -n "$(conf PASSWORD_WEB)" ] && webpw=1
+[ -n "$disks" ] && [ -z "$webpw" ] && echo '<p class="sub">Per installare imposta prima una password per queste pagine (Opzioni per esperti): cancellare un disco richiede di riscriverla.</p>'
 while IFS='|' read -r d gb model bus contents arch; do
 	[ -n "$d" ] || continue
 	n=$((n + 1))
 	printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s, %s GB (%s) - %s</div>\n' \
 		"$(esc "$model")" "$(esc "$d")" "$gb" "$(esc "$bus")" "$(esc "${contents:-vuoto}")"
+	if [ -z "$webpw" ]; then
+		echo '</div></div>'
+		continue
+	fi
 	printf '<form method="post" action="/cgi-bin/azione" onsubmit="return %s">\n' \
 		"$(esc "confirm(\"Cancellare TUTTO il contenuto di $(printf '%s' "$model" | tr -d '"\\') ($d, $gb GB) e installare Sweetspot?\")")"
 	printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="installa"><input type="hidden" name="disco" value="%s">\n' "$(token)" "$(esc "$d")"
@@ -287,6 +296,11 @@ while IFS='|' read -r d gb model bus contents arch; do
 		echo '<label class="check"><input type="checkbox" name="archivio" value="si" checked> Usa il resto del disco come archivio musicale</label>'
 	fi
 	echo '<label class="check"><input type="checkbox" name="conferma" value="si" required> Ho capito: il contenuto del disco verrà cancellato</label>'
+	printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
+	printf '<label for="dim-%s">Scrivi la dimensione del disco <span>(%s, in GB)</span></label>\n' "$(esc "$d")" "$gb"
+	printf '<input id="dim-%s" name="dimensione" inputmode="numeric" pattern="[0-9]+" autocomplete="off" required>\n' "$(esc "$d")"
+	printf '<label for="cpw-%s">Password di queste pagine</label>\n' "$(esc "$d")"
+	printf '<input id="cpw-%s" name="conferma_password" type="password" autocomplete="current-password" required>\n' "$(esc "$d")"
 	echo '<button class="danger">Installa su questo disco</button></form></div></div>'
 done <<EOF2
 $disks

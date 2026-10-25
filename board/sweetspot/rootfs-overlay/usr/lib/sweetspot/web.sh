@@ -179,15 +179,13 @@ session_cookie() {
 	fi
 }
 
-# Limitazione dei tentativi di accesso, per indirizzo di chi li fa e in
-# totale. Dopo la soglia di errori di fila si aspetta 30 secondi per ogni
-# errore in piu' (al massimo 15 minuti). login_wait stampa i secondi da
-# attendere (0 = si puo' provare).
+# Limitazione dei tentativi di accesso, solo per indirizzo di chi li fa: un
+# contatore comune a tutti permetterebbe a chiunque nella rete di bloccare
+# l'accesso dell'amministratore. Dopo la soglia di errori di fila si aspetta
+# 30 secondi per ogni errore in piu' (al massimo 15 minuti). login_wait stampa
+# i secondi da attendere (0 = si puo' provare).
 login_key() {
-	case "$1" in
-		globale) printf globale ;;
-		*) printf 'ip-%s' "$(client_ip)" | tr -c 'a-zA-Z0-9.:-' '_' ;;
-	esac
+	printf 'ip-%s' "$(client_ip)" | tr -c 'a-zA-Z0-9.:-' '_'
 }
 
 # Indirizzo di chi fa la richiesta. Con HTTPS il terminatore TLS (stunnel)
