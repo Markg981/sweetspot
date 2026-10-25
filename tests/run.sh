@@ -3533,6 +3533,62 @@ echo wlan0 > "$HS/run/hotspot.attivo"
 if hs_run 0 richiesta; then rc=0; else rc=1; fi
 expect "hotspot: richiesta registrata con l'hotspot acceso" "0|1" "$rc|$([ -e "$HS/run/hotspot.richiesta" ] && echo 1 || echo 0)"
 
+# 9b. Ricerca delle reti dalla pagina con l'hotspot spento: anche con una
+# scheda senza modalita' AP; senza WIFI_NOME la radio torna spenta.
+hs_env noap
+if hs_run 0 scansiona; then rc=0; else rc=1; fi
+expect "hotspot: scansiona senza hotspot, elenco scritto e radio di nuovo spenta" "0|Casa Rossi,Vicino|1|1" \
+	"$rc|$(cut -d'|' -f2 "$HS/run/wifi-scan.list" | tr '\n' ',' | sed 's/,$//')|$(hs_calls 'ip link set wlan0 up')|$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+hs_env noap
+echo 'WIFI_NOME=Casa' >> "$HS/run/sweetspot.conf"
+hs_run 0 scansiona
+expect "hotspot: scansiona con WIFI_NOME, la radio resta accesa" "0" "$(cat "$HS/sys/class/rfkill/rfkill0/soft")"
+hs_env noap
+rm -rf "$HS/sys/class/net/wlan0"
+if hs_run 0 scansiona; then rc=0; else rc=1; fi
+expect "hotspot: scansiona senza scheda Wi-Fi fallisce" "1" "$rc"
+
+# 9c. Collegamento subito alla rete scelta dalla pagina (hotspot spento).
+hs_collega() { SWEETSPOT_TEST=1 hs_run 0 collega; }
+hs_env noap
+if hs_collega; then rc=0; else rc=1; fi
+expect "hotspot: collega senza WIFI_NOME rifiutato" "1|0" "$rc|$(hs_calls 'S40')"
+hs_env ap
+printf 'WIFI_NOME=Casa\n' >> "$HS/run/sweetspot.conf"
+echo wlan0 > "$HS/run/hotspot.attivo"
+if hs_collega; then rc=0; else rc=1; fi
+expect "hotspot: collega con l'hotspot acceso rifiutato (si usa richiesta)" "1|0" "$rc|$(hs_calls 'S40')"
+hs_env noap
+printf 'WIFI_NOME=Casa\nHOTSPOT_PROVA=4\n' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -eq 2 ] && : > "$HS_DIR/ipok"' > "$HS/onsleep"
+if hs_collega; then rc=0; else rc=1; fi
+expect "hotspot: collega chiude il vecchio collegamento e collega la scheda" "0|1|1|1" \
+	"$rc|$(hs_calls 'ip addr flush dev wlan0')|$(hs_calls 'S40 wifi wlan0')|$(grep -c 'collegato alla rete Wi-Fi scelta' "$HS/log")"
+hs_env ap
+printf 'WIFI_NOME=Casa\nHOTSPOT_PROVA=4\n' >> "$HS/run/sweetspot.conf"
+echo '[ "$n" -ge 6 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/onsleep"
+hs_collega
+expect "hotspot: rete scelta che non risponde, senza cavo si accende l'hotspot" "1|1" \
+	"$(grep -c 'la rete Wi-Fi scelta non risponde' "$HS/log")|$(hs_calls hostapd)"
+
+# 9d. Pagina Rete: con una scheda Wi-Fi l'elenco delle reti e il collegamento.
+hs_page() {
+	mkdir -p "$HS/proc/sys/kernel"; echo sweetspot > "$HS/proc/sys/kernel/hostname"
+	SWEETSPOT_SYSFS=$HS/sys SWEETSPOT_PROCFS=$HS/proc SWEETSPOT_RUN=$HS/run SWEETSPOT_LOG=$HS/log \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH="$HS/bin:$SWEETSPOT_PATH" \
+		REQUEST_METHOD=GET QUERY_STRING="" HTTP_HOST=sweetspot.local \
+		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/rete" 2>&1
+}
+hs_env noap
+printf '100|Casa Rossi\n20|Vicino\n' > "$HS/run/wifi-scan.list"
+echo 'WIFI_NOME=Casa Rossi' >> "$HS/run/sweetspot.conf"
+out=$(hs_page)
+# La rete salvata compare nel menu e nei suggerimenti del campo di Impostazioni.
+expect "pagina rete: reti vicine, la salvata scelta, collega e cerca" "1|2|1|1" \
+	"$(printf '%s' "$out" | grep -c 'Reti Wi-Fi vicine')|$(printf '%s' "$out" | grep -c '<option value="Casa Rossi" selected>Casa Rossi (100%) - salvata</option>')|$(printf '%s' "$out" | grep -c 'value="wifi_connetti"')|$(printf '%s' "$out" | grep -c 'value="wifi_scansiona"')"
+rm -rf "$HS/sys/class/net/wlan0"
+expect "pagina rete: senza scheda Wi-Fi niente elenco" "0" "$(hs_page | grep -c 'value="wifi_connetti"')"
+
 # S40: la scheda Wi-Fi configurata si collega con il nuovo comando 'wifi'.
 expect "S40sweetspot-net: comando wifi e avvio della sorveglianza" "1|1" \
 	"$(grep -c 'wifi) *$' "$OVERLAY/etc/init.d/S40sweetspot-net")|$(grep -c 'sweetspot-hotspot sorveglia' "$OVERLAY/etc/init.d/S40sweetspot-net")"
