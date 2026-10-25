@@ -310,7 +310,7 @@
 		loading();
 		api({ op: 'titles', album_id: r.id, count: 200 }).then(function (res) {
 			var list = res.titles_loop || [], t0 = list[0] || {};
-			var kids = [h('a', { href: '#/albums', class: 'st-back', text: '← Album' }),
+			var kids = [h('a', { href: link('albums', { q: $('st-q').value.trim() }), class: 'st-back', text: '← Album' }),
 				h('div', { class: 'st-hero' }, [cover(t0.coverid, 300, ''),
 					h('div', {}, [h('h1', { text: t0.album || r.p.n || 'Album' }), h('p', { text: [t0.albumartist || t0.artist, t0.year && t0.year !== '0' ? t0.year : ''].filter(Boolean).join(' · ') }),
 						h('div', { class: 'st-actions' }, [
@@ -537,6 +537,8 @@
 			if (links[i].getAttribute('data-v') === (r.v === 'album' || r.v === 'search' ? 'albums' : r.v)) links[i].setAttribute('aria-current', 'page');
 			else links[i].removeAttribute('aria-current');
 		}
+		// La casella di ricerca mostra sempre il filtro della lista a schermo.
+		if (r.v === 'albums' || r.v === 'artists' || r.v === 'search') $('st-q').value = r.p.q || '';
 		switch (r.v) {
 			case 'albums': return vAlbums(r);
 			case 'album': return vAlbum(r);
