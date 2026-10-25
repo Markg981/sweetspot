@@ -77,6 +77,7 @@ async function run(opts) {
 		setInterval: () => 0, setTimeout, clearTimeout, encodeURIComponent, decodeURIComponent,
 	};
 	ctx.window.document = doc;
+	if (opts.q) get('st-q').value = opts.q;
 	vm.createContext(ctx);
 	vm.runInContext(SRC, ctx);
 	await new Promise((r) => setTimeout(r, 30));
@@ -193,6 +194,15 @@ const P = [{ playerid: 'aa:aa:aa:aa:aa:01', name: 'Principale', connected: 1 },
 	findText(r.get('st-main'), 'Riproduci la cartella').listeners.click();
 	await new Promise((x) => setTimeout(x, 30));
 	assert.ok(r.calls.some((c) => c.post && /op=carica/.test(c.body) && /kind=folder/.test(c.body) && /id=12/.test(c.body) && /mode=load/.test(c.body)), 'riproduce la cartella intera');
+
+	// Ricerca: la casella mostra il filtro della lista e "← Album" lo conserva.
+	r = await run({ mode: 'fisso', mainMac: 'aa:aa:aa:aa:aa:01', players: P, saved: 'aa:aa:aa:aa:aa:01', hash: '#/albums?q=dion' });
+	assert.strictEqual(r.get('st-q').value, 'dion', 'la casella riporta la ricerca della lista');
+	r = await run({ mode: 'fisso', mainMac: 'aa:aa:aa:aa:aa:01', players: P, saved: 'aa:aa:aa:aa:aa:01', hash: '#/albums', q: 'dion' });
+	assert.strictEqual(r.get('st-q').value, '', 'lista senza filtro: casella vuota');
+	r = await run({ mode: 'fisso', mainMac: 'aa:aa:aa:aa:aa:01', players: P, saved: 'aa:aa:aa:aa:aa:01', hash: '#/album/7', q: 'dion' });
+	const back = all(r.get('st-main'), (x) => x.tag === 'a' && x.textContent === '← Album')[0];
+	assert.strictEqual(back && back.attrs.href, '#/albums?q=dion', "dall'album si torna alla lista filtrata");
 
 	console.log('studio-js: volume per player, esiti, ricerca, paginazione e cartelle OK');
 })().catch((e) => { console.error('studio-js FALLITO:', e.message); process.exit(1); });
