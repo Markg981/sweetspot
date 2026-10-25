@@ -1671,6 +1671,12 @@ sleep 7200 &
 UPD_SUP=$!
 echo "$UPD_SUP" > "$UPD/run/supervisore.pid"
 printf '#!/bin/sh\nexit 1\n' > "$UPD/bin/wget-ko"
+# Rete: una scheda via cavo collegata, con l'indirizzo dato da ip finto.
+mkdir -p "$UPD/sys/class/net/eth0/device"
+echo 1 > "$UPD/sys/class/net/eth0/type"
+echo 1 > "$UPD/sys/class/net/eth0/carrier"
+printf '#!/bin/sh\necho "2: eth0    inet 192.168.1.50/24 brd 192.168.1.255 scope global eth0"\n' > "$UPD/bin/ip-ok"
+printf '#!/bin/sh\nexit 0\n' > "$UPD/bin/ip-nessuno"
 chmod +x "$UPD/bin"/*
 mkpkg() { # versione architettura [rovina]
 	rm -rf "$UPD/pkg"; mkdir -p "$UPD/pkg"
@@ -1687,6 +1693,7 @@ upd() {
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$UPD/stick \
 		SWEETSPOT_MEDIA=$UPD/media SWEETSPOT_ARCH=x86_64 SWEETSPOT_VERSION_FILE=$UPD/version \
 		SWEETSPOT_AVVIO=$UPD/avvio SWEETSPOT_WGET=${UPD_WGET:-$UPD/bin/wget-ok} SWEETSPOT_CONFERMA_ATTESA=2 \
+		SWEETSPOT_IP=${UPD_IP:-$UPD/bin/ip-ok} SWEETSPOT_CONFERMA_ATTESA_RETE=2 \
 		SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati SWEETSPOT_PATH=${UPD_PATH:-$UPD/jq:$SWEETSPOT_PATH} \
 		SWEETSPOT_CHIAVE_FIRMA=${UPD_PUB:-$UPD/nessuna-chiave.pub} SWEETSPOT_TEST=cli SWEETSPOT_ALLOW_UNSIGNED=1 \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" "$@"
@@ -1741,6 +1748,25 @@ conferma_ko lyrion : : "$UPD/bin/wget-nolms"
 conferma_ko supervisore 'rm -f "$UPD/run/supervisore.pid"' 'echo $UPD_SUP > "$UPD/run/supervisore.pid"'
 conferma_ko libreria 'rmdir "$UPD/lmsdati"' 'mkdir "$UPD/lmsdati"'
 conferma_ko impostazioni 'mv "$UPD/run/sweetspot.conf" "$UPD/run/sc"' 'mv "$UPD/run/sc" "$UPD/run/sweetspot.conf"'
+# Rete rotta: la pagina locale risponde, ma il lettore non si raggiunge
+conferma_ko rete 'echo 0 > "$UPD/sys/class/net/eth0/carrier"' 'echo 1 > "$UPD/sys/class/net/eth0/carrier"'
+conferma_ko rete 'export UPD_IP=$UPD/bin/ip-nessuno' 'unset UPD_IP'
+conferma_ko rete 'rmdir "$UPD/sys/class/net/eth0/device"' 'mkdir "$UPD/sys/class/net/eth0/device"'
+# Con l'hotspot di configurazione acceso il lettore si raggiunge
+echo 0 > "$UPD/sys/class/net/eth0/carrier"
+echo wlan0 > "$UPD/run/hotspot.attivo"
+setenv prova= tentato=b
+UPD_IP=$UPD/bin/ip-nessuno upd conferma
+expect "rete: con l'hotspot acceso si conferma" "b|" "$(genv slot)|$(genv tentato)"
+rm -f "$UPD/run/hotspot.attivo"
+# Wi-Fi: il collegamento non conta, basta l'indirizzo
+mkdir "$UPD/sys/class/net/eth0/wireless"
+setenv prova= tentato=b
+upd conferma
+expect "rete: Wi-Fi con indirizzo, si conferma" "b|" "$(genv slot)|$(genv tentato)"
+rmdir "$UPD/sys/class/net/eth0/wireless"
+echo 1 > "$UPD/sys/class/net/eth0/carrier"
+rm -f "$UPD/stick/boot/conferma-fallita"
 # Modalita' player: Lyrion non e' di questa macchina e non conta
 echo "MODALITA=player" > "$UPD/run/sweetspot.conf"
 rmdir "$UPD/lmsdati"
@@ -1941,10 +1967,13 @@ updpi() {
 	local s=$1
 	shift
 	mkdir -p "$PI/run" "$UPD/musica" "$UPD/lmsdati"
+	mkdir -p "$PI/sys/class/net/eth0/device"
+	echo 1 > "$PI/sys/class/net/eth0/type"
+	echo 1 > "$PI/sys/class/net/eth0/carrier"
 	[ -s "$PI/run/sweetspot.conf" ] || echo "MODALITA=completa" > "$PI/run/sweetspot.conf"
 	echo "$UPD_SUP" > "$PI/run/supervisore.pid"
 	SWEETSPOT_CONFERMA_ATTESA_LMS=2 SWEETSPOT_MUSICA=$UPD/musica SWEETSPOT_LMS_DATA=$UPD/lmsdati \
-		SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
+		SWEETSPOT_IP=$UPD/bin/ip-ok SWEETSPOT_CONFERMA_ATTESA_RETE=2 SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_STICK_DIR=$PI/stick \
 		SWEETSPOT_MEDIA=$PI/media SWEETSPOT_VERSION_FILE=$PI/version SWEETSPOT_AVVIO=$PI/avvio \
 		SWEETSPOT_WGET=$UPD/bin/wget-ok SWEETSPOT_CONFERMA_ATTESA=2 SWEETSPOT_RCK=$PI/bin/rcK SWEETSPOT_REBOOT=$PI/bin/reboot \

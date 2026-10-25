@@ -13,9 +13,9 @@
 #   sweetspot-aggiorna altra           al prossimo avvio prova l'altra versione
 #   sweetspot-aggiorna predefinita     la versione in uso diventa quella predefinita
 #   sweetspot-aggiorna conferma        a fine avvio: questa versione funziona
-#                                      (impostazioni, pagina web, supervisore
-#                                      del player, Lyrion, libreria; il DAC
-#                                      opzionale non conta)
+#                                      (impostazioni, pagina web, rete,
+#                                      supervisore del player, Lyrion,
+#                                      libreria; il DAC opzionale non conta)
 #   sweetspot-aggiorna watchdog        all'avvio dopo un riavvio del watchdog
 #                                      (S21): conta i riavvii consecutivi e,
 #                                      al secondo, al prossimo avvio parte
@@ -54,6 +54,7 @@ VERSION_FILE=${SWEETSPOT_VERSION_FILE:-/etc/sweetspot-version}
 # chiave privata (nei segreti di GitHub, la usa solo la compilazione
 # ufficiale) si possono installare.
 PUBKEY=${SWEETSPOT_CHIAVE_FIRMA:-/etc/sweetspot/aggiornamenti.pub}
+IPC=${SWEETSPOT_IP:-ip}
 
 current_version() { cut -d' ' -f1 "$VERSION_FILE" 2>/dev/null; }
 
@@ -532,6 +533,26 @@ check_web() {
 	"${SWEETSPOT_WGET:-wget}" -q -T 5 -O /dev/null "$url" 2>/dev/null
 }
 
+# Raggiungibile dalla rete: la pagina locale risponde anche con la rete
+# rotta, e un lettore senza schermo confermato cosi' resterebbe isolato.
+# Basta l'hotspot di configurazione acceso, oppure una scheda vera (anche
+# USB, come in S40sweetspot-net) con un indirizzo IPv4 e, se via cavo, il
+# collegamento attivo (un IP_FISSO resta sulla scheda anche senza cavo).
+check_network() {
+	local n i
+	[ -s "$RUN/hotspot.attivo" ] && return 0
+	for n in "$SYS"/class/net/*; do
+		i=${n##*/}
+		[ -e "$n/device" ] || continue
+		[ "$(cat "$n/type" 2>/dev/null)" = 1 ] || continue
+		if [ ! -d "$n/wireless" ] && [ ! -d "$n/phy80211" ]; then
+			[ "$(cat "$n/carrier" 2>/dev/null)" = 1 ] || continue
+		fi
+		[ -n "$("$IPC" -4 -o addr show scope global dev "$i" 2>/dev/null)" ] && return 0
+	done
+	return 1
+}
+
 # Impostazioni: l'unione tra predefinite e sweetspot.txt (costruita
 # all'avvio) esiste e non e' vuota, e la copia dell'utente si legge. Un
 # sweetspot.txt con valori sbagliati non e' un guasto della versione (la
@@ -587,12 +608,18 @@ wait_check() {
 
 # Lyrion al primo avvio su un Raspberry Pi puo' impiegare minuti: attesa
 # lunga (SWEETSPOT_CONFERMA_ATTESA_LMS, 600 s); il watchdog hardware e'
-# alimentato a parte e non scatta durante l'attesa.
+# alimentato a parte e non scatta durante l'attesa. La rete puo' arrivare
+# solo con l'hotspot, acceso dopo HOTSPOT_ATTESA secondi senza connessione:
+# si aspetta quel tempo piu' un minuto (SWEETSPOT_CONFERMA_ATTESA_RETE).
 healthy() {
-	local t=${SWEETSPOT_CONFERMA_ATTESA:-60} tl=${SWEETSPOT_CONFERMA_ATTESA_LMS:-600}
+	local t=${SWEETSPOT_CONFERMA_ATTESA:-60} tl=${SWEETSPOT_CONFERMA_ATTESA_LMS:-600} tn
+	tn=$(conf HOTSPOT_ATTESA 60)
+	case "$tn" in ''|*[!0-9]*) tn=60 ;; esac
+	tn=${SWEETSPOT_CONFERMA_ATTESA_RETE:-$((tn + 60))}
 	CHECK_FAILED=
 	wait_check impostazioni 0 check_settings "sweetspot.txt illeggibile o impostazioni non costruite" || return 1
 	wait_check web "$t" check_web "la pagina locale (/cgi-bin/vivo) non risponde" || return 1
+	wait_check rete "$tn" check_network "nessuna rete: nessuna scheda con indirizzo e collegamento, ne' hotspot" || return 1
 	wait_check supervisore "$t" check_player "il supervisore del player non e' in esecuzione" || return 1
 	wait_check lyrion "$tl" check_lms "Lyrion non risponde" || return 1
 	wait_check libreria "$t" check_library "musica o dati di Lyrion non accessibili" || return 1

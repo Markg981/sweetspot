@@ -323,7 +323,8 @@ Raspberry Pi `sweetspot-rpi-aggiornamento.tar`) su un disco
 collegato o nella cartella di rete Musica. Sulla partizione di sistema ci sono
 **due copie del sistema**: l'aggiornamento si scrive in quella non in uso
 (controllato con SHA-256), poi GRUB la avvia **una volta sola**. Se il nuovo
-sistema arriva in fondo all'avvio e risponde, diventa quello in uso; se non
+sistema arriva in fondo all'avvio e risponde dalla rete (una scheda con
+indirizzo e collegamento, oppure l'hotspot acceso), diventa quello in uso; se non
 parte (il kernel si ferma, riavvio automatico dopo 10 secondi) riparte da solo
 quello di prima e la pagina Sistema lo segnala. La versione precedente resta
 installata: si torna indietro con un clic.
