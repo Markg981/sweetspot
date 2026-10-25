@@ -5,6 +5,7 @@
 #
 #   sweetspot-hotspot sorveglia    (lanciato da S40sweetspot-net, in secondo piano)
 #   sweetspot-hotspot scansiona    cerca le reti Wi-Fi e aggiorna l'elenco
+#   sweetspot-hotspot collega      (dalle pagine) collega subito la rete salvata
 #   sweetspot-hotspot stato        scrive il nome della scheda se l'hotspot e' acceso
 #   sweetspot-hotspot richiesta    (dalle pagine) prova la rete Wi-Fi appena salvata
 #
@@ -16,6 +17,10 @@
 # l'hotspot si spegne e Sweetspot si collega. Se la rete salvata non si collega
 # entro HOTSPOT_PROVA secondi l'hotspot riparte. Con la rete funzionante l'hotspot
 # non e' mai acceso: se arriva un cavo, si spegne.
+#
+# Con l'hotspot spento la pagina Rete cerca le reti con "scansiona" (su qualsiasi
+# scheda Wi-Fi) e si collega a quella scelta con "collega": se non risponde e non
+# c'e' altra connessione riparte la sorveglianza, quindi l'hotspot.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -49,6 +54,18 @@ ap_iface() {
 			printf '%s' "$i"
 			return 0
 		fi
+	done
+	return 1
+}
+
+# Prima scheda Wi-Fi vera (anche senza modalita' access point).
+wifi_iface() {
+	local n
+	for n in "$SYS"/class/net/*; do
+		[ -e "$n/device" ] || continue
+		[ -d "$n/wireless" ] || [ -d "$n/phy80211" ] || continue
+		printf '%s' "${n##*/}"
+		return 0
 	done
 	return 1
 }
@@ -311,6 +328,28 @@ attesa_scrivi() { # secondi avvio|prova
 	schermo_sveglia
 }
 
+# Collega subito la scheda $1 alla rete di WIFI_NOME, scelta dalla pagina Rete
+# con l'hotspot spento. Se non risponde entro HOTSPOT_PROVA secondi e non c'e'
+# altra connessione, riparte la sorveglianza (e dopo l'attesa l'hotspot).
+prova_rete() { # scheda
+	local i=$1 prova
+	prova=$(conf HOTSPOT_PROVA 40)
+	case "$prova" in ''|*[!0-9]*) prova=40 ;; esac
+	"$SLEEP" 4	# il tempo di consegnare la risposta alla pagina
+	[ -f "/run/udhcpc.$i.pid" ] && kill "$(cat "/run/udhcpc.$i.pid")" 2>/dev/null
+	killall wpa_supplicant 2>/dev/null
+	"$IPC" addr flush dev "$i" 2>/dev/null
+	log "rete: collego il Wi-Fi scelto dalla pagina su $i"
+	"$NET_INIT" wifi "$i"
+	if wait_ip "$i" "$prova"; then
+		log "rete: collegato alla rete Wi-Fi scelta"
+		return 0
+	fi
+	log "rete: la rete Wi-Fi scelta non risponde"
+	connected && return 0
+	sorveglia
+}
+
 sorveglia() {
 	local attesa prova i t=0 step=3
 	is_yes "$(conf HOTSPOT si)" || exit 0
@@ -367,10 +406,31 @@ case "$1" in
 	sorveglia) sorveglia ;;
 	scansiona)
 		i=$(cat "$RUN/hotspot.attivo" 2>/dev/null)
-		[ -n "$i" ] || i=$(ap_iface) || exit 1
+		if [ -z "$i" ]; then
+			# Senza hotspot: radio accesa per la ricerca, poi come prima.
+			i=$(wifi_iface) || exit 1
+			radio_on "$i"
+			"$IPC" link set "$i" up
+			# Appena accesa la scheda puo' non essere ancora pronta.
+			scan "$i" || { "$SLEEP" 2; scan "$i"; }
+			rc=$?
+			radio_off
+			exit $rc
+		fi
 		scan "$i" ;;
 	stato) cat "$RUN/hotspot.attivo" 2>/dev/null ;;
 	# La pagina gira come "web" e non scrive in $RUN: passa da sweetspot-priv.
 	richiesta) [ -s "$RUN/hotspot.attivo" ] && : > "$RICHIESTA" ;;
-	*) echo "uso: $0 sorveglia|scansiona|stato|richiesta" >&2; exit 1 ;;
+	# Con l'hotspot acceso si passa da "richiesta".
+	collega)
+		[ -s "$RUN/hotspot.attivo" ] && exit 1
+		[ -n "$(conf WIFI_NOME)" ] || exit 1
+		i=$(wifi_iface) || exit 1
+		if [ "${SWEETSPOT_TEST:-}" = 1 ]; then
+			prova_rete "$i"
+		else
+			setsid "$0" prova "$i" > /dev/null 2>&1 < /dev/null &
+		fi ;;
+	prova) [ -n "$2" ] && prova_rete "$2" ;;
+	*) echo "uso: $0 sorveglia|scansiona|stato|richiesta|collega" >&2; exit 1 ;;
 esac

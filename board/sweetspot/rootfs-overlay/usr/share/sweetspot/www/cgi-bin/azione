@@ -409,22 +409,35 @@ case "$F_a" in
 		rc=$?
 		done_to rete "$(saved_msg $rc "Impostazioni di rete salvate: valgono dal prossimo avvio.")" ;;
 
-	# Primo avvio: rete scelta dal telefono collegato all'hotspot. Si salva e
-	# sweetspot-hotspot spegne l'hotspot e prova la rete (poi riparte se fallisce).
+	# Rete scelta dall'elenco (o scritta). Con l'hotspot acceso (primo avvio) si
+	# salva e sweetspot-hotspot spegne l'hotspot e prova la rete (poi riparte se
+	# fallisce); altrimenti la scheda Wi-Fi si collega subito.
 	wifi_connetti)
-		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
 		[ -n "$F_wifi_nome" ] || F_wifi_nome=$F_wifi_scelta
 		[ -n "$F_wifi_nome" ] || done_to rete "Scegli una rete o scrivine il nome."
 		valid_value "$F_wifi_nome" && valid_value "$F_wifi_password" || done_to rete "Dati non validi."
 		[ -z "$F_wifi_password" ] || { [ ${#F_wifi_password} -ge 8 ] && [ ${#F_wifi_password} -le 63 ]; } || done_to rete "La password Wi-Fi ha da 8 a 63 caratteri."
-		priv sweetspot-config imposta WIFI_NOME "$F_wifi_nome" WIFI_PASSWORD "$F_wifi_password"
+		host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
+		if [ -s "$RUN/hotspot.attivo" ]; then
+			priv sweetspot-config imposta WIFI_NOME "$F_wifi_nome" WIFI_PASSWORD "$F_wifi_password"
+			rc=$?
+			[ $rc -eq 0 ] || [ $rc -eq 2 ] || done_to rete "$(saved_msg $rc)"
+			priv sweetspot-hotspot richiesta || done_to rete "L'hotspot non risponde: riprova fra qualche secondo."
+			done_to rete "Mi collego a $F_wifi_nome: l'hotspot si spegne. Ricollega il telefono alla tua rete e apri http://$host.local/ (se non si collega, entro circa un minuto l'hotspot Sweetspot riparte)."
+		fi
+		# Stessa rete già salvata e password vuota: resta quella salvata.
+		set -- WIFI_NOME "$F_wifi_nome"
+		if [ -n "$F_wifi_password" ] || [ "$F_wifi_nome" != "$(conf WIFI_NOME)" ]; then
+			set -- "$@" WIFI_PASSWORD "$F_wifi_password"
+		fi
+		priv sweetspot-config imposta "$@"
 		rc=$?
 		[ $rc -eq 0 ] || [ $rc -eq 2 ] || done_to rete "$(saved_msg $rc)"
-		priv sweetspot-hotspot richiesta || done_to rete "L'hotspot non risponde: riprova fra qualche secondo."
-		done_to rete "Mi collego a $F_wifi_nome: l'hotspot si spegne. Ricollega il telefono alla tua rete e apri http://$(cat "$PROC/sys/kernel/hostname" 2>/dev/null).local/ (se non si collega, entro circa un minuto l'hotspot Sweetspot riparte)." ;;
+		priv sweetspot-hotspot collega || done_to rete "Nessuna scheda Wi-Fi: rete salvata per il prossimo avvio."
+		done_to rete "Mi collego a $F_wifi_nome: ricarica la pagina fra mezzo minuto per vedere l'indirizzo. Se usavi il Wi-Fi per questa pagina riaprila da http://$host.local/ (se la rete non risponde e non c'è il cavo, entro un paio di minuti si accende l'hotspot Sweetspot)."
+		;;
 	wifi_scansiona)
-		[ -s "$RUN/hotspot.attivo" ] || done_to rete "L'hotspot non è acceso."
-		priv sweetspot-hotspot scansiona
+		priv sweetspot-hotspot scansiona || done_to rete "Nessuna rete Wi-Fi trovata."
 		done_to rete "Elenco delle reti aggiornato." ;;
 
 	# Scheda DAC I2S del Raspberry Pi: la carica il firmware all'avvio, quindi

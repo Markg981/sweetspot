@@ -8,19 +8,20 @@ page_start "Rete" rete
 
 echo '<h2>Collegamento</h2><div class="card">'
 n=0
+wifi=""
 for d in "$SYS"/class/net/*; do
 	i=${d##*/}
 	[ -e "$d/device" ] || continue
 	[ "$(cat "$d/type" 2>/dev/null)" = 1 ] || continue
 	n=$((n + 1))
-	if [ -d "$d/wireless" ] || [ -d "$d/phy80211" ]; then kind="Wi-Fi"; else kind="Cavo"; fi
+	if [ -d "$d/wireless" ] || [ -d "$d/phy80211" ]; then kind="Wi-Fi"; wifi=$i; else kind="Cavo"; fi
 	ip=$(ip -4 -o addr show dev "$i" 2>/dev/null | sed -n 's/.*inet \([0-9.]*\/[0-9]*\).*/\1/p' | head -n 1)
 	speed=$(cat "$d/speed" 2>/dev/null)
 	case "$speed" in ''|-*) speed="" ;; *) speed=", $speed Mbit/s" ;; esac
 	if [ -n "$ip" ]; then
 		info_row OK "$kind ($i)" "indirizzo $ip$speed - MAC $(cat "$d/address" 2>/dev/null)"
 	elif [ "$kind" = "Wi-Fi" ] && [ -z "$(conf WIFI_NOME)" ]; then
-		info_row "" "$kind ($i)" "spento: inserisci qui sotto il nome della rete per usarlo"
+		info_row "" "$kind ($i)" "spento: scegli qui sotto la rete a cui collegarlo"
 	else
 		info_row ATTENZIONE "$kind ($i)" "nessun indirizzo$( [ "$(cat "$d/carrier" 2>/dev/null)" = 1 ] || echo ': cavo scollegato?')"
 	fi
@@ -30,20 +31,37 @@ host=$(cat "$PROC/sys/kernel/hostname" 2>/dev/null)
 info_row "" "Nome in rete" "http://$host.local - si può usare al posto dell'indirizzo dal telefono e dal computer"
 echo '</div>'
 
-# Reti Wi-Fi trovate (scansione fatta dall'hotspot): "percentuale|nome".
+# Reti Wi-Fi trovate (dall'hotspot o con "Cerca le reti"): "percentuale|nome".
 scanlist=""
 [ -s "$RUN/wifi-scan.list" ] && scanlist=$(cat "$RUN/wifi-scan.list")
+saved=$(conf WIFI_NOME)
 scan_options() {
-	printf '%s\n' "$scanlist" | while IFS='|' read -r pct name; do
+	printf '%s
+' "$scanlist" | while IFS='|' read -r pct name; do
 		[ -n "$name" ] || continue
-		printf '<option value="%s">%s (%s%%)</option>\n' "$(esc "$name")" "$(esc "$name")" "$pct"
+		sel="" note=""
+		[ "$name" = "$saved" ] && sel=" selected" note=" - salvata"
+		printf '<option value="%s"%s>%s (%s%%)%s</option>
+' "$(esc "$name")" "$sel" "$(esc "$name")" "$pct" "$note"
 	done
 }
 
-# Hotspot di configurazione acceso: primo avvio senza cavo.
-if [ -s "$RUN/hotspot.attivo" ]; then
-	echo '<h2>Collega Sweetspot al Wi-Fi di casa</h2><div class="card formcard">'
-	echo '<p class="sub">Sei collegato all'"'"'hotspot di Sweetspot. Scegli la tua rete e scrivi la password: l'"'"'hotspot si spegne e Sweetspot si collega (il telefono torna alla rete di casa). Se la password è sbagliata l'"'"'hotspot riparte dopo circa un minuto.</p>'
+# Scelta della rete dall'elenco: con l'hotspot di configurazione acceso (primo
+# avvio senza cavo) oppure con una scheda Wi-Fi, per collegarsi subito.
+if [ -s "$RUN/hotspot.attivo" ] || [ -n "$wifi" ]; then
+	if [ -s "$RUN/hotspot.attivo" ]; then
+		echo '<h2>Collega Sweetspot al Wi-Fi di casa</h2><div class="card formcard">'
+		echo '<p class="sub">Sei collegato all'"'"'hotspot di Sweetspot. Scegli la tua rete e scrivi la password: l'"'"'hotspot si spegne e Sweetspot si collega (il telefono torna alla rete di casa). Se la password è sbagliata l'"'"'hotspot riparte dopo circa un minuto.</p>'
+		pwnote="vuoto = rete aperta"
+	else
+		echo '<h2>Reti Wi-Fi vicine</h2><div class="card formcard">'
+		if [ -n "$scanlist" ]; then
+			echo '<p class="sub">Scegli una rete e scrivi la password: Sweetspot si collega subito e la ricorda per i prossimi avvii. Il cavo resta la scelta migliore per il suono.</p>'
+		else
+			echo '<p class="sub">Premi «Cerca le reti» per vedere le reti Wi-Fi vicine, oppure scrivi il nome di una rete nascosta.</p>'
+		fi
+		pwnote="vuoto = rete aperta, o la password già salvata per questa rete"
+	fi
 	form_start wifi_connetti
 	cat <<HTML
 <label for="rt">Rete trovata</label>
@@ -53,13 +71,13 @@ $(scan_options)
 </select>
 <label for="rn">Nome della rete <span>(se non è nell'elenco o è nascosta)</span></label>
 <input id="rn" name="wifi_nome" autocapitalize="off" autocorrect="off">
-<label for="rp">Password della rete <span>(vuoto = rete aperta)</span></label>
+<label for="rp">Password della rete <span>($pwnote)</span></label>
 <input id="rp" name="wifi_password" type="password" autocomplete="off">
 <button class="primary">Collega</button>
 </form>
 HTML
 	form_start wifi_scansiona
-	echo '<button>Cerca di nuovo le reti</button></form></div>'
+	echo '<button>Cerca le reti</button></form></div>'
 fi
 
 ipmode=automatico

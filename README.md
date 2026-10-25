@@ -127,7 +127,7 @@ le protezioni contro l'incorporamento da siti esterni restano attive.
 | **Musica** | stato della libreria, dischi trovati (escludi/includi), cartelle di rete (aggiunta con prova di accesso) |
 | **Archivio** | il disco dove Sweetspot scrive: copia di cartelle da altri dischi e dal NAS, cartella di rete **Musica** per copiare dal PC o dal Mac, **copia dei CD** |
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
-| **Rete** | schede di rete, Wi-Fi, indirizzo fisso, nome in rete |
+| **Rete** | schede di rete, Wi-Fi (scelta tra le reti vicine), indirizzo fisso, nome in rete |
 | **Sistema** | nome, modalità, profilo del processore, modalità ascolto, renderer UPnP/DLNA, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
 | **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto. Non rifà i controlli a ogni visita: legge la cache del demone a eventi `sweetspot-stato` (core di sistema, `nice 19`), che la aggiorna quando succede qualcosa (CLI di Lyrion, udev per sound/block/net, inotify sulla configurazione), quando qualcuno la legge ed è più vecchia di 10 secondi (40 durante l'ascolto) e come battito di sicurezza ogni 15 minuti; a riposo non lancia processi (meno di 100 fork al minuto in tutto il sistema, misurati da `tests/forks-riposo.sh`; gli altri cicli di servizio attendono con `read -t` su una FIFO senza scrittori (`nap` in `common.sh`) invece di `sleep`, e a riposo, con il DAC fermo, la sorveglianza del player gira ogni 60 s, la sonda Bluetooth ogni 5 s (30 s senza adattatore) e il diario ogni 30 s; mentre il DAC riproduce i ritmi di prima restano). Avvisa se è assente o vecchia. Lo stesso stato in JSON, in sola lettura: `/cgi-bin/stato.json` (stessa password del pannello) e, da Lyrion o Material via JSON-RPC, `["sweetspot","stato"]` |
 
@@ -626,6 +626,15 @@ BusyBox):
 **Primo avvio senza schermo**: oppure preconfigura il Wi-Fi di casa prima
 dell'accensione scrivendo `WIFI_NOME` e `WIFI_PASSWORD` in `sweetspot.txt`
 sulla partizione di avvio (da un PC): l'hotspot non serve.
+
+**Cambiare rete Wi-Fi dopo il primo avvio**: con l'hotspot spento la pagina
+Rete mostra *Reti Wi-Fi vicine* se c'è una scheda Wi-Fi (anche senza modalità
+AP). **Cerca le reti** accende la radio per la ricerca (e la rispegne se il
+Wi-Fi non è configurato); scelta la rete e scritta la password, **Collega** la
+salva e collega subito la scheda, senza riavviare. Con la stessa rete già
+salvata e la password vuota resta quella salvata. Se entro `HOTSPOT_PROVA`
+secondi la rete non risponde e non c'è il cavo riparte la sorveglianza, quindi
+dopo `HOTSPOT_ATTESA` secondi l'hotspot.
 
 L'hotspot non si accende mai con la rete funzionante e si spegne da solo se
 arriva un cavo. Con `HOTSPOT=no` non si accende mai; le radio Wi-Fi restano
