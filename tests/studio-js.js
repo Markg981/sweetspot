@@ -174,5 +174,25 @@ const P = [{ playerid: 'aa:aa:aa:aa:aa:01', name: 'Principale', connected: 1 },
 	sel.listeners.change.call(sel);
 	assert.ok(/[?&]p=30(&|$)/.test(r.ctx.location.hash), 'il selettore salta alla pagina: ' + r.ctx.location.hash);
 
-	console.log('studio-js: volume per player, esiti, ricerca e paginazione OK');
+	// Cartelle: percorso dall'indirizzo, sottocartelle e brani, gli altri file
+	// (copertine...) non compaiono; ▶ suona la cartella intera.
+	const trail = encodeURIComponent(JSON.stringify([[5, 'DaphileData'], [12, 'Jazz']]));
+	r = await run({ mode: 'fisso', mainMac: 'aa:aa:aa:aa:aa:01', players: P, saved: 'aa:aa:aa:aa:aa:01', hash: '#/folders/12?t=' + trail,
+		route: (q) => q.indexOf('op=cartella') >= 0 ? { json: { ok: true, result: { count: 3, folder_loop: [
+			{ id: 30, filename: 'Live', type: 'folder' }, { id: 31, filename: '01 So What.flac', type: 'track' },
+			{ id: 32, filename: 'cover.jpg', type: 'unknown' }] } } } : null });
+	await new Promise((x) => setTimeout(x, 50));
+	assert.ok(r.calls.some((c) => /op=cartella/.test(c.url) && /folder_id=12/.test(c.url)), 'legge la cartella 12');
+	t = texts(r.get('st-main'));
+	assert.ok(t.includes('Jazz') && t.includes('01 So What.flac') && t.some((x) => /Live$/.test(x)), 'cartella mostrata: ' + t.join('|'));
+	assert.ok(!t.includes('cover.jpg'), 'i file che non sono brani non compaiono');
+	const up = all(r.get('st-main'), (x) => x.tag === 'a' && x.textContent === 'DaphileData')[0];
+	assert.ok(up && /^#\/folders\/5\?t=/.test(up.attrs.href), 'il percorso torna alla cartella superiore: ' + (up && up.attrs.href));
+	const sub = all(r.get('st-main'), (x) => x.tag === 'a' && /Live$/.test(x.textContent))[0];
+	assert.deepStrictEqual(JSON.parse(decodeURIComponent(sub.attrs.href.split('t=')[1])), [[5, 'DaphileData'], [12, 'Jazz'], [30, 'Live']], 'la sottocartella allunga il percorso');
+	findText(r.get('st-main'), 'Riproduci la cartella').listeners.click();
+	await new Promise((x) => setTimeout(x, 30));
+	assert.ok(r.calls.some((c) => c.post && /op=carica/.test(c.body) && /kind=folder/.test(c.body) && /id=12/.test(c.body) && /mode=load/.test(c.body)), 'riproduce la cartella intera');
+
+	console.log('studio-js: volume per player, esiti, ricerca, paginazione e cartelle OK');
 })().catch((e) => { console.error('studio-js FALLITO:', e.message); process.exit(1); });

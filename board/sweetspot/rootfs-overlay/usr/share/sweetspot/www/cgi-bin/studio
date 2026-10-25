@@ -48,6 +48,7 @@ cat <<HTML
 <a href="#/albums" data-v="albums">Album</a>
 <a href="#/artists" data-v="artists">Artisti</a>
 <a href="#/playlists" data-v="playlists">Playlist</a>
+<a href="#/folders" data-v="folders">Cartelle</a>
 <a href="#/queue" data-v="queue">Coda</a>
 <a href="#/players" data-v="players">Zone</a>
 <a href="#/audio" data-v="audio">Percorso audio</a>
@@ -85,7 +86,7 @@ cat <<HTML
 <input type="range" id="st-vol" min="0" max="100" step="1" value="0"><output id="st-volv" class="mono"></output></div>
 </section>
 </div>
-<script src="/studio.js?v=1"></script>
+<script src="/studio.js?v=2"></script>
 </body>
 </html>
 HTML

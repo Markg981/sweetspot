@@ -341,6 +341,51 @@
 		}).catch(retry);
 	}
 
+	// Cartelle: i dischi della libreria come in Esplora risorse, in sola lettura
+	// (Lyrion legge le cartelle, non scrive sui dischi). Lyrion non da' la
+	// cartella superiore: il percorso fatto finora viaggia nell'indirizzo (t).
+	var FOLDER_PAGE = 200;
+	function vFolders(r) {
+		var p = r.p, trail = [];
+		try { trail = JSON.parse(p.t || '[]'); } catch (x) { trail = []; }
+		if (!Array.isArray(trail)) trail = [];
+		function href(id, t) { return link('folders/' + enc(id), { t: JSON.stringify(t) }); }
+		loading();
+		api({ op: 'cartella', folder_id: r.id, start: (Number(p.p) || 0) * FOLDER_PAGE, count: FOLDER_PAGE }).then(function (res) {
+			var list = res.folder_loop || [], total = Number(res.count) || list.length, here = trail[trail.length - 1];
+			var dirs = list.filter(function (x) { return x.type === 'folder'; });
+			var tracks = list.filter(function (x) { return x.type === 'track'; });
+			var crumbs = [h('a', { href: '#/folders', text: 'Cartelle' })];
+			trail.forEach(function (c, i) {
+				crumbs.push(' / ', i < trail.length - 1 ? h('a', { href: href(c[0], trail.slice(0, i + 1)), text: c[1] }) : h('span', { text: c[1] }));
+			});
+			var kids = [h('nav', { class: 'st-back', 'aria-label': 'Percorso' }, crumbs),
+				h('h1', { text: here ? here[1] : 'Cartelle' })];
+			if (r.id) kids.push(h('div', { class: 'st-actions' }, [
+				h('button', { type: 'button', class: 'st-primary', text: 'Riproduci la cartella', on: { click: function () { load('folder', r.id, 'load'); } } }),
+				h('button', { type: 'button', text: 'Aggiungi alla coda', on: { click: function () { load('folder', r.id, 'add'); } } })]));
+			else kids.push(h('p', { class: 'st-hint', text: 'I dischi e le cartelle della libreria, in sola lettura. ▶ su un disco o una cartella suona tutto quello che contiene, sottocartelle comprese.' }));
+			if (!dirs.length && !tracks.length) kids.push(empty(r.id ? 'In questa cartella non ci sono brani.' : 'Nessun disco nella libreria.',
+				r.id ? '' : 'Collega un disco USB o aggiungi una cartella di rete dalle impostazioni.'));
+			if (dirs.length) kids.push(h('ul', { class: 'st-list' }, dirs.map(function (d) {
+				var name = d.filename || 'Senza nome';
+				return h('li', {}, [h('a', { href: href(d.id, trail.concat([[d.id, name]])), text: '📁 ' + name }),
+					h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Riproduci la cartella ' + name, text: '▶', on: { click: function () { load('folder', d.id, 'load'); } } }),
+					h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Aggiungi alla coda la cartella ' + name, text: '+', on: { click: function () { load('folder', d.id, 'add'); } } })]);
+			})));
+			if (tracks.length) kids.push(h('ol', { class: 'st-tracks' }, tracks.map(function (t, i) {
+				var name = t.filename || 'Senza nome';
+				return h('li', { class: 'st-track', 'data-id': t.id }, [
+					h('span', { class: 'mono st-n', text: i + 1 }), h('span', { class: 'st-t' }, [h('strong', { text: name })]),
+					h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Riproduci ' + name, text: '▶', on: { click: function () { load('track', t.id, 'load'); } } }),
+					h('button', { type: 'button', class: 'st-mini', 'aria-label': 'Aggiungi alla coda ' + name, text: '+', on: { click: function () { load('track', t.id, 'add'); } } })]);
+			})));
+			kids.push(pager(p, FOLDER_PAGE, total, 'folders' + (r.id ? '/' + enc(r.id) : '')));
+			setMain(kids, here ? here[1] : 'Cartelle');
+			markNow();
+		}).catch(retry);
+	}
+
 	// Testo per il confronto: minuscole e senza accenti ("è" trova "e").
 	function norm(s) {
 		s = String(s || '').toLowerCase();
@@ -497,6 +542,7 @@
 			case 'album': return vAlbum(r);
 			case 'artists': return vArtists(r);
 			case 'playlists': return vPlaylists(r);
+			case 'folders': return vFolders(r);
 			case 'search': return vSearch(r);
 			case 'queue': return vQueue(r);
 			case 'players': return vPlayers(r);
