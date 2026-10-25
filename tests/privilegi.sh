@@ -109,7 +109,8 @@ SSH=si")"
 		expect "rete: 0 rifiutato" "NIENTE(126)" "$(priv sweetspot-rete prova 0)"
 		expect "rete: 10 rifiutato" "NIENTE(126)" "$(priv sweetspot-rete prova 10)"
 		expect "rete: testo rifiutato" "NIENTE(126)" "$(priv sweetspot-rete smonta-una '1;id')"
-		expect "installa avvia ammesso" "sweetspot-installa|avvia|sda|si" "$(priv sweetspot-installa avvia sda si)"
+		expect "installa avvia senza conferma forte: rifiutato" "NIENTE(126)" "$(priv sweetspot-installa avvia sda si 465)"
+		expect "installa dischi ammesso" "sweetspot-installa|dischi" "$(priv sweetspot-installa dischi)"
 		expect "hotspot richiesta ammessa" "sweetspot-hotspot|richiesta" "$(priv sweetspot-hotspot richiesta)"
 		expect "hotspot scansiona ammessa" "sweetspot-hotspot|scansiona" "$(priv sweetspot-hotspot scansiona)"
 		expect "hotspot collega ammessa" "sweetspot-hotspot|collega" "$(priv sweetspot-hotspot collega)"
@@ -239,6 +240,15 @@ SSH=si")"
 		expect "password vuota: rifiutata" "NIENTE(126)" "$(sconf '' @conferma "$tok" sweetspot-config imposta SSH si)"
 		expect "gettone inventato: rifiutato" "NIENTE(126)" "$(sconf segreta @conferma 00000000000000000000000000000000 sweetspot-config imposta SSH si)"
 		expect "gettone con percorso: rifiutato" "NIENTE(126)" "$(sconf segreta @conferma ../../../etc/passwd sweetspot-config imposta SSH si)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "installazione con conferma e dimensione" "sweetspot-installa|avvia|sda|si|465" \
+			"$(sconf segreta @conferma "$tok" sweetspot-installa avvia sda si 465)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "installazione con conferma ma senza dimensione: rifiutata" "NIENTE(126)" \
+			"$(sconf segreta @conferma "$tok" sweetspot-installa avvia sda si)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "installazione con password sbagliata: rifiutata" "NIENTE(126)" \
+			"$(sconf sbagliata @conferma "$tok" sweetspot-installa avvia sda si 465)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma non sblocca script fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-player restart)"
 		tok=$("$WORK/priv" @conferma-nuova)
@@ -401,6 +411,16 @@ expect "utente SSH inventato: ignorato, resta root" "1" "$(grep -c '^@conferma g
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_password=a%0aSSH%3dsi&ct=g4&conferma_password=segreta" > /dev/null
 expect "password SSH con a capo: non arriva all'helper" "0" "$(grep -c 'SSH' "$A/priv.log")"
+# Installazione: cancella un disco, la sola sessione e la casella non bastano.
+: > "$A/priv.log"
+act "a=installa&disco=sda&conferma=si&dimensione=465" > /dev/null
+expect "installazione senza password del pannello riscritta: niente" "0" "$(grep -c 'installa' "$A/priv.log")"
+: > "$A/priv.log"
+act "a=installa&disco=sda&conferma=si&ct=g5&conferma_password=segreta" > /dev/null
+expect "installazione senza dimensione scritta: niente" "0" "$(grep -c 'installa' "$A/priv.log")"
+: > "$A/priv.log"
+act "a=installa&disco=sda&conferma=si&archivio=si&dimensione=465&ct=g6&conferma_password=segreta" > /dev/null
+expect "installazione: passa dalla conferma forte con la dimensione" "1" "$(grep -c '^@conferma g6 sweetspot-installa avvia sda si 465$' "$A/priv.log")"
 
 # Con l'helper le pagine leggono la copia senza password.
 printf 'PASSWORD_WEB=*\nNOME_PLAYER=Visibile\n' > "$A/run/sweetspot.web"

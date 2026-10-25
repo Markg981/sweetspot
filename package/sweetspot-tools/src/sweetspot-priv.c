@@ -15,8 +15,8 @@
 //   sweetspot-priv @conferma GETTONE SCRIPT ARGOMENTI...   (password del
 //                                            pannello sull'ingresso standard)
 //
-// Le operazioni che aprono root (SSH, il suo utente e la sua password)
-// non passano dall'elenco normale: servono @conferma,
+// Le operazioni che aprono root (SSH, il suo utente e la sua password) o
+// cancellano un disco (installazione) non passano dall'elenco normale: servono @conferma,
 // con un gettone monouso e la password del pannello verificata da root.
 //
 // Esce con 126 se la richiesta non e' nell'elenco (nulla viene eseguito).
@@ -124,7 +124,8 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-hotspot", "richiesta", "", "", 0},
 	{"sweetspot-https", "applica", "", "", 0},
 	{"sweetspot-hotspot", "scansiona", "", "", 0},
-	{"sweetspot-installa", "avvia", "ss", "", 0},
+	// Cancella un disco: solo con @conferma, piu' la dimensione del disco scritta.
+	{"sweetspot-installa", "avvia", "sss", "", 1},
 	{"sweetspot-installa", "dischi", "", "", 0},
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
