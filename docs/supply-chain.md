@@ -21,6 +21,43 @@ il contenuto sia identico e si aggiorna l'hash, non si disattiva il controllo.
 Il controllo e' automatico: `./scripts/inventario.sh verifica` (e' anche in
 `tests/run.sh`).
 
+Buildroot stesso e' fissato per tag **e** commit (`BR_VERSION` e `BR_COMMIT` in
+`scripts/build.sh`): se il tag venisse spostato la compilazione si ferma. Le
+correzioni a Buildroot non ancora pubblicate stanno in `patches/buildroot/` e
+`build.sh` le applica una volta sola; oggi c'e' l'aggiornamento di ffmpeg da
+6.1.5 a 9.0.2 (archivio verificato con la firma GPG di FFmpeg, chiave
+FCF986EA15E6E293A5644F10B4322F04D67658D8, prima di fissarne lo sha256). Va
+tolta quando Buildroot pubblica la stessa versione.
+
+## Strumenti di compilazione fissati
+
+- Azioni di GitHub: tutte per commit (`uses: proprietario/azione@<sha> # vX.Y.Z`),
+  in tutti i workflow; un tag spostato non cambia cio' che gira. Il commento
+  dice la versione per gli aggiornamenti. Lo controlla `tests/triage-cve.py`.
+- `docker/Dockerfile`: immagine `debian:trixie-slim` per digest (indice
+  multi-architettura) e pacchetti apt dalla fotografia di snapshot.debian.org
+  indicata da `ARG SNAPSHOT`; si aggiornano insieme.
+- Moduli di Lyrion per ARM (`moduli-lyrion.yml`): Fedora 43 per digest e
+  slimserver-vendor per commit. La compilazione gira con `contents: read`;
+  solo il job `release`, su main e senza eseguire nulla di compilato, puo'
+  scrivere nella release `dipendenze-lyrion`. Il tag di quella release e'
+  mutabile, ma il pacchetto Buildroot `lms-moduli` ne fissa lo sha256: un file
+  sostituito fa fallire la compilazione.
+- syft e grype: versione fissata e `checksums.txt` di Anchore.
+
+Rischio residuo dichiarato: i pacchetti apt installati sui runner di GitHub
+(`ubuntu-26.04`, job `test`, prove e build) non sono fissati; i runner stessi
+sono immagini gestite da GitHub. Restano strumenti, non finiscono nell'immagine.
+
+## Protezione di main
+
+`./scripts/proteggi-main.sh --applica` (da amministratore) rende obbligatorio,
+anche per gli amministratori, il controllo `esito` di `build.yml`: un job
+finale che fallisce se test, compilazione (con il triage delle CVE) o prove
+Lyrion sono falliti **o annullati**. Una pull request con la compilazione
+annullata non si puo' piu' unire. Senza argomenti lo script mostra la
+protezione attuale.
+
 ## Inventario (SBOM)
 
 Dopo aver configurato una build di Buildroot:
@@ -40,13 +77,14 @@ librerie, 113 file, 5 applicazioni: busybox, curl, ffmpeg, jq, openssl).
 Scansione con grype 0.120.1 (database del 2026-10-16): 59 corrispondenze,
 tutte su binari rilevati da syft: ffmpeg 6.1.5 (43, di cui 1 Critical,
 CVE-2026-40962, corretta in 8.1), openssl 3.6.4 (13), busybox 1.38.0 (3).
-Dettaglio in `docs/evidenze/grype-x86_64.json`.
+Dettaglio in `docs/evidenze/grype-x86_64.json`. Il triage di queste
+corrispondenze e' sotto ("Triage").
 
 Copertura reale e limiti, da non nascondere:
 
 - le corrispondenze sono per versione/CPE dei binari: non dicono se la
   funzione vulnerabile e' raggiungibile ne' se Buildroot ha gia' applicato
-  patch (possibili falsi positivi); nessun triage e' stato fatto;
+  patch (possibili falsi positivi): per questo serve il triage;
 - **non coperti/opachi**: kernel (moduli con versione `UNKNOWN`, `bzImage` non
   scansionata), Perl e moduli CPAN inclusi in Lyrion, lms-material, CamillaDSP
   (binario Rust senza metadati), firmware; solo la build x86_64, non ARM;
@@ -67,11 +105,44 @@ dalle release di Anchore e verificati con il loro `checksums.txt`. L'artifact
 `grype-<scheda>.txt`; il riepilogo dell'esecuzione riporta il numero di
 componenti e le corrispondenze per gravita', con la data del giorno.
 
-Limiti: il passo non blocca la compilazione (`continue-on-error`: e'
-un'evidenza senza triage, e un database di grype irraggiungibile non deve
-fermare l'immagine); valgono le stesse lacune di copertura elencate sopra
-(tranne "solo x86_64"). Nelle pull request che non toccano l'immagine non si
+Subito dopo, il passo "Triage delle CVE gravi" esegue
+`scripts/triage-cve.py` sul rapporto e **blocca** la compilazione (e quindi
+firma e release) se una CVE Critical o High non ha una decisione valida (vedi
+sotto). Se la scansione non riesce (database di grype irraggiungibile) un tag
+`v*` si ferma, gli altri rami ricevono solo un avviso. Valgono le stesse
+lacune di copertura elencate sopra (tranne "solo x86_64"). Nelle pull request che non toccano l'immagine non si
 compila, quindi non c'e' un SBOM nuovo: vale quello dell'ultima build di main.
+
+## Triage
+
+`docs/triage-cve.tsv` ha una riga per ogni CVE Critical o High: CVE,
+pacchetto, versione (esatta o `*`), decisione e motivo.
+
+- `non-affetta`: il codice vulnerabile non e' nell'immagine o non e'
+  raggiungibile. Per ffmpeg vale per tutto cio' che non si compila: serve
+  solo a Squeezelite per WMA (demuxer asf) e ALAC (demuxer mov), quindi i
+  defconfig tengono solo quei decoder e demuxer e tolgono rete, protocolli,
+  codificatori, muxer, parser, filtri, bsf, accelerazioni hardware e il
+  programma `ffmpeg`. MiniDLNA usa libavformat solo per i video, che non
+  indicizza (`media_dir=A`).
+- `accettata`: rischio residuo consapevole, con `rivedere-entro` obbligatoria;
+  a quella data la CI torna a fermarsi finche' la decisione non viene
+  rivista. Oggi: le tre CVE di busybox 1.38.0 (awk, ash), senza versione
+  corretta pubblicata, da rivedere entro il 31/01/2027. CVE-2026-38754 (ash,
+  ifsbreakup) e' quella da guardare: le pagine CGI sono script ash.
+- le CVE corrette da un aggiornamento non hanno riga: dopo l'aggiornamento
+  spariscono dal rapporto. Sull'istantanea di main restano scoperte, ed e'
+  voluto, solo le sette corrette qui: CVE-2026-40962 (Critical),
+  CVE-2026-96611 e CVE-2026-52297 di `mov.c` (il demuxer mov e' raggiungibile
+  da un file ALAC; corrette in ffmpeg 9.0) e le quattro High di openssl 3.6.4
+  (corrette in 3.6.5, Buildroot 2026.08.1).
+
+Le gravita' Medium e Low si contano nel riepilogo ma non bloccano. Una nuova
+CVE grave pubblicata nel database ferma la build di main il giorno stesso:
+si aggiunge la riga (o si aggiorna il pacchetto) nella stessa pull request che
+sblocca. In locale:
+
+    python3 scripts/triage-cve.py grype-x86_64.json --oggi AAAA-MM-GG
 
 ## Vulnerabilita' (CVE)
 

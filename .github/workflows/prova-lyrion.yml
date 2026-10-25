@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Esecuzione con i pacchetti
         id: esecuzione
         env:
@@ -75,7 +75,7 @@ jobs:
           echo "Pacchetto $nome dell'esecuzione $id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
           echo "nome=$nome" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ steps.esecuzione.outputs.nome }}
           run-id: ${{ steps.esecuzione.outputs.id }}
@@ -85,7 +85,7 @@ jobs:
       - name: Avvio di Lyrion nel sistema compilato
         run: sudo -E sh tests/prova-lyrion.sh sweetspot-${{ matrix.scheda }}-aggiornamento.tar
       # Le stesse prove in QEMU del job "lyrion" di Compila Sweetspot.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: ${{ !cancelled() && inputs.qemu && matrix.scheda == 'x86_64' }}
         with:
           name: sweetspot.img.xz
@@ -104,7 +104,7 @@ jobs:
           sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-robustezza-qemu.sh sweetspot.img.xz
       - name: Evidenza delle prove
         if: ${{ always() && inputs.qemu && matrix.scheda == 'x86_64' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: prova-qemu-${{ matrix.scheda }}
