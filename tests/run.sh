@@ -1710,6 +1710,16 @@ expect "stato per la pagina" "v1.1.0|pronto|v1.1.0" "$(upd stato | sed -n 's/^al
 # GRUB avvia la copia B e consuma "prova"
 setenv prova= tentato=b
 echo "BOOT_IMAGE=/b/bzImage sweetspot.slot=b sweetspot.part=ABCD-1234" > "$UPD/proc/cmdline"
+# Un altro aggiornamento mentre B e' in prova renderebbe B predefinita
+# senza conferma e cancellerebbe A: si rifiuta e A resta.
+printf 'versione=v9.9.9\nurl=https://example.com/upd.tar\ndimensione=1\n' > "$UPD/run/aggiornamento/disponibile"
+expect "in prova: scarica rifiutato" "la versione in uso e' ancora in prova" "$(upd scarica | cut -d: -f1)"
+rm -f "$UPD/run/aggiornamento/disponibile"
+expect "in prova: pacchetto dal disco rifiutato" "la versione in uso e' ancora in prova" \
+	"$(upd file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar" | cut -d: -f1)"
+upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
+expect "in prova: anche il lavoro si ferma" "errore|la versione in uso e' ancora in prova" "$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+expect "in prova: copia A intatta e non predefinita" "A-kernel|a|b" "$(cat "$UPD/stick/bzImage")|$(genv slot)|$(genv tentato)"
 UPD_WGET=$UPD/bin/wget-ko upd conferma
 expect "senza risposta dalla rete non si conferma" "a|b" "$(genv slot)|$(genv tentato)"
 upd conferma

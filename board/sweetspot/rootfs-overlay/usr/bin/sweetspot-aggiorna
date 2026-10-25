@@ -268,6 +268,13 @@ release_stick() {
 	stick_umount
 }
 
+# Con "tentato" impostato la versione appena aggiornata non si e' ancora
+# confermata (o la conferma del ritorno non e' ancora passata): prepare_slot
+# la renderebbe predefinita senza controllo di salute e cancellerebbe l'altra
+# copia, l'unica sicuramente buona. Si aspetta la conferma, oppure si sceglie
+# a mano con "predefinita".
+IN_PROVA="la versione in uso e' ancora in prova: attendi la conferma (fino a 10 minuti dall'avvio) o rendila predefinita"
+
 # Estrae il pacchetto (da internet o da un file) e lo installa.
 install_job() { # url|file SORGENTE
 	local kind="$1" src="$2" d x other archive err="" v try=1 rc=0
@@ -282,6 +289,11 @@ install_job() { # url|file SORGENTE
 	STICK_HELD=1
 	trap release_stick EXIT
 	trap 'exit 143' TERM INT HUP
+	if [ -n "$(grubenv_get "$(boot_env)" tentato)" ]; then
+		state "errore|$IN_PROVA"
+		release_stick
+		return 1
+	fi
 	if ! d=$(prepare_slot); then
 		state "errore|impossibile scrivere sulla chiavetta"
 		release_stick
@@ -330,7 +342,13 @@ install_job() { # url|file SORGENTE
 }
 
 start_job() { # url|file SORGENTE
+	local tried=
 	running && { echo "c'e' gia' un aggiornamento in corso"; return 1; }
+	if stick_mount ro; then
+		tried=$(grubenv_get "$(boot_env)" tentato)
+		stick_umount
+	fi
+	[ -z "$tried" ] || { echo "$IN_PROVA"; return 1; }
 	mkdir -p "$DIR" "$PAUSABLE"
 	state "scarica|$1|$2"
 	setsid "$0" _lavoro "$1" "$2" > /dev/null 2>&1 < /dev/null &
