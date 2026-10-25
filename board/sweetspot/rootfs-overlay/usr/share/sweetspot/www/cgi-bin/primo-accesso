@@ -64,8 +64,6 @@ if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
 fi
 
 w=$(login_wait ip "$LOGIN_FREE")
-wg=$(login_wait globale $((LOGIN_FREE * 6)))
-[ "$wg" -gt "$w" ] && w=$wg
 if [ "$w" -gt 0 ]; then
 	reply_page "429 Too Many Requests" "Troppi tentativi: riprova tra $w secondi."
 	exit 0
@@ -84,14 +82,12 @@ case $? in
 		exit 0 ;;
 	*)
 		login_fail ip
-		login_fail globale
 		log "primo accesso: codice rifiutato da ${REMOTE_ADDR:-?}"
 		reply_page "401 Unauthorized" "Codice non corretto."
 		exit 0 ;;
 esac
 
 login_ok ip
-login_ok globale
 rm -f "$SESSION_DIR"/* 2>/dev/null
 id=$(session_new)
 printf 'Status: 303 See Other\r\nLocation: /cgi-bin/audio\r\nCache-Control: no-store\r\n'

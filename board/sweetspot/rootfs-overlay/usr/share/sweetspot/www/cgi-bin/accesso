@@ -31,6 +31,7 @@ login_page() {
 	[ -n "$1" ] && printf '<p class="msg">%s</p>\n' "$(esc "$1")"
 	cat <<HTML
 <form method="post" action="/cgi-bin/accesso" class="card">
+<input type="hidden" name="t" value="$(token)">
 <div class="row"><div class="grow">
 <label for="pw">Password dell'amministratore</label>
 <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
@@ -69,11 +70,16 @@ fi
 # --- Entrata -------------------------------------------------------------------
 auth_enabled || { redirect /cgi-bin/audio; exit 0; }
 
-# Per indirizzo e in totale (soglia piu' larga): chi e' bloccato aspetta senza
-# nemmeno far verificare la password.
+# Il gettone anti-CSRF prima di tutto: un modulo inviato da una pagina esterna
+# non arriva a contare come tentativo sbagliato.
+if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
+	reply_login "403 Forbidden" "Modulo scaduto: ricarica la pagina e riprova."
+	exit 0
+fi
+
+# Solo per indirizzo: chi e' bloccato aspetta senza nemmeno far verificare la
+# password, e chi sbaglia non blocca gli altri.
 w=$(login_wait ip "$LOGIN_FREE")
-wg=$(login_wait globale $((LOGIN_FREE * 6)))
-[ "$wg" -gt "$w" ] && w=$wg
 if [ "$w" -gt 0 ]; then
 	reply_login "429 Too Many Requests" "Troppi tentativi: riprova tra $w secondi."
 	exit 0
@@ -86,7 +92,6 @@ if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso 
 		exit 0
 	fi
 	login_ok ip
-	login_ok globale
 	log "accesso alle pagine da ${REMOTE_ADDR:-?}"
 	printf 'Status: 303 See Other\r\nLocation: %s\r\nCache-Control: no-store\r\n' "$(safe_next "$F_next")"
 	sec_headers
@@ -96,6 +101,5 @@ if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso 
 fi
 
 login_fail ip
-login_fail globale
 log "accesso alle pagine rifiutato da ${REMOTE_ADDR:-?}"
 reply_login "401 Unauthorized" "Password errata."
