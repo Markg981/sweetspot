@@ -126,6 +126,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-installa", "dischi", "", "", 0},
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
+	{"sweetspot-lms", "applica", "", "", 0},
 	{"sweetspot-lms", "cover", "ww", "", 0},
 	{"sweetspot-lms", "credenziali", "", "", 0},
 	{"sweetspot-lms", "json", "", "", 0}, // controllato a parte (lms_json_ok)
@@ -160,6 +161,8 @@ static const struct regola REGOLE[] = {
 //  b  si oppure no
 //  m  nome di dispositivo: lettere, cifre, spazio, . _ - (al massimo 40)
 //  g  guadagno in dB (margine): da -24 a 0, al massimo un decimale (0, -3, -1.5)
+//  y  password di Lyrion: da 10 a 64 caratteri ASCII stampabili, senza spazi
+//     e senza % (la CLI di Lyrion decodifica gli argomenti di "login")
 struct chiave {
 	const char *nome;
 	char valore;
@@ -183,6 +186,7 @@ static const struct chiave CHIAVI[] = {
 	{"PASSWORD_WEB", 's', 0}, {"SERVER", 'h', 0}, {"CORREZIONE", 'w', 0},
 	{"HTTPS", 'w', 0}, {"HTTPS_REINDIRIZZA", 'w', 0},
 	{"BLUETOOTH", 'b', 0}, {"BLUETOOTH_NOME", 'm', 0},
+	{"LYRION_UTENTE", 'w', 0}, {"LYRION_PASSWORD", 'y', 0},
 	// Aprono root (login SSH come root o come utente di assistenza): solo con @conferma.
 	{"SSH", 'w', 1}, {"SSH_PASSWORD", 's', 1}, {"SSH_UTENTE", 'w', 1},
 	{NULL, 0, 0},
@@ -260,6 +264,7 @@ static int c_host(unsigned char c) { return isalnum(c) || strchr(".:_-", c) != N
 static int c_disco(unsigned char c) { return isalnum(c) || strchr("=_.:-", c) != NULL; }
 static int c_elenco(unsigned char c) { return isalnum(c) || strchr(" ._,-", c) != NULL; }
 static int c_nome(unsigned char c) { return isalnum(c) || strchr(" ._-", c) != NULL; }
+static int c_password_lyrion(unsigned char c) { return c > ' ' && c < 0x7f && c != '%'; }
 
 // Margine in dB (DSD_PCM_MARGINE_DB): 0 oppure da -24 a 0, con al massimo un
 // decimale ("-3", "-1.5", "0", "-24.0"); niente "+", spazi, esponenti o altro.
@@ -307,6 +312,7 @@ static int valore_ok(const char *chiave, const char *v)
 	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
 	case 'm': return solo(v, 40, c_nome);
 	case 'g': return margine_ok(v);
+	case 'y': return strlen(v) >= 10 && solo(v, 64, c_password_lyrion);
 	}
 	return 0;
 }
