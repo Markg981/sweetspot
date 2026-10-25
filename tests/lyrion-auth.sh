@@ -39,6 +39,12 @@ avvia() { # esegue ensure_auth come all'avvio
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		sh -c ". $OVERLAY/usr/bin/sweetspot-lms; ensure_auth"
 }
+lms() { # sottocomando del vero sweetspot-lms, con l'ambiente del test
+	PATH=$WORK/bin:$PATH SWEETSPOT_LMS_DATA=$WORK/data SWEETSPOT_RUN=$WORK/run \
+		SWEETSPOT_LOG=$WORK/log SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		sh "$OVERLAY/usr/bin/sweetspot-lms" "$@"
+}
 pref() { grep "^$1:" "$PREFS/server.prefs" | tail -n 1 | cut -d: -f2- | tr -d ' '; }
 cfg() { grep "^$1=" "$WORK/run/sweetspot.conf" 2>/dev/null | cut -d= -f2-; }
 sha() { printf '%s' "$1" | perl -MDigest::SHA=sha1_base64 -e 'print sha1_base64(<STDIN>)'; }
@@ -63,6 +69,24 @@ expect "password invariata" "$P" "$(cfg LYRION_PASSWORD)"
 expect "impronta invariata" "$H" "$(pref password)"
 expect "authorize ancora attivo" 1 "$(pref authorize)"
 expect "una sola riga password" 1 "$(grep -c '^password:' "$PREFS/server.prefs")"
+expect "stato: configurata" configurata "$(cat "$WORK/run/lyrion-auth.stato")"
+expect "la pagina Sistema la mostra anche dopo il riavvio" "password=$P" "$(lms credenziali | grep '^password=')"
+
+echo "Password cambiata dalla pagina Sistema"
+"$WORK/bin/sweetspot-config" imposta LYRION_PASSWORD 'Scelta:dalla!pagina'
+expect "applica senza Lyrion acceso non fa nulla" 0 "$(lms applica; echo $?)"
+sleep 300 > /dev/null 2>&1 &
+FINTO=$!
+echo "$FINTO" > "$WORK/run/lms.pid"
+lms applica
+wait "$FINTO" 2>/dev/null
+expect "applica ferma Lyrion" 1 "$(kill -0 "$FINTO" 2>/dev/null && echo 0 || echo 1)"
+kill "$FINTO" 2>/dev/null
+expect "il diario lo dichiara" 1 "$(grep -c 'credenziali nuove' "$WORK/log")"
+rm -f "$WORK/run/lms.pid"
+avvia
+expect "al riavvio vale la password scelta" "$(sha 'Scelta:dalla!pagina')" "$(pref password)"
+expect "e la pagina mostra quella" "password=Scelta:dalla!pagina" "$(lms credenziali | grep '^password=')"
 
 echo "Password scelta in sweetspot.txt"
 printf 'LYRION_UTENTE=marco\nLYRION_PASSWORD=nuova:pass\n' > "$WORK/run/sweetspot.conf"
@@ -87,6 +111,7 @@ expect "nessuna password inventata" "" "$(cfg LYRION_PASSWORD)"
 expect "stato: preesistente" preesistente "$(cat "$WORK/run/lyrion-auth.stato")"
 avvia
 expect "conservate anche al secondo avvio" AbCdEfGhIjKl "$(pref password)"
+expect "la pagina non mostra password che Sweetspot non conosce" "" "$(lms credenziali | grep '^password=')"
 
 echo "Credenziali preesistenti dichiarate in sweetspot.txt"
 printf 'LYRION_UTENTE=giovanni\nLYRION_PASSWORD=la-sua\n' > "$WORK/run/sweetspot.conf"

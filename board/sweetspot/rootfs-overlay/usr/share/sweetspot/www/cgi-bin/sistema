@@ -117,12 +117,17 @@ lyr_u=$(printf '%s\n' "$lyr" | sed -n 's/^utente=//p')
 lyr_p=$(printf '%s\n' "$lyr" | sed -n 's/^password=//p')
 echo '<h3>Accesso a Lyrion (porta 9000, app e CLI)</h3>'
 case "$lyr_st" in
-	preesistente) echo '<p class="sub">Lyrion ha credenziali già presenti che Sweetspot ha conservato senza cambiarle e non conosce: per usare Sweetspot con Lyrion scrivi LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt.</p>' ;;
+	preesistente) echo '<p class="sub">Lyrion ha credenziali già presenti che Sweetspot ha conservato senza cambiarle e non conosce: per usare Sweetspot con Lyrion scegli qui sotto una password nuova (utente sweetspot), oppure scrivi le tue LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt.</p>' ;;
 	"") echo '<p class="sub">Stato della protezione di Lyrion non disponibile.</p>' ;;
 	*) printf '<p class="sub">Lyrion chiede utente e password (anche Material Skin e le app JSON/CLI). Utente: <code>%s</code>.' "$(esc "$lyr_u")"
-	   [ -n "$lyr_p" ] && printf ' Password generata da Sweetspot: <code>%s</code>.' "$(esc "$lyr_p")"
-	   echo ' Inseriscili nelle app (Squeezer, iPeng, Material come app) quando li chiedono. Per cambiarli scrivi LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt: valgono al riavvio di Lyrion. I player (porta 3483) non usano la password: la porta resta protetta solo dalla rete di casa.</p>' ;;
-esac)
+	   echo ' Inseriscili nelle app (Squeezer, iPeng, Material come app) quando li chiedono. I player (porta 3483) non usano la password: la porta resta protetta solo dalla rete di casa.</p>'
+	   [ -n "$lyr_p" ] && printf '<details><summary>Mostra la password di Lyrion</summary><p><code>%s</code></p></details>\n' "$(esc "$lyr_p")" ;;
+esac
+if [ -n "$lyr_st" ]; then
+	echo '<label for="lyrp">Nuova password di Lyrion <span>(lascia vuoto per non cambiarla)</span></label>'
+	echo '<input id="lyrp" name="lyrion_password" type="password" autocomplete="new-password" minlength="10" maxlength="64">'
+	echo '<p class="sub">Da 10 a 64 caratteri, senza spazi e senza il segno %. Lyrion si riavvia per applicarla (la musica in corso si ferma) e va reinserita nelle app e in Material.</p>'
+fi)
 <label for="https">Connessione protetta (HTTPS)</label>
 <select id="https" name="https">
 $(option no "Spenta: pagine solo in chiaro (http)" "$(if is_yes "$(conf HTTPS no)"; then echo si; else echo no; fi)")

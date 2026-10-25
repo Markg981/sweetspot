@@ -229,8 +229,9 @@ PASSWORD_WEB=
 
 # Credenziali di Lyrion (porta 9000, Material, app e CLI 9090): se vuote, al
 # primo avvio Sweetspot genera una password casuale (utente sweetspot) e la
-# scrive qui; mostrata nella pagina Sistema. Credenziali Lyrion gia' presenti
-# non vengono sovrascritte: scrivile qui. Togli LYRION_PASSWORD per ruotarla.
+# scrive qui; la pagina Sistema la mostra e permette di cambiarla (da 10 a 64
+# caratteri, senza spazi ne' %). Credenziali Lyrion gia' presenti non vengono
+# sovrascritte: scrivile qui. Togli LYRION_PASSWORD per ruotarla.
 LYRION_UTENTE=
 LYRION_PASSWORD=
 

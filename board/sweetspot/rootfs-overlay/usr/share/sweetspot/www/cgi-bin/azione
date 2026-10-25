@@ -23,7 +23,7 @@ F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamen
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
-F_web_password="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
+F_web_password="" F_lyrion_password="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
 F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
 F_bt_attivo="" F_bt_nome="" F_bt_minuti="" F_bt_mac=""
@@ -533,6 +533,18 @@ case "$F_a" in
 			h=$(priv sweetspot-accesso hash "$F_web_password") || done_to sistema "Password non salvata."
 			set -- "$@" PASSWORD_WEB "$h"
 		fi
+		# Password di Lyrion: in chiaro in sweetspot.txt come quella generata;
+		# senza spazi ne' % (la CLI la riceve URL-decodificata). Senza utente
+		# (credenziali preesistenti) Sweetspot usa il suo, sweetspot.
+		valid_value "$F_lyrion_password" || done_to sistema "Password non valida."
+		if [ -n "$F_lyrion_password" ]; then
+			[ ${#F_lyrion_password} -ge 10 ] && [ ${#F_lyrion_password} -le 64 ] ||
+				done_to sistema "La password di Lyrion ha da 10 a 64 caratteri. Niente e' stato cambiato."
+			[ -z "$(printf '%s' "$F_lyrion_password" | LC_ALL=C tr -d '!-$&-~')" ] ||
+				done_to sistema "La password di Lyrion non puo' contenere spazi, % o lettere accentate. Niente e' stato cambiato."
+			set -- "$@" LYRION_PASSWORD "$F_lyrion_password"
+			[ -n "$(conf LYRION_UTENTE)" ] || set -- "$@" LYRION_UTENTE sweetspot
+		fi
 		if [ -n "$F_server" ]; then set -- "$@" SERVER "$F_server"; else priv sweetspot-config rimuovi SERVER; fi
 		priv sweetspot-config imposta "$@"
 		rc=$?
@@ -546,6 +558,13 @@ case "$F_a" in
 			# shellcheck disable=SC2034
 			REDIRECT_COOKIE=$(session_new) || REDIRECT_COOKIE=""
 		fi
+		# Password di Lyrion nuova: Lyrion riparte e la applica.
+		lyr_msg=""
+		if [ -n "$F_lyrion_password" ]; then
+			priv sweetspot-lms applica > /dev/null 2>&1
+			log "sistema: password di Lyrion cambiata da $(client_ip)"
+			lyr_msg=" Lyrion si riavvia con la nuova password: inseriscila in Material e nelle app."
+		fi
 		# Il nome nuovo vale subito, in Lyrion e nel player.
 		if [ "$nome" != "$old_name" ] && [ "$old_mode" = completa ]; then
 			mac=$(cat "$RUN/player.mac" 2>/dev/null)
@@ -556,9 +575,9 @@ case "$F_a" in
 			priv sweetspot-mediaserver riavvia > /dev/null 2>&1
 		fi
 		if [ "$F_modalita" != "$old_mode" ]; then
-			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalità vale dal prossimo avvio: riavvia Sweetspot.")"
+			done_to sistema "$(saved_msg $rc "Impostazioni salvate. La nuova modalità vale dal prossimo avvio: riavvia Sweetspot.$lyr_msg")"
 		fi
-		done_to sistema "$(saved_msg $rc "Impostazioni salvate.")" ;;
+		done_to sistema "$(saved_msg $rc "Impostazioni salvate.$lyr_msg")" ;;
 
 	# --- Correzione ambientale -------------------------------------------------------
 	correzione_salva)

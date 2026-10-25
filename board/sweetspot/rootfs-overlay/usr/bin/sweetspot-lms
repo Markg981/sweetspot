@@ -434,8 +434,21 @@ do_credenziali() {
 	st=$(cat "$AUTH_STATO" 2>/dev/null)
 	u=$(conf LYRION_UTENTE)
 	printf 'stato=%s\nutente=%s\n' "${st:-sconosciuto}" "$u"
-	[ "$st" = generata ] && printf 'password=%s\n' "$(conf LYRION_PASSWORD)"
+	# Generata o scelta, e' quella di sweetspot.txt: la pagina la mostra
+	# anche dopo i riavvii. Le preesistenti Sweetspot non le conosce.
+	case "$st" in generata|configurata) printf 'password=%s\n' "$(conf LYRION_PASSWORD)" ;; esac
 	return 0
+}
+
+# Password nuova in sweetspot.txt (pagina Sistema): Lyrion si ferma, salva le
+# sue preferenze, e il ciclo di do_service riapplica le credenziali prima di
+# farlo ripartire. Con Lyrion spento valgono dal prossimo avvio.
+do_apply() {
+	local pid
+	pid=$(cat "$RUN/lms.pid" 2>/dev/null)
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 0
+	log "lyrion: riavvio per applicare le credenziali nuove"
+	kill "$pid"
 }
 
 # Diagnostica: posizione, tetto e MB usati adesso (non quelli dell'avvio).
@@ -544,6 +557,10 @@ do_service() {
 			restarts=0
 		fi
 		log "lyrion: fermo (codice $rc), riavvio"
+		# Lyrion e' fermo e ha gia' scritto le preferenze: le credenziali
+		# cambiate in sweetspot.txt (do_apply) si applicano qui.
+		ensure_auth || log "lyrion: credenziali non riapplicate, restano le precedenti"
+		chown "$LMS_USER:$LMS_USER" "$PREFS/server.prefs" "$AUTH_HASH" 2>/dev/null
 		if [ $restarts -gt 5 ]; then sleep 60; else sleep 3; fi
 	done
 	rm -f "$RUN/lms.pid"
@@ -756,10 +773,11 @@ case "$1" in
 	json) shift; lms_json_locale "$@" ;;
 	plugin) shift; do_plugin "$@" ;;
 	operazione) shift; do_operazione "$@" ;;
-	# credenziali: stato e utente di Lyrion per la pagina Sistema (autenticata);
-	# la password si mostra solo se l'ha generata Sweetspot.
+	# credenziali: stato, utente e password di Lyrion per la pagina Sistema
+	# (autenticata); applica: le rende effettive dopo un cambio.
 	credenziali) do_credenziali ;;
+	applica) do_apply ;;
 	cover) do_cover "$2" "$3" ;;
 	riavvia) lms_json '' restartserver > /dev/null; log "lyrion: riavvio richiesto" ;;
-	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|credenziali|plugin|operazione|riavvia" >&2; exit 1 ;;
+	*) echo "uso: $0 prepara|servizio|ferma|attendi|aggiorna|ricostruisci|copertine|credenziali|applica|plugin|operazione|riavvia" >&2; exit 1 ;;
 esac

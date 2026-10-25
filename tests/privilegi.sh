@@ -90,7 +90,7 @@ else
 			"$(priv sweetspot-config imposta CONDIVISIONE_3_SMB1 si)"
 		expect "config condivisione 0 rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_0 x)"
 		expect "config condivisione 10 rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta CONDIVISIONE_10 x)"
-		expect "config chiave fuori elenco (LYRION_PASSWORD)" "NIENTE(126)" "$(priv sweetspot-config imposta LYRION_PASSWORD x)"
+		expect "config chiave fuori elenco (LYRION_MEM_MB)" "NIENTE(126)" "$(priv sweetspot-config imposta LYRION_MEM_MB 512)"
 		expect "config chiave fuori elenco (STICK_LABEL)" "NIENTE(126)" "$(priv sweetspot-config imposta SWEETSPOT_PATH /tmp)"
 		expect "config coppia incompleta" "NIENTE(126)" "$(priv sweetspot-config imposta VOLUME)"
 		expect "config valore con a capo" "NIENTE(126)" "$(priv sweetspot-config imposta VOLUME "fisso
@@ -240,7 +240,7 @@ SSH=si")"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma non sblocca script fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-player restart)"
 		tok=$("$WORK/priv" @conferma-nuova)
-		expect "la conferma non sblocca chiavi fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta LYRION_PASSWORD x)"
+		expect "la conferma non sblocca chiavi fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta LYRION_MEM_MB 512)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma vale anche l'utente di assistenza" "sweetspot-config|imposta|SSH_UTENTE|assistenza" \
 			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH_UTENTE assistenza)"
@@ -296,6 +296,12 @@ nameserver 6.6.6.6')"
 		expect "BLUETOOTH_NOME: oltre 40 caratteri rifiutato" "NIENTE(126)" "$(priv sweetspot-config imposta BLUETOOTH_NOME "$(printf 'a%.0s' $(seq 1 41))")"
 		expect "BLUETOOTH e BLUETOOTH_NOME non sono chiavi protette" "0" "$(grep -c '"BLUETOOTH[A-Z_]*", .[bm]., 1' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
 		expect "sweetspot-bluetooth: sottocomandi ammessi" "sweetspot-bluetooth|abbina|5 sweetspot-bluetooth|applica sweetspot-bluetooth|chiudi sweetspot-bluetooth|elenco sweetspot-bluetooth|rimuovi|AA:BB:CC:DD:EE:01" "$(priv sweetspot-bluetooth abbina 5) $(priv sweetspot-bluetooth applica) $(priv sweetspot-bluetooth chiudi) $(priv sweetspot-bluetooth elenco) $(priv sweetspot-bluetooth rimuovi AA:BB:CC:DD:EE:01)"
+		expect "LYRION_PASSWORD: da 10 a 64 caratteri, anche simboli" "sweetspot-config|imposta|LYRION_PASSWORD|Pass:w0rd!#&*|LYRION_UTENTE|sweetspot" \
+			"$(priv sweetspot-config imposta LYRION_PASSWORD 'Pass:w0rd!#&*' LYRION_UTENTE sweetspot)"
+		expect "LYRION_PASSWORD: corta, lunga, spazio, %, accenti rifiutati" "NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126)" \
+			"$(priv sweetspot-config imposta LYRION_PASSWORD corta123) $(priv sweetspot-config imposta LYRION_PASSWORD "$(printf 'a%.0s' $(seq 1 65))") $(priv sweetspot-config imposta LYRION_PASSWORD 'con spazio1') $(priv sweetspot-config imposta LYRION_PASSWORD 'cento%percento') $(priv sweetspot-config imposta LYRION_PASSWORD 'perché12345')"
+		expect "LYRION_UTENTE: una parola" "NIENTE(126)" "$(priv sweetspot-config imposta LYRION_UTENTE 'a;id')"
+		expect "sweetspot-lms applica: senza argomenti" "sweetspot-lms|applica|NIENTE(126)" "$(priv sweetspot-lms applica)|$(priv sweetspot-lms applica 123)"
 		expect "sweetspot-bluetooth: finestra fuori misura, MAC con shell e comandi interni rifiutati" "NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126) NIENTE(126)" "$(priv sweetspot-bluetooth abbina 99) $(priv sweetspot-bluetooth rimuovi 'AA;id') $(priv sweetspot-bluetooth finestra 5) $(priv sweetspot-bluetooth sorveglia) $(priv sweetspot-bluetooth avvia)"
 	fi
 fi
