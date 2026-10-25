@@ -3,8 +3,9 @@
 # Sweetspot - Reference Studio: l'interfaccia di ascolto (libreria, ricerca,
 # riproduzione, coda, zone, percorso audio). La pagina e' una sola, statica
 # (studio.css, studio.js) e protetta dalla sessione; i dati veri arrivano da
-# Lyrion tramite /cgi-bin/studio-api.json. Material resta raggiungibile dal
-# collegamento "Material" e come ripiego se Lyrion non e' pronto.
+# Lyrion tramite /cgi-bin/studio-api.json. L'interfaccia di Lyrion (Material)
+# resta raggiungibile dal collegamento "Interfaccia Lyrion" e come ripiego se
+# Lyrion non e' pronto.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
@@ -32,8 +33,9 @@ cat <<HTML
 <meta name="theme-color" content="#10151d">
 <meta name="sweetspot-token" content="$(esc "$(token)")">
 <title>Ascolta - SweetSpot</title>
-<link rel="stylesheet" href="/reference-studio.css?v=1">
-<link rel="stylesheet" href="/studio.css?v=1">
+<link rel="stylesheet" href="/reference-studio.css?v=2">
+<link rel="stylesheet" href="/studio.css?v=2">
+<script src="/tema.js?v=1"></script>
 </head>
 <body class="st">
 <a class="st-skip" href="#st-main">Vai al contenuto</a>
@@ -55,7 +57,8 @@ cat <<HTML
 </nav>
 <nav class="st-nav st-nav-sec" aria-label="Altro">
 <a href="/cgi-bin/audio" target="_top">Impostazioni</a>
-<a href="$(esc "$(player_url)")" target="_top">Material</a>
+<a href="$(esc "$(player_url)")" target="_top">Interfaccia Lyrion</a>
+<button type="button" class="st-tema" data-tema-switch hidden>Tema chiaro</button>
 </nav>
 </aside>
 <div class="st-col">
@@ -69,7 +72,7 @@ cat <<HTML
 <select id="st-player" aria-label="Player da controllare"></select></label>
 </header>
 <div id="st-banner" class="st-banner" role="status" aria-live="polite" hidden></div>
-<main id="st-main" tabindex="-1"><p class="st-vuoto">Caricamento…</p><noscript><p class="st-vuoto">Il Reference Studio richiede JavaScript. Le <a href="/cgi-bin/audio">impostazioni</a> e <a href="$(esc "$(player_url)")">Material</a> funzionano anche senza.</p></noscript></main>
+<main id="st-main" tabindex="-1"><p class="st-vuoto">Caricamento…</p><noscript><p class="st-vuoto">Il Reference Studio richiede JavaScript. Le <a href="/cgi-bin/audio">impostazioni</a> e <a href="$(esc "$(player_url)")">l'interfaccia di Lyrion</a> funzionano anche senza.</p></noscript></main>
 </div>
 <section class="st-bar" id="st-bar" aria-label="Riproduzione">
 <img class="st-bar-cover" id="st-bar-cover" alt="" width="56" height="56">

@@ -330,7 +330,7 @@
 		api({ op: 'playlists', start: (Number(p.p) || 0) * PAGE, count: PAGE }).then(function (res) {
 			var list = res.playlists_loop || [], total = Number(res.count) || list.length;
 			var kids = [h('h1', { text: 'Playlist' })];
-			if (!list.length) kids.push(empty('Non ci sono playlist salvate.', 'Si creano da Material o dalla coda di un player.'));
+			if (!list.length) kids.push(empty('Non ci sono playlist salvate.', "Si creano dall'interfaccia Lyrion o dalla coda di un player."));
 			else kids.push(h('ul', { class: 'st-list' }, list.map(function (pl) {
 				return h('li', {}, [h('span', { text: pl.playlist || 'Senza nome' }),
 					h('button', { type: 'button', text: 'Riproduci', on: { click: function () { load('playlist', pl.id, 'load'); } } }),
