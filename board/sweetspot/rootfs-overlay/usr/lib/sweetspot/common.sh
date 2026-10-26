@@ -111,7 +111,12 @@ evento_da_log() {
 # note di Windows) e stampa righe CHIAVE=valore pulite. Non esegue mai il
 # contenuto del file.
 config_normalize() {
+	# Il Blocco note puo' salvare con il BOM UTF-8 (EF BB BF): senza toglierlo
+	# la prima chiave non sarebbe valida e la riga andrebbe persa. Il BOM e'
+	# costruito con printf: il sed di BusyBox non garantisce \xHH.
+	bom=$(printf '\357\273\277')
 	tr -d '\r' < "$1" | while IFS= read -r line || [ -n "$line" ]; do
+		line=${line#"$bom"}
 		line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
 		case "$line" in
 			''|'#'*|';'*) continue ;;
