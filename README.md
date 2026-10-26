@@ -134,7 +134,7 @@ le protezioni contro l'incorporamento da siti esterni restano attive.
 | **Archivio** | il disco dove Sweetspot scrive: copia di cartelle da altri dischi e dal NAS, cartella di rete **Musica** per copiare dal PC o dal Mac, **copia dei CD** |
 | **Plugin** | streaming (Qobuz, TIDAL, Spotify, Deezer, Bandcamp, YouTube), radio (Radio Paradise in FLAC, Radio Browser, radio.net), collegamenti (AirPlay in ingresso, UPnP/DLNA, Chromecast, gruppi): installazione con un clic dal repository ufficiale |
 | **Rete** | schede di rete, Wi-Fi (scelta tra le reti vicine), indirizzo fisso, nome in rete |
-| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, renderer UPnP/DLNA, SSH, **aggiornamenti**, **installazione sul disco interno**, riavvio e spegnimento |
+| **Sistema** | nome, modalità, profilo del processore, modalità ascolto, renderer UPnP/DLNA, SSH, **aggiornamenti**, **installazione sul disco interno** o **accanto a Windows**, riavvio e spegnimento |
 | **Stato** | tutte le ottimizzazioni con un pallino verde o arancione, interruzioni dell'audio, traffico di rete, e la prova dell'ascolto puro: letture dal disco e byte di rete dall'inizio dell'ascolto. Non rifà i controlli a ogni visita: legge la cache del demone a eventi `sweetspot-stato` (core di sistema, `nice 19`), che la aggiorna quando succede qualcosa (CLI di Lyrion, udev per sound/block/net, inotify sulla configurazione), quando qualcuno la legge ed è più vecchia di 10 secondi (40 durante l'ascolto) e come battito di sicurezza ogni 15 minuti; a riposo non lancia processi (meno di 100 fork al minuto in tutto il sistema, misurati da `tests/forks-riposo.sh`; gli altri cicli di servizio attendono con `read -t` su una FIFO senza scrittori (`nap` in `common.sh`) invece di `sleep`, e a riposo, con il DAC fermo, la sorveglianza del player gira ogni 60 s, la sonda Bluetooth ogni 5 s (30 s senza adattatore) e il diario ogni 30 s; mentre il DAC riproduce i ritmi di prima restano). Avvisa se è assente o vecchia. Lo stesso stato in JSON, in sola lettura: `/cgi-bin/stato.json` (stessa password del pannello) e, da Lyrion o Material via JSON-RPC, `["sweetspot","stato"]` |
 
 Le impostazioni restano nella chiavetta, nel file `sweetspot.txt` (modificabile
@@ -320,6 +320,71 @@ vuole, usa il resto del disco come archivio musicale (ext4). Copia la versione
 in uso con impostazioni, plugin e libreria: si spegne, si toglie la chiavetta e
 il computer parte dal disco, con BIOS o UEFI. Il sistema continua a girare
 tutto in RAM; la chiavetta resta valida come copia di riserva.
+
+### Installazione accanto a Windows
+
+*Sistema → Installazione accanto a Windows* lascia il disco com'è: Sweetspot
+aggiunge solo una partizione da 4 GB (FAT32, `SWEETSPOT`, tipo "dati di base")
+nello **spazio non allocato** e una voce "Sweetspot" nel menu di avvio UEFI. Le
+partizioni che ci sono già non vengono né spostate né ridimensionate.
+
+1. In Windows: *Gestione disco* → tasto destro sul volume `C:` → *Riduci
+   volume*, almeno 4096 MB. Lo spazio liberato resta "Non allocato" (non
+   serve creare un volume). Con BitLocker attivo conviene avere a portata di
+   mano la chiave di ripristino.
+2. Nel BIOS/UEFI: **Secure Boot disattivato**, come per la chiavetta.
+3. Si avvia la chiavetta **in modalità UEFI**; nella pagina Sistema compaiono i
+   dischi GPT con almeno 4 GB liberi. Si conferma scrivendo la dimensione del
+   disco e la password delle pagine.
+4. Si spegne, si toglie la chiavetta e si riaccende: parte il menu di
+   Sweetspot, con la voce **Windows** in fondo quando sul computer c'è il boot
+   manager di Windows (`\EFI\Microsoft\Boot\bootmgfw.efi` in una qualunque
+   partizione).
+
+Requisiti e limiti: disco GPT (i dischi MBR non vengono proposti) e avvio UEFI;
+dischi con almeno 4 GB liberi in un unico blocco. Prima di scrivere, Sweetspot
+salva una copia della tabella delle partizioni e, se un passo successivo non
+riesce, la rimette com'era. La libreria e le impostazioni restano nella
+partizione di Sweetspot; l'archivio musicale si può mettere nello spazio
+libero rimasto (*Archivio musicale*).
+
+Se all'accensione parte direttamente Windows (alcuni firmware, o un
+aggiornamento di Windows, rimettono primo il boot manager di Windows): dal
+menu di avvio del computer (F12, F11, F8 o Esc a seconda del modello) si
+sceglie *Sweetspot*, oppure lo si rimette primo nell'ordine di avvio del
+BIOS/UEFI. Da Windows (prompt dei comandi come amministratore) la voce si
+rimette prima così:
+
+```
+bcdedit /enum firmware
+bcdedit /set {fwbootmgr} displayorder {ID-DI-SWEETSPOT} /addfirst
+```
+
+Se il firmware non ha accettato la voce (la pagina lo dice a fine
+installazione), la si crea da Windows: la partizione di Sweetspot compare in
+Esplora risorse con una lettera, per esempio `D:`.
+
+```
+bcdedit /copy {bootmgr} /d Sweetspot
+bcdedit /set {ID-STAMPATO} device partition=D:
+bcdedit /set {ID-STAMPATO} path \EFI\BOOT\BOOTX64.EFI
+bcdedit /set {fwbootmgr} displayorder {ID-STAMPATO} /addfirst
+```
+
+Per togliere Sweetspot: *Gestione disco* → elimina il volume `SWEETSPOT` (lo
+spazio torna non allocato e si può riassegnare a `C:` con *Estendi volume*) e
+`bcdedit /delete {ID-DI-SWEETSPOT}` per la voce di avvio.
+
+**Mac con processore Intel**: il disco interno è GPT e il firmware è UEFI, ma
+macOS usa APFS e la sua partizione non lascia spazio libero da sola: va
+liberato prima con *Utility Disco* (ridurre il contenitore APFS). All'accensione
+si tiene premuto **Option (⌥)** e si sceglie *EFI Boot*. Sui Mac con chip T2
+serve *Utility Sicurezza Avvio* → "Nessuna sicurezza" e "Consenti l'avvio da
+supporti esterni". Il menu di Sweetspot non offre macOS: si sceglie dal menu
+Option. I Mac con chip Apple (M1 e successivi) non sono supportati.
+
+Provato in QEMU con firmware UEFI (OVMF) e un SSD NVMe preparato come lo lascia
+Windows (`tests/prova-accanto-qemu.sh`); non ancora su un PC o un Mac veri.
 
 ### Aggiornamenti
 
@@ -782,7 +847,7 @@ annullata proprio perché il registro di prima del riavvio non c'era),
 | Underrun e picchi della correzione | pagina di stato, "Underrun di CamillaDSP" (righe "underrun" di `camilladsp.log` dall'inizio della sessione, contate dal player: CamillaDSP non li espone nel websocket) e "Picco di CamillaDSP" (massimo di sessione per canale, dal websocket) |
 | Traffico durante l'ascolto | pagina di stato, "Traffico di rete ora"; read-ahead e streaming non garantiscono rete inattiva |
 | Attività elettrica superflua | pagina di stato: "LED" (spenti tranne quelli della tastiera), "USB inutilizzate", "PCI a riposo" (ogni dispositivo con il suo stato reale: a riposo o attivo), "Lavoro differito del kernel" (workqueue non legate a un core solo sui core di sistema) e "Schermo" (stato DPMS dei connettori collegati e retroilluminazione). Le applica `sweetspot-silenzio` all'avvio, se le ottimizzazioni sono attive; è una riduzione di attività, non una misura del rumore analogico |
-| Robustezza | CI (`tests/prova-robustezza-qemu.sh`, immagine x86 in QEMU): watchdog i6300ESB attivo, DAC USB emulato collegato, scollegato e ricollegato a caldo con il player che si ferma e riparte, blocco simulato (servizio del watchdog fermato) con riavvio automatico e player di nuovo attivo, file system della chiavetta integro dopo il riavvio brusco. Sull'hardware: `sweetspot-durata 24 &` con una playlist lunga in riproduzione, esito in `/run/sweetspot/durata.txt` e sulla chiavetta; collaudo prolungato con guasti iniettati e benchmark di grandi librerie in [`docs/collaudo.md`](docs/collaudo.md) (nessun XRUN, nessun riavvio del player, uscita in riproduzione almeno il 95% del tempo, memoria calata meno del 10%); pagina di stato, voce "Watchdog" |
+| Robustezza | CI (`tests/prova-robustezza-qemu.sh`, immagine x86 in QEMU): watchdog i6300ESB attivo, DAC USB emulato collegato, scollegato e ricollegato a caldo con il player che si ferma e riparte, blocco simulato (servizio del watchdog fermato) con riavvio automatico e player di nuovo attivo, file system della chiavetta integro dopo il riavvio brusco. Installazione accanto a Windows (`tests/prova-accanto-qemu.sh`, UEFI con OVMF): SSD NVMe GPT con partizione EFI, MSR e Windows, installazione nello spazio libero, tabella GPT integra, partizioni di Windows identiche byte per byte, avvio senza chiavetta dalla voce UEFI creata e voce Windows nel menu. Sull'hardware: `sweetspot-durata 24 &` con una playlist lunga in riproduzione, esito in `/run/sweetspot/durata.txt` e sulla chiavetta; collaudo prolungato con guasti iniettati e benchmark di grandi librerie in [`docs/collaudo.md`](docs/collaudo.md) (nessun XRUN, nessun riavvio del player, uscita in riproduzione almeno il 95% del tempo, memoria calata meno del 10%); pagina di stato, voce "Watchdog" |
 | Conversione PCM → DSD | non disponibile, per scelta: costo di CPU continuo e modulatore di qualità mancante; motivi e condizioni per riaprirla in [docs/pcm-dsd.md](docs/pcm-dsd.md) |
 | Compatibilità | [Matrice di compatibilità](docs/compatibilita.md), generata solo dai rapporti reali: pagina di stato → *Scarica il rapporto di compatibilità* (`sweetspot-rapporto`: computer, CPU, schede di rete con driver, DAC con identificativo USB e firmware, esiti della pagina Stato e della prova di durata, senza indirizzi né dati personali), poi una segnalazione *Rapporto di compatibilità* su GitHub |
 | Coda in RAM e dischi fermi | pagina di stato, voce "Precarico in RAM": brani caricati, MB usati sul budget, esclusioni e dischi in standby; `sweetspot-precarica residenza FILE` misura quanto di un file è in RAM |
@@ -894,6 +959,7 @@ tests/run.sh                          test degli script con /sys e /proc simulat
 tests/cd-simulato.sh                  copia completa di un CD con un lettore finto
 tests/diario.sh                       diario di bordo: timeline, registro persistente, pstore, bundle
 tests/qemu-avvio.sh                   prova dell'immagine in QEMU (BIOS e UEFI)
+tests/prova-accanto-qemu.sh           installazione accanto a Windows in QEMU (UEFI)
 tests/prova-lyrion.sh                 Lyrion avviato nel sistema compilato (CI, anche su ARM)
 tests/renderer-upnp.py                renderer UPnP/DLNA: SSDP, descrittore, SOAP, eventi e riproduzione
 tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per ARM

@@ -131,6 +131,10 @@ static const struct regola REGOLE[] = {
 	// Cancella un disco: solo con @conferma, piu' la dimensione del disco scritta.
 	{"sweetspot-installa", "avvia", "sss", "", 1},
 	{"sweetspot-installa", "dischi", "", "", 0},
+	// Accanto al sistema esistente: scrive solo nello spazio libero, ma
+	// cambia la tabella delle partizioni e la NVRAM: anche qui @conferma.
+	{"sweetspot-installa", "affianca", "ss", "", 1},
+	{"sweetspot-installa", "accanto", "", "", 0},
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},
 	{"sweetspot-lms", "applica", "", "", 0},

@@ -82,3 +82,9 @@ CONFIG_I6300ESB_WDT=m
 # riservare memoria. Dove non c'e' UEFI scrivibile non succede nulla: il
 # registro persistente di sweetspot-diario resta comunque attivo.
 CONFIG_EFI_VARS_PSTORE=y
+
+# --- Installazione accanto a un altro sistema --------------------------------
+# Tabelle GPT e variabili UEFI (efivarfs) per creare la voce di avvio
+# "Sweetspot" con efibootmgr.
+CONFIG_EFI_PARTITION=y
+CONFIG_EFIVAR_FS=y

@@ -55,6 +55,14 @@ Come su Daphile: pagina Sistema > Installazione sul disco interno. Il
 disco scelto viene cancellato; il resto del disco puo' diventare
 l'archivio musicale. Poi spegni, togli la chiavetta e riaccendi.
 
+Accanto a Windows, senza cancellare nulla: prima libera almeno 4 GB da
+Windows (Gestione disco > tasto destro su C: > Riduci volume), poi avvia
+la chiavetta in modalita' UEFI e scegli Sistema > Installazione accanto a
+Windows. All'accensione un menu chiede se avviare Sweetspot o Windows.
+Se parte subito Windows, apri il menu di avvio del computer (F12, F11, F8
+o Esc) e scegli Sweetspot, o mettilo primo nel BIOS/UEFI. Serve un disco
+GPT; il Secure Boot resta spento.
+
 Aggiornamenti
 -------------
 Pagina Sistema > Cerca aggiornamenti. La versione in uso resta installata:

@@ -252,7 +252,7 @@ itot=${irest%%|*}; imsg=${irest#*|}
 bootdisk=$(stick_disk)
 echo '<h2>Installazione sul disco interno</h2><div class="card formcard">'
 case "$istate" in
-	prepara|partizioni|formatta|copia|impostazioni|controllo)
+	prepara|partizioni|formatta|copia|impostazioni|controllo|avvio)
 		pct=$(( ${istep:-0} * 100 / ${itot:-7} ))
 		printf '<p><b>Installazione in corso</b>: %s</p><progress max="100" value="%s"></progress>' "$(esc "$imsg")" "$pct"
 		echo '<p class="sub">Non spegnere il computer. Mentre la musica suona l'"'"'installazione si sospende.</p><meta http-equiv="refresh" content="5">'
@@ -260,6 +260,24 @@ case "$istate" in
 		page_end
 		exit 0 ;;
 	finita)
+		case "$imsg" in
+		accanto*)
+			# "accanto DISCO si|no": si = voce "Sweetspot" creata nella NVRAM UEFI.
+			cat <<'HTML'
+<p class="msg">Sweetspot è installato accanto al sistema che c'era già: le altre partizioni non sono state toccate.</p>
+<p>Ora: <b>spegni</b>, <b>togli la chiavetta</b> e riaccendi. Parte il menu di Sweetspot: la prima voce avvia Sweetspot,
+la voce <b>Windows</b> (se sul computer c'è Windows) avvia Windows.</p>
+HTML
+			if [ "${imsg##* }" = no ]; then
+				echo '<p class="sub">La voce di avvio UEFI non è stata creata (il firmware non lo permette da qui): all'"'"'accensione apri il menu di avvio del computer e scegli <b>Sweetspot</b> o il disco interno, oppure aggiungi la voce da Windows con bcdedit (README, "Installazione accanto a Windows").</p>'
+			else
+				echo '<p class="sub">Se parte direttamente Windows, Windows si è rimesso primo nell'"'"'ordine di avvio: all'"'"'accensione apri il menu di avvio del computer e scegli <b>Sweetspot</b>, o rimettilo primo nel BIOS/UEFI. Il Secure Boot resta spento, come per la chiavetta.</p>'
+			fi
+			button spegni "Spegni" "" "" primary
+			echo '</div>'
+			page_end
+			exit 0 ;;
+		esac
 		cat <<'HTML'
 <p class="msg">Sweetspot è installato sul disco interno.</p>
 <p>Ora: <b>spegni</b>, <b>togli la chiavetta</b> e riaccendi. Sweetspot partirà dal disco, con le stesse impostazioni, plugin e libreria.</p>
@@ -317,6 +335,47 @@ $disks
 EOF2
 [ $n -eq 0 ] && info_row "" "Nessun disco adatto" "Serve un disco interno (o USB) di almeno 2 GB, diverso da quello da cui parte Sweetspot."
 [ -n "$installed" ] && echo '</details>'
+echo '</div>'
+
+# --- Accanto al sistema che c'e' gia' (Windows, Linux): solo spazio libero.
+echo '<h2>Installazione accanto a Windows</h2><div class="card formcard">'
+cat <<'HTML'
+<p class="sub">Sweetspot si aggiunge al disco senza cancellare nulla: crea una partizione da 4 GB nello <b>spazio libero</b>
+e una voce di avvio. All'accensione un menu chiede se avviare Sweetspot o Windows.
+Le partizioni che ci sono già non vengono toccate né ridimensionate: se il disco è tutto occupato, prima libera almeno 4 GB
+da Windows (Gestione disco, "Riduci volume") e poi torna qui. Serve un disco GPT e la chiavetta avviata in modalità UEFI.
+Prima di cambiare le partizioni di un disco conviene comunque avere una copia dei dati importanti.</p>
+HTML
+if [ ! -d "$SYS/firmware/efi" ]; then
+	info_row "" "Avvio non UEFI" "Sweetspot è partito in modalità BIOS (legacy): riavvia la chiavetta in modalità UEFI per installarlo accanto a Windows."
+else
+	n=0
+	sdisks=$(priv sweetspot-installa accanto)
+	[ -n "$sdisks" ] && [ -z "$webpw" ] && echo '<p class="sub">Per installare imposta prima una password per queste pagine (Opzioni per esperti).</p>'
+	while IFS='|' read -r d gb model bus contents free; do
+		[ -n "$d" ] || continue
+		n=$((n + 1))
+		printf '<div class="row"><span class="dot"></span><div class="grow"><div class="k">%s</div><div class="v">%s, %s GB (%s), %s GB liberi - %s</div>\n' \
+			"$(esc "$model")" "$(esc "$d")" "$gb" "$(esc "$bus")" "$free" "$(esc "${contents:-vuoto}")"
+		if [ -z "$webpw" ]; then
+			echo '</div></div>'
+			continue
+		fi
+		printf '<form method="post" action="/cgi-bin/azione" onsubmit="return %s">\n' \
+			"$(esc "confirm(\"Installare Sweetspot nello spazio libero di $(printf '%s' "$model" | tr -d '"\\') ($d)? Le altre partizioni non vengono toccate.\")")"
+		printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="affianca"><input type="hidden" name="disco" value="%s">\n' "$(token)" "$(esc "$d")"
+		echo '<label class="check"><input type="checkbox" name="conferma" value="si" required> Ho capito: si aggiunge una partizione da 4 GB nello spazio libero e una voce di avvio</label>'
+		printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
+		printf '<label for="sdim-%s">Scrivi la dimensione del disco <span>(%s, in GB)</span></label>\n' "$(esc "$d")" "$gb"
+		printf '<input id="sdim-%s" name="dimensione" inputmode="numeric" pattern="[0-9]+" autocomplete="off" required>\n' "$(esc "$d")"
+		printf '<label for="scpw-%s">Password di queste pagine</label>\n' "$(esc "$d")"
+		printf '<input id="scpw-%s" name="conferma_password" type="password" autocomplete="current-password" required>\n' "$(esc "$d")"
+		echo '<button>Installa accanto</button></form></div></div>'
+	done <<EOF2
+$sdisks
+EOF2
+	[ $n -eq 0 ] && info_row "" "Nessun disco con spazio libero" "Serve un disco GPT con almeno 4 GB non assegnati a nessuna partizione, diverso da quello da cui parte Sweetspot."
+fi
 echo '</div>'
 
 fi

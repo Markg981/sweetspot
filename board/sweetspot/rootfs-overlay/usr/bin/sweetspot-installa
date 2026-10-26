@@ -11,6 +11,12 @@
 #                                        del disco diventa l'archivio musicale; GB =
 #                                        dimensione del disco scritta da chi installa
 #                                        (deve essere quella dell'elenco)
+#   sweetspot-installa accanto           righe "nome|GB|modello|tipo|contenuto|liberi"
+#                                        dischi GPT con almeno 4 GB liberi (solo UEFI);
+#                                        liberi = GB del blocco libero piu' grande
+#   sweetspot-installa affianca DISCO GB installa accanto al sistema che c'e' gia'
+#                                        (Windows, Linux): solo una partizione nuova
+#                                        nello spazio libero, le altre non si toccano
 #   sweetspot-installa stato             "stato|passo|passi|messaggio"
 #
 # Disco risultante (come la chiavetta, avviabile da BIOS e da UEFI):
@@ -19,6 +25,11 @@
 #   partizione 1       FAT32 "SWEETSPOT", 4 GB: sistema (due copie), menu,
 #                      impostazioni, libreria di Lyrion
 #   partizione 2       ext4 "Sweetspot Musica": archivio musicale (facoltativo)
+#
+# Accanto a un altro sistema (dischi GPT, avvio UEFI): una partizione FAT32
+# "SWEETSPOT" da 4 GB nello spazio libero e una voce "Sweetspot" nella NVRAM
+# UEFI. Dal menu di Sweetspot si avvia anche Windows. Le partizioni esistenti,
+# il loro contenuto e la partizione EFI non vengono toccati.
 #
 # Il sistema in uso e' in RAM: si copia la versione in uso con impostazioni,
 # plugin e libreria. Mentre la musica suona l'installazione si sospende.
@@ -37,6 +48,8 @@ MIN_SECTORS=$((2048 * SECT_MIB))  # disco minimo: 2 GiB
 ARCHIVE_MIN=$((8192 * SECT_MIB))  # archivio solo se restano almeno 8 GiB
 MBR_LIMIT=4294967295              # una tabella MBR arriva a 2 TiB
 SYS_MARGIN_KB=65536               # FAT32, GRUB, EFI e impostazioni oltre ai dati
+SIDE_NAME=Sweetspot               # nome della partizione e della voce UEFI
+SIDE_TYPE=0700                    # dati di base Microsoft, come una chiavetta
 
 state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
 
@@ -113,6 +126,67 @@ do_disks() {
 		[ "$4" -gt 0 ] && arch=si
 		printf '%s|%s|%s|%s|%s|%s\n' "$n" "$gb" "$(disk_model "$n")" "$(disk_bus "$n")" "$(disk_contents "$n")" "$arch"
 	done
+}
+
+# --- Accanto a un altro sistema (GPT) ---------------------------------------------
+
+uefi() { [ -d "$SYS/firmware/efi" ]; }
+
+is_gpt() { [ "$(dd if="$1" bs=512 skip=1 count=1 2>/dev/null | head -c 8)" = "EFI PART" ]; }
+
+# Ultima riga numerica dell'uscita di sgdisk (prima possono esserci avvisi).
+sg_number() { sgdisk "$@" 2>/dev/null | awk '/^[0-9]+$/ { n = $1 } END { if (n != "") print n }'; }
+
+# Blocco libero piu' grande, allineato a 1 MiB: "inizio fine" (settori).
+gpt_free() {
+	local f e
+	f=$(sg_number -f "$1")
+	e=$(sg_number -E "$1")
+	[ -n "$f" ] && [ -n "$e" ] && [ "$e" -gt "$f" ] && echo "$f $e"
+}
+
+# Tabella integra secondo sgdisk: niente errori ne' MBR ibrido.
+gpt_ok() { sgdisk -v "$1" 2>/dev/null | grep -q 'No problems found'; }
+
+# Primo numero di partizione libero nella tabella.
+gpt_slot() {
+	sgdisk -p "$1" 2>/dev/null | awk '
+		/^ *[0-9]+ +[0-9]+ +[0-9]+ / { used[$1] = 1 }
+		END { for (n = 1; n <= 128; n++) if (!(n in used)) { print n; exit } }'
+}
+
+do_side_disks() {
+	local d n boot size gb free
+	uefi || return 0
+	boot=$(stick_disk)
+	[ -n "$boot" ] || return 0
+	for d in "$SYS"/block/*; do
+		n=${d##*/}
+		case "$n" in
+			loop*|ram*|zram*|sr*|fd*|md*|dm-*|nbd*|mtdblock*|*boot[0-9]|*rpmb) continue ;;
+		esac
+		[ "$n" = "$boot" ] && continue
+		[ "$(cat "$d/ro" 2>/dev/null)" = 1 ] && continue
+		size=$(cat "$d/size" 2>/dev/null || echo 0)
+		[ "$size" -ge "$SYS_SECTORS" ] || continue
+		[ "$(cat "$d/queue/logical_block_size" 2>/dev/null || echo 512)" = 512 ] || continue
+		is_gpt "$DEV/$n" && gpt_ok "$DEV/$n" || continue
+		# shellcheck disable=SC2046
+		set -- $(gpt_free "$DEV/$n")
+		[ -n "$2" ] && [ $(($2 - $1 + 1)) -ge "$SYS_SECTORS" ] || continue
+		gb=$((size / 2097152))
+		free=$((($2 - $1 + 1) / 2097152))
+		printf '%s|%s|%s|%s|%s|%s\n' "$n" "$gb" "$(disk_model "$n")" "$(disk_bus "$n")" "$(disk_contents "$n")" "$free"
+	done
+}
+
+# Voce "Sweetspot" nella NVRAM UEFI, prima nell'ordine di avvio.
+efi_entry() { # disco numero_partizione
+	local loader='\EFI\BOOT\BOOTX64.EFI'
+	[ "$(cat "$SYS/firmware/efi/fw_platform_size" 2>/dev/null)" = 32 ] && loader='\EFI\BOOT\BOOTIA32.EFI'
+	grep -q ' efivarfs ' "$PROC/mounts" ||
+		mount -t efivarfs efivarfs "$SYS/firmware/efi/efivars" 2>/dev/null
+	efibootmgr -q -c -d "$DEV/$1" -p "$2" -L "$SIDE_NAME" -l "$loader" > /dev/null 2>&1
 }
 
 # --- Tabella delle partizioni (MBR) ----------------------------------------------
@@ -303,6 +377,109 @@ install_job() { # disco si|no
 	log "installazione: Sweetspot installato su $dev (archivio musicale: $want)"
 }
 
+# Errore dopo aver scritto la tabella: si rimette quella di prima.
+side_fail() { # passo messaggio dispositivo copia_della_tabella
+	if sgdisk --load-backup="$4" "$3" > /dev/null 2>&1; then
+		fail "$1" "$2: la tabella delle partizioni è tornata com'era"
+	else
+		fail "$1" "$2; ripristino della tabella non riuscito (copia in $4)"
+	fi
+}
+
+side_job() { # disco
+	local disk=$1 dev boot kb start end num p new bak efi=si
+	dev=$DEV/$disk
+	bak=$DIR/gpt-$disk.bak
+	# Gli eventi dei dischi aspettano la fine dell'installazione.
+	exec 9> "$RUN/dischi.lock"
+	flock 9
+	state "prepara|1|6|preparazione"
+	boot=$(stick_disk)
+	[ -n "$boot" ] || { fail 1 "chiavetta di avvio non trovata: niente è stato cambiato"; return 1; }
+	[ "$boot" = "$disk" ] && { fail 1 "il disco scelto è quello da cui parte Sweetspot"; return 1; }
+	is_gpt "$dev" && gpt_ok "$dev" || { fail 1 "il disco non ha una tabella GPT integra: niente è stato cambiato"; return 1; }
+	# shellcheck disable=SC2046
+	set -- $(gpt_free "$dev")
+	[ -n "$2" ] && [ $(($2 - $1 + 1)) -ge "$SYS_SECTORS" ] ||
+		{ fail 1 "spazio libero insufficiente (servono 4 GB): niente è stato cambiato"; return 1; }
+	start=$1
+	end=$((start + SYS_SECTORS - 1))
+	num=$(gpt_slot "$dev")
+	[ -n "$num" ] || { fail 1 "la tabella delle partizioni è piena: niente è stato cambiato"; return 1; }
+	sweetspot-dati salva > /dev/null 2>&1 || { fail 1 "salvataggio della libreria non riuscito: niente è stato cambiato"; return 1; }
+	kb=$(system_kb)
+	[ -n "$kb" ] || { fail 1 "chiavetta non leggibile: niente è stato cambiato"; return 1; }
+	[ $((kb + SYS_MARGIN_KB)) -le $((SYS_SECTORS / 2)) ] ||
+		{ fail 1 "spazio insufficiente per il sistema e la libreria: niente è stato cambiato"; return 1; }
+
+	state "partizioni|2|6|nuova partizione nello spazio libero"
+	blockdev --setrw "$dev" 2>/dev/null
+	mkdir -p "$DIR"
+	rm -f "$bak"
+	sgdisk --backup="$bak" "$dev" > /dev/null 2>&1 && [ -s "$bak" ] ||
+		{ fail 2 "copia della tabella delle partizioni non riuscita: niente è stato cambiato"; return 1; }
+	if ! sgdisk -n "$num:$start:$end" -t "$num:$SIDE_TYPE" -c "$num:$SIDE_NAME" "$dev" > /dev/null 2>&1 || ! gpt_ok "$dev"; then
+		side_fail 2 "nuova partizione non riuscita" "$dev" "$bak"
+		return 1
+	fi
+	sync
+	p=$DEV/$(part_name "$disk" "$num")
+	# Il kernel riceve solo la partizione nuova: le altre possono essere in uso.
+	[ -b "$p" ] || sweetspot-partizione "$dev" "$num" "$start" "$SYS_SECTORS" 2>/dev/null ||
+		blockdev --rereadpt "$dev" 2>/dev/null
+	wait_dev "$p" || { side_fail 2 "il disco non mostra la nuova partizione" "$dev" "$bak"; return 1; }
+
+	state "formatta|3|6|formattazione"
+	blockdev --setrw "$p" 2>/dev/null
+	mkfs.vfat -F 32 -n "$STICK_LABEL" "$p" > /dev/null 2>&1 || { side_fail 3 "formattazione non riuscita" "$dev" "$bak"; return 1; }
+
+	state "copia|4|6|copia del sistema, delle impostazioni e della libreria"
+	new=$DIR/nuovo
+	mkdir -p "$new"
+	mount -t vfat -o rw,noatime "$p" "$new" || { side_fail 4 "la nuova partizione non si apre" "$dev" "$bak"; return 1; }
+	if ! stick_mount ro; then
+		umount "$new"
+		side_fail 4 "chiavetta non trovata" "$dev" "$bak"
+		return 1
+	fi
+	if ! copy_system "$new"; then
+		stick_umount
+		umount "$new"
+		side_fail 4 "copia del sistema non riuscita" "$dev" "$bak"
+		return 1
+	fi
+	stick_umount
+	sync
+	umount "$new" || { fail 4 "chiusura della partizione non riuscita"; return 1; }
+	rmdir "$new" 2>/dev/null
+
+	# Senza la voce UEFI il sistema c'e' lo stesso: si sceglie dal menu di
+	# avvio del computer.
+	state "avvio|5|6|voce di avvio UEFI"
+	efi_entry "$disk" "$num" || efi=no
+	state "finita|6|6|accanto $disk $efi"
+	log "installazione: Sweetspot installato accanto al sistema esistente su $p (voce UEFI: $efi)"
+}
+
+do_side() { # disco GB
+	local d=$1 gb=""
+	[ "$(boot_type)" = grub ] || { echo "non serve su questo computer"; return 1; }
+	uefi || { echo "serve l'avvio UEFI: avvia la chiavetta in modalità UEFI"; return 1; }
+	running && { echo "installazione gia' in corso"; return 1; }
+	case "$d" in ''|*[!a-z0-9]*) echo "disco non valido"; return 1 ;; esac
+	[ -n "$(stick_disk)" ] || { echo "chiavetta di avvio non trovata"; return 1; }
+	gb=$(do_side_disks | awk -F'|' -v d="$d" '$1 == d { print $2 }')
+	[ -n "$gb" ] || { echo "disco non adatto"; return 1; }
+	# La dimensione scritta a mano conferma su quale disco si scrive.
+	[ "$2" = "$gb" ] || { echo "la dimensione scritta non è quella del disco ($gb GB)"; return 1; }
+	mkdir -p "$DIR" "$PAUSABLE"
+	state "prepara|0|6|preparazione"
+	setsid "$0" _accanto "$d" > /dev/null 2>&1 < /dev/null &
+	echo $! > "$DIR/pid"
+	echo $! > "$PAUSABLE/installa"
+	log "installazione: avviata accanto al sistema esistente su $d"
+}
+
 do_start() { # disco si|no GB
 	local d=$1 gb=""
 	# Sul Raspberry Pi il sistema sta gia' sulla scheda SD da cui parte.
@@ -340,7 +517,10 @@ do_status() {
 case "$1" in
 	dischi) do_disks ;;
 	avvia) do_start "$2" "$3" "$4" ;;
+	accanto) do_side_disks ;;
+	affianca) do_side "$2" "$3" ;;
 	stato) do_status ;;
 	_lavoro) install_job "$2" "$3"; rm -f "$DIR/pid" "$PAUSABLE/installa" ;;
-	*) echo "uso: $0 dischi|avvia DISCO si|no GB|stato" >&2; exit 1 ;;
+	_accanto) side_job "$2"; rm -f "$DIR/pid" "$PAUSABLE/installa" ;;
+	*) echo "uso: $0 dischi|avvia DISCO si|no GB|accanto|affianca DISCO GB|stato" >&2; exit 1 ;;
 esac
