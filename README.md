@@ -336,6 +336,17 @@ installata: si torna indietro con un clic. Viene sostituita solo quando il
 nuovo pacchetto è scaricato e verificato; se sulla chiavetta non c'è posto per
 tutti e due, la pagina Sistema lo dice e chiede di cancellarla prima.
 
+**Niente downgrade per sbaglio**: prima di installare, la versione del
+pacchetto (formato di `git describe`, es. `v1.2.3` o `v1.2.3-5-gabcdef`) si
+confronta con quella in uso (`/etc/sweetspot-version`). Un pacchetto più
+vecchio, anche se firmato, è rifiutato: potrebbe contenere falle note. Per
+installarlo comunque si spunta *Consenti una versione più vecchia* nel modulo
+del pacchetto da disco (insieme alla conferma con la password) o si usa
+`sweetspot-aggiorna file-downgrade PACCHETTO`. La stessa versione è ammessa
+(reinstallazione); una versione non confrontabile (compilazione di sviluppo)
+non blocca. L'aggiornamento scaricato da GitHub (`scarica`) non ha l'opzione:
+installa sempre l'ultima release.
+
 Gli aggiornamenti sono **firmati**: la compilazione ufficiale firma l'elenco dei
 file del pacchetto con una chiave privata che sta solo nei segreti del
 repository su GitHub (`SWEETSPOT_FIRMA`), e Sweetspot installa solo pacchetti

@@ -1918,6 +1918,30 @@ upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
 expect "dopo libera l'aggiornamento si installa" "pronto|v1.4.0|kernel v1.4.0|a" \
 	"$(cat "$UPD/run/aggiornamento/stato")|$(cat "$UPD/stick/bzImage")|$(genv prova)"
 
+echo "Aggiornamenti: niente downgrade senza conferma"
+vcmp() { $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-aggiorna; version_cmp \"\$1\" \"\$2\"" sh "$1" "$2"; }
+expect "confronto: minore" "-1" "$(SWEETSPOT_TEST=1 vcmp v1.2.9 v1.10.0)"
+expect "confronto: maggiore" "1" "$(SWEETSPOT_TEST=1 vcmp v1.10.0 v1.2.9)"
+expect "confronto: uguale (anche -dirty)" "0" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-dirty v1.2.0)"
+expect "confronto: commit dopo il tag e' piu' recente" "1" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-3-gabc1234 v1.2.0)"
+expect "confronto: versione di sviluppo non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp sviluppo v1.2.0)"
+echo "v3.0.0 (2026-10-01)" > "$UPD/version"
+PKG=$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar
+mkpkg v2.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "versione minore: rifiutata" "errore|il pacchetto (v2.0.0) e' piu' vecchio della versione in uso (v3.0.0)" \
+	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+expect "versione minore: la copia non e' toccata" "kernel v1.4.0" "$(cat "$UPD/stick/bzImage")"
+upd _lavoro file "$PKG" downgrade
+expect "versione minore con conferma esplicita: accettata" "pronto|v2.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v3.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "stessa versione: reinstallazione ammessa" "pronto|v3.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v3.1.0 x86_64
+upd _lavoro file "$PKG"
+expect "versione maggiore: accettata" "pronto|v3.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
+echo "v1.0.0 (2026-10-01)" > "$UPD/version"
+
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
 	mkdir -p "$UPD/chiavi"
