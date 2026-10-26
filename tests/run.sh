@@ -3766,7 +3766,7 @@ echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/on
 hs_run
 pw1=$(sed -n 's/^Password: //p' "$HS/stick/sweetspot-hotspot.txt" | head -n 1)
 expect "hotspot: nome e password scritti sulla partizione di avvio" "1|1" \
-	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{10\}$')"
+	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{4\}\(-[a-z2-9]\{4\}\)\{3\}$')"
 expect "hotspot: codice QR WIFI: sulla partizione di avvio (SVG) e sullo schermo" "1|1|1" \
 	"$(sort -u "$HS/qrtesti" | grep -c "^WIFI:T:WPA;S:Sweetspot-5E6F;P:$pw1;;\$")|$(grep -c '<svg' "$HS/stick/sweetspot-hotspot.svg")|$(grep -c '^\[QR\]$' "$HS/console")"
 rm -f "$HS/run/hotspot.attivo"
