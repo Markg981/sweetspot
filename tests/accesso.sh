@@ -347,6 +347,7 @@ expect "gli errori li conta root, nella sua cartella" "3" "$(cut -d' ' -f1 "$V/r
 printf '3 %s\n' "$(( $(date +%s) - 31 ))" > "$V/run/accesso.errori"
 expect "passata l'attesa la password giusta vale" "si" "$(vrun segreta segreta)"
 expect "una password giusta azzera gli errori" "no" "$([ -f "$V/run/accesso.errori" ] && echo si || echo no)"
+rm -f "$V/riscritta"
 VLIBERI=20
 expect "verifica: un errore costa una pausa (2 secondi)" "1" "$(grep -c 'VERIFICA_PAUSA=${SWEETSPOT_VERIFICA_PAUSA:-2}' "$OVERLAY/usr/bin/sweetspot-accesso")"
 expect "verifica: le verifiche passano una alla volta" "1" "$(grep -c '^	flock 8$' "$OVERLAY/usr/bin/sweetspot-accesso")"
