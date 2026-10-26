@@ -1792,11 +1792,20 @@ boot_env() {
 	else echo "$STICK_MNT/boot/grub/grubenv"; fi
 }
 
+# Sostituisce un file critico della FAT con la versione nuova: sync del
+# temporaneo prima del mv (senza, un taglio di corrente puo' lasciare il file
+# vuoto), copia .bak del precedente, mv e sync finale.
+fat_sostituisci() { # temporaneo destinazione
+	sync
+	[ -s "$2" ] && cp -p "$2" "$2.bak" 2>/dev/null
+	mv "$1" "$2" && sync
+}
+
 # Raspberry Pi: scrive config.txt o tryboot.txt dal modello con la copia
 # indicata (os_prefix).
 rpi_boot_config() { # file copia [modello]
 	local tpl=${3:-${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}/config.txt}
-	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && mv "$1.nuovo" "$1"
+	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && fat_sostituisci "$1.nuovo" "$1"
 }
 
 # Raspberry Pi: riga di comando del kernel di una copia (cmdline.txt).
