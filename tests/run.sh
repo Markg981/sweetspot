@@ -4222,6 +4222,7 @@ verifica_salti
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
+sh "$ROOT/tests/renderer-limiti.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
