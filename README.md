@@ -324,14 +324,20 @@ tutto in RAM; la chiavetta resta valida come copia di riserva.
 ### Installazione accanto a Windows
 
 *Sistema → Installazione accanto a Windows* lascia il disco com'è: Sweetspot
-aggiunge solo una partizione da 4 GB (FAT32, `SWEETSPOT`, tipo "dati di base")
+aggiunge solo una partizione da 4 GB (FAT32, `SWEETSPOT`, tipo "dati di base", nascosta a Windows)
 nello **spazio non allocato** e una voce "Sweetspot" nel menu di avvio UEFI. Le
 partizioni che ci sono già non vengono né spostate né ridimensionate.
 
 1. In Windows: *Gestione disco* → tasto destro sul volume `C:` → *Riduci
    volume*, almeno 4096 MB. Lo spazio liberato resta "Non allocato" (non
-   serve creare un volume). Con BitLocker attivo conviene avere a portata di
-   mano la chiave di ripristino.
+   serve creare un volume). Con BitLocker attivo tieni a portata di mano la
+   chiave di ripristino: disattivare il Secure Boot e avviare Windows dal
+   menu di Sweetspot (GRUB in catena) cambiano le misure del TPM (PCR 4 e 7) e
+   Windows pu� chiederla. Avviando Windows dal menu di avvio del computer
+   (voce "Windows Boot Manager") il percorso di avvio resta quello originale.
+   La voce "Sweetspot" viene messa prima nell'ordine di avvio, quindi non
+   � Windows la voce predefinita. La partizione `SWEETSPOT` � nascosta e senza
+   lettera in Windows (attributi GPT 62 e 63).
 2. Nel BIOS/UEFI: **Secure Boot disattivato**, come per la chiavetta.
 3. Si avvia la chiavetta **in modalità UEFI**; nella pagina Sistema compaiono i
    dischi GPT con almeno 4 GB liberi. Si conferma scrivendo la dimensione del

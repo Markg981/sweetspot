@@ -49,7 +49,8 @@ ARCHIVE_MIN=$((8192 * SECT_MIB))  # archivio solo se restano almeno 8 GiB
 MBR_LIMIT=4294967295              # una tabella MBR arriva a 2 TiB
 SYS_MARGIN_KB=65536               # FAT32, GRUB, EFI e impostazioni oltre ai dati
 SIDE_NAME=Sweetspot               # nome della partizione e della voce UEFI
-SIDE_TYPE=0700                    # dati di base Microsoft, come una chiavetta
+SIDE_TYPE=0700                    # dati di base Microsoft: il firmware la legge come una chiavetta
+SIDE_ATTR=62,63                   # GPT: nascosta e senza lettera in Windows (niente "formatta disco")
 
 state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
 
@@ -180,6 +181,13 @@ do_side_disks() {
 	done
 }
 
+# UUID del file system della partizione EFI (tipo EF00) del disco, se c'e'.
+esp_uuid() { # disco
+	local n
+	n=$(sgdisk -p "$DEV/$1" 2>/dev/null | awk '$6 == "EF00" { print $1; exit }')
+	[ -n "$n" ] && blkid -s UUID -o value "$DEV/$(part_name "$1" "$n")" 2>/dev/null
+}
+
 # Voce "Sweetspot" nella NVRAM UEFI, prima nell'ordine di avvio.
 efi_entry() { # disco numero_partizione
 	local loader='\EFI\BOOT\BOOTX64.EFI'
@@ -260,6 +268,11 @@ copy_system() { # radice_nuova archivio(si|no) etichetta_archivio_vecchio
 	grubenv_set "$new/boot/grub/grubenv" slot=a || return 1
 	[ -f "$STICK_MNT/boot/grub/auto.cfg" ] && cp "$STICK_MNT/boot/grub/auto.cfg" "$new/boot/grub/auto.cfg"
 	cp "$AVVIO/LEGGIMI.txt" "$new/LEGGIMI.txt"
+	# Solo accanto a Windows: il menu avvia il Windows della partizione EFI
+	# di questo disco, non il primo che trova (altri dischi, chiavetta).
+	if [ -n "${SIDE_DISK:-}" ] && esp=$(esp_uuid "$SIDE_DISK") && [ -n "$esp" ]; then
+		echo "set sweetspot_esp=$esp" > "$new/boot/grub/esp.cfg"
+	fi
 	cfg=$new/sweetspot.txt
 	if [ -f "$STICK_MNT/sweetspot.txt" ]; then cp "$STICK_MNT/sweetspot.txt" "$cfg"; else cp "$AVVIO/sweetspot.txt" "$cfg"; fi
 	if [ -d "$STICK_MNT/$DATA_DIR_NAME" ]; then
@@ -387,7 +400,8 @@ side_fail() { # passo messaggio dispositivo copia_della_tabella
 }
 
 side_job() { # disco
-	local disk=$1 dev boot kb start end num p new bak efi=si
+	local disk=$1 dev boot kb start end num p new bak efi=si a
+	SIDE_DISK=$disk
 	dev=$DEV/$disk
 	bak=$DIR/gpt-$disk.bak
 	# Gli eventi dei dischi aspettano la fine dell'installazione.
@@ -422,6 +436,8 @@ side_job() { # disco
 		side_fail 2 "nuova partizione non riuscita" "$dev" "$bak"
 		return 1
 	fi
+	# Gli attributi sono un di piu': se sgdisk non li accetta la partizione c'e' lo stesso.
+	for a in ${SIDE_ATTR//,/ }; do sgdisk -A "$num:set:$a" "$dev" > /dev/null 2>&1; done
 	sync
 	p=$DEV/$(part_name "$disk" "$num")
 	# Il kernel riceve solo la partizione nuova: le altre possono essere in uso.
