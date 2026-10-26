@@ -4062,6 +4062,67 @@ sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+
+# --- C17: follower del volume unico e niente picco al passaggio da fisso ---
+VF=$WORK/volfollower
+mkdir -p "$VF/run"
+sleep 60 & VF_PID=$!
+echo "$VF_PID" > "$VF/run/volume-follower.pid"
+SWEETSPOT_VOLUME_ATTESA_FOLLOWER=0 SWEETSPOT_VOLUME_PIDFILE=$VF/run/volume-follower.pid SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log \
+	SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-volume" segui 00:11:22:33:44:55 > /dev/null 2>&1
+expect "volume: con un follower vivo, un secondo segui non parte e lascia il pidfile" "$VF_PID" "$(cat "$VF/run/volume-follower.pid")"
+SWEETSPOT_VOLUME_PIDFILE=$VF/run/volume-follower.pid SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log \
+	SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-volume" ferma > /dev/null 2>&1
+sleep 1
+kill -0 "$VF_PID" 2>/dev/null && VF_VIVO=si || VF_VIVO=no
+expect "volume: ferma termina il follower e rimuove il pidfile" "no|assente" "$VF_VIVO|$([ -e "$VF/run/volume-follower.pid" ] && echo presente || echo assente)"
+grep -q 'sweetspot-volume ferma' "$OVERLAY/etc/init.d/S60sweetspot-player" && ok "S60: lo stop ferma il follower del volume" || ko "S60 stop follower" "presente" "assente"
+
+# Passaggio a caldo da fisso a software/dsp: Lyrion (a 100 in fisso) va al valore sicuro.
+vsw() { # modalita' volume_iniziale prefs_fisso
+	rm -f "$VF/mix" "$VF/log"
+	printf '%s\n' "$2" > "$VF/vol"
+	if [ "$3" = 1 ]; then : > "$VF/run/volume.fisso"; else rm -f "$VF/run/volume.fisso"; fi
+	SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+		PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+		mode() { echo completa; }; volume_modalita() { echo $1; }; volume_effettivo() { echo x; }
+		lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) cat $VF/vol ;; playerpref) echo 1 ;; esac; }
+		lms_json() { [ \"\$2\" = mixer ] && echo \"\$4\" > $VF/mix; return 0; }
+		prefs_divergenti() { :; }; prefs_stato() { :; }
+		apply_player_prefs" > /dev/null 2>&1
+	cat "$VF/mix" 2>/dev/null || echo nessuno
+}
+expect "player: da fisso a software con Lyrion a 100 il volume scende al valore sicuro" "25" "$(vsw software 100 1)"
+expect "player: da fisso a dsp con Lyrion a 100 il volume scende al valore sicuro" "25" "$(vsw dsp 100 1)"
+expect "player: dopo il passaggio il volume e' sotto la soglia (<= 25)" "si" "$([ "$(vsw software 100 1)" -le 25 ] && echo si || echo no)"
+expect "player: volume gia' sotto la soglia non viene toccato" "nessuno" "$(vsw software 10 1)"
+# Supervisore riavviato fra fisso e software: ogni invocazione e' un processo
+# nuovo, il marcatore in $RUN e' l'unica memoria. Il fisso lo lascia (digital=0).
+rm -f "$VF/run/volume.fisso"
+SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+	$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+	PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+	mode() { echo completa; }; volume_modalita() { echo fisso; }; volume_effettivo() { echo x; }
+	lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) echo 100 ;; playerpref) echo 0 ;; esac; }
+	lms_json() { return 0; }; prefs_divergenti() { :; }; prefs_stato() { :; }
+	apply_player_prefs" > /dev/null 2>&1
+expect "player: il fisso applicato lascia il marcatore in RUN" "si" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
+rm -f "$VF/mix"; echo 100 > "$VF/vol"
+SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+	$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+	PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+	mode() { echo completa; }; volume_modalita() { echo software; }; volume_effettivo() { echo x; }
+	lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) cat $VF/vol ;; playerpref) echo 1 ;; esac; }
+	lms_json() { [ \"\$2\" = mixer ] && echo \"\$4\" > $VF/mix; return 0; }
+	prefs_divergenti() { :; }; prefs_stato() { :; }
+	apply_player_prefs" > /dev/null 2>&1
+expect "player: supervisore riavviato fra fisso e software, volume <= soglia" "25" "$(cat "$VF/mix" 2>/dev/null)"
+expect "player: dopo la riduzione il marcatore e' rimosso" "no" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
+expect "player: avvio diretto in software (non da fisso) non tocca il volume" "nessuno" "$(vsw software 100 0)"
+
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
