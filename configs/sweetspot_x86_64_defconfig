@@ -124,6 +124,12 @@ BR2_PACKAGE_DOSFSTOOLS=y
 BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
 BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
 BR2_PACKAGE_E2FSPROGS=y
+# Installazione accanto al sistema che c'e' gia' (Windows, Linux): nuova
+# partizione nello spazio libero di un disco GPT (sgdisk) e voce di avvio
+# nella NVRAM UEFI (efibootmgr)
+BR2_PACKAGE_GPTFDISK=y
+BR2_PACKAGE_GPTFDISK_SGDISK=y
+BR2_PACKAGE_EFIBOOTMGR=y
 
 # Verifica della firma degli aggiornamenti
 BR2_PACKAGE_MINISIGN=y
@@ -181,7 +187,7 @@ BR2_TARGET_GRUB2_I386_EFI=y
 BR2_TARGET_GRUB2_X86_64_EFI=y
 BR2_TARGET_GRUB2_BUILTIN_MODULES_PC="boot linux fat part_msdos part_gpt normal biosdisk search search_label search_fs_uuid configfile test echo loadenv probe"
 BR2_TARGET_GRUB2_BUILTIN_CONFIG_PC="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/x86/grub-early.cfg"
-BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux fat part_msdos part_gpt normal search search_label search_fs_uuid configfile test echo loadenv probe efi_gop efi_uga"
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux fat part_msdos part_gpt normal search search_label search_fs_uuid search_fs_file configfile test echo loadenv probe efi_gop efi_uga chain"
 BR2_TARGET_GRUB2_BUILTIN_CONFIG_EFI="$(BR2_EXTERNAL_SWEETSPOT_PATH)/board/sweetspot/x86/grub-early.cfg"
 
 # Strumenti per creare l'immagine

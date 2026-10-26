@@ -111,6 +111,8 @@ SSH=si")"
 		expect "rete: testo rifiutato" "NIENTE(126)" "$(priv sweetspot-rete smonta-una '1;id')"
 		expect "installa avvia senza conferma forte: rifiutato" "NIENTE(126)" "$(priv sweetspot-installa avvia sda si 465)"
 		expect "installa dischi ammesso" "sweetspot-installa|dischi" "$(priv sweetspot-installa dischi)"
+		expect "installa accanto (elenco) ammesso" "sweetspot-installa|accanto" "$(priv sweetspot-installa accanto)"
+		expect "installa affianca senza conferma forte: rifiutato" "NIENTE(126)" "$(priv sweetspot-installa affianca nvme0n1 476)"
 		expect "hotspot richiesta ammessa" "sweetspot-hotspot|richiesta" "$(priv sweetspot-hotspot richiesta)"
 		expect "hotspot scansiona ammessa" "sweetspot-hotspot|scansiona" "$(priv sweetspot-hotspot scansiona)"
 		expect "hotspot collega ammessa" "sweetspot-hotspot|collega" "$(priv sweetspot-hotspot collega)"
@@ -254,6 +256,12 @@ SSH=si")"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "installazione con password sbagliata: rifiutata" "NIENTE(126)" \
 			"$(sconf sbagliata @conferma "$tok" sweetspot-installa avvia sda si 465)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "installazione accanto con conferma e dimensione" "sweetspot-installa|affianca|nvme0n1|476" \
+			"$(sconf segreta @conferma "$tok" sweetspot-installa affianca nvme0n1 476)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "installazione accanto senza dimensione: rifiutata" "NIENTE(126)" \
+			"$(sconf segreta @conferma "$tok" sweetspot-installa affianca nvme0n1)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma non sblocca script fuori elenco" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-player restart)"
 		tok=$("$WORK/priv" @conferma-nuova)
@@ -451,6 +459,16 @@ expect "installazione senza dimensione scritta: niente" "0" "$(grep -c 'installa
 : > "$A/priv.log"
 act "a=installa&disco=sda&conferma=si&archivio=si&dimensione=465&ct=g6&conferma_password=segreta" > /dev/null
 expect "installazione: passa dalla conferma forte con la dimensione" "1" "$(grep -c '^@conferma g6 sweetspot-installa avvia sda si 465$' "$A/priv.log")"
+# Accanto al sistema esistente: stessa conferma forte.
+: > "$A/priv.log"
+act "a=affianca&disco=nvme0n1&dimensione=476" > /dev/null
+expect "installazione accanto senza casella ne' password: niente" "0" "$(grep -c 'installa' "$A/priv.log")"
+: > "$A/priv.log"
+act "a=affianca&disco=nvme0n1&conferma=si&ct=g5&conferma_password=segreta" > /dev/null
+expect "installazione accanto senza dimensione scritta: niente" "0" "$(grep -c 'installa' "$A/priv.log")"
+: > "$A/priv.log"
+act "a=affianca&disco=nvme0n1&conferma=si&dimensione=476&ct=g6&conferma_password=segreta" > /dev/null
+expect "installazione accanto: passa dalla conferma forte" "1" "$(grep -c '^@conferma g6 sweetspot-installa affianca nvme0n1 476$' "$A/priv.log")"
 
 # Con l'helper le pagine leggono la copia senza password.
 printf 'PASSWORD_WEB=*\nNOME_PLAYER=Visibile\n' > "$A/run/sweetspot.web"

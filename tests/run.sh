@@ -2196,6 +2196,71 @@ expect "salvataggio fallito: installazione fermata, disco intatto" "salvataggio 
 expect "spazio insufficiente: fermata prima della tabella" "spazio insufficiente per il sistema e la libreria: niente è stato cancellato|aaaa" \
 	"$(insjob sdd)"
 
+echo "Installazione accanto al sistema esistente (GPT, UEFI)"
+expect "accanto: senza UEFI nessun disco proposto" "" "$(ins do_side_disks)"
+expect "accanto: senza UEFI non si installa" "serve l'avvio UEFI: avvia la chiavetta in modalità UEFI" "$(ins 'do_side sda 465')"
+mkdir -p "$INS/sys/firmware/efi/efivars"
+printf '#!/bin/sh\necho "$*" > %s/efibootmgr.args\nexit "${INS_EFI_RC:-0}"\n' "$INS" > "$INS/bin/efibootmgr"
+chmod +x "$INS/bin/efibootmgr"
+expect "accanto: un disco MBR non e' proposto" "" "$(ins do_side_disks)"
+expect "accanto: disco MBR rifiutato" "disco non adatto" "$(ins 'do_side sda 465')"
+printf 'efivarfs /sys/firmware/efi/efivars efivarfs rw 0 0\n' > "$INS/proc/mounts"
+expect "accanto: voce UEFI per il caricatore a 64 bit" "-q -c -d $INS/dev/nvme0n1 -p 4 -L Sweetspot -l \EFI\BOOT\BOOTX64.EFI" \
+	"$(ins 'efi_entry nvme0n1 4' && cat "$INS/efibootmgr.args")"
+echo 32 > "$INS/sys/firmware/efi/fw_platform_size"
+expect "accanto: firmware UEFI a 32 bit" "-q -c -d $INS/dev/nvme0n1 -p 4 -L Sweetspot -l \EFI\BOOT\BOOTIA32.EFI" \
+	"$(ins 'efi_entry nvme0n1 4' && cat "$INS/efibootmgr.args")"
+rm -f "$INS/sys/firmware/efi/fw_platform_size"
+expect "accanto: voce UEFI non creata" "1" "$(INS_EFI_RC=1 ins 'efi_entry nvme0n1 4'; echo $?)"
+: > "$INS/proc/mounts"
+if command -v sgdisk > /dev/null; then
+	# SSD con Windows: partizione EFI, MSR, Windows da 2 GB e il resto libero.
+	gptdisk() { # nome GiB [ultima partizione piena]
+		mkdir -p "$INS/sys/block/$1/queue"
+		echo $(($2 * 2097152)) > "$INS/sys/block/$1/size"
+		echo 512 > "$INS/sys/block/$1/queue/logical_block_size"
+		rm -f "$INS/dev/$1"
+		truncate -s "$2G" "$INS/dev/$1"
+		sgdisk -n 1:2048:+260M -t 1:EF00 -n 2:0:+16M -t 2:0C01 -n "3:0:${3:-+2G}" -t 3:0700 -c 3:Windows "$INS/dev/$1" > /dev/null
+	}
+	gptsum() { od -An -tx1 -N 17408 "$INS/dev/$1" | md5sum | cut -c1-32; }
+	gptdisk nvme0n1 8
+	gptdisk sde 6 0
+	expect "accanto: solo il disco GPT con spazio libero" "nvme0n1|8|Disco nvme0n1|NVMe||5" "$(ins do_side_disks)"
+	expect "accanto: blocco libero piu' grande" "4761600 16777182" "$(ins "gpt_free $INS/dev/nvme0n1")"
+	expect "accanto: primo numero libero" "4" "$(ins "gpt_slot $INS/dev/nvme0n1")"
+	expect "accanto: disco senza spazio libero rifiutato" "disco non adatto" "$(ins 'do_side sde 6')"
+	expect "accanto: dimensione sbagliata rifiutata" "la dimensione scritta non è quella del disco (8 GB)" "$(ins 'do_side nvme0n1 465')"
+	expect "accanto: chiavetta di avvio rifiutata" "disco non adatto" "$(ins 'do_side sdc 7')"
+	sidejob() { # disco [comandi prima] -> messaggio finale|tabella intatta (si/no)
+		local before
+		before=$(gptsum "$1")
+		rm -rf "$INS/run/installa"
+		ins "${2:-:}; side_job $1" > /dev/null 2>&1
+		printf '%s|%s' "$(cut -d'|' -f4 "$INS/run/installa/stato")" "$([ "$(gptsum "$1")" = "$before" ] && echo si || echo no)"
+	}
+	expect "accanto: chiavetta sparita, niente cambiato" "chiavetta di avvio non trovata: niente è stato cambiato|si" "$(INS_STICK='' sidejob nvme0n1)"
+	expect "accanto: disco pieno, niente cambiato" "spazio libero insufficiente (servono 4 GB): niente è stato cambiato|si" "$(sidejob sde)"
+	expect "accanto: disco MBR, niente cambiato" "il disco non ha una tabella GPT integra: niente è stato cambiato|si" "$(sidejob sdd)"
+	expect "accanto: salvataggio fallito, niente cambiato" "salvataggio della libreria non riuscito: niente è stato cambiato|si" \
+		"$(INS_SALVA_RC=1 sidejob nvme0n1)"
+	# La partizione nuova non compare: la tabella torna quella di prima.
+	expect "accanto: errore dopo la tabella, tabella ripristinata" \
+		"il disco non mostra la nuova partizione: la tabella delle partizioni è tornata com'era|si" \
+		"$(sidejob nvme0n1 'wait_dev() { return 1; }')"
+	expect "accanto: copia della tabella conservata" "si" "$([ -s "$INS/run/installa/gpt-nvme0n1.bak" ] && echo si || echo no)"
+	# La partizione che si aggiungerebbe: 4 GiB nello spazio libero, tipo dati di base.
+	ins "sgdisk -n 4:4761600:$((4761600 + 8388608 - 1)) -t 4:\$SIDE_TYPE -c 4:\$SIDE_NAME $INS/dev/nvme0n1" > /dev/null
+	expect "accanto: tabella risultante integra" "si" "$(ins "gpt_ok $INS/dev/nvme0n1" && echo si || echo no)"
+	expect "accanto: nuova partizione" "4 4761600 13150207 Sweetspot" \
+		"$(sgdisk -p "$INS/dev/nvme0n1" | awk '$1 == 4 { print $1, $2, $3, $7 }')"
+	rm -f "$INS/dev/nvme0n1" "$INS/dev/sde"
+	rm -rf "$INS/sys/block/nvme0n1" "$INS/sys/block/sde"
+else
+	echo "  (sgdisk non presente: prove con tabelle GPT saltate)"
+fi
+rm -rf "$INS/sys/firmware"
+
 echo "Archivio nello spazio libero del disco di avvio"
 SP=$WORK/spazio
 SPD=$SP/sys/devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0

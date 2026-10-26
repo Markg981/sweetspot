@@ -24,6 +24,12 @@ rm -rf "${TARGET_DIR:?}/boot"
 # SSH parte solo se attivato in sweetspot.txt (S45sweetspot-ssh).
 rm -f "$TARGET_DIR/etc/init.d/S50dropbear"
 
+# HTTPS: stunnel lo avvia sweetspot-https con una configurazione propria in
+# /run. Il servizio e la configurazione d'esempio di Buildroot (gmail-pop3 e
+# simili) fallivano a ogni avvio.
+rm -f "$TARGET_DIR"/etc/init.d/S[0-9][0-9]stunnel
+rm -rf "${TARGET_DIR:?}/etc/stunnel"
+
 # Media server UPnP/DLNA: parte solo se attivato (S71sweetspot-mediaserver).
 rm -f "$TARGET_DIR/etc/init.d/S60minidlnad"
 if [ ! -x "$TARGET_DIR/usr/sbin/minidlnad" ]; then

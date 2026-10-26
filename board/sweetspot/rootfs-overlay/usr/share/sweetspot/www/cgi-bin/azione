@@ -721,6 +721,19 @@ case "$F_a" in
 		log "installazione: avviata con conferma forte da $(client_ip)"
 		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
 
+	affianca)
+		# Accanto al sistema esistente: non cancella nulla, ma cambia la
+		# tabella delle partizioni e la NVRAM. Stessa conferma forte.
+		[ "$F_conferma" = si ] || done_to sistema "Per installare conferma di aver letto come funziona l'installazione accanto."
+		case "$F_dimensione" in ''|*[!0-9]*) done_to sistema "Per installare scrivi la dimensione del disco in GB, come nell'elenco." ;; esac
+		confirm_or_stop sistema "installare accanto al sistema esistente"
+		out=$(priv_confirm "$F_ct" "$F_conferma_password" sweetspot-installa affianca "$F_disco" "$F_dimensione")
+		rc=$?
+		[ $rc -eq 126 ] && confirm_refused sistema
+		[ $rc -eq 0 ] || done_to sistema "Installazione non avviata: $out."
+		log "installazione accanto: avviata con conferma forte da $(client_ip)"
+		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
+
 	ripristina)
 		[ "$F_conferma" = si ] || done_to sistema "Per ripristinare conferma che tutte le impostazioni torneranno quelle iniziali."
 		priv sweetspot-config ripristina
