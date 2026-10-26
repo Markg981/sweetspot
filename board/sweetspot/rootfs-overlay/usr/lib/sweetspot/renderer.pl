@@ -952,10 +952,18 @@ sub handle_http {
 				$SUBS{$sid}{expires} = time + $to;
 				return http_reply($c, 200, undef, '', SID => $sid, TIMEOUT => "Second-$to");
 			}
-			my @urls = defined $cb ? ($cb =~ /<(https?:\/\/[^>]+)>/g) : ();
+			my @urls = defined $cb ? ($cb =~ /<(http:\/\/[^>]+)>/gi) : ();
 			return http_reply($c, 412, 'text/plain', "CALLBACK mancante\n") unless @urls;
 			return http_reply($c, 412, 'text/plain', "CALLBACK troppo lungo\n") if grep { length $_ > $MAX_CB_LEN } @urls;
 			splice @urls, $MAX_CALLBACKS if @urls > $MAX_CALLBACKS;
+			# Anti-SSRF: il NOTIFY parte solo verso chi ha chiesto l'abbonamento, mai verso altri host della LAN.
+			my $peer = lc($c->peerhost // '');
+			$peer =~ s/^::ffff://;
+			if (grep { cb_host($_) ne $peer } @urls) {
+				logm("SUBSCRIBE rifiutato: CALLBACK diversa dal richiedente ($peer)");
+				return http_reply($c, 412, 'text/plain', "CALLBACK non ammessa
+");
+			}
 			my $host = cb_host($urls[0]);
 			if (keys(%SUBS) >= $MAX_SUBS || (grep { cb_host($_->{urls}[0]) eq $host } values %SUBS) >= $MAX_SUBS_HOST) {
 				logm("SUBSCRIBE rifiutato: troppi abbonamenti");
