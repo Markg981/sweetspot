@@ -305,7 +305,7 @@ class SigningTests(unittest.TestCase):
         sudo.write_text("#!/bin/sh\n[ \"$1\" = apt-get ] && exit 0\nexit 1\n")
         sudo.chmod(0o755)
         self.env = {**os.environ, "PATH": str(tools) + ":" + os.environ["PATH"],
-                    "GITHUB_REF": "refs/tags/v1.0.0", "FIRMA": self.key.read_text()}
+                    "GITHUB_REF": "refs/tags/v1.0.0", "GITHUB_REF_NAME": "v1.0.0", "FIRMA": self.key.read_text()}
         self.package()
 
     def package(self, embedded=None, tamper=False, board="x86_64"):
@@ -407,6 +407,13 @@ class SigningTests(unittest.TestCase):
         self.release_artifacts()
         result = self.verify_release()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_release_rejects_version_different_from_tag(self):
+        self.release_artifacts()
+        self.env["GITHUB_REF_NAME"] = "v9.9.9"
+        result = self.verify_release()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ma il tag e' 'v9.9.9'", result.stdout + result.stderr)
 
     def test_release_rejects_unsigned_download(self):
         self.release_artifacts()
