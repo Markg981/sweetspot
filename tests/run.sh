@@ -32,6 +32,24 @@ fi
 
 ok() { PASS=$((PASS + 1)); printf '  ok  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf '  NO  %s\n      atteso: [%s]\n      ottenuto: [%s]\n' "$1" "$2" "$3"; }
+
+# Sezioni saltate perche' manca uno strumento. In locale sono ammesse ma
+# elencate; in CI (CI=true o SWEETSPOT_CI_STRICT=1) sono un errore.
+SALTATE=""
+salta() {
+	SALTATE="$SALTATE $1"
+	echo "  (strumento \"$1\" non installato: sezione saltata)"
+}
+verifica_salti() {
+	[ -n "$SALTATE" ] || return 0
+	echo "Sezioni saltate per strumenti mancanti:$SALTATE"
+	case "${SWEETSPOT_CI_STRICT:-${CI:-}}" in
+	1 | true)
+		echo "NO  in modalita' rigorosa (CI) i salti sono un errore"
+		exit 1
+		;;
+	esac
+}
 expect() { if [ "$2" = "$3" ]; then ok "$1"; else ko "$1" "$2" "$3"; fi; }
 
 # Esegue una funzione di common.sh nell'ambiente finto $1.
@@ -1287,6 +1305,8 @@ expect "DAC a 16 bit: dither" "format: S16_LE|dither 3" \
 	"$(grep -o 'format: S16_LE' "$DSPE/run/camilladsp.yml" | tail -n 1)|dither $(grep -c 'dither' "$DSPE/run/camilladsp.yml")"
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione accettata da CamillaDSP"; else ko "camilladsp -c" "valida" "rifiutata"; fi
+else
+	salta "camilladsp"
 fi
 expect "correzione: volume principale a 0 dB per ogni processo" "0.0 0|1" \
 	"$(cat "$DSPE/run/camilladsp.volume")|$(grep -c "vol_file \"$DSPE/run/camilladsp.volume\"" "$DSPE/asound.conf")"
@@ -1304,7 +1324,13 @@ dsp 'VOLUME=dsp' prepara 1 > /dev/null
 yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "volume a 64 bit, DAC a 16 bit: nessun filtro, guadagno 0, dither a 16 bit, mai sopra 0 dB" "0|0.0|bits: 16|volume_limit: 0.0" \
 	"$(printf '%s\n' "$yml" | grep -c 'type: Biquad')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)|$(printf '%s\n' "$yml" | grep -o 'bits: 16')|$(printf '%s\n' "$yml" | grep -o 'volume_limit: 0.0')"
-expect "volume a 64 bit: primo avvio a -30 dB" "-30.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+expect "volume a 64 bit: primo avvio a -30 dB in sordina (silenzio, non volume udibile)" "-30.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+# file del volume assente o non valido: CamillaDSP parte in sordina (-m)
+rm -f "$DSPE/run/camilladsp.volume"
+expect "avvio senza file del volume: sordina (-m)" "-g-30.0 -m" "$(dsp 'VOLUME=dsp' avvio | sed -n 's/.*\(-g[^ ]* -m\).*/\1/p')"
+echo "spazzatura" > "$DSPE/run/camilladsp.volume"
+expect "avvio con file del volume non valido: sordina (-m)" "-g-30.0 -m" "$(dsp 'VOLUME=dsp' avvio | sed -n 's/.*\(-g[^ ]* -m\).*/\1/p')"
+echo "-30.0 1" > "$DSPE/run/camilladsp.volume"
 printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
 echo "-17.4 1" > "$DSPE/run/camilladsp.volume"
 dsp 'VOLUME=dsp' prepara 1 > /dev/null
@@ -1313,6 +1339,8 @@ expect "volume a 64 bit, DAC a 32 bit: dither a 24 bit" "S32_LE|bits: 24|dither 
 expect "volume a 64 bit: il volume gia' scelto resta" "-17.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione del volume accettata da CamillaDSP"; else ko "camilladsp -c volume" "valida" "rifiutata"; fi
+else
+	salta "camilladsp"
 fi
 expect "file del volume: valori non validi rifiutati" "1|-17.4 1" "$(dsp '' stato 'abc'; echo $?)|$(cat "$DSPE/run/camilladsp.volume")"
 mv "$DSPE/sinistro.bak" "$DSPE/run/correzione/sinistro.txt"
@@ -1419,6 +1447,8 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 		"$(dspf fir_taps)|$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 	if command -v camilladsp > /dev/null; then
 		if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione FIR accettata da CamillaDSP"; else ko "camilladsp -c FIR" "valida" "rifiutata"; fi
+	else
+		salta "camilladsp"
 	fi
 	dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
 	expect "FIR nel confronto: stessa frequenza e attenuazione, senza convoluzione" "samplerate: 96000|0|-7.5" \
@@ -1541,6 +1571,8 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 	expect "FIR solo a frequenze che il DAC non accetta: il motivo le elenca" "il DAC non accetta nessuna delle frequenze dei filtri FIR (192000 Hz)" "$(cat "$DSPE/run/correzione.motivo")"
 	rm -f "$FR"/fir-*.wav
 	rm -f "$DSPE"/run/camilladsp-[0-9]*.yml "$DSPE/run/correzione.motivo" "$DSPE/run/correzione.avviso" "$DSPE/run/correzione.frequenze"
+else
+	salta "python3"
 fi
 # Correzione chiesta con file mancanti, illeggibili o malformati: il problema
 # e' esplicito (con blocca il player non suona, vedi correzione_non_applicabile).
@@ -1721,6 +1753,8 @@ setenv slot=a
 expect "ambiente di GRUB di 1024 byte" "1024" "$(wc -c < "$UPD/stick/boot/grub/grubenv" | tr -d ' ')"
 if command -v grub-editenv > /dev/null; then
 	expect "ambiente leggibile da GRUB" "slot=a" "$(grub-editenv "$UPD/stick/boot/grub/grubenv" list)"
+else
+	salta "grub-editenv"
 fi
 mkpkg v1.1.0 x86_64
 expect "pacchetto trovato sul disco" "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar" "$(upd pacchetti)"
@@ -1884,6 +1918,30 @@ upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
 expect "dopo libera l'aggiornamento si installa" "pronto|v1.4.0|kernel v1.4.0|a" \
 	"$(cat "$UPD/run/aggiornamento/stato")|$(cat "$UPD/stick/bzImage")|$(genv prova)"
 
+echo "Aggiornamenti: niente downgrade senza conferma"
+vcmp() { $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-aggiorna; version_cmp \"\$1\" \"\$2\"" sh "$1" "$2"; }
+expect "confronto: minore" "-1" "$(SWEETSPOT_TEST=1 vcmp v1.2.9 v1.10.0)"
+expect "confronto: maggiore" "1" "$(SWEETSPOT_TEST=1 vcmp v1.10.0 v1.2.9)"
+expect "confronto: uguale (anche -dirty)" "0" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-dirty v1.2.0)"
+expect "confronto: commit dopo il tag e' piu' recente" "1" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-3-gabc1234 v1.2.0)"
+expect "confronto: versione di sviluppo non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp sviluppo v1.2.0)"
+echo "v3.0.0 (2026-10-01)" > "$UPD/version"
+PKG=$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar
+mkpkg v2.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "versione minore: rifiutata" "errore|il pacchetto (v2.0.0) e' piu' vecchio della versione in uso (v3.0.0)" \
+	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+expect "versione minore: la copia non e' toccata" "kernel v1.4.0" "$(cat "$UPD/stick/bzImage")"
+upd _lavoro file "$PKG" downgrade
+expect "versione minore con conferma esplicita: accettata" "pronto|v2.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v3.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "stessa versione: reinstallazione ammessa" "pronto|v3.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v3.1.0 x86_64
+upd _lavoro file "$PKG"
+expect "versione maggiore: accettata" "pronto|v3.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
+echo "v1.0.0 (2026-10-01)" > "$UPD/version"
+
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
 	mkdir -p "$UPD/chiavi"
@@ -1917,6 +1975,8 @@ if command -v minisign > /dev/null; then
 	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
 	expect "pacchetto alterato dopo la firma rifiutato" "errore|firma non valida: il pacchetto è stato alterato o non è ufficiale" "$(cat "$UPD/run/aggiornamento/stato")"
 	rm -f "$UPD/pkg/SHA256SUMS.minisig"
+else
+	salta "minisign"
 fi
 
 echo "Riavvii del watchdog: al secondo di seguito parte l'altra copia"
@@ -1984,10 +2044,15 @@ pi() { run "$PI" "SWEETSPOT_STICK_DIR=$PI/stick; STICK_MNT=$PI/stick; SWEETSPOT_
 expect "scheda e avvio del Pi" "rpi rpi Image.gz $PI/stick/b $PI/stick/sweetspot-avvio.env" \
 	"$(pi 'echo $(board) $(boot_type) $(kernel_file) $(slot_dir $STICK_MNT b) $(boot_env)')"
 expect "modello dall'albero dei dispositivi" "Raspberry Pi 4 Model B Rev 1.5" "$(pi cpu_model)"
-expect "non e' un avvio di prova (tryboot)" "no" "$(pi 'rpi_tryboot && echo si || echo no')"
 pi "rpi_boot_config $PI/stick/config.txt a"
 expect "config.txt dal modello, copia A" "os_prefix=a/|include sweetspot-scheda.txt" \
 	"$(grep -E '^(os_prefix|include)' "$PI/stick/config.txt" | tr '\n' '|' | sed 's/|$//')"
+# Scrittura sicura dei file critici della FAT: sync prima del mv, .bak, sync dopo.
+echo "vecchio" > "$PI/stick/config.txt"
+ordine=$(pi "sync() { printf 'sync '; }; mv() { printf 'mv '; command mv \"\$@\"; }; rpi_boot_config $PI/stick/config.txt b")
+expect "fat_sostituisci: sync, mv, sync; .bak del precedente; contenuto nuovo" "sync mv sync |vecchio|os_prefix=b/" \
+	"$ordine|$(cat "$PI/stick/config.txt.bak")|$(grep '^os_prefix' "$PI/stick/config.txt")"
+pi "rpi_boot_config $PI/stick/config.txt a"
 pi "rpi_cmdline a 'cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678'" > "$PI/stick/a/cmdline.txt"
 expect "parametri adattati letti da cmdline.txt" "cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678" "$(pi 'rpi_tune a')"
 expect "scheda I2S in sweetspot-scheda.txt" "dtparam=i2s=on|dtoverlay=hifiberry-dacplus" \
@@ -2072,7 +2137,6 @@ expect "riavvio normale senza prove in sospeso" "normale|" "$(cat "$PI/riavvio")
 # Parte la copia B (tryboot) e si conferma
 echo "coherent_pool=1M console=tty1 quiet sweetspot.slot=b" > "$PI/proc/cmdline"
 printf '\000\000\000\001' > "$PI/proc/device-tree/chosen/bootloader/tryboot"
-expect "avvio di prova riconosciuto" "si" "$(pi 'rpi_tryboot && echo si || echo no')"
 updpi sweetspot-aggiorna conferma
 expect "la copia B si conferma ed e' quella in uso" "b|" "$(penv slot)|$(penv tentato)"
 expect "config.txt ora avvia la copia B" "os_prefix=b/" "$(grep '^os_prefix' "$PI/stick/config.txt")"
@@ -2089,6 +2153,19 @@ pi "grubenv_set $PI/stick/sweetspot-avvio.env prova= tentato=a"
 updpi sweetspot-aggiorna conferma
 expect "versione non partita: si resta su B" "b||os_prefix=b/" "$(penv slot)|$(penv tentato)|$(grep '^os_prefix' "$PI/stick/config.txt")"
 expect "versione non partita segnalata" "fallita=v1.2.0" "$(updpi sweetspot-aggiorna stato | grep '^fallita=')"
+# Riconciliazione di config.txt e sweetspot-avvio.env (C18): vale config.txt
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=a prova= tentato="
+pi "rpi_boot_config $PI/stick/config.txt b"
+pi "rpi_riconcilia"
+expect "stato incoerente: avvio.env allineato a config.txt" "b" "$(penv slot)"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=b"
+pi "rpi_boot_config $PI/stick/config.txt a"
+pi "rpi_riconcilia"
+expect "stato incoerente al contrario: vale ancora config.txt" "a" "$(penv slot)"
+pi "rpi_boot_config $PI/stick/config.txt b"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=b"
+pi "rpi_riconcilia"
+expect "file concordi: nulla cambia" "b|os_prefix=b/" "$(penv slot)|$(grep '^os_prefix' "$PI/stick/config.txt")"
 mkpkg_pi v1.3.0 x86_64
 updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
 expect "pacchetto per PC rifiutato sul Pi" "errore|pacchetto per un altro tipo di computer (x86_64)" "$(cat "$PI/run/aggiornamento/stato")"
@@ -2099,6 +2176,8 @@ if command -v minisign > /dev/null; then
 	PI_PUB=$UPD/chiavi/ok.pub updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
 	expect "pacchetto del Pi firmato accettato" "pronto|v1.4.0|no" \
 		"$(cat "$PI/run/aggiornamento/stato")|$([ -e "$PI/stick/a/SHA256SUMS.minisig" ] && echo si || echo no)"
+else
+	salta "minisign"
 fi
 expect "installazione sul disco interno non disponibile sul Pi" "non serve su questo computer" \
 	"$(SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
@@ -2158,6 +2237,8 @@ expect "GRUB nel settore 0 e nei settori successivi" "ebeb 6767" \
 if command -v sfdisk > /dev/null; then
 	expect "tabella letta da sfdisk" "start=2048,size=1048576,type=c,bootable start=1050624,size=1048576,type=83" \
 		"$(sfdisk -d "$INS/disco.img" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
+else
+	salta "sfdisk"
 fi
 expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si 465')"
 expect "chiavetta di avvio non proponibile" "disco non adatto" "$(ins 'do_start sdc si 7')"
@@ -2241,6 +2322,8 @@ expect "diventa l'archivio" "imposta ARCHIVIO Sweetspot Musica" "$(cat "$SP/conf
 if command -v sfdisk > /dev/null; then
 	expect "tabella letta da sfdisk" "start=8192,size=2097152,type=c,bootable start=2105344,size=65001472,type=83" \
 		"$(sfdisk -d "$SP/dev/mmcblk0" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
+else
+	salta "sfdisk"
 fi
 expect "dopo la creazione non si offre piu'" "mmcblk0|0|no|il disco ha gia' altre partizioni" "$(sp examine)"
 expect "con un archivio gia' presente non si crea" "c'e' gia' un archivio musicale" "$(sp do_create)"
@@ -2503,7 +2586,7 @@ if command -v jq >/dev/null; then
 	expect "riepilogo: solo i brani del piano, errori e streaming" "parziale 3 1 1 1 0" \
 		"$(jq -r '"\(.stato) \(.brani) \(.caricati) \(.errori) \(.streaming) \(.oltre)"' "$PRE/run/precarico.json")"
 else
-	echo "  (jq non installato: riepilogo non provato)"
+	salta "jq"
 fi
 
 echo "CamillaDSP in real-time"
@@ -2709,6 +2792,8 @@ print("|".join(res))
 PY
 	expect "prova ALSA CamillaDSP: tono corretto accettato, frequenza sbagliata, buchi e silenzio rifiutati" \
 		"pass|fail|fail|pass|fail|fail|fail" "$(python3 "$WORK/analisi.py" "$ROOT/tests/camilladsp-sessione.py")"
+else
+	salta "python3"
 fi
 expect "la prova ALSA in QEMU include il caso CamillaDSP di sessione (stesso PID, 44,1 -> 96 kHz)" "1|1" \
 	"$(grep -c 'camilladsp-sessione.py' "$ROOT/tests/prova-alsa-qemu.sh")|$(grep -c 'RATES = (44100, 96000)' "$ROOT/tests/camilladsp-sessione.py")"
@@ -3501,6 +3586,8 @@ if command -v python3 > /dev/null; then
 		"$(grep -c '^| .*ASUSTeK N550JV' "$Q/matrice.md")|$(grep '^| .*ASUSTeK' "$Q/matrice.md" | awk -F'|' '{gsub(/ /, "", $8); print $8}')"
 	expect "matrice: docs/compatibilita.md aggiornata" "0" \
 		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
+else
+	salta "python3"
 fi
 
 echo "Hotspot di configurazione Wi-Fi (primo avvio)"
@@ -3941,10 +4028,41 @@ if command -v perl >/dev/null; then
 		else
 			ko "renderer UPnP" "tutte le prove superate" "$(printf '%s' "$out" | grep -v '^  ok' | tail -n 15)"
 		fi
+	else
+		salta "python3"
 	fi
 else
-	echo "  (perl non installato, saltato)"
+	salta "perl"
 fi
+echo "SSH: dropbear sicuro"
+SSHT=$WEB/ssh
+rm -rf "$SSHT"; mkdir -p "$SSHT/bin" "$SSHT/stick" "$SSHT/run"
+printf '#!/bin/sh\necho "$*" > "%s/args"\n' "$SSHT" > "$SSHT/bin/dropbear"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done\necho nuova > "$f"\n' > "$SSHT/bin/dropbearkey"
+printf '#!/bin/sh\ncat > /dev/null\n' > "$SSHT/bin/chpasswd"
+chmod +x "$SSHT/bin/"*
+ssh_avvia() { # utente
+	printf 'SSH=si\nSSH_PASSWORD=segreta\nSSH_UTENTE=%s\n' "$1" > "$SSHT/run/sweetspot.conf"
+	rm -f "$SSHT/args"
+	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$SSHT/run SWEETSPOT_STICK_DIR=$SSHT/stick \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH=$SSHT/bin SWEETSPOT_SSH_KEYDIR=$SSHT/keys \
+		SWEETSPOT_SSH_HOME=$SSHT/home SWEETSPOT_SSH_PORT=2222 SWEETSPOT_LOG=$SSHT/log \
+		$TEST_SH "$OVERLAY/etc/init.d/S45sweetspot-ssh" start > /dev/null 2>&1
+}
+ssh_avvia root
+expect "ssh: senza chiavi resta la password, con limite ai tentativi" "1|1|0" \
+	"$(grep -c -e '-T 3' "$SSHT/args")|$(grep -c -e '-r .*dropbear_ed25519_host_key' "$SSHT/args")|$(grep -c -e ' -s' "$SSHT/args")"
+expect "ssh: chiave dell'host salvata sulla chiavetta" "nuova" "$(cat "$SSHT/stick/sweetspot-ssh-host-key" 2>/dev/null)"
+rm -rf "$SSHT/keys"; echo vecchia > "$SSHT/stick/sweetspot-ssh-host-key"
+ssh_avvia root
+expect "ssh: chiave dell'host gia' presente riusata, non rigenerata" "vecchia" "$(cat "$SSHT/keys/dropbear_ed25519_host_key")"
+echo 'ssh-ed25519 AAAA prova' > "$SSHT/stick/authorized_keys"
+ssh_avvia root
+expect "ssh: con chiavi password spente (-s) e per root (-g)" "1|1|ssh-ed25519 AAAA prova" \
+	"$(grep -c -e ' -s' "$SSHT/args")|$(grep -c -e ' -g' "$SSHT/args")|$(cat "$SSHT/home/.ssh/authorized_keys")"
+ssh_avvia assistenza
+expect "ssh: utente assistenza con chiavi, root disattivato (-w), niente -g" "1|1|0" \
+	"$(grep -c -e ' -s' "$SSHT/args")|$(grep -c -e ' -w' "$SSHT/args")|$(grep -c -e ' -g' "$SSHT/args")"
 echo "Media server UPnP/DLNA"
 MSD=$WEB/mediaserver
 mkdir -p "$MSD/run"
@@ -4029,12 +4147,13 @@ if command -v shellcheck >/dev/null; then
 		ko "shellcheck" "nessun avviso" "$out"
 	fi
 else
-	echo "  (shellcheck non installato, saltato)"
+	salta "shellcheck"
 fi
 
 echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
+verifica_salti
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
@@ -4045,6 +4164,67 @@ sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+
+# --- C17: follower del volume unico e niente picco al passaggio da fisso ---
+VF=$WORK/volfollower
+mkdir -p "$VF/run"
+sleep 60 & VF_PID=$!
+echo "$VF_PID" > "$VF/run/volume-follower.pid"
+SWEETSPOT_VOLUME_ATTESA_FOLLOWER=0 SWEETSPOT_VOLUME_PIDFILE=$VF/run/volume-follower.pid SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log \
+	SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-volume" segui 00:11:22:33:44:55 > /dev/null 2>&1
+expect "volume: con un follower vivo, un secondo segui non parte e lascia il pidfile" "$VF_PID" "$(cat "$VF/run/volume-follower.pid")"
+SWEETSPOT_VOLUME_PIDFILE=$VF/run/volume-follower.pid SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log \
+	SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-volume" ferma > /dev/null 2>&1
+sleep 1
+kill -0 "$VF_PID" 2>/dev/null && VF_VIVO=si || VF_VIVO=no
+expect "volume: ferma termina il follower e rimuove il pidfile" "no|assente" "$VF_VIVO|$([ -e "$VF/run/volume-follower.pid" ] && echo presente || echo assente)"
+grep -q 'sweetspot-volume ferma' "$OVERLAY/etc/init.d/S60sweetspot-player" && ok "S60: lo stop ferma il follower del volume" || ko "S60 stop follower" "presente" "assente"
+
+# Passaggio a caldo da fisso a software/dsp: Lyrion (a 100 in fisso) va al valore sicuro.
+vsw() { # modalita' volume_iniziale prefs_fisso
+	rm -f "$VF/mix" "$VF/log"
+	printf '%s\n' "$2" > "$VF/vol"
+	if [ "$3" = 1 ]; then : > "$VF/run/volume.fisso"; else rm -f "$VF/run/volume.fisso"; fi
+	SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+		PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+		mode() { echo completa; }; volume_modalita() { echo $1; }; volume_effettivo() { echo x; }
+		lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) cat $VF/vol ;; playerpref) echo 1 ;; esac; }
+		lms_json() { [ \"\$2\" = mixer ] && echo \"\$4\" > $VF/mix; return 0; }
+		prefs_divergenti() { :; }; prefs_stato() { :; }
+		apply_player_prefs" > /dev/null 2>&1
+	cat "$VF/mix" 2>/dev/null || echo nessuno
+}
+expect "player: da fisso a software con Lyrion a 100 il volume scende al valore sicuro" "25" "$(vsw software 100 1)"
+expect "player: da fisso a dsp con Lyrion a 100 il volume scende al valore sicuro" "25" "$(vsw dsp 100 1)"
+expect "player: dopo il passaggio il volume e' sotto la soglia (<= 25)" "si" "$([ "$(vsw software 100 1)" -le 25 ] && echo si || echo no)"
+expect "player: volume gia' sotto la soglia non viene toccato" "nessuno" "$(vsw software 10 1)"
+# Supervisore riavviato fra fisso e software: ogni invocazione e' un processo
+# nuovo, il marcatore in $RUN e' l'unica memoria. Il fisso lo lascia (digital=0).
+rm -f "$VF/run/volume.fisso"
+SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+	$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+	PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+	mode() { echo completa; }; volume_modalita() { echo fisso; }; volume_effettivo() { echo x; }
+	lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) echo 100 ;; playerpref) echo 0 ;; esac; }
+	lms_json() { return 0; }; prefs_divergenti() { :; }; prefs_stato() { :; }
+	apply_player_prefs" > /dev/null 2>&1
+expect "player: il fisso applicato lascia il marcatore in RUN" "si" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
+rm -f "$VF/mix"; echo 100 > "$VF/vol"
+SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+	$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+	PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+	mode() { echo completa; }; volume_modalita() { echo software; }; volume_effettivo() { echo x; }
+	lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) cat $VF/vol ;; playerpref) echo 1 ;; esac; }
+	lms_json() { [ \"\$2\" = mixer ] && echo \"\$4\" > $VF/mix; return 0; }
+	prefs_divergenti() { :; }; prefs_stato() { :; }
+	apply_player_prefs" > /dev/null 2>&1
+expect "player: supervisore riavviato fra fisso e software, volume <= soglia" "25" "$(cat "$VF/mix" 2>/dev/null)"
+expect "player: dopo la riduzione il marcatore e' rimosso" "no" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
+expect "player: avvio diretto in software (non da fisso) non tocca il volume" "nessuno" "$(vsw software 100 0)"
+
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
@@ -4059,14 +4239,79 @@ python3 "$ROOT/tests/player-avvio.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
 python3 "$ROOT/tests/squeezelite-mixer-dsd.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
+echo "Wi-Fi: nomi e password particolari, dalla scansione a wpa.conf"
+WS=$WORK/wifissid
+mkdir -p "$WS/bin" "$WS/run"
+# iw finto: come il vero, scrive UTF-8/emoji come \xNN e il backslash raddoppiato.
+cat > "$WS/bin/iw" <<'EOF'
+#!/bin/sh
+printf 'BSS aa:bb:cc:00:00:01(on wlan0)\n\tsignal: -40.00 dBm\n\tSSID: Casa #2\nBSS aa:bb:cc:00:00:02(on wlan0)\n\tsignal: -50.00 dBm\n\tSSID: Caff\\xc3\\xa8 \\xf0\\x9f\\x8e\\xb5\nBSS aa:bb:cc:00:00:03(on wlan0)\n\tsignal: -60.00 dBm\n\tSSID: "Q" a\\\\b\n'
+EOF
+chmod +x "$WS/bin/iw"
+printf '1\n' > /dev/null
+echo wlan0 > "$WS/run/hotspot.attivo"
+SWEETSPOT_IW=$WS/bin/iw SWEETSPOT_RUN=$WS/run SWEETSPOT_LOG=$WS/log SWEETSPOT_TEST=1 \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" scansiona
+expect "wifi scan: nomi decodificati" 'Caffè 🎵|Casa #2|"Q" a\b' \
+	"$(cut -d'|' -f2- "$WS/run/wifi-scan.list" | tr '\n' '|' | sed 's/|$//')"
+# wifi_conf, estratta da S40sweetspot-net, per ogni nome (prelevato dalla lista).
+sed -n '/^wifi_conf() {/,/^}/p' "$OVERLAY/etc/init.d/S40sweetspot-net" > "$WS/wifi_conf.sh"
+wifi_prova() { # nome password -> wpa.conf
+	printf 'WIFI_NOME=%s\nWIFI_PASSWORD=%s\n' "$1" "$2" > "$WS/s.txt"
+	SWEETSPOT_RUN=$WS/run SWEETSPOT_LOG=$WS/log SWEETSPOT_DEFAULTS=$WS/nessuno \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WS/s.txt; . $WS/wifi_conf.sh; wifi_conf; cat \$RUN/wpa.conf"
+}
+hexs() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
+while IFS= read -r nome; do
+	w=$(wifi_prova "$nome" "pw")
+	expect "wifi wpa.conf: ssid in esadecimale ($nome)" "ssid=$(hexs "$nome")" "$(printf '%s\n' "$w" | grep -o 'ssid=.*')"
+done <<'EOF'
+Casa #2
+"Casa"
+a\b"c
+Caffè 🎵
+EOF
+w=$(wifi_prova 'Casa' 'pa#ss "x" \y')
+expect "wifi wpa.conf: password cruda, senza escape ne' commento" 'psk="pa#ss "x" \y"' "$(printf '%s\n' "$w" | grep -o 'psk=.*')"
+w=$(wifi_prova 'Casa' '')
+expect "wifi wpa.conf: rete aperta" "key_mgmt=NONE" "$(printf '%s\n' "$w" | grep -o 'key_mgmt=.*')"
+k=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+expect "wifi wpa.conf: chiave di 64 cifre senza virgolette" "psk=$k" "$(wifi_prova 'Casa' "$k" | grep -o 'psk=.*')"
+printf '# commento\nWIFI_NOME = Casa #2 \nHOTSPOT=si # nota\n' > "$WS/n.txt"
+expect "config_normalize: # solo a inizio riga per il nome Wi-Fi" "WIFI_NOME=Casa #2|HOTSPOT=si" \
+	"$(SWEETSPOT_RUN=$WS/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $WS/n.txt" | tr '\n' '|' | sed 's/|$//')"
+
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
 python3 "$ROOT/tests/reference-studio.py" || exit 1
 if command -v node > /dev/null 2>&1; then
 	node "$ROOT/tests/studio-js.js" || exit 1
 else
-	echo "studio-js: node assente, prova del JS saltata"
+	salta "node"
 fi
+verifica_salti
+# --- sweetspot-dati: ripristino fallito blocca il salvataggio (C15) ---
+RF=$WORK/ripfall
+mkdir -p "$RF/run" "$RF/lms/prefs" "$RF/stick/sweetspot-dati"
+echo "buona" > "$RF/stick/sweetspot-dati/lyrion.tar"   # non e' un tar: ripristino fallisce
+echo x > "$RF/lms/prefs/p"
+rfdati() {
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$RF/run SWEETSPOT_LOG=$RF/log SWEETSPOT_LMS_DATA=$RF/lms SWEETSPOT_STICK_DIR=$RF/stick \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dati
+		stick_mount() { return 0; }; stick_umount() { :; }; space_ok() { return 0; }
+		$1"
+}
+rfdati 'do_restore "$STICK_MNT/sweetspot-dati"'; rc=$?
+expect "dati: ripristino fallito, esito non zero" 1 "$rc"
+expect "dati: ripristino fallito lascia il marcatore" si "$([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+rfdati 'do_save'; rc=$?
+expect "dati: salvataggio rifiutato dopo ripristino fallito" 1 "$rc"
+expect "dati: la generazione precedente resta intatta" buona "$(cat "$RF/stick/sweetspot-dati/lyrion.tar")"
+expect "dati: il rifiuto e' nel registro" 1 "$(grep -c 'salvataggio rifiutato' "$RF/log")"
+rm -rf "$RF/stick/sweetspot-dati"; mkdir -p "$RF/s2"; tar -cf "$RF/s2/lyrion.tar" -C "$RF/lms" prefs
+rfdati "do_restore $RF/s2"; rc=$?
+expect "dati: un ripristino riuscito toglie il blocco" "0 no" "$rc $([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1

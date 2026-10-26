@@ -8,6 +8,9 @@
 #   sweetspot-aggiorna cerca           chiede a GitHub l'ultima versione pubblicata
 #   sweetspot-aggiorna scarica         la scarica e la installa, in sottofondo
 #   sweetspot-aggiorna file PACCHETTO  installa un pacchetto .tar da un disco
+#   sweetspot-aggiorna file-downgrade PACCHETTO
+#                                      come "file" ma accetta anche una versione
+#                                      piu' vecchia di quella in uso
 #   sweetspot-aggiorna pacchetti       pacchetti di aggiornamento sui dischi
 #   sweetspot-aggiorna annulla         interrompe l'aggiornamento in corso
 #   sweetspot-aggiorna libera          cancella la versione non in uso, se
@@ -343,9 +346,36 @@ release_stick() {
 # a mano con "predefinita".
 IN_PROVA="la versione in uso e' ancora in prova: attendi la conferma (fino a 10 minuti dall'avvio) o rendila predefinita"
 
-# Estrae il pacchetto (da internet o da un file) e lo installa.
+# Confronta due versioni nel formato di "git describe" (v1.2.3, oppure
+# v1.2.3-5-gabcdef per i commit dopo il tag, con -dirty finale facoltativo):
+# stampa -1, 0 o 1 (la prima e' minore, uguale, maggiore) oppure ? se una
+# delle due non e' confrontabile (es. "sviluppo", un hash).
+version_cmp() { # versione_a versione_b
+	awk -v a="$1" -v b="$2" '
+	function parse(v, arr,   m, n, i, p) {
+		sub(/-dirty$/, "", v); sub(/^v/, "", v)
+		if (v !~ /^[0-9]+(\.[0-9]+)*(-[0-9]+-g[0-9a-f]+)?$/) return 0
+		arr[1] = arr[2] = arr[3] = arr[4] = 0
+		n = split(v, m, "-"); split(m[1], p, ".")
+		for (i = 1; i <= 3; i++) arr[i] = p[i] + 0
+		if (n >= 2) arr[4] = m[2] + 0
+		return 1
+	}
+	BEGIN {
+		if (!parse(a, x) || !parse(b, y)) { print "?"; exit }
+		for (i = 1; i <= 4; i++) {
+			if (x[i] < y[i]) { print -1; exit }
+			if (x[i] > y[i]) { print 1; exit }
+		}
+		print 0
+	}'
+}
+
+# Estrae il pacchetto (da internet o da un file) e lo installa. Con $3 =
+# downgrade accetta anche una versione piu' vecchia di quella in uso; la
+# stessa versione e' una reinstallazione, sempre ammessa.
 install_job() { # url|file SORGENTE
-	local kind="$1" src="$2" d x other archive err="" v try=1 rc=0
+	local kind="$1" src="$2" allow="${3:-}" d x other archive err="" v try=1 rc=0 cmp
 	other=$(other_slot "$(running_slot)")
 	rm -f "$DIR/fallita" "$DIR/riuscita"
 	if ! stick_mount rw; then
@@ -405,6 +435,11 @@ install_job() { # url|file SORGENTE
 	elif ! v=$(verify_package "$x"); then
 		state "errore|$v"
 		rc=1
+	elif cmp=$(version_cmp "$v" "$(current_version)"); [ "$cmp" = -1 ] && [ "$allow" != downgrade ]; then
+		# Una versione firmata ma vecchia puo' avere falle note: serve la
+		# conferma esplicita. Le versioni non confrontabili non bloccano.
+		state "errore|il pacchetto ($v) e' piu' vecchio della versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
+		rc=1
 	elif v=$(install_package "$x" "$d" "$other" "$v"); then
 		state "pronto|$v"
 		log "aggiornamento: versione $v installata nella copia $other, si prova al prossimo avvio"
@@ -420,7 +455,7 @@ install_job() { # url|file SORGENTE
 	return "$rc"
 }
 
-start_job() { # url|file SORGENTE
+start_job() { # url|file SORGENTE [downgrade]
 	local tried=
 	running && { echo "c'e' gia' un aggiornamento in corso"; return 1; }
 	if stick_mount ro; then
@@ -430,7 +465,7 @@ start_job() { # url|file SORGENTE
 	[ -z "$tried" ] || { echo "$IN_PROVA"; return 1; }
 	mkdir -p "$DIR" "$PAUSABLE"
 	state "scarica|$1|$2"
-	setsid "$0" _lavoro "$1" "$2" > /dev/null 2>&1 < /dev/null &
+	setsid "$0" _lavoro "$1" "$2" "${3:-}" > /dev/null 2>&1 < /dev/null &
 	echo $! > "$DIR/pid"
 	echo $! > "$PAUSABLE/aggiornamento"
 }
@@ -453,13 +488,13 @@ do_packages() {
 	return 0
 }
 
-do_file() {
+do_file() { # PACCHETTO [downgrade]
 	local p m
 	p=$(readlink -f "$1" 2>/dev/null) || { echo "file non trovato"; return 1; }
 	m=$(readlink -f "$MEDIA_DIR")
 	case "$p" in "$m"/*.tar) ;; *) echo "file non valido"; return 1 ;; esac
 	[ -f "$p" ] || { echo "file non trovato"; return 1; }
-	start_job file "$p"
+	start_job file "$p" "${2:-}"
 }
 
 do_cancel() {
@@ -490,8 +525,8 @@ do_free() {
 	slot=$(running_slot)
 	other=$(other_slot "$slot")
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
-	grubenv_set "$(boot_env)" "slot=$slot" prova= tentato=
 	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$slot"
+	grubenv_set "$(boot_env)" "slot=$slot" prova= tentato=
 	clear_slot "$(slot_dir "$STICK_MNT" "$other")" "$other"
 	sync
 	stick_umount
@@ -511,7 +546,11 @@ do_other() {
 		echo "non c'e' un'altra versione installata"
 		return 1
 	fi
-	grubenv_set "$(boot_env)" "prova=$other"
+	if ! grubenv_set "$(boot_env)" "prova=$other"; then
+		stick_umount
+		echo "non riesco a scrivere sulla chiavetta"
+		return 1
+	fi
 	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/tryboot.txt" "$other"
 	stick_umount
 	log "aggiornamento: al prossimo avvio si prova la copia $other"
@@ -520,8 +559,17 @@ do_other() {
 # La versione in uso (avviata a mano dal menu) diventa quella predefinita.
 do_default() {
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
-	grubenv_set "$(boot_env)" "slot=$(running_slot)" prova= tentato=
-	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)"
+	# Sul Pi prima config.txt (quello che il firmware usa), poi lo stato.
+	if [ "$(boot_type)" = rpi ] && ! rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)"; then
+		stick_umount
+		echo "non riesco a scrivere sulla chiavetta"
+		return 1
+	fi
+	if ! grubenv_set "$(boot_env)" "slot=$(running_slot)" prova= tentato=; then
+		stick_umount
+		echo "non riesco a scrivere sulla chiavetta"
+		return 1
+	fi
 	stick_umount
 }
 
@@ -556,8 +604,8 @@ do_watchdog_reset() {
 	d=$(slot_dir "$STICK_MNT" "$other")
 	if [ "$n" -ge "$WATCHDOG_MAX" ] && [ -f "$d/$(kernel_file)" ] && [ -f "$d/rootfs.cpio.zst" ] &&
 		[ "$(grubenv_get "$env" slot)" != "$other" ]; then
-		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=
 		[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$other"
+		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=
 		echo "$other" > "$DIR/watchdog.ritorno"
 		log "aggiornamento: dal prossimo avvio parte la copia $other ($(cat "$STICK_MNT/boot/versioni/$other" 2>/dev/null || echo versione sconosciuta))"
 	fi
@@ -741,12 +789,15 @@ healthy() {
 }
 
 do_confirm() {
-	local slot env def tried fail_reboot=0
+	local slot env def tried fail_reboot=0 werr=0
 	slot=$(running_slot)
 	mkdir -p "$DIR"
-	stick_mount rw || return 0
+	stick_mount rw || { log "aggiornamento: conferma non riuscita, chiavetta non scrivibile"; return 1; }
 	env=$(boot_env)
-	[ -f "$env" ] || grubenv_set "$env" "slot=$slot"
+	[ -f "$env" ] || grubenv_set "$env" "slot=$slot" || { stick_umount; log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"; return 1; }
+	# Sul Pi config.txt e avvio.env devono concordare prima di decidere (dopo
+	# il controllo del montaggio, perche' puo' scrivere sulla chiavetta).
+	rpi_riconcilia || werr=1
 	def=$(grubenv_get "$env" slot)
 	tried=$(grubenv_get "$env" tentato)
 	if [ -n "$tried" ] && [ "$tried" != "$slot" ]; then
@@ -758,11 +809,21 @@ do_confirm() {
 			cp "$STICK_MNT/boot/conferma-fallita" "$DIR/fallita.motivo" 2>/dev/null
 			rm -f "$STICK_MNT/boot/conferma-fallita"
 		fi
-		grubenv_set "$env" tentato=
+		grubenv_set "$env" tentato= || werr=1
 		log "aggiornamento: la nuova versione (copia $tried) non e' partita, si e' tornati alla precedente"
 	elif [ "$tried" = "$slot" ]; then
 		if healthy; then
-			grubenv_set "$env" "slot=$slot" tentato=
+			# Sul Pi prima config.txt (quello che il firmware usa), poi lo stato.
+			if [ "$(boot_type)" = rpi ] && ! { rpi_boot_config "$STICK_MNT/config.txt" "$slot" && sync; }; then
+				stick_umount
+				log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"
+				return 1
+			fi
+			if ! grubenv_set "$env" "slot=$slot" tentato=; then
+				stick_umount
+				log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"
+				return 1
+			fi
 			touch "$DIR/riuscita"
 			rm -f "$STICK_MNT/boot/conferma-fallita"
 			log "aggiornamento: la versione $(current_version) funziona ed e' ora quella in uso"
@@ -775,9 +836,10 @@ do_confirm() {
 			fail_reboot=1
 		fi
 	elif [ -z "$def" ]; then
-		grubenv_set "$env" "slot=$slot"
+		grubenv_set "$env" "slot=$slot" || werr=1
 	fi
 	stick_umount
+	[ "$werr" = 1 ] && { log "aggiornamento: scrittura su chiavetta fallita"; return 1; }
 	# Conferma fallita: si riavvia subito. La prova di GRUB e' a colpo unico
 	# (sul Pi config.txt resta sulla copia di prima), quindi riparte la copia
 	# precedente senza aspettare un riavvio manuale.
@@ -799,6 +861,7 @@ case "$1" in
 	cerca) do_check ;;
 	scarica) do_download ;;
 	file) do_file "$2" ;;
+	file-downgrade) do_file "$2" downgrade ;;
 	pacchetti) do_packages ;;
 	annulla) do_cancel ;;
 	libera) do_free ;;
@@ -807,6 +870,6 @@ case "$1" in
 	stabile) do_stable ;;
 	predefinita) do_default ;;
 	conferma) do_confirm ;;
-	_lavoro) install_job "$2" "$3"; rc=$?; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"; exit "$rc" ;;
-	*) echo "uso: $0 stato|cerca|scarica|file PACCHETTO|pacchetti|annulla|libera|altra|predefinita|conferma" >&2; exit 1 ;;
+	_lavoro) install_job "$2" "$3" "$4"; rc=$?; rm -f "$DIR/pid" "$PAUSABLE/aggiornamento"; exit "$rc" ;;
+	*) echo "uso: $0 stato|cerca|scarica|file PACCHETTO|file-downgrade PACCHETTO|pacchetti|annulla|libera|altra|predefinita|conferma" >&2; exit 1 ;;
 esac

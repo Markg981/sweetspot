@@ -18,10 +18,10 @@ has() { grep -q -- "$1" "$2"; }
 echo "== README allineato al codice"
 
 # Comandi di sweetspot-dati: tutti quelli dell'intestazione hanno un ramo nel case.
-for c in ripristina salva checkpoint sorveglia; do
+for c in ripristina salva checkpoint sblocca sorveglia; do
 	has "^	$c)" "$OV/usr/bin/sweetspot-dati"; t "sweetspot-dati gestisce '$c'" $?
 done
-has 'ripristina|salva|checkpoint|sorveglia' "$OV/usr/bin/sweetspot-dati"; t "sweetspot-dati: l'uso elenca checkpoint" $?
+has 'ripristina|salva \[--forza\]|checkpoint|sblocca|sorveglia' "$OV/usr/bin/sweetspot-dati"; t "sweetspot-dati: l'uso elenca checkpoint e sblocca" $?
 
 # Il pannello non e' mai "senza login": PASSWORD_WEB e' obbligatoria.
 ! has 'senza login' "$R"; t "README: nessun pannello 'senza login'" $?

@@ -123,12 +123,15 @@ config_normalize() {
 			*[!A-Z0-9_]*|'') continue ;;
 		esac
 		val=${line#*=}
+		# Nome e password del Wi-Fi sono testo libero: '#' e virgolette fanno
+		# parte del valore (per loro i commenti esistono solo a inizio riga).
+		libero=
 		case "$key" in
-			*PASSWORD) ;;
+			WIFI_NOME|*PASSWORD) libero=1 ;;
 			*) val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
 		esac
 		val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-		case "$val" in
+		[ -n "$libero" ] || case "$val" in
 			\"*\") val=${val#\"}; val=${val%\"} ;;
 			\'*\') val=${val#\'}; val=${val%\'} ;;
 		esac
@@ -1686,6 +1689,11 @@ io_counters() {
 # e dei dischi, e riaprirli li scioglierebbe.
 STICK_USERS=$RUN/chiavetta.utenti
 
+# La chiavetta e' montata scrivibile? (opzioni di montaggio in /proc/mounts)
+stick_is_rw() {
+	awk -v m="$STICK_MNT" '$2 == m { n = split($4, o, ","); for (i = 1; i <= n; i++) if (o[i] == "rw") ok = 1 } END { exit !ok }' "$PROC/mounts" 2>/dev/null
+}
+
 stick_mount() { # [ro|rw]
 	local dev mode=${1:-ro} n rc=0
 	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && { [ -d "$STICK_MNT" ]; return; }
@@ -1694,7 +1702,15 @@ stick_mount() { # [ro|rw]
 	flock 6
 	n=$(cat "$STICK_USERS" 2>/dev/null)
 	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
-		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null && evento chiavetta rimontata "rw"
+		if [ "$mode" = rw ]; then
+			# Il rimontaggio puo' riuscire a parole e lasciare la chiavetta in
+			# sola lettura (errori del filesystem): si controlla lo stato vero.
+			if mount -o remount,rw "$STICK_MNT" 2>/dev/null && stick_is_rw; then
+				evento chiavetta rimontata "rw"
+			else
+				rc=1
+			fi
+		fi
 	else
 		n=0
 		dev=$(stick_device)
@@ -1779,11 +1795,20 @@ boot_env() {
 	else echo "$STICK_MNT/boot/grub/grubenv"; fi
 }
 
+# Sostituisce un file critico della FAT con la versione nuova: sync del
+# temporaneo prima del mv (senza, un taglio di corrente puo' lasciare il file
+# vuoto), copia .bak del precedente, mv e sync finale.
+fat_sostituisci() { # temporaneo destinazione
+	sync
+	[ -s "$2" ] && cp -p "$2" "$2.bak" 2>/dev/null
+	mv "$1" "$2" && sync
+}
+
 # Raspberry Pi: scrive config.txt o tryboot.txt dal modello con la copia
 # indicata (os_prefix).
 rpi_boot_config() { # file copia [modello]
 	local tpl=${3:-${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}/config.txt}
-	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && mv "$1.nuovo" "$1"
+	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && fat_sostituisci "$1.nuovo" "$1"
 }
 
 # Raspberry Pi: riga di comando del kernel di una copia (cmdline.txt).
@@ -1805,9 +1830,27 @@ rpi_tune() { # copia
 	sed -n 's/.*sweetspot\.slot=[ab] *//p' "$STICK_MNT/$1/cmdline.txt" 2>/dev/null | head -n 1
 }
 
-# Il Raspberry Pi e' partito con tryboot (prova di una copia nuova)?
-rpi_tryboot() {
-	[ "$(od -An -tx1 "$PROC/device-tree/chosen/bootloader/tryboot" 2>/dev/null | tr -d ' \n')" = 00000001 ]
+# Raspberry Pi: due file dicono quale copia e' in uso, config.txt (os_prefix,
+# quello che il firmware usa davvero) e sweetspot-avvio.env (slot). Dopo un
+# taglio di corrente fra le due scritture possono non concordare: vale
+# config.txt (se illeggibile, la copia avviata) e si corregge l'altro file.
+# Non agisce con un aggiornamento in prova (tentato/prova): li gestisce la conferma.
+rpi_riconcilia() {
+	local env real def
+	[ "$(boot_type)" = rpi ] || return 0
+	env=$(boot_env)
+	[ -z "$(grubenv_get "$env" tentato)" ] && [ -z "$(grubenv_get "$env" prova)" ] || return 0
+	real=$(sed -n 's|^os_prefix=\([ab]\)/*[[:space:]]*$|\1|p' "$STICK_MNT/config.txt" 2>/dev/null | head -n 1)
+	def=$(grubenv_get "$env" slot)
+	if [ -z "$real" ]; then
+		real=$(running_slot)
+		rpi_boot_config "$STICK_MNT/config.txt" "$real" || return 1
+		log "avvio: config.txt illeggibile, riscritto con la copia $real"
+	fi
+	if [ "$def" != "$real" ]; then
+		grubenv_set "$env" "slot=$real" || return 1
+		log "avvio: sweetspot-avvio.env indicava la copia '${def:-nessuna}', riallineato a config.txt (copia $real)"
+	fi
 }
 
 grubenv_get() { # file chiave

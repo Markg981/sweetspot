@@ -13,6 +13,9 @@ case "$1" in
 		;;
 	stop)
 		start-stop-daemon -K -p "$PIDFILE" 2>/dev/null
+		# Il follower del volume vive in un gruppo di processi proprio (setsid)
+		# e non muore con il supervisore: si ferma da pidfile.
+		sweetspot-volume ferma 2>/dev/null
 		killall squeezelite 2>/dev/null
 		# L'unica istanza di CamillaDSP della sessione (libera il DAC).
 		killall camilladsp 2>/dev/null

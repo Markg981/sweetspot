@@ -219,6 +219,7 @@ if [ "$jstate" != scarica ] && [ "$jstate" != controlla ] && [ "$jstate" != pron
 			printf '<input type="hidden" name="t" value="%s"><input type="hidden" name="a" value="aggiorna_file">' "$(token)"
 			printf '<input type="hidden" name="file" value="%s"><input type="hidden" name="ct" value="%s">' "$(esc "$f")" "$(esc "$(confirm_token)")"
 			echo '<input name="conferma_password" type="password" autocomplete="current-password" required placeholder="Password di queste pagine" aria-label="Conferma con la password attuale di queste pagine">'
+			echo '<label><input type="checkbox" name="consenti_downgrade" value="si"> Consenti una versione più vecchia di quella in uso (downgrade)</label>'
 			echo '<button>Installa</button></form>'
 		else
 			echo '<div class="v">Per installarlo da qui imposta prima una password per queste pagine.</div>'

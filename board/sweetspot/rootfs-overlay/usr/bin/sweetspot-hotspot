@@ -72,6 +72,7 @@ wifi_iface() {
 
 # C'e' una connessione che non e' l'hotspot? Un cavo con collegamento, oppure un
 # indirizzo IPv4 su una scheda Wi-Fi diversa da $1 (quella dell'hotspot).
+# shellcheck disable=SC2120 # $1 e' opzionale: i chiamanti attuali non lo passano
 connected() {
 	local n i
 	for n in "$SYS"/class/net/*; do
@@ -134,6 +135,13 @@ scan() { # scheda
 			p = int(2 * (sig + 100)); if (p < 0) p = 0; if (p > 100) p = 100
 			print p "|" s
 		}' | sort -t'|' -k1,1nr | awk '!seen[substr($0, index($0, "|") + 1)]++')
+	[ -n "$out" ] || return 1
+	# iw scrive i byte non stampabili (UTF-8, emoji) come \xNN e il backslash
+	# raddoppiato: li riporta ai caratteri veri; scarta nomi con controlli.
+	out=$(printf '%s\n' "$out" | while IFS= read -r l; do
+		n=$(printf '%b' "${l#*|}")
+		[ -n "$n" ] && valid_value "$n" && printf '%s|%s\n' "${l%%|*}" "$n"
+	done)
 	[ -n "$out" ] || return 1
 	mkdir -p "$RUN"
 	printf '%s\n' "$out" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
