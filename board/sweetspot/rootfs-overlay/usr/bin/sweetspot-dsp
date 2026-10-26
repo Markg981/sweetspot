@@ -404,13 +404,14 @@ dsp_state_write() { # dB [muto]
 }
 
 # Senza il volume a 64 bit il volume principale resta a 0 dB (solo la
-# correzione); con il volume si parte da -30 dB finche' Lyrion non dice il
-# suo, e un valore gia' scritto (anche 0.0, cioe' il cursore al 100%) resta.
+# correzione); con il volume si parte in sordina (-30 dB, muto) finche' Lyrion
+# non dice il suo: silenzio, come promesso; sweetspot-volume toglie la sordina
+# al primo volume letto. Un valore gia' scritto (anche 0.0, cioe' il cursore al 100%) resta.
 dsp_state_prepare() {
 	if ! volume_dsp; then
 		dsp_state_write 0.0
 	elif ! grep -qE '^-?[0-9]+(\.[0-9]+)? [01]$' "$DSP_VOLUME" 2>/dev/null; then
-		dsp_state_write -30.0
+		dsp_state_write -30.0 muto
 	fi
 }
 
@@ -834,9 +835,9 @@ do_prepare() { # scheda
 # sessione (stdin dalla pipe $DSP_FIFO): registro, websocket solo locale,
 # volume di partenza e configurazione della prima frequenza offerta.
 do_start_args() {
-	local gain=-30.0 mute=0 first
+	local gain=-30.0 mute=1 first
 	[ -s "$DSP_VOLUME" ] && read -r gain mute < "$DSP_VOLUME"
-	case "$gain" in -[0-9]*|0|0.0) ;; *) gain=-30.0 ;; esac
+	case "$gain" in -[0-9]*|0|0.0) ;; *) gain=-30.0; mute=1 ;; esac
 	first=$(awk '$2 != "escluso" { print $1; exit }' "$RUN/correzione.frequenze" 2>/dev/null)
 	[ -n "$first" ] || return 1
 	printf -- '-l warn -o /var/log/camilladsp.log -p %s -a 127.0.0.1 -g%s' "$DSP_PORTA" "$gain"
