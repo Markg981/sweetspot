@@ -655,8 +655,40 @@ refresh_boot_rpi() {
 	return 0
 }
 
+# Scrive su un disco il secondo stadio di GRUB (settori 1..n) e poi il primo
+# (i 440 byte del settore 0), controllando ogni dd e rileggendo per
+# confrontare. Se qualcosa non va rimette com'erano le copie vecchie
+# ($DIR/grub.ora e $DIR/mbr.ora, lette prima) e torna 1. Ordine: prima il
+# secondo stadio, poi il primo; il vecchio primo stadio punta allo stesso
+# settore, quindi in ogni momento il disco ha un primo stadio che trova un
+# secondo stadio intero (vecchio o nuovo). Limite residuo: un dd su un
+# settore grezzo non e' atomico; se manca la corrente proprio durante la
+# scrittura o il ripristino, il secondo stadio puo' restare a meta' e la
+# chiavetta non parte (si rifa' con sweetspot-installa o a mano). La
+# rilettura puo' venire dalla cache: sync prima, ma non prova il supporto.
+scrivi_grub_bios() { # disco n
+	local disk=$1 n=$2 size
+	size=$(wc -c < "$AVVIO/grub.img")
+	blockdev --setrw "$disk" 2>/dev/null
+	if dd if="$AVVIO/grub.img" of="$disk" bs=512 seek=1 conv=notrunc,fsync 2>/dev/null && sync &&
+		dd if="$disk" bs=512 skip=1 count="$n" 2>/dev/null | head -c "$size" > "$DIR/grub.letto" &&
+		same "$DIR/grub.letto" "$AVVIO/grub.img"; then
+		if dd if="$DIR/mbr.nuovo" of="$disk" bs=440 count=1 conv=notrunc,fsync 2>/dev/null && sync &&
+			dd if="$disk" bs=440 count=1 2>/dev/null > "$DIR/mbr.letto" &&
+			same "$DIR/mbr.letto" "$DIR/mbr.nuovo"; then
+			rm -f "$DIR/grub.letto" "$DIR/mbr.letto"
+			return 0
+		fi
+		dd if="$DIR/mbr.ora" of="$disk" bs=440 count=1 conv=notrunc,fsync 2>/dev/null
+	fi
+	dd if="$DIR/grub.ora" of="$disk" bs=512 seek=1 conv=notrunc,fsync 2>/dev/null
+	sync
+	rm -f "$DIR/grub.letto" "$DIR/mbr.letto"
+	return 1
+}
+
 refresh_boot_grub() {
-	local disk dev start n
+	local disk dev start n bios=0
 	replace_file "$AVVIO/BOOTX64.EFI" "$STICK_MNT/EFI/BOOT/BOOTX64.EFI"
 	replace_file "$AVVIO/BOOTIA32.EFI" "$STICK_MNT/EFI/BOOT/BOOTIA32.EFI"
 	# GRUB per BIOS: primo stadio nel settore 0 (senza la tabella delle
@@ -671,15 +703,20 @@ refresh_boot_grub() {
 			dd if="/dev/$disk" bs=440 count=1 2>/dev/null > "$DIR/mbr.ora"
 			head -c 440 "$AVVIO/boot.img" > "$DIR/mbr.nuovo"
 			if ! same "$DIR/grub.ora" "$AVVIO/grub.img" || ! same "$DIR/mbr.ora" "$DIR/mbr.nuovo"; then
-				blockdev --setrw "/dev/$disk" 2>/dev/null
-				dd if="$AVVIO/grub.img" of="/dev/$disk" bs=512 seek=1 conv=notrunc,fsync 2>/dev/null &&
-					dd if="$DIR/mbr.nuovo" of="/dev/$disk" bs=440 count=1 conv=notrunc,fsync 2>/dev/null &&
+				if scrivi_grub_bios "/dev/$disk" "$n"; then
 					log "aggiornamento: GRUB per BIOS aggiornato su /dev/$disk"
+				else
+					bios=1
+					log "aggiornamento: GRUB per BIOS non aggiornato su /dev/$disk, ripristinato com'era"
+				fi
 			fi
 			rm -f "$DIR/grub.ora" "$DIR/mbr.ora" "$DIR/mbr.nuovo"
 		fi
 	fi
 	# Il menu per ultimo: usa solo comandi presenti nel GRUB appena scritto.
+	# Se il GRUB per BIOS e' rimasto quello vecchio il menu non si tocca: un
+	# menu nuovo con un secondo stadio vecchio potrebbe non avviarsi.
+	[ "$bios" = 0 ] || return 0
 	replace_file "$AVVIO/grub.cfg" "$STICK_MNT/boot/grub/grub.cfg"
 }
 
