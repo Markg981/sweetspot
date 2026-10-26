@@ -3742,8 +3742,8 @@ expect "hotspot: senza rete si accende su wlan0 con nome dal MAC" "1|1" \
 expect "hotspot: indirizzo 192.168.4.1 sulla scheda, DHCP e DNS avviati" "1|1|1" \
 	"$(hs_calls 'ip addr add 192.168.4.1/24 dev wlan0')|$(hs_calls udhcpd)|$(hs_calls dnsd)"
 pw=$(sed -n 's/^Password: //p' "$HS/console" | head -n 1)
-expect "hotspot: password sullo schermo (10 caratteri), non nel registro" "1|0" \
-	"$(grep -c '^Password: [a-z2-9]\{10\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
+expect "hotspot: password sullo schermo (16 caratteri, 80 bit), non nel registro" "1|0" \
+	"$(grep -c '^Password: [a-z2-9]\{4\}\(-[a-z2-9]\{4\}\)\{3\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
 expect "hotspot: elenco reti ordinato per segnale, senza nomi vuoti" "100|Casa Rossi,Vicino" \
 	"$(head -n 1 "$HS/run/wifi-scan.list" | cut -d'|' -f1)|$(cut -d'|' -f2 "$HS/run/wifi-scan.list" | tr '\n' ',' | sed 's/,$//')"
 expect "hotspot: arrivato il cavo si spegne e le radio tornano spente" "1|0|1" \

@@ -150,7 +150,9 @@ scan() { # scheda
 # Password: HOTSPOT_PASSWORD (8-63 caratteri) se scritta in sweetspot.txt;
 # altrimenti quella gia' scritta in sweetspot-hotspot.txt sulla partizione di
 # avvio (stessa a ogni accensione, cosi' si legge da un PC senza schermo);
-# altrimenti una nuova casuale (che ap_start salva li').
+# altrimenti una nuova casuale (che ap_start salva li'): 16 caratteri di un
+# alfabeto di 32 senza ambigui (niente l, o, 0, 1), cioe' 80 bit da /dev/urandom,
+# a gruppi di 4 con il trattino (xxxx-xxxx-xxxx-xxxx) per digitarla senza errori.
 pass_ok() { [ "${#1}" -ge 8 ] && [ "${#1}" -le 63 ] && valid_value "$1"; }
 ap_pass() {
 	local p
@@ -164,7 +166,7 @@ ap_pass() {
 		stick_umount
 		pass_ok "$p" && { printf '%s' "$p"; return 0; }
 	fi
-	tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 10
+	tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 16 | sed 's/..../&-/g; s/-$//'
 }
 
 # Valore per il codice QR del Wi-Fi: \ ; , : " si proteggono con la barra.
