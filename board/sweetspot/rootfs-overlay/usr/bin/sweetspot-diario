@@ -118,7 +118,8 @@ da_salvare() {
 	local s nome f size off
 	for s in $(sorgenti); do
 		nome=${s%%:*}; f=${s#*:}
-		[ -s "$f" ] || continue
+		# Sorgente svuotata con un offset residuo: c'e' da azzerarlo.
+		[ -s "$f" ] || { [ "$(off_letto "$nome")" -ne 0 ] && return 0; continue; }
 		size=$(dim_file "$f"); off=$(off_letto "$nome")
 		[ "$size" -ne "$off" ] && return 0
 	done
