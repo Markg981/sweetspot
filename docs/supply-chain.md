@@ -18,6 +18,25 @@ Gli archivi "generati" da GitHub possono, in teoria, cambiare se GitHub cambia
 la compressione. In quel caso la build fallisce (fail-closed): si verifica che
 il contenuto sia identico e si aggiorna l'hash, non si disattiva il controllo.
 
+## Kernel x86: serie e politica di aggiornamento
+
+Il kernel x86 e' la serie mainline (oggi 7.3), non una LTS: le LTS attuali
+(6.18 e 6.12) non vanno bene sui PC nuovi (Intel Lunar Lake, Samsung Galaxy
+Book 5), che si riavviano subito, e il PREEMPT_RT serve a tutte le schede. Il
+prezzo e' una finestra di supporto breve, quindi vale questa politica:
+
+- si segue la mainline stabile: a ogni nuova uscita (7.x) si aggiorna
+  `BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE` in `configs/sweetspot_x86_64_defconfig`
+  e la riga di `patches/linux/linux.hash`, e si verificano i frammenti
+  `linux.fragment` con la compilazione x86 della CI; non si resta su una
+  versione che kernel.org ha smesso di mantenere;
+- appena una LTS supporta le CPU dei PC di riferimento (con PREEMPT_RT in
+  mainline), si torna a una LTS e si toglie questa eccezione;
+- il tarball e' verificato da `patches/linux/linux.hash` (sha256 da
+  `sha256sums.asc` di kernel.org), perche' non e' detto che il `linux.hash` di
+  Buildroot copra una versione cosi' recente; `BR2_GLOBAL_PATCH_DIR` lo cerca
+  prima di quello del pacchetto.
+
 Il controllo e' automatico: `./scripts/inventario.sh verifica` (e' anche in
 `tests/run.sh`).
 
