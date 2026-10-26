@@ -32,6 +32,24 @@ fi
 
 ok() { PASS=$((PASS + 1)); printf '  ok  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf '  NO  %s\n      atteso: [%s]\n      ottenuto: [%s]\n' "$1" "$2" "$3"; }
+
+# Sezioni saltate perche' manca uno strumento. In locale sono ammesse ma
+# elencate; in CI (CI=true o SWEETSPOT_CI_STRICT=1) sono un errore.
+SALTATE=""
+salta() {
+	SALTATE="$SALTATE $1"
+	echo "  (strumento \"$1\" non installato: sezione saltata)"
+}
+verifica_salti() {
+	[ -n "$SALTATE" ] || return 0
+	echo "Sezioni saltate per strumenti mancanti:$SALTATE"
+	case "${SWEETSPOT_CI_STRICT:-${CI:-}}" in
+	1 | true)
+		echo "NO  in modalita' rigorosa (CI) i salti sono un errore"
+		exit 1
+		;;
+	esac
+}
 expect() { if [ "$2" = "$3" ]; then ok "$1"; else ko "$1" "$2" "$3"; fi; }
 
 # Esegue una funzione di common.sh nell'ambiente finto $1.
@@ -1287,6 +1305,8 @@ expect "DAC a 16 bit: dither" "format: S16_LE|dither 3" \
 	"$(grep -o 'format: S16_LE' "$DSPE/run/camilladsp.yml" | tail -n 1)|dither $(grep -c 'dither' "$DSPE/run/camilladsp.yml")"
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione accettata da CamillaDSP"; else ko "camilladsp -c" "valida" "rifiutata"; fi
+else
+	salta "camilladsp"
 fi
 expect "correzione: volume principale a 0 dB per ogni processo" "0.0 0|1" \
 	"$(cat "$DSPE/run/camilladsp.volume")|$(grep -c "vol_file \"$DSPE/run/camilladsp.volume\"" "$DSPE/asound.conf")"
@@ -1313,6 +1333,8 @@ expect "volume a 64 bit, DAC a 32 bit: dither a 24 bit" "S32_LE|bits: 24|dither 
 expect "volume a 64 bit: il volume gia' scelto resta" "-17.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione del volume accettata da CamillaDSP"; else ko "camilladsp -c volume" "valida" "rifiutata"; fi
+else
+	salta "camilladsp"
 fi
 expect "file del volume: valori non validi rifiutati" "1|-17.4 1" "$(dsp '' stato 'abc'; echo $?)|$(cat "$DSPE/run/camilladsp.volume")"
 mv "$DSPE/sinistro.bak" "$DSPE/run/correzione/sinistro.txt"
@@ -1419,6 +1441,8 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 		"$(dspf fir_taps)|$(printf '%s\n' "$yml" | grep -o 'extra_samples: [0-9]*')"
 	if command -v camilladsp > /dev/null; then
 		if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione FIR accettata da CamillaDSP"; else ko "camilladsp -c FIR" "valida" "rifiutata"; fi
+	else
+		salta "camilladsp"
 	fi
 	dsp 'CORREZIONE=confronto' prepara 1 > /dev/null
 	expect "FIR nel confronto: stessa frequenza e attenuazione, senza convoluzione" "samplerate: 96000|0|-7.5" \
@@ -1541,6 +1565,8 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 	expect "FIR solo a frequenze che il DAC non accetta: il motivo le elenca" "il DAC non accetta nessuna delle frequenze dei filtri FIR (192000 Hz)" "$(cat "$DSPE/run/correzione.motivo")"
 	rm -f "$FR"/fir-*.wav
 	rm -f "$DSPE"/run/camilladsp-[0-9]*.yml "$DSPE/run/correzione.motivo" "$DSPE/run/correzione.avviso" "$DSPE/run/correzione.frequenze"
+else
+	salta "python3"
 fi
 # Correzione chiesta con file mancanti, illeggibili o malformati: il problema
 # e' esplicito (con blocca il player non suona, vedi correzione_non_applicabile).
@@ -1721,6 +1747,8 @@ setenv slot=a
 expect "ambiente di GRUB di 1024 byte" "1024" "$(wc -c < "$UPD/stick/boot/grub/grubenv" | tr -d ' ')"
 if command -v grub-editenv > /dev/null; then
 	expect "ambiente leggibile da GRUB" "slot=a" "$(grub-editenv "$UPD/stick/boot/grub/grubenv" list)"
+else
+	salta "grub-editenv"
 fi
 mkpkg v1.1.0 x86_64
 expect "pacchetto trovato sul disco" "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar" "$(upd pacchetti)"
@@ -1917,6 +1945,8 @@ if command -v minisign > /dev/null; then
 	UPD_PUB=$UPD/chiavi/ok.pub upd _lavoro file "$PKG"
 	expect "pacchetto alterato dopo la firma rifiutato" "errore|firma non valida: il pacchetto è stato alterato o non è ufficiale" "$(cat "$UPD/run/aggiornamento/stato")"
 	rm -f "$UPD/pkg/SHA256SUMS.minisig"
+else
+	salta "minisign"
 fi
 
 echo "Riavvii del watchdog: al secondo di seguito parte l'altra copia"
@@ -2099,6 +2129,8 @@ if command -v minisign > /dev/null; then
 	PI_PUB=$UPD/chiavi/ok.pub updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
 	expect "pacchetto del Pi firmato accettato" "pronto|v1.4.0|no" \
 		"$(cat "$PI/run/aggiornamento/stato")|$([ -e "$PI/stick/a/SHA256SUMS.minisig" ] && echo si || echo no)"
+else
+	salta "minisign"
 fi
 expect "installazione sul disco interno non disponibile sul Pi" "non serve su questo computer" \
 	"$(SWEETSPOT_SYSFS=$PI/sys SWEETSPOT_PROCFS=$PI/proc SWEETSPOT_RUN=$PI/run SWEETSPOT_LOG=$PI/log \
@@ -2158,6 +2190,8 @@ expect "GRUB nel settore 0 e nei settori successivi" "ebeb 6767" \
 if command -v sfdisk > /dev/null; then
 	expect "tabella letta da sfdisk" "start=2048,size=1048576,type=c,bootable start=1050624,size=1048576,type=83" \
 		"$(sfdisk -d "$INS/disco.img" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
+else
+	salta "sfdisk"
 fi
 expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si 465')"
 expect "chiavetta di avvio non proponibile" "disco non adatto" "$(ins 'do_start sdc si 7')"
@@ -2241,6 +2275,8 @@ expect "diventa l'archivio" "imposta ARCHIVIO Sweetspot Musica" "$(cat "$SP/conf
 if command -v sfdisk > /dev/null; then
 	expect "tabella letta da sfdisk" "start=8192,size=2097152,type=c,bootable start=2105344,size=65001472,type=83" \
 		"$(sfdisk -d "$SP/dev/mmcblk0" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
+else
+	salta "sfdisk"
 fi
 expect "dopo la creazione non si offre piu'" "mmcblk0|0|no|il disco ha gia' altre partizioni" "$(sp examine)"
 expect "con un archivio gia' presente non si crea" "c'e' gia' un archivio musicale" "$(sp do_create)"
@@ -2503,7 +2539,7 @@ if command -v jq >/dev/null; then
 	expect "riepilogo: solo i brani del piano, errori e streaming" "parziale 3 1 1 1 0" \
 		"$(jq -r '"\(.stato) \(.brani) \(.caricati) \(.errori) \(.streaming) \(.oltre)"' "$PRE/run/precarico.json")"
 else
-	echo "  (jq non installato: riepilogo non provato)"
+	salta "jq"
 fi
 
 echo "CamillaDSP in real-time"
@@ -2709,6 +2745,8 @@ print("|".join(res))
 PY
 	expect "prova ALSA CamillaDSP: tono corretto accettato, frequenza sbagliata, buchi e silenzio rifiutati" \
 		"pass|fail|fail|pass|fail|fail|fail" "$(python3 "$WORK/analisi.py" "$ROOT/tests/camilladsp-sessione.py")"
+else
+	salta "python3"
 fi
 expect "la prova ALSA in QEMU include il caso CamillaDSP di sessione (stesso PID, 44,1 -> 96 kHz)" "1|1" \
 	"$(grep -c 'camilladsp-sessione.py' "$ROOT/tests/prova-alsa-qemu.sh")|$(grep -c 'RATES = (44100, 96000)' "$ROOT/tests/camilladsp-sessione.py")"
@@ -3501,6 +3539,8 @@ if command -v python3 > /dev/null; then
 		"$(grep -c '^| .*ASUSTeK N550JV' "$Q/matrice.md")|$(grep '^| .*ASUSTeK' "$Q/matrice.md" | awk -F'|' '{gsub(/ /, "", $8); print $8}')"
 	expect "matrice: docs/compatibilita.md aggiornata" "0" \
 		"$(python3 "$ROOT/tools/matrice-compatibilita.py" --verifica > /dev/null 2>&1; echo $?)"
+else
+	salta "python3"
 fi
 
 echo "Hotspot di configurazione Wi-Fi (primo avvio)"
@@ -3941,9 +3981,11 @@ if command -v perl >/dev/null; then
 		else
 			ko "renderer UPnP" "tutte le prove superate" "$(printf '%s' "$out" | grep -v '^  ok' | tail -n 15)"
 		fi
+	else
+		salta "python3"
 	fi
 else
-	echo "  (perl non installato, saltato)"
+	salta "perl"
 fi
 echo "Media server UPnP/DLNA"
 MSD=$WEB/mediaserver
@@ -4029,12 +4071,13 @@ if command -v shellcheck >/dev/null; then
 		ko "shellcheck" "nessun avviso" "$out"
 	fi
 else
-	echo "  (shellcheck non installato, saltato)"
+	salta "shellcheck"
 fi
 
 echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
+verifica_salti
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
@@ -4064,8 +4107,9 @@ python3 "$ROOT/tests/reference-studio.py" || exit 1
 if command -v node > /dev/null 2>&1; then
 	node "$ROOT/tests/studio-js.js" || exit 1
 else
-	echo "studio-js: node assente, prova del JS saltata"
+	salta "node"
 fi
+verifica_salti
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
