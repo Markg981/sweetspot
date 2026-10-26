@@ -58,7 +58,34 @@ fingerprint() {
 	} | sort | md5sum | cut -d' ' -f1
 }
 
+# Ripristino fallito: la RAM e' vuota o parziale, un salvataggio la
+# scriverebbe sopra la generazione buona della chiavetta (e persist.db, con
+# valutazioni e statistiche, non si ricostruisce con la scansione). Il
+# marcatore blocca salvataggio e checkpoint finche' un ripristino non riesce o
+# l'utente non lo toglie ("salva --forza" o "sblocca").
+RESTORE_FAIL=$RUN/dati.ripristino-fallito
+
 do_restore() {
+	if _restore "$@"; then
+		rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
+		return 0
+	fi
+	date +%s > "$RESTORE_FAIL"
+	log "dati: ripristino non riuscito, salvataggio bloccato per non sovrascrivere la copia sulla chiavetta"
+	return 1
+}
+
+# Vero (e registra l'avviso una volta) se un ripristino fallito blocca i salvataggi.
+restore_blocked() {
+	[ -f "$RESTORE_FAIL" ] || return 1
+	if [ ! -f "$RESTORE_FAIL.avvisato" ]; then
+		: > "$RESTORE_FAIL.avvisato"
+		log "dati: salvataggio rifiutato, il ripristino all'avvio non e' riuscito (sweetspot-dati sblocca per forzare)"
+	fi
+	return 0
+}
+
+_restore() {
 	local src="$1" f
 	[ -d "$src" ] || [ -d "$src.vecchio" ] || return 0
 	# Interruzione fra le due rinomine: la generazione precedente resta valida.
@@ -126,6 +153,7 @@ save_failed() { # temporaneo destinazione [montata]
 do_save() {
 	local rc n=0 before after
 	[ -d "$LMS_DATA" ] || return 0
+	restore_blocked && return 1
 	exec 8> "$RUN/dati.lock" || return 1
 	while ! flock -n 8; do
 		if [ "$n" -ge "$LOCK_WAIT" ]; then
@@ -271,6 +299,7 @@ space_wait() {
 do_checkpoint() {
 	local rc=0
 	[ -d "$LMS_DATA" ] || return 0
+	restore_blocked && return 1
 	exec 8> "$RUN/dati.lock" || return 1
 	if ! flock -n 8; then exec 8>&-; return 1; fi
 	( bg_self sweetspot-dati; checkpoint_dbs ) || rc=1
@@ -381,7 +410,12 @@ case "$1" in
 		# Chiamato con la chiavetta gia' montata dallo script di avvio.
 		do_restore "${2:-$STICK_MNT/$DATA_DIR_NAME}"
 		;;
-	salva) do_save ;;
+	salva)
+		[ "${2:-}" = "--forza" ] && rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
+		do_save ;;
+	sblocca)
+		rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
+		log "dati: blocco del salvataggio tolto a mano" ;;
 	sorveglia) do_watch ;;
-	*) echo "uso: $0 ripristina|salva|sorveglia" >&2; exit 1 ;;
+	*) echo "uso: $0 ripristina|salva [--forza]|sblocca|sorveglia" >&2; exit 1 ;;
 esac

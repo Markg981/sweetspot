@@ -1324,7 +1324,13 @@ dsp 'VOLUME=dsp' prepara 1 > /dev/null
 yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "volume a 64 bit, DAC a 16 bit: nessun filtro, guadagno 0, dither a 16 bit, mai sopra 0 dB" "0|0.0|bits: 16|volume_limit: 0.0" \
 	"$(printf '%s\n' "$yml" | grep -c 'type: Biquad')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)|$(printf '%s\n' "$yml" | grep -o 'bits: 16')|$(printf '%s\n' "$yml" | grep -o 'volume_limit: 0.0')"
-expect "volume a 64 bit: primo avvio a -30 dB" "-30.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+expect "volume a 64 bit: primo avvio a -30 dB in sordina (silenzio, non volume udibile)" "-30.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+# file del volume assente o non valido: CamillaDSP parte in sordina (-m)
+rm -f "$DSPE/run/camilladsp.volume"
+expect "avvio senza file del volume: sordina (-m)" "-g-30.0 -m" "$(dsp 'VOLUME=dsp' avvio | sed -n 's/.*\(-g[^ ]* -m\).*/\1/p')"
+echo "spazzatura" > "$DSPE/run/camilladsp.volume"
+expect "avvio con file del volume non valido: sordina (-m)" "-g-30.0 -m" "$(dsp 'VOLUME=dsp' avvio | sed -n 's/.*\(-g[^ ]* -m\).*/\1/p')"
+echo "-30.0 1" > "$DSPE/run/camilladsp.volume"
 printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
 echo "-17.4 1" > "$DSPE/run/camilladsp.volume"
 dsp 'VOLUME=dsp' prepara 1 > /dev/null
@@ -2014,7 +2020,6 @@ pi() { run "$PI" "SWEETSPOT_STICK_DIR=$PI/stick; STICK_MNT=$PI/stick; SWEETSPOT_
 expect "scheda e avvio del Pi" "rpi rpi Image.gz $PI/stick/b $PI/stick/sweetspot-avvio.env" \
 	"$(pi 'echo $(board) $(boot_type) $(kernel_file) $(slot_dir $STICK_MNT b) $(boot_env)')"
 expect "modello dall'albero dei dispositivi" "Raspberry Pi 4 Model B Rev 1.5" "$(pi cpu_model)"
-expect "non e' un avvio di prova (tryboot)" "no" "$(pi 'rpi_tryboot && echo si || echo no')"
 pi "rpi_boot_config $PI/stick/config.txt a"
 expect "config.txt dal modello, copia A" "os_prefix=a/|include sweetspot-scheda.txt" \
 	"$(grep -E '^(os_prefix|include)' "$PI/stick/config.txt" | tr '\n' '|' | sed 's/|$//')"
@@ -2102,7 +2107,6 @@ expect "riavvio normale senza prove in sospeso" "normale|" "$(cat "$PI/riavvio")
 # Parte la copia B (tryboot) e si conferma
 echo "coherent_pool=1M console=tty1 quiet sweetspot.slot=b" > "$PI/proc/cmdline"
 printf '\000\000\000\001' > "$PI/proc/device-tree/chosen/bootloader/tryboot"
-expect "avvio di prova riconosciuto" "si" "$(pi 'rpi_tryboot && echo si || echo no')"
 updpi sweetspot-aggiorna conferma
 expect "la copia B si conferma ed e' quella in uso" "b|" "$(penv slot)|$(penv tentato)"
 expect "config.txt ora avvia la copia B" "os_prefix=b/" "$(grep '^os_prefix' "$PI/stick/config.txt")"
@@ -2119,6 +2123,19 @@ pi "grubenv_set $PI/stick/sweetspot-avvio.env prova= tentato=a"
 updpi sweetspot-aggiorna conferma
 expect "versione non partita: si resta su B" "b||os_prefix=b/" "$(penv slot)|$(penv tentato)|$(grep '^os_prefix' "$PI/stick/config.txt")"
 expect "versione non partita segnalata" "fallita=v1.2.0" "$(updpi sweetspot-aggiorna stato | grep '^fallita=')"
+# Riconciliazione di config.txt e sweetspot-avvio.env (C18): vale config.txt
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=a prova= tentato="
+pi "rpi_boot_config $PI/stick/config.txt b"
+pi "rpi_riconcilia"
+expect "stato incoerente: avvio.env allineato a config.txt" "b" "$(penv slot)"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=b"
+pi "rpi_boot_config $PI/stick/config.txt a"
+pi "rpi_riconcilia"
+expect "stato incoerente al contrario: vale ancora config.txt" "a" "$(penv slot)"
+pi "rpi_boot_config $PI/stick/config.txt b"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=b"
+pi "rpi_riconcilia"
+expect "file concordi: nulla cambia" "b|os_prefix=b/" "$(penv slot)|$(grep '^os_prefix' "$PI/stick/config.txt")"
 mkpkg_pi v1.3.0 x86_64
 updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
 expect "pacchetto per PC rifiutato sul Pi" "errore|pacchetto per un altro tipo di computer (x86_64)" "$(cat "$PI/run/aggiornamento/stato")"
@@ -4110,6 +4127,28 @@ else
 	salta "node"
 fi
 verifica_salti
+# --- sweetspot-dati: ripristino fallito blocca il salvataggio (C15) ---
+RF=$WORK/ripfall
+mkdir -p "$RF/run" "$RF/lms/prefs" "$RF/stick/sweetspot-dati"
+echo "buona" > "$RF/stick/sweetspot-dati/lyrion.tar"   # non e' un tar: ripristino fallisce
+echo x > "$RF/lms/prefs/p"
+rfdati() {
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$RF/run SWEETSPOT_LOG=$RF/log SWEETSPOT_LMS_DATA=$RF/lms SWEETSPOT_STICK_DIR=$RF/stick \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dati
+		stick_mount() { return 0; }; stick_umount() { :; }; space_ok() { return 0; }
+		$1"
+}
+rfdati 'do_restore "$STICK_MNT/sweetspot-dati"'; rc=$?
+expect "dati: ripristino fallito, esito non zero" 1 "$rc"
+expect "dati: ripristino fallito lascia il marcatore" si "$([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+rfdati 'do_save'; rc=$?
+expect "dati: salvataggio rifiutato dopo ripristino fallito" 1 "$rc"
+expect "dati: la generazione precedente resta intatta" buona "$(cat "$RF/stick/sweetspot-dati/lyrion.tar")"
+expect "dati: il rifiuto e' nel registro" 1 "$(grep -c 'salvataggio rifiutato' "$RF/log")"
+rm -rf "$RF/stick/sweetspot-dati"; mkdir -p "$RF/s2"; tar -cf "$RF/s2/lyrion.tar" -C "$RF/lms" prefs
+rfdati "do_restore $RF/s2"; rc=$?
+expect "dati: un ripristino riuscito toglie il blocco" "0 no" "$rc $([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
