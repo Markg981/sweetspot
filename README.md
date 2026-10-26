@@ -46,7 +46,12 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    se manca la corrente. Il riavvio del solo player ("Salva e applica" nella
    pagina Audio) non fa più alcuna copia del database. Prima di scrivere si
    controlla lo spazio: a chiavetta piena non si riprova ogni minuto (ogni 30
-   minuti) e la pagina Stato avvisa. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
+   minuti) e la pagina Stato avvisa. Se il ripristino all'avvio non riesce,
+   un marcatore in RAM (`dati.ripristino-fallito`) blocca salvataggio e
+   checkpoint: la copia buona sulla chiavetta (valutazioni e statistiche
+   comprese) non viene sovrascritta da una RAM vuota. Il blocco cade da solo a
+   un ripristino riuscito, o a mano con `sweetspot-dati sblocca` /
+   `sweetspot-dati salva --forza`. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
    `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner
    non resta congelato con una transazione del database aperta. Se il kernel
    non ha cgroup v2 si ripiega sul vecchio `SIGSTOP`. All'avvio il demone
@@ -395,6 +400,17 @@ quello di prima e la pagina Sistema lo segnala. La versione precedente resta
 installata: si torna indietro con un clic. Viene sostituita solo quando il
 nuovo pacchetto è scaricato e verificato; se sulla chiavetta non c'è posto per
 tutti e due, la pagina Sistema lo dice e chiede di cancellarla prima.
+
+**Niente downgrade per sbaglio**: prima di installare, la versione del
+pacchetto (formato di `git describe`, es. `v1.2.3` o `v1.2.3-5-gabcdef`) si
+confronta con quella in uso (`/etc/sweetspot-version`). Un pacchetto più
+vecchio, anche se firmato, è rifiutato: potrebbe contenere falle note. Per
+installarlo comunque si spunta *Consenti una versione più vecchia* nel modulo
+del pacchetto da disco (insieme alla conferma con la password) o si usa
+`sweetspot-aggiorna file-downgrade PACCHETTO`. La stessa versione è ammessa
+(reinstallazione); una versione non confrontabile (compilazione di sviluppo)
+non blocca. L'aggiornamento scaricato da GitHub (`scarica`) non ha l'opzione:
+installa sempre l'ultima release.
 
 Gli aggiornamenti sono **firmati**: la compilazione ufficiale firma l'elenco dei
 file del pacchetto con una chiave privata che sta solo nei segreti del
@@ -756,7 +772,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `RENDERER_UPNP` | `si`: Sweetspot compare come diffusore UPnP/DLNA (MediaRenderer) per BubbleUPnP, JPlay, mconnect e simili; l'audio passa da Lyrion e dal player, vedi [Renderer UPnP/DLNA](#renderer-upnpdlna-in-entrata). Solo con `MODALITA=completa` | no |
 | `SERVER_UPNP` | `si`: la libreria compare come media server UPnP/DLNA (MiniDLNA) per streamer e DAC di rete; DSF e DFF partono senza conversioni, vedi [Media server UPnP/DLNA](#media-server-upnpdlna). Solo con `MODALITA=completa` | no |
-| `SSH`, `SSH_PASSWORD`, `SSH_UTENTE` | accesso remoto per l'assistenza. `SSH_UTENTE` è `root` (predefinito) oppure `assistenza`, un utente senza privilegi (con `assistenza` il login di root è disattivato). Dalla pagina Sistema queste tre chiavi aprono il sistema come amministratore e si cambiano solo con la **conferma forte**: serve avere `PASSWORD_WEB`, riscriverla nel campo di conferma e un gettone monouso (valido 10 minuti) emesso da root; la verifica la fa l'helper privilegiato, non la pagina, e un tentativo sbagliato conta come un errore di accesso. Senza `PASSWORD_WEB` da web non si cambiano: si scrivono in `sweetspot.txt` con il computer | no |
+| `SSH`, `SSH_PASSWORD`, `SSH_UTENTE` | accesso remoto per l'assistenza. `SSH_UTENTE` è `root` (predefinito) oppure `assistenza`, un utente senza privilegi (con `assistenza` il login di root è disattivato). Se sulla chiavetta c'è un file `authorized_keys`, SSH accetta **solo le chiavi** (password spente, anche per root); altrimenti resta la password, con al massimo 3 tentativi per connessione. La chiave dell'host si crea una volta e si salva sulla chiavetta (`sweetspot-ssh-host-key`), così non cambia a ogni avvio. Dalla pagina Sistema queste tre chiavi aprono il sistema come amministratore e si cambiano solo con la **conferma forte**: serve avere `PASSWORD_WEB`, riscriverla nel campo di conferma e un gettone monouso (valido 10 minuti) emesso da root; la verifica la fa l'helper privilegiato, non la pagina, e un tentativo sbagliato conta come un errore di accesso. Senza `PASSWORD_WEB` da web non si cambiano: si scrivono in `sweetspot.txt` con il computer | no |
 | `HTTPS`, `HTTPS_REINDIRIZZA` | connessione protetta delle pagine (porta 443) con `stunnel` davanti all'httpd di BusyBox; certificato autofirmato creato al primo avvio con `HTTPS=si` e salvato sulla chiavetta (`sweetspot-https.pem`), impronta SHA-256 nella pagina Sistema. Con HTTPS il cookie di accesso è `Secure`. `HTTPS_REINDIRIZZA=si` fa rimandare a https le pagine richieste in chiaro (non `/cgi-bin/vivo` né le richieste dal computer stesso). Lyrion (porta 9000) resta in chiaro, anche se con password | no |
 | `DIARIO`, `DIARIO_ORE`, `DIARIO_KB` | diario di bordo sulla chiavetta (cartella `diagnostica`): `si`/`no`; ogni quante ore (1-24, 2 predefinite) si salvano registro e timeline; dimensione massima in KB di ogni file prima della rotazione (256 predefiniti, tre generazioni). Vedi [Diagnostica](#diagnostica-registro-persistente-timeline-e-crash-dump) | si, 2, 256 |
 | `OTTIMIZZAZIONI` | `no` per confronti alla cieca o problemi | si |

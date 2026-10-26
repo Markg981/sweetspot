@@ -123,12 +123,15 @@ config_normalize() {
 			*[!A-Z0-9_]*|'') continue ;;
 		esac
 		val=${line#*=}
+		# Nome e password del Wi-Fi sono testo libero: '#' e virgolette fanno
+		# parte del valore (per loro i commenti esistono solo a inizio riga).
+		libero=
 		case "$key" in
-			*PASSWORD) ;;
+			WIFI_NOME|*PASSWORD) libero=1 ;;
 			*) val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
 		esac
 		val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-		case "$val" in
+		[ -n "$libero" ] || case "$val" in
 			\"*\") val=${val#\"}; val=${val%\"} ;;
 			\'*\') val=${val#\'}; val=${val%\'} ;;
 		esac
@@ -1792,11 +1795,20 @@ boot_env() {
 	else echo "$STICK_MNT/boot/grub/grubenv"; fi
 }
 
+# Sostituisce un file critico della FAT con la versione nuova: sync del
+# temporaneo prima del mv (senza, un taglio di corrente puo' lasciare il file
+# vuoto), copia .bak del precedente, mv e sync finale.
+fat_sostituisci() { # temporaneo destinazione
+	sync
+	[ -s "$2" ] && cp -p "$2" "$2.bak" 2>/dev/null
+	mv "$1" "$2" && sync
+}
+
 # Raspberry Pi: scrive config.txt o tryboot.txt dal modello con la copia
 # indicata (os_prefix).
 rpi_boot_config() { # file copia [modello]
 	local tpl=${3:-${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}/config.txt}
-	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && mv "$1.nuovo" "$1"
+	sed "s|@COPIA@|$2|g" "$tpl" > "$1.nuovo" && fat_sostituisci "$1.nuovo" "$1"
 }
 
 # Raspberry Pi: riga di comando del kernel di una copia (cmdline.txt).

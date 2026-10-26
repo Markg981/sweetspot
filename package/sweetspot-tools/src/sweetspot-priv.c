@@ -88,6 +88,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-aggiorna", "annulla", "", "", 0},
 	{"sweetspot-aggiorna", "cerca", "", "", 0},
 	{"sweetspot-aggiorna", "file", "s", "", 1}, // installa un pacchetto qualsiasi del disco: solo con @conferma
+	{"sweetspot-aggiorna", "file-downgrade", "s", "", 1}, // come "file" ma accetta una versione piu' vecchia: solo con @conferma
 	{"sweetspot-aggiorna", "libera", "", "", 0},
 	{"sweetspot-aggiorna", "pacchetti", "", "", 0},
 	{"sweetspot-aggiorna", "predefinita", "", "", 0},

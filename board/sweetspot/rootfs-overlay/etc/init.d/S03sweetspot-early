@@ -75,7 +75,8 @@ case "$1" in
 			cp "$STICK_MNT/sweetspot.txt" "$RUN/sweetspot.txt" 2>/dev/null
 			cp "$STICK_MNT/boot/grub/auto.cfg" "$RUN/auto.cfg" 2>/dev/null
 			# Impostazioni, plugin e libreria di Lyrion salvati.
-			sweetspot-dati ripristina "$STICK_MNT/$DATA_DIR_NAME"
+			sweetspot-dati ripristina "$STICK_MNT/$DATA_DIR_NAME" ||
+				log "dati: ripristino non riuscito, salvataggio bloccato fino a intervento"
 			# Filtri della correzione ambientale (REW) e impulsi FIR.
 			sweetspot-dsp ripristina "$STICK_MNT/correzione-ambientale" ||
 				log "correzione: ripristino dei filtri non riuscito"
