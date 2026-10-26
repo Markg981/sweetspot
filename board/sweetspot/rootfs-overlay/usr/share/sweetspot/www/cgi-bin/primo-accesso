@@ -19,12 +19,13 @@ reply_page() { # codice-stato messaggio
 }
 
 first_page() {
+	login_prepare
 	page_start "Primo accesso" accesso
 	[ -n "$1" ] && printf '<p class="msg">%s</p>\n' "$(esc "$1")"
 	cat <<HTML
 <p class="sub">Questo Sweetspot non ha ancora una password. Il codice di primo accesso è sullo schermo collegato al dispositivo e nel file <code>PRIMO-ACCESSO.txt</code> sulla chiavetta. Inseriscilo e scegli la password dell'amministratore (almeno 10 caratteri): serve per tutte le pagine e le operazioni di amministrazione.</p>
 <form method="post" action="/cgi-bin/primo-accesso" class="card">
-<input type="hidden" name="t" value="$(token)">
+<input type="hidden" name="t" value="$(login_token)">
 <div class="row"><div class="grow">
 <label for="cod">Codice di primo accesso</label>
 <input id="cod" name="codice" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX" autofocus required>
@@ -58,7 +59,7 @@ read_form
 if auth_enabled; then redirect /cgi-bin/accesso; exit 0; fi
 [ -f "$RUN/primo-accesso.attivo" ] || { no_code; exit 0; }
 
-if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
+if ! login_token_ok "$F_t"; then
 	reply_page "403 Forbidden" "Modulo scaduto: ricarica la pagina e riprova."
 	exit 0
 fi
