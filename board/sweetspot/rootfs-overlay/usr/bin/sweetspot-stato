@@ -590,6 +590,7 @@ do_round() {
 		ROWS_CACHE=$rows
 	fi
 	liveness_round "$now"
+	stick_guardia
 	{
 		[ -n "$rows" ] && printf '%s\n' "$rows"
 		[ -n "$LV_ROWS" ] && printf '%s' "$LV_ROWS"
