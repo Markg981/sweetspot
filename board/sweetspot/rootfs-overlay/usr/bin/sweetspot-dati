@@ -382,6 +382,7 @@ case "$1" in
 		do_restore "${2:-$STICK_MNT/$DATA_DIR_NAME}"
 		;;
 	salva) do_save ;;
+	checkpoint) do_checkpoint ;;
 	sorveglia) do_watch ;;
-	*) echo "uso: $0 ripristina|salva|sorveglia" >&2; exit 1 ;;
+	*) echo "uso: $0 ripristina|salva|checkpoint|sorveglia" >&2; exit 1 ;;
 esac

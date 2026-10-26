@@ -97,7 +97,8 @@ nessuna preferenza esistente viene cancellata. Funzionano anche le app per
 Lyrion (iPeng, Squeezer, Material) e gli altri player Squeezebox della casa.
 Il frontend è provato con Lyrion e `sweetspot-priv` simulati
 (`tests/reference-studio.py` e prove in browser a 320, 390, 768 e 1440 px),
-non ancora con un Lyrion vero.
+non ancora con un Lyrion vero (limite noto: la prova con un Lyrion reale
+non è stata fatta).
 
 L'aspetto **Reference Studio** usa grafite, blu e controlli leggibili su
 telefono, tablet e computer. Le impostazioni SweetSpot hanno la stessa
@@ -344,8 +345,11 @@ Senza una chiave pubblica incorporata, l'installazione degli aggiornamenti è
 disabilitata. Una release ufficiale richiede chiave, firma e test Lyrion
 riusciti per entrambe le architetture. Le compilazioni di sviluppo possono
 produrre artifact non firmati, che il player rifiuta. Il pacchetto viene
-controllato prima dell'estrazione: solo file previsti, tutti coperti dal
-manifesto, senza collegamenti o percorsi esterni. Per un aggiornamento serve
+controllato in due tempi. Prima dell'estrazione si ispeziona l'elenco del tar:
+solo file previsti, senza collegamenti, dispositivi, percorsi esterni o membri
+ripetuti. Poi si estrae in una cartella temporanea e lì si verifica che il
+manifesto (`SHA256SUMS`, con la firma) copra tutti i file estratti, nessuno in
+più e nessuno mancante; solo allora il pacchetto viene accettato. Per un aggiornamento serve
 spazio temporaneo anche per il tar completo, oltre ai file estratti.
 
 ### Modalità
@@ -688,7 +692,6 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `WATCHDOG` | `si`: watchdog hardware (Intel iTCO, AMD SP5100, Raspberry Pi; i moduli del chipset sono caricati da `S21sweetspot-watchdog`, in blacklist solo con `no`; softdog se manca) alimentato ogni 5 s, tempo limitato al massimo del dispositivo (15 s sul Pi); un blocco totale fa ripartire il computer e, dopo un aggiornamento, la versione precedente; un riavvio causato dal watchdog è annotato nel registro (`bootstatus`) | si |
 | `PASSWORD_WEB` | password delle pagine di Sweetspot (impronta SHA-512-crypt con sale; una vecchia impronta MD5-crypt viene riscritta al primo accesso giusto, una password scritta in chiaro in `sweetspot.txt` all'avvio; accesso da `/cgi-bin/accesso` con sessione: cookie HttpOnly e SameSite=Strict, 8 ore, ID casuale; dopo 5 errori di fila **dallo stesso indirizzo** si aspetta 30 secondi per ogni errore in più, fino a 15 minuti, e chi sbaglia non blocca gli altri (non c'è un contatore comune, che chiunque nella rete potrebbe usare per bloccare l'accesso); anche il modulo di accesso richiede il gettone anti-CSRF; ogni risposta porta `Content-Security-Policy: frame-ancestors`, `X-Frame-Options`, `X-Content-Type-Options` e `Referrer-Policy` (solo Audio, Stato e Accesso possono stare nel riquadro di Material, dalla porta 9000); senza sessione la copertina del CD risponde con un segnaposto e non con un errore; ogni azione richiede sessione e gettone anti-CSRF; il pulsante *Esci* chiude la sessione): obbligatoria: al primo avvio (e dopo un ripristino) le pagine mostrano solo *Primo accesso*, dove si inserisce il **codice univoco del dispositivo** (`XXXX-XXXX-XXXX`, casuale, mostrato su console e scritto in `PRIMO-ACCESSO.txt` sulla chiavetta, anche senza schermo) e si sceglie la password (minimo 10 caratteri, nessuna password predefinita). Non si puo' piu' togliere dalla pagina Sistema, solo cambiare, e per cambiarla serve la **conferma forte** con la password attuale (come per `SSH`): una sessione rubata non basta a chiudere fuori il proprietario. La stessa conferma serve per installare un pacchetto dal disco, che sostituisce il sistema anche se firmato ma vecchio. Le verifiche della password fatte da root (conferma forte compresa) hanno un loro contatore, fuori dalla portata delle pagine: dopo 20 errori di fila si aspetta 30 secondi per ogni errore in più, fino a 15 minuti, e ogni errore costa comunque 2 secondi. Dimenticata, anche senza schermo: togliere la riga `PASSWORD_WEB` da `sweetspot.txt` sulla chiavetta e riavviare; il codice viene riemesso su console e chiavetta. La conferma degli aggiornamenti (`/cgi-bin/vivo`) resta possibile con una chiave casuale di ogni avvio, solo per root. Le pagine rispondono solo se l'indirizzo usato è quello del player (`NOME_RETE.local`, il nome breve, i suoi indirizzi IP, `localhost`), altrimenti 403: è la difesa dal DNS rebinding di un sito esterno. Lyrion (porta 9000) e la sua CLI (9090) sono protetti da utente e password: vedi `LYRION_UTENTE`; Sweetspot tiene attiva la protezione CSRF di Lyrion al livello 1 (media, compatibile con Material Skin, iPeng e Squeezer; un livello 2 scelto da te resta). Nella pagina Sistema c'è anche *Ripristina le impostazioni iniziali* (`sweetspot-config ripristina`): musica, archivio e filtri restano | vuota |
 | `LYRION_UTENTE`, `LYRION_PASSWORD` | credenziali di Lyrion, sempre attive (`authorize`): HTTP 9000 (anche Material e `/jsonrpc.js`) risponde 401 senza Basic e la CLI 9090 vuole `login`. Se mancano, al primo avvio Sweetspot genera una password casuale (utente `sweetspot`) e la salva qui; la pagina Sistema la mostra sempre, generata o scelta (blocco *Accesso a Lyrion*, *Mostra la password di Lyrion*), e permette di sceglierne una nuova (da 10 a 64 caratteri ASCII, senza spazi ne' `%`, che la CLI di Lyrion decodificherebbe): si salva qui e Lyrion si riavvia per applicarla, riallineando le credenziali mentre e' fermo. Va inserita una volta nelle app (Material, iPeng, Squeezer, UPnP/DLNA con credenziali, ecc.). Sweetspot le usa per volume, precarico, pagine, prova DoP e impostazioni del player. Credenziali Lyrion **preesistenti** non vengono sovrascritte: restano valide e vanno scritte qui perche' Sweetspot le usi, oppure sostituite con una password scelta dalla pagina Sistema (utente `sweetspot`). Scrivendo qui una password propria la si applica a ogni avvio; togliendo `LYRION_PASSWORD` se ne genera una nuova (rotazione). Sono in chiaro in `sweetspot.txt`, come `WIFI_PASSWORD`. Slimproto (3483) non ha autenticazione nativa: i player non sono toccati, ma quella porta e' protetta solo dalla rete locale | generate |
-| `SSH`, `SSH_PASSWORD` | accesso remoto per l'assistenza | no |
 | `RENDERER_UPNP` | `si`: Sweetspot compare come diffusore UPnP/DLNA (MediaRenderer) per BubbleUPnP, JPlay, mconnect e simili; l'audio passa da Lyrion e dal player, vedi [Renderer UPnP/DLNA](#renderer-upnpdlna-in-entrata). Solo con `MODALITA=completa` | no |
 | `SERVER_UPNP` | `si`: la libreria compare come media server UPnP/DLNA (MiniDLNA) per streamer e DAC di rete; DSF e DFF partono senza conversioni, vedi [Media server UPnP/DLNA](#media-server-upnpdlna). Solo con `MODALITA=completa` | no |
 | `SSH`, `SSH_PASSWORD`, `SSH_UTENTE` | accesso remoto per l'assistenza. `SSH_UTENTE` è `root` (predefinito) oppure `assistenza`, un utente senza privilegi (con `assistenza` il login di root è disattivato). Dalla pagina Sistema queste tre chiavi aprono il sistema come amministratore e si cambiano solo con la **conferma forte**: serve avere `PASSWORD_WEB`, riscriverla nel campo di conferma e un gettone monouso (valido 10 minuti) emesso da root; la verifica la fa l'helper privilegiato, non la pagina, e un tentativo sbagliato conta come un errore di accesso. Senza `PASSWORD_WEB` da web non si cambiano: si scrivono in `sweetspot.txt` con il computer | no |
@@ -812,7 +815,8 @@ payload DoP a 176,4/352,8 kHz, anche decodificando sorgenti DSF/DFF DSD64/128.
 Sul PC i casi a frequenza costante si ripetono anche nel driver ALSA del kernel di
 Sweetspot, avviato in QEMU, su `hw:Loopback` (snd-aloop) con buffer, periodi e
 mmap del player; un XRUN fa fallire la prova.
-Restano aperti il cambio di frequenza su ALSA e la certificazione dei DAC reali.
+Limiti noti: il cambio di frequenza su ALSA e la certificazione dei DAC reali
+non sono ancora provati.
 
 ### Qualità sonora e compatibilità
 
@@ -852,8 +856,8 @@ firmware: **compatibile** (riconosciuto), **verificato** (prove funzionali) e
 **certificato audio** (confronto campioni e prove di continuità). Il progetto
 non garantisce tutti i DAC o tutti gli hardware. Prima della distribuzione
 servono una matrice PCM/DSD/gapless/hotplug su hardware reale, prove di
-aggiornamento con interruzione di alimentazione e protezione amministrativa
-del pannello web, attualmente accessibile dalla rete locale senza login.
+aggiornamento con interruzione di alimentazione (la protezione del pannello web è già nel
+sistema: password obbligatoria e sessione, vedi `PASSWORD_WEB`).
 
 ## Struttura del progetto
 
