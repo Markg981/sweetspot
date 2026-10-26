@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - una connessione SSH (lanciata da tcpsvd): dopo 5 errori di
+# accesso dallo stesso indirizzo fa attendere 5 secondi in piu' a ogni
+# connessione, fino a 60. Un accesso riuscito azzera il conto.
+# Uso: sweetspot-ssh-conn OPZIONI_DROPBEAR...
+
+dir=${SWEETSPOT_SSH_STATE:-/var/run/sweetspot-ssh}
+mkdir -p "$dir"
+ip=$(printf '%s' "${TCPREMOTEIP:-sconosciuto}" | tr -c 'A-Za-z0-9.:' '_')
+cnt=$dir/$ip
+n=$(cat "$cnt" 2> /dev/null)
+case "$n" in ''|*[!0-9]*) n=0 ;; esac
+if [ "$n" -ge 5 ]; then
+	attesa=$(( (n - 4) * 5 ))
+	[ "$attesa" -gt 60 ] && attesa=60
+	sleep "${SWEETSPOT_SSH_ATTESA:-$attesa}"
+fi
+out=$dir/$ip.log
+dropbear -i -E "$@" 2> "$out"
+if grep -q 'auth succeeded' "$out"; then
+	rm -f "$cnt"
+elif grep -q 'Bad password\|Login attempt for nonexistent\|Exit before auth\|auth failed' "$out"; then
+	echo $((n + 1)) > "$cnt"
+fi
+rm -f "$out"

@@ -10,6 +10,8 @@ CONFIG_DNSD=y
 CONFIG_HTTPD=y
 CONFIG_FEATURE_HTTPD_CGI=y
 CONFIG_CHPASSWD=y
+# Un dropbear per connessione, con il ritardo dopo gli errori (sweetspot-ssh-conn).
+CONFIG_TCPSVD=y
 CONFIG_TIMEOUT=y
 CONFIG_STAT=y
 CONFIG_PGREP=y

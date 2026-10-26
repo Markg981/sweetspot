@@ -96,8 +96,8 @@ $(option si "Acceso" "$(if is_yes "$(conf SSH no)"; then echo si; else echo no; 
 </select>
 <label for="sshu">Utente SSH</label>
 <select id="sshu" name="ssh_utente">
-$(option assistenza "assistenza: utente senza privilegi (consigliato)" "$(lower "$(conf SSH_UTENTE root)")")
-$(option root "root: accesso completo al sistema" "$(lower "$(conf SSH_UTENTE root)")")
+$(option assistenza "assistenza: utente senza privilegi (consigliato)" "$(lower "$(conf SSH_UTENTE assistenza)")")
+$(option root "root: accesso completo al sistema" "$(lower "$(conf SSH_UTENTE assistenza)")")
 </select>
 <label for="sshp">Password SSH <span>(lascia vuoto per non cambiarla)</span></label>
 <input id="sshp" name="ssh_password" type="password" autocomplete="new-password">

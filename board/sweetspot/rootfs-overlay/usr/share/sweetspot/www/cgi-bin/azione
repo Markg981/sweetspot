@@ -510,7 +510,7 @@ case "$F_a" in
 		fi
 		case "$F_server" in *[!A-Za-z0-9.:_-]*) done_to sistema "Indirizzo del server non valido." ;; esac
 		valid_value "$F_ssh_password" || done_to sistema "Password non valida."
-		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=$(lower "$(conf SSH_UTENTE root)") ;; esac
+		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=$(lower "$(conf SSH_UTENTE assistenza)") ;; esac
 		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=root ;; esac
 		case "$F_https" in si|no) ;; *) F_https=no ;; esac
 		case "$F_https_reindirizza" in si|no) ;; *) F_https_reindirizza=no ;; esac
@@ -531,7 +531,7 @@ case "$F_a" in
 		ssh_change=""
 		[ "$F_ssh" != "$cur_ssh" ] && ssh_change=1
 		[ -n "$F_ssh_password" ] && ssh_change=1
-		[ "$F_ssh_utente" != "$(lower "$(conf SSH_UTENTE root)")" ] && ssh_change=1
+		[ "$F_ssh_utente" != "$(lower "$(conf SSH_UTENTE assistenza)")" ] && ssh_change=1
 		if [ -n "$ssh_change" ] || [ -n "$web_hash" ]; then
 			set --
 			what=""

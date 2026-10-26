@@ -420,7 +420,7 @@ act "$SISTEMA&ssh=si&ssh_password=nuova" > /dev/null
 expect "SSH con password del pannello ma senza conferma: non si cambia" "0" "$(grep -c 'SSH' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_password=nuova&ct=gettone1&conferma_password=segreta" > /dev/null
-expect "SSH con conferma: passa dalla conferma forte dell'helper" "1" "$(grep -c '^@conferma gettone1 sweetspot-config imposta SSH si SSH_UTENTE root SSH_PASSWORD nuova$' "$A/priv.log")"
+expect "SSH con conferma: passa dalla conferma forte dell'helper" "1" "$(grep -c '^@conferma gettone1 sweetspot-config imposta SSH si SSH_UTENTE assistenza SSH_PASSWORD nuova$' "$A/priv.log")"
 expect "SSH: le impostazioni normali non portano le chiavi di root" "0" "$(grep '^sweetspot-config imposta NOME_PLAYER' "$A/priv.log" | grep -c 'SSH')"
 expect "le altre impostazioni si salvano comunque" "1" "$(grep -c '^sweetspot-config imposta NOME_PLAYER Salotto' "$A/priv.log")"
 : > "$A/priv.log"
@@ -431,7 +431,7 @@ act "$SISTEMA&ssh=no&ssh_password=&ssh_utente=assistenza&ct=g2&conferma_password
 expect "cambio dell'utente SSH: conferma forte" "1" "$(grep -c '^@conferma g2 sweetspot-config imposta SSH no SSH_UTENTE assistenza$' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_utente=root%0aSSH%3dsi&ct=g3&conferma_password=segreta" > /dev/null
-expect "utente SSH inventato: ignorato, resta root" "1" "$(grep -c '^@conferma g3 sweetspot-config imposta SSH si SSH_UTENTE root$' "$A/priv.log")"
+expect "utente SSH inventato: ignorato, resta assistenza" "1" "$(grep -c '^@conferma g3 sweetspot-config imposta SSH si SSH_UTENTE assistenza$' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_password=a%0aSSH%3dsi&ct=g4&conferma_password=segreta" > /dev/null
 expect "password SSH con a capo: non arriva all'helper" "0" "$(grep -c 'SSH' "$A/priv.log")"
@@ -445,7 +445,7 @@ expect "cambio password delle pagine con la vecchia: conferma forte" "1" "$(grep
 expect "la password delle pagine non va con le impostazioni normali" "0" "$(grep '^sweetspot-config imposta NOME_PLAYER' "$A/priv.log" | grep -c 'PASSWORD_WEB')"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_password=nuova&web_password=nuovissima123&ct=g6&conferma_password=segreta" > /dev/null
-expect "SSH e password delle pagine insieme: una sola conferma" "1|1" "$(grep -c '@conferma' "$A/priv.log")|$(grep -c '^@conferma g6 sweetspot-config imposta SSH si SSH_UTENTE root SSH_PASSWORD nuova PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
+expect "SSH e password delle pagine insieme: una sola conferma" "1|1" "$(grep -c '@conferma' "$A/priv.log")|$(grep -c '^@conferma g6 sweetspot-config imposta SSH si SSH_UTENTE assistenza SSH_PASSWORD nuova PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
 # Un pacchetto dal disco, anche firmato ma vecchio, sostituisce il sistema.
 : > "$A/priv.log"
 act "a=aggiorna_file&file=%2Fmedia%2FUSB%2Fpacchetto.tar" > /dev/null

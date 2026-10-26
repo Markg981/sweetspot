@@ -196,10 +196,12 @@ PERIFERICHE_INUTILIZZATE=spente
 # Accesso remoto per l'assistenza tecnica (SSH).
 SSH=no
 SSH_PASSWORD=
-# Utente del login SSH: root (predefinito) oppure assistenza, senza privilegi.
+# Utente del login SSH: assistenza (predefinito, senza privilegi) oppure root.
+# La password SSH deve avere almeno 12 caratteri, altrimenti SSH con password
+# non si avvia (restano solo le chiavi, file authorized_keys sulla chiavetta).
 # Dalle pagine, SSH, utente e password si cambiano solo riscrivendo la
 # password delle pagine (PASSWORD_WEB): aprono il sistema come amministratore.
-SSH_UTENTE=root
+SSH_UTENTE=assistenza
 
 # Connessione protetta (HTTPS) delle pagine, con certificato autofirmato
 # creato al primo avvio e salvato su questa chiavetta (sweetspot-https.pem).
