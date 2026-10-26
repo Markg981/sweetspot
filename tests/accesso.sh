@@ -74,7 +74,8 @@ echo "Struttura"
 expect "l'helper ammette sweetspot-accesso verifica" "1" "$(grep -c '"sweetspot-accesso", "verifica"' "$ROOT/package/sweetspot-tools/src/sweetspot-priv.c")"
 expect "BusyBox con mkpasswd" "1" "$(grep -c '^CONFIG_MKPASSWD=y' "$ROOT/board/sweetspot/common/busybox.fragment")"
 expect "vivo resta pubblica per l'aggiornamento" "1" "$(grep -c '^WEB_PUBLIC=1' "$CGI/vivo")"
-expect "la password non compare tra gli argomenti dell'helper" "0" "$(grep -c 'verifica "' "$CGI/accesso")"
+expect "la password non compare tra gli argomenti dell'helper" "0" "$(grep -c 'verifica "\$F_' "$CGI/accesso")"
+expect "la pagina passa l'indirizzo di chi accede a verifica" "1" "$(grep -c 'verifica "\$(client_ip)"' "$CGI/accesso")"
 
 echo "Pagine dietro l'accesso"
 out=$(req "$A/pagina" GET "" "")
@@ -327,7 +328,7 @@ vrun() { # PASSWORD_WEB password
 	printf 'PASSWORD_WEB=%s\n' "$1" > "$V/s.txt"
 	printf '%s\n' "$2" | SWEETSPOT_RUN="$V/run" SWEETSPOT_LOG="$V/log" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" \
 		SWEETSPOT_VERIFICA_PAUSA=0 SWEETSPOT_VERIFICA_LIBERI=${VLIBERI:-20} \
-		sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $V/s.txt; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; verify && echo si || echo no"
+		sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $V/s.txt; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; verify '${VSRC:-}' && echo si || echo no"
 }
 # sweetspot-config finto: annota l'impronta riscritta dalla migrazione.
 printf '#!/bin/sh\nprintf "%%s\\n" "$3" > "%s/riscritta"\n' "$V" > "$V/sweetspot-config"
@@ -339,14 +340,29 @@ rm -f "$V/riscritta"
 expect "password in chiaro in sweetspot.txt: sbagliata" "no" "$(vrun segreta altra)"
 expect "senza password impostata: sempre no" "no" "$(vrun '' x)"
 # Limite tenuto da root: vale anche per chi chiama "verifica" direttamente.
-rm -f "$V/run/accesso.errori"
+rm -f "$V"/run/accesso.errori*
 VLIBERI=3
 for i in 1 2 3; do vrun segreta altra > /dev/null; done
 expect "troppi errori di fila: anche la password giusta e' rifiutata" "no" "$(vrun segreta segreta)"
-expect "gli errori li conta root, nella sua cartella" "3" "$(cut -d' ' -f1 "$V/run/accesso.errori")"
-printf '3 %s\n' "$(( $(date +%s) - 31 ))" > "$V/run/accesso.errori"
+expect "gli errori li conta root, nella sua cartella" "3" "$(cut -d' ' -f1 "$V/run/accesso.errori.locale")"
+printf '3 %s\n' "$(( $(date +%s) - 31 ))" > "$V/run/accesso.errori.locale"
 expect "passata l'attesa la password giusta vale" "si" "$(vrun segreta segreta)"
-expect "una password giusta azzera gli errori" "no" "$([ -f "$V/run/accesso.errori" ] && echo si || echo no)"
+expect "una password giusta azzera gli errori" "no" "$([ -f "$V/run/accesso.errori.locale" ] && echo si || echo no)"
+# Contatore per sorgente: chi sbaglia da un indirizzo non blocca gli altri.
+rm -f "$V"/run/accesso.errori*
+VLIBERI=20
+for i in $(seq 1 25); do VSRC=10.0.0.$i vrun segreta altra > /dev/null; done
+expect "25 errori da IP diversi: l'amministratore da un altro IP entra" "si" "$(VSRC=192.168.1.50 vrun segreta segreta)"
+for i in $(seq 1 25); do VSRC=10.9.9.9 vrun segreta altra > /dev/null; done
+expect "25 errori dallo stesso IP: quell'IP e' bloccato" "no" "$(VSRC=10.9.9.9 vrun segreta segreta)"
+expect "...e un altro IP no" "si" "$(VSRC=192.168.1.50 vrun segreta segreta)"
+expect "la sorgente e' sanificata nel nome del file" "1" "$(VSRC='../x/..;y' vrun segreta altra > /dev/null; ls "$V/run" | grep -Fxc 'accesso.errori..._x_.._y')"
+printf '5 %s\n' "$(date +%s)" > "$V/run/accesso.errori.vecchio"
+touch -d '2 hours ago' "$V/run/accesso.errori.vecchio" 2>/dev/null
+vrun segreta altra > /dev/null
+expect "i contatori vecchi si cancellano" "no" "$([ -f "$V/run/accesso.errori.vecchio" ] && echo si || echo no)"
+VSRC=
+rm -f "$V"/run/accesso.errori*
 rm -f "$V/riscritta"
 VLIBERI=20
 expect "verifica: un errore costa una pausa (2 secondi)" "1" "$(grep -c 'VERIFICA_PAUSA=${SWEETSPOT_VERIFICA_PAUSA:-2}' "$OVERLAY/usr/bin/sweetspot-accesso")"

@@ -41,9 +41,9 @@ priv_confirm() {
 	local tok=$1 pw=$2
 	shift 2
 	if [ -x "$SWEETSPOT_PRIV" ]; then
-		printf '%s\n' "$pw" | "$SWEETSPOT_PRIV" @conferma "$tok" "$@"
+		printf '%s\n' "$pw" | SWEETSPOT_SORGENTE=$(client_ip) "$SWEETSPOT_PRIV" @conferma "$tok" "$@"
 	else
-		printf '%s\n' "$pw" | sweetspot-accesso verifica || return 126
+		printf '%s\n' "$pw" | sweetspot-accesso verifica "$(client_ip)" || return 126
 		"$@"
 	fi
 }

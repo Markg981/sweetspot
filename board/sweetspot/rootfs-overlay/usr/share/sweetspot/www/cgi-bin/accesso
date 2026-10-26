@@ -85,7 +85,7 @@ if [ "$w" -gt 0 ]; then
 	exit 0
 fi
 
-if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso verifica; then
+if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso verifica "$(client_ip)"; then
 	id=$(session_new)
 	if [ -z "$id" ]; then
 		reply_login "500 Internal Server Error" "Non riesco a creare la sessione: riprova."
