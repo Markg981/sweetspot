@@ -402,5 +402,46 @@ confermaprova() { # tentato
 expect 'conferma fallita: riavvio automatico' si "$(confermaprova b)"
 expect 'conferma riuscita o nessuna prova: nessun riavvio' no "$(confermaprova "")"
 
+# C12: la chiavetta resta in sola lettura dopo il rimontaggio, o la scrittura
+# dell'ambiente di avvio fallisce: l'errore arriva a chi chiama.
+W=$WORK/stickrw
+mkdir -p "$W/run/chiavetta" "$W/proc"
+stickrw() { # opzioni-in-mounts esito-del-remount
+	printf '/dev/sda1 %s/run/chiavetta vfat %s 0 0\n' "$W" "$1" > "$W/proc/mounts"
+	SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$W/run SWEETSPOT_PROCFS=$W/proc SWEETSPOT_LOG=$W/log \
+		$TEST_SH -c '. "$1"; RC=$2; mount() { return $RC; }; stick_mount rw >/dev/null 2>&1; echo $?' \
+		sh "$OVERLAY/usr/lib/sweetspot/common.sh" "$2" 2>/dev/null
+}
+expect 'stick_mount rw: rimontata scrivibile, successo' 0 "$(stickrw rw,noatime 0)"
+expect 'stick_mount rw: remount che fallisce, errore' 1 "$(stickrw ro,noatime 1)"
+expect 'stick_mount rw: remount "riuscito" ma ancora ro, errore' 1 "$(stickrw ro,noatime 0)"
+
+grubfail() { # comando
+	rm -f "$C/riavvio"
+	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$C/run SWEETSPOT_LOG=$C/log SWEETSPOT_PROCFS=$C/proc \
+		SWEETSPOT_STICK_DIR=$C/stick \
+		$TEST_SH -c '. "$1"
+			stick_mount() { return $STICKRC; }; stick_umount() { :; }
+			grubenv_set() { return 1; }; healthy() { return 0; }; refresh_boot() { :; }
+			boot_env() { echo "$SWEETSPOT_STICK_DIR/boot/grub/grubenv"; }
+			other_slot() { echo b; }; kernel_file() { echo k; }
+			mkdir -p "$SWEETSPOT_STICK_DIR/boot/b"; : > "$SWEETSPOT_STICK_DIR/boot/b/k"
+			slot_dir() { echo "$SWEETSPOT_STICK_DIR/boot/b"; }
+			: > "$SWEETSPOT_STICK_DIR/boot/b/rootfs.cpio.zst"
+			DIR=$SWEETSPOT_RUN/agg
+			do_$2 >/dev/null 2>&1; echo $?' sh "$OVERLAY/usr/bin/sweetspot-aggiorna" "$1"
+}
+STICKRC=0
+export STICKRC
+printf 'sweetspot.slot=a\n' > "$C/proc/cmdline"
+rm -f "$C/stick/boot/grub/grubenv"
+$TEST_SH -c '. "$1"; grubenv_set "$2/boot/grub/grubenv" slot=a tentato=a' sh "$OVERLAY/usr/lib/sweetspot/common.sh" "$C/stick" >/dev/null 2>&1
+expect 'do_other: grubenv_set fallito, errore' 1 "$(grubfail other)"
+expect 'do_default: grubenv_set fallito, errore' 1 "$(grubfail default)"
+expect 'do_confirm: grubenv_set fallito, errore' 1 "$(grubfail confirm)"
+STICKRC=1
+expect 'do_confirm: chiavetta non scrivibile, errore' 1 "$(grubfail confirm)"
+unset STICKRC
+
 printf '\nOperazioni: %s passati, %s falliti\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

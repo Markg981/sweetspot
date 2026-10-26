@@ -564,6 +564,25 @@ def run(args):
             for s_id in made:
                 urllib.request.urlopen(urllib.request.Request(base + "/evt/ConnectionManager", method="UNSUBSCRIBE", headers={"SID": s_id}), timeout=5).close()
             check("dopo UNSUBSCRIBE si puo' di nuovo sottoscrivere", subscribe(base, "ConnectionManager", "http://127.0.0.1:%d/z" % sink.port)[0] == 200)
+            # C16: la CALLBACK deve puntare al richiedente (anti-SSRF) ed essere http.
+            for label, cbk in (("verso un altro IP", "http://127.0.0.2:%d/ev" % sink.port), ("https", "https://127.0.0.1:%d/ev" % sink.port),
+                               ("mista (una sola ammessa)", "http://127.0.0.1:%d/ev>,<http://127.0.0.2:%d/ev" % (sink.port, sink.port))):
+                try:
+                    subscribe(base, "AVTransport", cbk)
+                    got = 200
+                except urllib.error.HTTPError as e:
+                    got = e.code
+                check("CALLBACK %s rifiutata (412)" % label, got == 412, got)
+            check("CALLBACK verso l'IP del richiedente accettata", subscribe(base, "AVTransport", "http://127.0.0.1:%d/ok" % sink.port)[0] == 200)
+            with socket.create_connection(("127.0.0.1", http_port), timeout=10) as slow:
+                slow.sendall(b"SUBSCRIBE /evt/AVTransport HTTP/1.1\r\nHost: x\r\n")
+                t0 = time.time()
+                slow.settimeout(8)
+                try:
+                    data = slow.recv(1024)
+                except socket.timeout:
+                    data = None
+                check("connessione lenta chiusa dal timeout", data is not None and time.time() - t0 < 6, (data, time.time() - t0))
 
         st, out = soap(base, "RenderingControl", "SetVolume", [("InstanceID", 0), ("Channel", "Master"), ("DesiredVolume", 37)])
         check("SetVolume accettato", st == 200, (st, out))
