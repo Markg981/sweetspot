@@ -72,6 +72,7 @@ wifi_iface() {
 
 # C'e' una connessione che non e' l'hotspot? Un cavo con collegamento, oppure un
 # indirizzo IPv4 su una scheda Wi-Fi diversa da $1 (quella dell'hotspot).
+# shellcheck disable=SC2120 # $1 e' opzionale: i chiamanti attuali non lo passano
 connected() {
 	local n i
 	for n in "$SYS"/class/net/*; do
