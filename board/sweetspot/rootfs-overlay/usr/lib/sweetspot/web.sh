@@ -107,8 +107,8 @@ token() {
 # verificata da root (sweetspot-accesso verifica, impronta salata SHA-512-crypt),
 # poi una sessione con cookie HttpOnly e SameSite=Strict. Il gettone anti-CSRF
 # resta richiesto a ogni azione: la sessione dice CHI e', il gettone che la
-# richiesta viene dalle nostre pagine. Senza PASSWORD_WEB (predefinito, come
-# prima) le pagine restano aperte a chi e' nella rete di casa.
+# richiesta viene dalle nostre pagine. PASSWORD_WEB e' obbligatoria: finche'
+# non c'e' (primo avvio o dopo un ripristino) si vede solo Primo accesso.
 # Le sessioni sono file in $WEBDIR/sessioni (nome = ID casuale da /dev/urandom,
 # contenuto = scadenza): spariscono al riavvio.
 SESSION_DIR=$WEBDIR/sessioni

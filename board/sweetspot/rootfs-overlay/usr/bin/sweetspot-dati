@@ -413,9 +413,10 @@ case "$1" in
 	salva)
 		[ "${2:-}" = "--forza" ] && rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
 		do_save ;;
+	checkpoint) do_checkpoint ;;
 	sblocca)
 		rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
 		log "dati: blocco del salvataggio tolto a mano" ;;
 	sorveglia) do_watch ;;
-	*) echo "uso: $0 ripristina|salva [--forza]|sblocca|sorveglia" >&2; exit 1 ;;
+	*) echo "uso: $0 ripristina|salva [--forza]|checkpoint|sblocca|sorveglia" >&2; exit 1 ;;
 esac
