@@ -50,7 +50,7 @@ MBR_LIMIT=4294967295              # una tabella MBR arriva a 2 TiB
 SYS_MARGIN_KB=65536               # FAT32, GRUB, EFI e impostazioni oltre ai dati
 SIDE_NAME=Sweetspot               # nome della partizione e della voce UEFI
 SIDE_TYPE=0700                    # dati di base Microsoft: il firmware la legge come una chiavetta
-SIDE_ATTR=62,63                   # GPT: nascosta e senza lettera in Windows (niente "formatta disco")
+SIDE_ATTR="62 63"                 # GPT: nascosta e senza lettera in Windows (niente "formatta disco")
 
 state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
 
@@ -437,7 +437,8 @@ side_job() { # disco
 		return 1
 	fi
 	# Gli attributi sono un di piu': se sgdisk non li accetta la partizione c'e' lo stesso.
-	for a in ${SIDE_ATTR//,/ }; do sgdisk -A "$num:set:$a" "$dev" > /dev/null 2>&1; done
+	# shellcheck disable=SC2086
+	for a in $SIDE_ATTR; do sgdisk -A "$num:set:$a" "$dev" > /dev/null 2>&1; done
 	sync
 	p=$DEV/$(part_name "$disk" "$num")
 	# Il kernel riceve solo la partizione nuova: le altre possono essere in uso.

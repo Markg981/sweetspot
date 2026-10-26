@@ -333,10 +333,10 @@ partizioni che ci sono già non vengono né spostate né ridimensionate.
    serve creare un volume). Con BitLocker attivo tieni a portata di mano la
    chiave di ripristino: disattivare il Secure Boot e avviare Windows dal
    menu di Sweetspot (GRUB in catena) cambiano le misure del TPM (PCR 4 e 7) e
-   Windows pu� chiederla. Avviando Windows dal menu di avvio del computer
+   Windows può chiederla. Avviando Windows dal menu di avvio del computer
    (voce "Windows Boot Manager") il percorso di avvio resta quello originale.
    La voce "Sweetspot" viene messa prima nell'ordine di avvio, quindi non
-   � Windows la voce predefinita. La partizione `SWEETSPOT` � nascosta e senza
+   è Windows la voce predefinita. La partizione `SWEETSPOT` è nascosta e senza
    lettera in Windows (attributi GPT 62 e 63).
 2. Nel BIOS/UEFI: **Secure Boot disattivato**, come per la chiavetta.
 3. Si avvia la chiavetta **in modalità UEFI**; nella pagina Sistema compaiono i
