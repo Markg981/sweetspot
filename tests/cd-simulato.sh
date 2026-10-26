@@ -38,3 +38,18 @@ f=$(find "$W/media/Archivio" -name '01 - *.flac')
 metaflac --export-tags-to=- "$f"
 metaflac --list --block-type=PICTURE "$f" | grep -c 'type: 3' | sed 's/^/copertine incorporate: /'
 grep -q 'tutte le tracce verificate' "$W/run/cd/stato" && echo "PROVA RIUSCITA" || { echo "PROVA FALLITA"; exit 1; }
+
+# Privacy: con i servizi online disattivati curl non va mai chiamato e la
+# copia riesce comunque, con titoli generici e senza verifica.
+printf '#!/bin/sh
+echo "$@" >> %s/curl.chiamate
+exit 22
+' "$W" > "$W/bin/curl"
+printf 'CD_CERCA_TITOLI=no
+CD_ACCURATERIP=no
+' >> "$W/run/sweetspot.txt"
+busybox sh "$CD" leggi
+[ "$(jq -r .album "$W/run/cd/info.json")" = "CD sconosciuto" ] && [ "$(jq -r .cover "$W/run/cd/info.json")" = false ] || { echo "PROVA FALLITA: titoli online con CD_CERCA_TITOLI=no"; exit 1; }
+busybox sh "$CD" _copia
+[ ! -e "$W/curl.chiamate" ] || { echo "PROVA FALLITA: rete contattata con i servizi disattivati"; cat "$W/curl.chiamate"; exit 1; }
+grep -q 'senza verifica AccurateRip' "$W/run/cd/stato" && ls "$W/media/Archivio/Artista sconosciuto"/*/01*.flac > /dev/null && echo "PROVA SENZA RETE RIUSCITA" || { echo "PROVA SENZA RETE FALLITA"; exit 1; }
