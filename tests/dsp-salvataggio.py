@@ -230,13 +230,13 @@ do_save "$TEST_ROOT/left" "$RIGHT"
 
     def test_oversized_rew_text_is_rejected_not_truncated(self):
         big = self.root / "big"
-        big.write_text(LEFT * 400)
+        big.write_text(LEFT * 600)
         result = self.sh('parse_rew "$F"; echo "rc=$?"', F=str(big))
         self.assertIn("errore|0|file troppo grande", result.stdout)
         self.assertIn("rc=1", result.stdout)
 
     def test_save_of_oversized_rew_keeps_previous_filters(self):
-        (self.root / "left").write_text(LEFT * 400)
+        (self.root / "left").write_text(LEFT * 600)
         result = self.save()
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assert_previous(self.ram)
