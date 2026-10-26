@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - firewall dell'hotspot di configurazione.
+#
+#   sweetspot-firewall applica [scheda]   limita la scheda dell'hotspot (di
+#                                         default quella in hotspot.attivo)
+#   sweetspot-firewall ferma              toglie le regole
+#
+# Se le regole non si caricano resta tutto aperto e l'errore va nel registro:
+# il firewall non deve mai chiudere fuori l'utente.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
+
+NFT=${SWEETSPOT_NFT:-nft}
+REGOLE=${SWEETSPOT_FIREWALL_REGOLE:-/etc/sweetspot/firewall.nft}
+TAVOLA="inet sweetspot_hotspot"
+
+ferma() { "$NFT" delete table $TAVOLA 2>/dev/null; return 0; }
+
+applica() { # scheda
+	local i=${1:-$(cat "$RUN/hotspot.attivo" 2>/dev/null)} tmp
+	# Senza hotspot acceso non c'e' niente da limitare.
+	[ -n "$i" ] || return 0
+	ferma
+	tmp=$(mktemp) || return 0
+	{ printf 'define AP_IF = "%s"\n' "$i"; cat "$REGOLE"; } > "$tmp" 2>/dev/null
+	if ! "$NFT" -f "$tmp" 2>/dev/null; then
+		ferma
+		log "firewall: regole non caricate su $i, hotspot senza filtro"
+	fi
+	rm -f "$tmp"
+	return 0
+}
+
+case "${1:-}" in
+	applica) applica "${2:-}" ;;
+	ferma) ferma ;;
+	*) echo "uso: $0 applica [scheda]|ferma" >&2; exit 2 ;;
+esac

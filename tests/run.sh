@@ -4377,6 +4377,32 @@ rm -rf "$RF/stick/sweetspot-dati"; mkdir -p "$RF/s2"; tar -cf "$RF/s2/lyrion.tar
 rfdati "do_restore $RF/s2"; rc=$?
 expect "dati: un ripristino riuscito toglie il blocco" "0 no" "$rc $([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
 
+# --- Firewall dell'hotspot -----------------------------------------------------
+FWR=$OVERLAY/etc/sweetspot/firewall.nft
+for porta in 53 67 80 443; do
+	atteso=1
+	[ "$porta" = 53 ] && atteso=2 # UDP e TCP
+	expect "firewall: la porta $porta e' ammessa" "$atteso" "$(grep -cE "dport \{[^}]*\b$porta\b.*accept" "$FWR")"
+done
+expect "firewall: solo la scheda dell'AP, il resto accept" "1|1" \
+	"$(grep -c 'iifname != \$AP_IF accept' "$FWR")|$(grep -c 'policy accept' "$FWR")"
+expect "firewall: Lyrion, SMB e DLNA non sono aperti" 0 "$(grep -cE '\b(9000|3483|445|8200)\b' "$FWR")"
+if command -v nft > /dev/null 2>&1; then
+	{ echo 'define AP_IF = "wlan0"'; cat "$FWR"; } > "$WORK/fw.nft"
+	nft -c -f "$WORK/fw.nft" > /dev/null 2>&1
+	expect "firewall: nft -c accetta le regole" 0 "$?"
+else
+	salta nft
+fi
+# Se nft fallisce il firewall lascia tutto aperto e lo scrive nel registro.
+FWE=$WORK/fw; mkdir -p "$FWE/run"
+printf '#!/bin/sh\nexit 1\n' > "$FWE/nft"; chmod +x "$FWE/nft"
+SWEETSPOT_NFT=$FWE/nft SWEETSPOT_RUN=$FWE/run SWEETSPOT_LOG=$FWE/log \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-firewall" applica wlan0
+rc=$?
+expect "firewall: caricamento fallito, esito 0 e errore nel registro" "0|1" \
+	"$rc|$(grep -c 'firewall: regole non caricate' "$FWE/log")"
+
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
