@@ -88,11 +88,11 @@ out=$(req "$A/pagina" GET "sweetspot_sid=$(printf 'a%.0s' $(seq 1 32))" "")
 expect "cookie con ID inesistente: rifiutato" "303" "$(status "$out")"
 
 echo "Accesso"
-out=$(req "$CGI/accesso" POST "" "password=sbagliata")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=sbagliata")
 expect "password errata: 401 senza cookie" "401|" "$(status "$out")|$(header "$out" Set-Cookie)"
-out=$(req "$CGI/accesso" POST "" "password=")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=")
 expect "password vuota: 401" "401" "$(status "$out")"
-out=$(req "$CGI/accesso" POST "" "password=segreta&next=/cgi-bin/sistema")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta&next=/cgi-bin/sistema")
 sid=$(cookie_id "$out")
 expect "password giusta: 303 alla pagina richiesta" "303|/cgi-bin/sistema" "$(status "$out")|$(header "$out" Location)"
 expect "ID della sessione: 32 cifre esadecimali" "32" "${#sid}"
@@ -111,11 +111,11 @@ exp=$(cat "$RUNDIR/web/sessioni/$sid")
 now=$(date +%s)
 [ "$exp" -gt "$now" ] && [ "$exp" -le $((now + 28800)) ] && r=scadenza-ok || r=$exp
 expect "la sessione scade entro 8 ore" "scadenza-ok" "$r"
-out2=$(req "$CGI/accesso" POST "" "password=segreta")
+out2=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "ogni accesso ha un ID diverso" "diverso" "$([ "$(cookie_id "$out2")" != "$sid" ] && echo diverso)"
-out=$(req "$CGI/accesso" POST "" "password=segreta&next=http://evil.example/")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta&next=http://evil.example/")
 expect "next verso un altro sito: ignorato" "/cgi-bin/audio" "$(header "$out" Location)"
-out=$(req "$CGI/accesso" POST "" "password=segreta&next=/cgi-bin/../x")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta&next=/cgi-bin/../x")
 expect "next con .. : ignorato" "/cgi-bin/audio" "$(header "$out" Location)"
 out=$(req "$A/pagina" GET "sweetspot_sid=$sid" "")
 expect "con la sessione la pagina risponde" "PAGINA" "$(printf '%s' "$out" | grep PAGINA)"
@@ -146,44 +146,54 @@ expect "sessione scaduta: il file viene tolto" "no" "$([ -f "$RUNDIR/web/session
 
 echo "Limite ai tentativi"
 rm -rf "$RUNDIR/web/tentativi"
-for i in 1 2 3 4; do req "$CGI/accesso" POST "" "password=no$i" > /dev/null; done
-out=$(req "$CGI/accesso" POST "" "password=no5")
+for i in 1 2 3 4; do req "$CGI/accesso" POST "" "t=tokenfinto&password=no$i" > /dev/null; done
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=no5")
 expect "quinto errore: ancora 401" "401" "$(status "$out")"
-out=$(req "$CGI/accesso" POST "" "password=segreta")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "dopo 5 errori anche la password giusta aspetta (429)" "429|" "$(status "$out")|$(cookie_id "$out")"
 case "$out" in *"riprova tra "*" secondi"*) ok "il messaggio dice quanto aspettare" ;; *) expect "messaggio di attesa" "riprova tra N secondi" "$out" ;; esac
 f=$(ls "$RUNDIR/web/tentativi"/ip-* | head -n 1)
 printf '5 %s\n' "$(( $(date +%s) - 120 ))" > "$f"
-rm -f "$RUNDIR/web/tentativi/globale"
-out=$(req "$CGI/accesso" POST "" "password=segreta")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "passata l'attesa si puo' entrare" "303" "$(status "$out")"
 expect "l'accesso riuscito azzera i tentativi" "0" "$(ls "$RUNDIR/web/tentativi" | grep -c .)"
-printf '40 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
+rm -rf "$RUNDIR/web/tentativi"
+
+echo "Gettone anti-CSRF sul modulo di accesso"
+out=$(req "$CGI/accesso" GET "" "")
+expect "il modulo porta il gettone" "1" "$(printf '%s' "$out" | grep -c 'name="t" value="tokenfinto"')"
 out=$(req "$CGI/accesso" POST "" "password=segreta")
-expect "limite globale oltre il limite per indirizzo" "429" "$(status "$out")"
+expect "senza gettone: 403, nessuna sessione" "403|" "$(status "$out")|$(cookie_id "$out")"
+out=$(req "$CGI/accesso" POST "" "t=sbagliato&password=segreta")
+expect "gettone sbagliato: 403" "403" "$(status "$out")"
+for i in 1 2 3 4 5 6 7 8; do req "$CGI/accesso" POST "" "password=no$i" > /dev/null; done
+expect "un modulo da fuori non conta come tentativo" "0" "$(ls "$RUNDIR/web/tentativi" 2>/dev/null | grep -c .)"
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
+expect "dopo moduli da fuori si entra lo stesso" "303" "$(status "$out")"
 rm -rf "$RUNDIR/web/tentativi"
 
 echo "Limite per indirizzo: chi sbaglia non blocca gli altri"
-for i in 1 2 3 4 5 6; do REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "password=no$i" > /dev/null; done
-out=$(REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "password=segreta")
+for i in 1 2 3 4 5 6; do REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "t=tokenfinto&password=no$i" > /dev/null; done
+out=$(REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "l'indirizzo che ha sbagliato 6 volte aspetta (429)" "429" "$(status "$out")"
 case "$out" in *"riprova tra "[1-9]*" secondi"*) ok "il messaggio dice quanto aspettare (backoff: 60 s al sesto errore)" ;; *) expect "attesa" "riprova tra N secondi" "$out" ;; esac
-out=$(REMOTE_T=10.0.0.10 req "$CGI/accesso" POST "" "password=segreta")
+out=$(REMOTE_T=10.0.0.10 req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "un altro indirizzo entra lo stesso" "303" "$(status "$out")"
-out=$(REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "password=segreta")
+out=$(REMOTE_T=10.0.0.9 req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "l'indirizzo bloccato resta bloccato" "429" "$(status "$out")"
-# Il tetto globale c'e' ancora ma molto piu' in alto (6 volte la soglia per indirizzo).
-rm -rf "$RUNDIR/web/tentativi"; mkdir -p "$RUNDIR/web/tentativi"
-printf '29 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
-out=$(REMOTE_T=10.0.0.11 req "$CGI/accesso" POST "" "password=segreta")
-expect "sotto il tetto globale (29 errori) si entra" "303" "$(status "$out")"
-printf '30 %s\n' "$(date +%s)" > "$RUNDIR/web/tentativi/globale"
-out=$(REMOTE_T=10.0.0.11 req "$CGI/accesso" POST "" "password=segreta")
-expect "al tetto globale (30 errori) si aspetta" "429" "$(status "$out")"
+# Nessun contatore comune: molti errori da tanti indirizzi diversi non
+# bloccano un indirizzo pulito.
+rm -rf "$RUNDIR/web/tentativi"
+for h in 20 21 22 23 24 25 26 27; do
+	for i in 1 2 3 4 5 6; do REMOTE_T=10.0.1.$h req "$CGI/accesso" POST "" "t=tokenfinto&password=no$i" > /dev/null; done
+done
+out=$(REMOTE_T=10.0.0.11 req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
+expect "48 errori da 8 indirizzi non bloccano un indirizzo pulito" "303" "$(status "$out")"
+expect "nessun file di contatore globale" "no" "$([ -e "$RUNDIR/web/tentativi/globale" ] && echo si || echo no)"
 rm -rf "$RUNDIR/web/tentativi"
 
 echo "Intestazioni di sicurezza"
-out=$(REMOTE_T=10.0.0.12 req "$CGI/accesso" POST "" "password=segreta")
+out=$(REMOTE_T=10.0.0.12 req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 sid=$(cookie_id "$out")
 sec() { # SCRIPT_NAME -> risposta con sessione
 	SCRIPT_NAME_T=$1 req "$A/pagina2" GET "sweetspot_sid=$sid" ""
@@ -227,7 +237,7 @@ out=$(SCRIPT_NAME_T=/cgi-bin/vivo req "$CGI/vivo" GET "" "")
 expect "vivo con le intestazioni" "nosniff" "$(header "$out" X-Content-Type-Options)"
 out=$(SCRIPT_NAME_T=/cgi-bin/accesso req "$CGI/accesso" POST "sweetspot_sid=$sid" "a=esci&t=tokenfinto")
 expect "uscita con le intestazioni" "nosniff" "$(header "$out" X-Content-Type-Options)"
-out=$(SCRIPT_NAME_T=/cgi-bin/accesso req "$CGI/accesso" POST "" "password=segreta")
+out=$(SCRIPT_NAME_T=/cgi-bin/accesso req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 expect "accesso riuscito con le intestazioni" "nosniff" "$(header "$out" X-Content-Type-Options)"
 
 echo "Nome in rete scelto dall'utente (host_guard legge la configurazione leggibile)"
@@ -248,24 +258,24 @@ out=$(RUN_T=$R2 HOST_T=evil.example req "$A/pagina" GET "" "")
 expect "un Host estraneo resta 403" "403" "$(status "$out")"
 
 echo "Cookie Secure con HTTPS"
-out=$(HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: req "$CGI/accesso" POST "" "password=segreta")
+out=$(HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 case "$(header "$out" Set-Cookie)" in
 	*"; Secure") ok "con HTTPS il cookie e' Secure" ;;
 	*) expect "con HTTPS il cookie e' Secure" "...; Secure" "$(header "$out" Set-Cookie)" ;;
 esac
-out=$(req "$CGI/accesso" POST "" "password=segreta")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 case "$(header "$out" Set-Cookie)" in
 	*Secure*) expect "in chiaro il cookie non e' Secure" "senza Secure" "$(header "$out" Set-Cookie)" ;;
 	*) ok "in chiaro il cookie non e' Secure" ;;
 esac
 # Con HTTPS i tentativi si contano per l'indirizzo vero del client (REMOTE_HOST di stunnel).
 rm -rf "$RUNDIR/web/tentativi"
-(HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: req "$CGI/accesso" POST "" "password=no" > /dev/null)
+(HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: req "$CGI/accesso" POST "" "t=tokenfinto&password=no" > /dev/null)
 expect "con HTTPS il limite e' per l'IP del client, non per quello del terminatore" "1" "$(ls "$RUNDIR/web/tentativi" | grep -c '^ip-192.168.1.77$')"
 rm -rf "$RUNDIR/web/tentativi"
 
 echo "Uscita"
-out=$(req "$CGI/accesso" POST "" "password=segreta")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 sid=$(cookie_id "$out")
 out=$(req "$CGI/accesso" POST "sweetspot_sid=$sid" "a=esci&t=sbagliato")
 expect "uscita senza gettone: la sessione resta" "si" "$([ -f "$RUNDIR/web/sessioni/$sid" ] && echo si || echo no)"
@@ -273,7 +283,7 @@ out=$(req "$CGI/accesso" POST "sweetspot_sid=$sid" "a=esci&t=tokenfinto")
 expect "uscita: sessione tolta e cookie cancellato" "no|1" "$([ -f "$RUNDIR/web/sessioni/$sid" ] && echo si || echo no)|$(printf '%s' "$out" | grep -c 'sweetspot_sid=;.*Max-Age=0')"
 
 echo "Operazioni privilegiate: sessione e gettone"
-out=$(req "$CGI/accesso" POST "" "password=segreta")
+out=$(req "$CGI/accesso" POST "" "t=tokenfinto&password=segreta")
 sid=$(cookie_id "$out")
 : > "$PRIVLOG"
 SCRIPT_NAME_T=/cgi-bin/azione req "$CGI/azione" POST "" "t=tokenfinto&a=riavvia" > /dev/null
@@ -319,7 +329,13 @@ vrun() { # PASSWORD_WEB password
 		SWEETSPOT_VERIFICA_PAUSA=0 SWEETSPOT_VERIFICA_LIBERI=${VLIBERI:-20} \
 		sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $V/s.txt; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; verify && echo si || echo no"
 }
+# sweetspot-config finto: annota l'impronta riscritta dalla migrazione.
+printf '#!/bin/sh\nprintf "%%s\\n" "$3" > "%s/riscritta"\n' "$V" > "$V/sweetspot-config"
+chmod +x "$V/sweetspot-config"
+PATH=$V:$PATH
+riscritta() { sed -n 1p "$V/riscritta" 2>/dev/null; rm -f "$V/riscritta"; }
 expect "password in chiaro in sweetspot.txt: giusta" "si" "$(vrun segreta segreta)"
+rm -f "$V/riscritta"
 expect "password in chiaro in sweetspot.txt: sbagliata" "no" "$(vrun segreta altra)"
 expect "senza password impostata: sempre no" "no" "$(vrun '' x)"
 # Limite tenuto da root: vale anche per chi chiama "verifica" direttamente.
@@ -334,15 +350,29 @@ expect "una password giusta azzera gli errori" "no" "$([ -f "$V/run/accesso.erro
 VLIBERI=20
 expect "verifica: un errore costa una pausa (2 secondi)" "1" "$(grep -c 'VERIFICA_PAUSA=${SWEETSPOT_VERIFICA_PAUSA:-2}' "$OVERLAY/usr/bin/sweetspot-accesso")"
 expect "verifica: le verifiche passano una alla volta" "1" "$(grep -c '^	flock 8$' "$OVERLAY/usr/bin/sweetspot-accesso")"
-if [ -n "$BB" ] && "$BB" mkpasswd -m md5 -S ab test 2>/dev/null | grep -q '^\$1\$ab\$'; then
+expect "impronta di altro tipo: non vale come password in chiaro" "no" "$(vrun '$5$sale$impronta' '$5$sale$impronta')"
+expect "BusyBox con le impronte SHA-512-crypt" "1" "$(grep -c '^CONFIG_USE_BB_CRYPT_SHA=y' "$ROOT/board/sweetspot/common/busybox.fragment")"
+expect "l'impronta nuova non e' piu' quella MD5 dell'httpd" "0" "$(grep -c 'httpd -m' "$OVERLAY/usr/bin/sweetspot-accesso")"
+if [ -n "$BB" ] && "$BB" mkpasswd -m sha512 -S abcdefgh test 2>/dev/null | grep -q '^\$6\$abcdefgh\$'; then
 	ln -sf "$BB" "$V/mkpasswd"
-	PATH=$V:$PATH
 	h=$("$BB" mkpasswd -m md5 -S sale1234 segreta)
-	expect "impronta salata: password giusta" "si" "$(vrun "$h" segreta)"
-	expect "impronta salata: password sbagliata" "no" "$(vrun "$h" segreta2)"
-	expect "impronta salata: la sale e' nell'impronta" '$1$sale1234$' "$(printf '%s' "$h" | cut -c1-12)"
+	expect "impronta MD5-crypt: password sbagliata" "no" "$(vrun "$h" segreta2)"
+	expect "impronta MD5-crypt: con la password sbagliata non si riscrive" "" "$(riscritta)"
+	expect "impronta MD5-crypt: password giusta" "si" "$(vrun "$h" segreta)"
+	h6=$(riscritta)
+	expect "impronta MD5-crypt: riscritta come SHA-512-crypt" '$6$' "$(printf '%s' "$h6" | cut -c1-3)"
+	expect "impronta riscritta: password giusta" "si" "$(vrun "$h6" segreta)"
+	expect "impronta riscritta: non si riscrive di nuovo" "" "$(riscritta)"
+	expect "impronta riscritta: password sbagliata" "no" "$(vrun "$h6" segreta2)"
+	expect "password in chiaro: riscritta come SHA-512-crypt" '$6$' "$(vrun segreta segreta >/dev/null; riscritta | cut -c1-3)"
+	hrun() { sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; hash segreta"; }
+	h=$(hrun)
+	expect "hash: impronta SHA-512-crypt" '$6$' "$(printf '%s' "$h" | cut -c1-3)"
+	expect "hash: sale casuale (due impronte diverse)" "no" "$([ "$h" = "$(hrun)" ] && echo si || echo no)"
+	expect "hash: password giusta" "si" "$(vrun "$h" segreta)"
+	expect "hash: password sbagliata" "no" "$(vrun "$h" segreta2)"
 else
-	echo "  (mkpasswd di BusyBox non disponibile: verifica dell'impronta salata saltata)"
+	echo "  (mkpasswd di BusyBox con SHA-512 non disponibile: verifica delle impronte saltata)"
 fi
 
 echo

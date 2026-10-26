@@ -6,7 +6,7 @@
 #   sweetspot-accesso applica          scrive la configurazione dell'httpd di
 #                                      BusyBox da PASSWORD_WEB e gliela fa
 #                                      rileggere (SIGHUP)
-#   sweetspot-accesso hash PASSWORD    impronta MD5-crypt da salvare
+#   sweetspot-accesso hash PASSWORD    impronta SHA-512-crypt da salvare
 #   sweetspot-accesso verifica         legge la password dall'ingresso
 #                                      standard (non compare tra gli
 #                                      argomenti) e risponde 0 se e' quella
@@ -29,8 +29,11 @@
 # l'accesso (/cgi-bin/accesso, sessione con cookie: vedi web.sh). La
 # password si verifica qui, da root: le pagine non leggono l'impronta.
 # Non protegge da chi ascolta il traffico (http). In sweetspot.txt si puo'
-# scrivere la password in chiaro: all'avvio vale come la sua impronta; dalle
-# pagine si salva solo l'impronta ($1$...). Password dimenticata: togli la
+# scrivere la password in chiaro: all'avvio viene sostituita dalla sua
+# impronta; dalle pagine si salva solo l'impronta SHA-512-crypt ($6$...).
+# Le vecchie impronte MD5-crypt ($1$...) si recuperano in fretta da chi ha
+# la chiavetta in mano: valgono ancora una volta, al primo accesso giusto
+# vengono riscritte come SHA-512-crypt. Password dimenticata: togli la
 # riga PASSWORD_WEB da sweetspot.txt con il computer: al riavvio il codice
 # di primo accesso torna disponibile (stessa chiavetta, stesso codice).
 # Lyrion (9000 e CLI 9090) ha credenziali proprie: vedi sweetspot-lms credenziali.
@@ -54,7 +57,15 @@
 HTTPD_CONF=$RUN/httpd.conf
 VIVO_KEY=$RUN/vivo.chiave
 
-hash() { httpd -m "$1"; }
+# Impronta SHA-512-crypt ($6$sale$...), sale casuale scelta da mkpasswd.
+hash() {
+	local h
+	h=$(mkpasswd -m sha512 -- "$1" 2>/dev/null) || return 1
+	case "$h" in
+		'$6$'*) printf '%s\n' "$h" ;;
+		*) return 1 ;;
+	esac
+}
 
 random_key() {
 	od -An -N16 -tx1 "${SWEETSPOT_URANDOM:-/dev/urandom}" 2>/dev/null | tr -d ' \n'
@@ -86,6 +97,31 @@ apply() {
 	fi
 	mv "$HTTPD_CONF.nuovo" "$HTTPD_CONF"
 	killall -HUP httpd 2>/dev/null
+	return 0
+}
+
+# crypt_check METODO PREFISSO IMPRONTA PASSWORD: rifa l'impronta con la
+# stessa sale e la confronta.
+crypt_check() {
+	local salt calc
+	salt=${3#"$2"}
+	salt=${salt%%'$'*}
+	calc=$(mkpasswd -m "$1" -S "$salt" -- "$4" 2>/dev/null) || return 1
+	[ "$calc" = "$3" ]
+}
+
+# Password giusta ma salvata in chiaro o come MD5-crypt: si riscrive come
+# SHA-512-crypt. L'accesso vale anche se la riscrittura non riesce (si
+# riprova al prossimo).
+upgrade() {
+	local h
+	if h=$(hash "$1"); then
+		sweetspot-config imposta PASSWORD_WEB "$h" >/dev/null 2>&1
+		case $? in
+			0|2) log "accesso: password riscritta come SHA-512-crypt"; return 0 ;;
+		esac
+	fi
+	log "accesso: password non riscritta come SHA-512-crypt"
 	return 0
 }
 
@@ -127,21 +163,32 @@ verify() {
 	return 1
 }
 
-# Password contro PASSWORD_WEB: impronta MD5-crypt ($1$sale$...), rifatta
-# con la stessa sale; se in sweetspot.txt e' in chiaro (e l'avvio non l'ha
-# ancora trasformata) si confronta com'e'.
+# Password in ingresso contro PASSWORD_WEB: impronta SHA-512-crypt
+# ($6$sale$...) o MD5-crypt ($1$sale$..., poi riscritta), rifatta con la
+# stessa sale; se in sweetspot.txt e' in chiaro (e l'avvio non l'ha ancora
+# trasformata) si confronta com'e' e si riscrive. Altre impronte ($id$...)
+# si rifiutano: confrontate in chiaro, l'impronta stessa aprirebbe le pagine.
 verify_password() {
-	local pw=$1 stored salt calc
+	local pw=$1 stored
 	stored=$(conf PASSWORD_WEB)
 	[ -n "$stored" ] && [ -n "$pw" ] || return 1
 	case "$stored" in
-		'$1$'*)
-			salt=${stored#'$1$'}
-			salt=${salt%%'$'*}
-			calc=$(mkpasswd -m md5 -S "$salt" -- "$pw" 2>/dev/null) || return 1
-			[ "$calc" = "$stored" ] ;;
-		*) [ "$pw" = "$stored" ] ;;
+		'$6$'*) crypt_check sha512 '$6$' "$stored" "$pw" ;;
+		'$1$'*) crypt_check md5 '$1$' "$stored" "$pw" && upgrade "$pw" ;;
+		'$'*'$'*'$'*) return 1 ;;
+		*) [ "$pw" = "$stored" ] && upgrade "$pw" ;;
 	esac
+}
+
+# Avvio con la password in chiaro in sweetspot.txt: la si sostituisce subito
+# con l'impronta, cosi' non resta leggibile sulla chiavetta.
+upgrade_plain() {
+	local stored
+	stored=$(conf PASSWORD_WEB)
+	case "$stored" in
+		''|'$'*'$'*'$'*) return 0 ;;
+	esac
+	upgrade "$stored"
 }
 
 PRIMO_CODICE=$RUN/primo-accesso.codice
@@ -176,6 +223,7 @@ boot_setup() {
 	mkdir -p "$RUN"
 	if [ -n "$(conf PASSWORD_WEB)" ]; then
 		rm -f "$PRIMO_CODICE" "$PRIMO_ATTIVO"
+		upgrade_plain
 		return 0
 	fi
 	if stick_mount rw 2>/dev/null; then

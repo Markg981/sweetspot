@@ -24,7 +24,7 @@ F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
 F_web_password="" F_lyrion_password="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
-F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file=""
+F_condiviso="" F_album="" F_artista="" F_anno="" F_scheda="" F_overlay="" F_disco="" F_archivio="" F_conferma="" F_file="" F_dimensione=""
 F_sinistro="" F_destro="" F_modo="" F_esito=""
 F_bt_attivo="" F_bt_nome="" F_bt_minuti="" F_bt_mac=""
 
@@ -514,7 +514,7 @@ case "$F_a" in
 		case "$F_ssh_utente" in root|assistenza) ;; *) F_ssh_utente=root ;; esac
 		case "$F_https" in si|no) ;; *) F_https=no ;; esac
 		case "$F_https_reindirizza" in si|no) ;; *) F_https_reindirizza=no ;; esac
-		# Password delle pagine: si salva solo l'impronta MD5-crypt.
+		# Password delle pagine: si salva solo l'impronta SHA-512-crypt.
 		valid_value "$F_web_password" || done_to sistema "Password non valida."
 		[ -z "$F_web_password" ] || [ ${#F_web_password} -ge 10 ] || done_to sistema "La password delle pagine ha almeno 10 caratteri. Niente e' stato cambiato."
 		web_hash=""
@@ -708,9 +708,17 @@ case "$F_a" in
 		done_to sistema "Questa versione è ora quella che parte all'accensione." ;;
 
 	installa)
+		# Cancella un disco: conferma forte (password di queste pagine e
+		# gettone monouso) piu' la dimensione del disco scritta a mano.
 		[ "$F_conferma" = si ] || done_to sistema "Per installare conferma che il disco verrà cancellato."
 		[ "$F_archivio" = si ] || F_archivio=no
-		out=$(priv sweetspot-installa avvia "$F_disco" "$F_archivio") || done_to sistema "Installazione non avviata: $out."
+		case "$F_dimensione" in ''|*[!0-9]*) done_to sistema "Per installare scrivi la dimensione del disco in GB, come nell'elenco." ;; esac
+		confirm_or_stop sistema "installare sul disco interno"
+		out=$(priv_confirm "$F_ct" "$F_conferma_password" sweetspot-installa avvia "$F_disco" "$F_archivio" "$F_dimensione")
+		rc=$?
+		[ $rc -eq 126 ] && confirm_refused sistema
+		[ $rc -eq 0 ] || done_to sistema "Installazione non avviata: $out."
+		log "installazione: avviata con conferma forte da $(client_ip)"
 		done_to sistema "Installazione avviata: richiede qualche minuto." ;;
 
 	ripristina)

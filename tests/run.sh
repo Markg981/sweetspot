@@ -2120,14 +2120,27 @@ ln -s ../devices/pci0000:00/usb1/1-1/block/sdb "$INS/sys/block/sdb"
 echo 15728640 > "$INS/sys/devices/pci0000:00/usb1/1-1/block/sdb/size"
 echo 512 > "$INS/sys/devices/pci0000:00/usb1/1-1/block/sdb/queue/logical_block_size"
 echo 8192 > "$INS/sys/block/mmcblk0boot0/size"
+# Chiavetta di avvio: sdc (mai proposta per l'installazione)
+mkdir -p "$INS/sys/block/sdc/queue" "$INS/sys/block/sdc/sdc1" "$INS/sys/class/block" "$INS/dev" "$INS/bin" "$INS/chiavetta"
+echo 15728640 > "$INS/sys/block/sdc/size"
+echo 1 > "$INS/sys/block/sdc/sdc1/partition"
+ln -s ../../block/sdc/sdc1 "$INS/sys/class/block/sdc1"
 echo "BOOT_IMAGE=/bzImage" > "$INS/proc/cmdline"
+: > "$INS/proc/mounts"
+printf '#!/bin/sh\n[ "$1" = salva ] && exit "${INS_SALVA_RC:-0}"\nexit 0\n' > "$INS/bin/sweetspot-dati"
+printf '#!/bin/sh\nexit 0\n' > "$INS/bin/sweetspot-dischi"
+chmod +x "$INS/bin"/*
+echo kernel > "$INS/chiavetta/bzImage"
+echo sistema > "$INS/chiavetta/rootfs.cpio.zst"
 ins() {
 	SWEETSPOT_SYSFS=$INS/sys SWEETSPOT_PROCFS=$INS/proc SWEETSPOT_RUN=$INS/run SWEETSPOT_LOG=$INS/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_DEV=$INS/dev SWEETSPOT_AVVIO=$INS/avvio \
-		SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-installa; $1"
+		SWEETSPOT_STICK_DEV=${INS_STICK-$INS/dev/sdc1} SWEETSPOT_STICK_DIR=$INS/chiavetta \
+		SWEETSPOT_PATH="$INS/bin:$SWEETSPOT_PATH" INS_SALVA_RC=${INS_SALVA_RC:-0} SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-installa; $1"
 }
 expect "dischi adatti" "sda|465|Samsung SSD 860|interno|partizione sda1 (sconosciuta, 465 GB)|si sdb|7|Disco sdb|USB||no" \
 	"$(ins do_disks | tr '\n' ' ' | sed 's/ $//')"
+expect "senza chiavetta di avvio nessun disco proposto" "" "$(INS_STICK='' ins do_disks)"
 expect "partizioni di un disco da 500 GB" "2048 8388608 8390656 968380416" "$(ins 'plan 976773168')"
 expect "disco piccolo: niente archivio" "2048 6287360 6289408 0" "$(ins 'plan 6291456')"
 expect "disco da 4 TB: archivio fino al limite MBR" "2048 8388608 8390656 4286574592" "$(ins 'plan 8589934592')"
@@ -2146,7 +2159,31 @@ if command -v sfdisk > /dev/null; then
 	expect "tabella letta da sfdisk" "start=2048,size=1048576,type=c,bootable start=1050624,size=1048576,type=83" \
 		"$(sfdisk -d "$INS/disco.img" 2>/dev/null | grep start= | sed -n 's/.*: //p' | tr -d ' ' | tr '\n' ' ' | sed 's/ $//')"
 fi
-expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si')"
+expect "disco non adatto rifiutato" "disco non adatto" "$(ins 'do_start sdz si 465')"
+expect "chiavetta di avvio non proponibile" "disco non adatto" "$(ins 'do_start sdc si 7')"
+expect "senza chiavetta di avvio non si installa" "chiavetta di avvio non trovata" "$(INS_STICK='' ins 'do_start sda si 465')"
+expect "dimensione sbagliata rifiutata" "la dimensione scritta non è quella del disco (465 GB)" "$(ins 'do_start sda si 400')"
+expect "dimensione mancante rifiutata" "la dimensione scritta non è quella del disco (465 GB)" "$(ins 'do_start sda si')"
+# Lavoro di installazione: ogni controllo ferma tutto prima di scrivere sul disco.
+mkdir -p "$INS/sys/block/sdd/queue"
+echo 10240 > "$INS/sys/block/sdd/size"
+insjob() { # stato finale e primi byte del disco (intatto: aaaa)
+	rm -rf "$INS/run/installa"
+	head -c 5242880 /dev/zero | tr '\0' '\252' > "$INS/dev/sdd"
+	ins "install_job $1 no" > /dev/null 2>&1
+	printf '%s|%s' "$(cut -d'|' -f4 "$INS/run/installa/stato")" "$(od -An -tx1 -N2 "$INS/dev/sdd" | tr -d ' ')"
+}
+expect "chiavetta sparita: installazione fermata, disco intatto" "chiavetta di avvio non trovata: niente è stato cancellato|aaaa" \
+	"$(INS_STICK='' insjob sdd)"
+mkdir -p "$INS/sys/block/sdd/sdd1" && echo 1 > "$INS/sys/block/sdd/sdd1/partition"
+ln -sf ../../block/sdd/sdd1 "$INS/sys/class/block/sdd1"
+expect "disco scelto uguale alla chiavetta: fermata" "il disco scelto è la chiavetta di avvio|aaaa" \
+	"$(INS_STICK=$INS/dev/sdd1 insjob sdd)"
+rm -rf "$INS/sys/block/sdd/sdd1" "$INS/sys/class/block/sdd1"
+expect "salvataggio fallito: installazione fermata, disco intatto" "salvataggio della libreria non riuscito: niente è stato cancellato|aaaa" \
+	"$(INS_SALVA_RC=1 insjob sdd)"
+expect "spazio insufficiente: fermata prima della tabella" "spazio insufficiente per il sistema e la libreria: niente è stato cancellato|aaaa" \
+	"$(insjob sdd)"
 
 echo "Archivio nello spazio libero del disco di avvio"
 SP=$WORK/spazio
@@ -4031,4 +4068,5 @@ else
 fi
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
+python3 "$ROOT/tests/triage-cve.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"

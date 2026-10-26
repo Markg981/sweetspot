@@ -17,9 +17,10 @@
 //
 // Le operazioni che aprono root o il pannello per sempre (SSH, il suo utente
 // e la sua password, la password del pannello, un pacchetto di aggiornamento
-// da disco) non passano dall'elenco normale: servono @conferma, con un
-// gettone monouso e la password del pannello (quella attuale) verificata da
-// root. Una sessione rubata da sola non basta.
+// da disco) o cancellano un disco (installazione) non passano dall'elenco
+// normale: servono @conferma, con un gettone monouso e la password del
+// pannello (quella attuale) verificata da root. Una sessione rubata da sola
+// non basta.
 //
 // Esce con 126 se la richiesta non e' nell'elenco (nulla viene eseguito).
 
@@ -126,7 +127,8 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-hotspot", "richiesta", "", "", 0},
 	{"sweetspot-https", "applica", "", "", 0},
 	{"sweetspot-hotspot", "scansiona", "", "", 0},
-	{"sweetspot-installa", "avvia", "ss", "", 0},
+	// Cancella un disco: solo con @conferma, piu' la dimensione del disco scritta.
+	{"sweetspot-installa", "avvia", "sss", "", 1},
 	{"sweetspot-installa", "dischi", "", "", 0},
 	{"sweetspot-installa", "stato", "", "", 0},
 	{"sweetspot-lms", "aggiorna", "", "", 0},

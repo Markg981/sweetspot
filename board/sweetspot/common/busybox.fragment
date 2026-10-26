@@ -29,8 +29,11 @@ CONFIG_WATCHDOG=y
 # Password delle pagine web (sweetspot-accesso).
 CONFIG_FEATURE_HTTPD_BASIC_AUTH=y
 CONFIG_FEATURE_HTTPD_AUTH_MD5=y
-# Verifica della password dell'accesso: impronta MD5-crypt con la sale salvata.
+# Impronta della password dell'accesso: SHA-512-crypt (mkpasswd -m sha512);
+# MD5-crypt resta solo per riconoscere e riscrivere le impronte vecchie.
 CONFIG_MKPASSWD=y
+CONFIG_USE_BB_CRYPT=y
+CONFIG_USE_BB_CRYPT_SHA=y
 # httpd e CGI come utente "web", non root (httpd -u web:web).
 CONFIG_FEATURE_HTTPD_SETUID=y
 # Precarico della coda dietro a tutti (ionice idle).
