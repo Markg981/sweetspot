@@ -28,7 +28,7 @@ jobs:
     outputs:
       compila: ${{ steps.file.outputs.compila }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: File dell'immagine modificati
@@ -49,7 +49,7 @@ jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Strumenti di verifica
         run: sudo apt-get update && sudo apt-get install -y busybox-static shellcheck flac jq minisign python3-yaml cpio zstd sqlite3 gcc
       - name: Test degli script
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 330
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # Il kernel del Raspberry Pi con tutti i suoi moduli occupa parecchio:
@@ -91,7 +91,7 @@ jobs:
       # Sorgenti scaricati e ccache: si salvano anche quando la compilazione
       # fallisce, cosi' il tentativo successivo riparte da dove era arrivato.
       - name: Cache di sorgenti e compilazione
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.buildroot-dl
@@ -118,14 +118,14 @@ jobs:
           done
       - name: Registro della compilazione
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: registro-compilazione-${{ matrix.scheda }}
           path: build.log
       - name: Salva la cache
         if: always()
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.buildroot-dl
@@ -134,7 +134,7 @@ jobs:
       # Immagine, disco per VMware e pacchetto di aggiornamento si scaricano
       # dalla pagina dell'esecuzione come file, non dentro uno zip.
       - name: Pubblica l'immagine
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/${{ matrix.immagine }}.xz
@@ -152,7 +152,7 @@ jobs:
             output/images/sweetspot.img output/images/sweetspot-vmware.vmdk
       - name: Pubblica il disco per VMware
         if: matrix.scheda == 'x86_64' && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/sweetspot-vmware.vmdk
@@ -163,7 +163,7 @@ jobs:
       # passa dal job "firma", l'unico che vede la chiave privata.
       - name: Pubblica il pacchetto di aggiornamento
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
@@ -171,15 +171,15 @@ jobs:
           if-no-files-found: error
       - name: Pubblica il pacchetto da firmare
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: da-firmare-${{ matrix.scheda }}
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           if-no-files-found: error
       # SBOM CycloneDX del sistema compilato (output/target) e vulnerabilita'
-      # note con grype (vedi docs/supply-chain.md). E' un'evidenza senza triage:
-      # non blocca la compilazione, e un database irraggiungibile non la fa fallire.
+      # note con grype (vedi docs/supply-chain.md). Un database irraggiungibile
+      # non fa fallire questo passo: decide il controllo del triage che segue.
       - name: SBOM e scansione delle vulnerabilita'
         id: sbom
         continue-on-error: true
@@ -209,12 +209,33 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pubblica SBOM e scansione
         if: ${{ steps.sbom.outcome == 'success' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: sbom-${{ matrix.scheda }}
           path: sbom
           if-no-files-found: error
+      # Ogni CVE Critical o High deve avere una decisione in docs/triage-cve.tsv
+      # (non affetta, o accettata con una data di revisione non scaduta):
+      # altrimenti la compilazione fallisce e niente si pubblica. Senza
+      # scansione un tag v* si ferma; gli altri rami ricevono un avviso.
+      - name: Triage delle CVE gravi
+        env:
+          SCHEDA: ${{ matrix.scheda }}
+          SCANSIONE: ${{ steps.sbom.outcome }}
+        run: |
+          if [ "$SCANSIONE" != success ]; then
+            case "$GITHUB_REF" in
+              refs/tags/v*) echo "::error::scansione delle vulnerabilita' non riuscita: triage non verificabile"; exit 1 ;;
+              *) echo "::warning::scansione delle vulnerabilita' non riuscita: triage non verificato"; exit 0 ;;
+            esac
+          fi
+          rc=0
+          python3 scripts/triage-cve.py "sbom/grype-$SCHEDA.json" > triage.txt 2>&1 || rc=$?
+          cat triage.txt
+          { echo; echo "#### Triage delle CVE ($SCHEDA)"; echo; echo '```'; cat triage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          grep '^ERRORE: ' triage.txt | sed 's/^ERRORE: /::error::/' || true
+          exit $rc
 
   # Firma dei soli tag ufficiali. L'ambiente e' esplicito e limitato ai tag v*
   # (vedi docs/aggiornamenti.md): rami e pull request non vedono la chiave.
@@ -228,10 +249,10 @@ jobs:
         scheda: [x86_64, rpi]
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Strumenti di firma
         run: sudo apt-get update && sudo apt-get install -y minisign cpio zstd
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: da-firmare-${{ matrix.scheda }}
           path: output/images
@@ -276,7 +297,7 @@ jobs:
           minisign -V -p "$P" -m "$d/pacchetto/SHA256SUMS" -x "$d/pacchetto/SHA256SUMS.minisig"
           tar -rf "$T" -C "$d/pacchetto" SHA256SUMS.minisig
       - name: Pubblica il pacchetto firmato
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
@@ -309,7 +330,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Pacchetti di questa esecuzione o, se non si e' compilato, dell'ultima
       # compilazione riuscita di main che li ha ancora; l'evidenza lo registra.
       - name: Pacchetti da provare
@@ -351,7 +372,7 @@ jobs:
           sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '.head_sha' 2>/dev/null || echo "?")
           printf 'compilazione: %s/%s/actions/runs/%s\ncommit: %s\nricompilato in questa esecuzione: %s\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$id" "$sha" "$COMPILA" | tee "$RUNNER_TEMP/sweetspot-audio-evidence/pacchetti.txt"
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ startsWith(github.ref, 'refs/tags/v') && format('da-firmare-{0}', matrix.scheda) || format('sweetspot-{0}-aggiornamento.tar', matrix.scheda) }}
           run-id: ${{ steps.pacchetti.outputs.id }}
@@ -367,7 +388,7 @@ jobs:
       # si avvia in QEMU. Il kernel del Raspberry Pi non si avvia in QEMU.
       # Le prove in QEMU girano anche se quella di Lyrion fallisce, ma non
       # senza pacchetti o senza immagine (altrimenti fallirebbero a catena).
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         id: immagine
         if: ${{ !cancelled() && steps.pacchetti.outcome == 'success' && matrix.scheda == 'x86_64' }}
         with:
@@ -390,7 +411,7 @@ jobs:
           sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-robustezza-qemu.sh sweetspot.img.xz
       - name: Evidenza della verifica audio software
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 3 }}
           name: verifica-audio-${{ matrix.scheda }}
@@ -411,30 +432,30 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # archive:false usa il nome del file come nome dell'artifact. v8 lo
       # scarica direttamente, senza estrarre il tar del pacchetto.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sweetspot.img.xz
           path: artifacts
           digest-mismatch: error
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sweetspot-rpi.img.xz
           path: artifacts
           digest-mismatch: error
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sweetspot-vmware.vmdk
           path: artifacts
           digest-mismatch: error
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sweetspot-x86_64-aggiornamento.tar
           path: artifacts
           digest-mismatch: error
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: sweetspot-rpi-aggiornamento.tar
           path: artifacts
@@ -465,7 +486,7 @@ jobs:
             cmp "$P" "$d/incorporata.pub"
           done
       - name: Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
             artifacts/sweetspot.img.xz
@@ -474,3 +495,19 @@ jobs:
             artifacts/sweetspot-x86_64-aggiornamento.tar
             artifacts/sweetspot-rpi-aggiornamento.tar
           fail_on_unmatched_files: true
+
+  # Unico controllo richiesto dalla protezione di main (scripts/proteggi-main.sh):
+  # i job a matrice o saltati hanno nomi variabili, questo no. Passa solo se
+  # nessun job necessario e' fallito o annullato; "saltato" e' ammesso perche'
+  # le pull request che non toccano l'immagine non compilano.
+  esito:
+    needs: [modifiche, test, build, lyrion]
+    if: ${{ always() }}
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Esito dei job
+        env:
+          RISULTATI: ${{ toJSON(needs) }}
+        run: |
+          echo "$RISULTATI" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          ! echo "$RISULTATI" | jq -e '[.[].result] | any(. == "failure" or . == "cancelled")' > /dev/null

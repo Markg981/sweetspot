@@ -880,7 +880,7 @@ tools/moduli-lyrion/                  prova dei moduli di Lyrion compilati per A
 tools/genera-test-dop.py              file di prova bit-perfect
 ```
 
-Basato su Buildroot 2026.08 e sul kernel con PREEMPT_RT: l'ultimo stabile
+Basato su Buildroot 2026.08.1 e sul kernel con PREEMPT_RT: l'ultimo stabile
 (7.3) sul PC, il ramo LTS rpi-6.18.y della Raspberry Pi Foundation sul
 Raspberry Pi.
 

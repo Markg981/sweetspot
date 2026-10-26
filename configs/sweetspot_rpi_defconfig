@@ -75,6 +75,24 @@ BR2_PACKAGE_JQ=y
 # Player: Squeezelite, con tutti i formati e ricampionamento facoltativo
 BR2_PACKAGE_SQUEEZELITE=y
 BR2_PACKAGE_SQUEEZELITE_FFMPEG=y
+# ffmpeg serve a Squeezelite solo per WMA (demuxer asf) e ALAC (demuxer mov),
+# con ingresso proprio: niente rete, protocolli, codificatori, filtri,
+# accelerazioni hardware ne' programma ffmpeg. Meno codice, meno CVE
+# raggiungibili (vedi docs/triage-cve.tsv). MiniDLNA usa libavformat solo
+# per i video, che non indicizza (media_dir=A in sweetspot-mediaserver).
+BR2_PACKAGE_FFMPEG_DECODERS="alac wmav1 wmav2 wmapro wmalossless"
+BR2_PACKAGE_FFMPEG_DEMUXERS="asf mov"
+BR2_PACKAGE_FFMPEG_ENCODERS=""
+BR2_PACKAGE_FFMPEG_MUXERS=""
+BR2_PACKAGE_FFMPEG_PARSERS=""
+BR2_PACKAGE_FFMPEG_BSFS=""
+BR2_PACKAGE_FFMPEG_PROTOCOLS=""
+BR2_PACKAGE_FFMPEG_FILTERS=""
+# BR2_PACKAGE_FFMPEG_FFMPEG is not set
+# BR2_PACKAGE_FFMPEG_INDEVS is not set
+# BR2_PACKAGE_FFMPEG_OUTDEVS is not set
+# BR2_PACKAGE_FFMPEG_SWSCALE is not set
+BR2_PACKAGE_FFMPEG_EXTRACONF="--disable-network --disable-hwaccels"
 BR2_PACKAGE_SQUEEZELITE_DSD=y
 BR2_PACKAGE_SQUEEZELITE_RESAMPLE=y
 BR2_PACKAGE_FAAD2=y
