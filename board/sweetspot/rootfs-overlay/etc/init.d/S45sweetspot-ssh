@@ -1,44 +1,69 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - accesso SSH per l'assistenza, solo se attivato in sweetspot.txt
-# e con una password impostata.
+# e con una password o delle chiavi autorizzate.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
 case "$1" in
 	start)
 		is_yes "$(conf SSH no)" || exit 0
-		pass=$(conf SSH_PASSWORD)
-		if [ -z "$pass" ]; then
-			log "ssh: attivato senza password, non avviato"
-			exit 0
-		fi
-		# Utente dell'accesso: "root" (predefinito, come prima) oppure
-		# "assistenza", senza privilegi. Qualunque altro valore vale root solo
-		# se e' proprio "root": un nome inventato non deve dare un login.
 		user=$(lower "$(conf SSH_UTENTE root)")
 		case "$user" in
 			root|assistenza) ;;
 			*) log "ssh: utente $user non ammesso, non avviato"; exit 0 ;;
 		esac
-		# La password arriva a chpasswd dall'ingresso standard, mai nella riga di comando.
-		printf '%s:%s\n' "$user" "$pass" | chpasswd >/dev/null 2>&1
-		if [ "$user" = root ]; then
-			opts="-R"
-		else
-			# Con l'utente di assistenza il login di root e' disattivato (-w).
-			opts="-R -w"
+		# Chiavi autorizzate: file "authorized_keys" sulla chiavetta. Se ci sono,
+		# le password sono spente del tutto (-s) e root non entra con la password
+		# (-g): niente brute force. Altrimenti resta la password, con al massimo
+		# 3 tentativi per connessione (-T).
+		keydir=${SWEETSPOT_SSH_KEYDIR:-/var/run/dropbear}
+		home=${SWEETSPOT_SSH_HOME:-$(if [ "$user" = root ]; then echo /root; else echo "/home/$user"; fi)}
+		authkeys=""
+		if stick_mount ro 2> /dev/null; then
+			[ -s "$STICK_MNT/authorized_keys" ] && authkeys=$(cat "$STICK_MNT/authorized_keys")
+			stick_umount
 		fi
-		# In Buildroot /etc/dropbear e' un collegamento a /var/run/dropbear,
-		# che dopo l'avvio non esiste: le chiavi vanno nella cartella puntata.
-		if [ -L /etc/dropbear ]; then
-			(cd /etc && mkdir -p "$(readlink dropbear)")
+		opts="-R -T 3"
+		[ "$user" = root ] || opts="$opts -w"
+		pass=$(conf SSH_PASSWORD)
+		if [ -n "$authkeys" ]; then
+			mkdir -p "$home/.ssh" && chmod 700 "$home/.ssh"
+			printf '%s
+' "$authkeys" > "$home/.ssh/authorized_keys"
+			chmod 600 "$home/.ssh/authorized_keys"
+			[ "$user" = root ] || chown -R "$user" "$home/.ssh" 2> /dev/null
+			opts="$opts -s"
+			[ "$user" = root ] && opts="$opts -g"
+		elif [ -z "$pass" ]; then
+			log "ssh: attivato senza password ne' chiavi, non avviato"
+			exit 0
 		else
-			mkdir -p /etc/dropbear
+			# La password arriva a chpasswd dall'ingresso standard, mai nella riga di comando.
+			printf '%s:%s
+' "$user" "$pass" | chpasswd > /dev/null 2>&1
 		fi
+		# In Buildroot /etc/dropbear e' un collegamento a /var/run/dropbear (tmpfs):
+		# senza altro le chiavi dell'host cambierebbero a ogni avvio. La chiave
+		# si crea una volta e si salva sulla chiavetta, poi si riusa.
+		mkdir -p "$keydir"
+		hostkey=$keydir/dropbear_ed25519_host_key
+		if [ ! -s "$hostkey" ] && stick_mount ro 2> /dev/null; then
+			[ -s "$STICK_MNT/sweetspot-ssh-host-key" ] && cp "$STICK_MNT/sweetspot-ssh-host-key" "$hostkey"
+			stick_umount
+		fi
+		if [ ! -s "$hostkey" ]; then
+			rm -f "$hostkey"
+			dropbearkey -t ed25519 -f "$hostkey" > /dev/null 2>&1 || log "ssh: chiave dell'host non creata"
+			if [ -s "$hostkey" ] && stick_mount rw 2> /dev/null; then
+				cp "$hostkey" "$STICK_MNT/sweetspot-ssh-host-key.nuovo" && mv "$STICK_MNT/sweetspot-ssh-host-key.nuovo" "$STICK_MNT/sweetspot-ssh-host-key"
+				stick_umount
+			fi
+		fi
+		chmod 600 "$hostkey" 2> /dev/null
 		# shellcheck disable=SC2086
-		dropbear $opts -p 22
-		log "ssh: attivo (utente $user)"
+		dropbear $opts -r "$hostkey" -p "${SWEETSPOT_SSH_PORT:-22}"
+		log "ssh: attivo (utente $user$([ -n "$authkeys" ] && echo ", solo chiavi"))"
 		;;
 	stop) killall dropbear 2>/dev/null ;;
 	*) echo "uso: $0 start|stop" ;;
