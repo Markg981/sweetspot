@@ -105,7 +105,7 @@ if [ -n "$BB" ] && ! $BB sh -c 'start-stop-daemon() { :; }' 2>/dev/null; then
 	BBSH=no
 	SH=sh
 fi
-if [ -n "$BB" ]; then
+if [ "$BBSH" = si ] && [ -n "$BB" ]; then
 	for p in taskset start-stop-daemon killall modprobe pidof bluetoothctl dbus-send dbus-uuidgen dbus-daemon bluealsa-aplay; do
 		printf '%s() { "%s/bin/%s" "$@"; }\n' "$p" "$T" "$p"
 	done > "$T/shim.sh"
