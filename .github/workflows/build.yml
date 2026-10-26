@@ -60,6 +60,12 @@ jobs:
           tar -xJf shellcheck.tar.xz
           sudo install -m 0755 shellcheck-v0.10.0/shellcheck /usr/local/bin/shellcheck
           shellcheck --version
+      - name: camilladsp fissato (v4.1.3, come il pacchetto)
+        run: |
+          curl -fsSL -o camilladsp.tar.gz https://github.com/HEnquist/camilladsp/releases/download/v4.1.3/camilladsp-linux-amd64.tar.gz
+          echo "55f5ec2ed80fcc79a543672f9f89ace4557d290d80584ef31ee0442111bd0b11  camilladsp.tar.gz" | sha256sum -c -
+          tar -xzf camilladsp.tar.gz camilladsp
+          sudo install -m 0755 camilladsp /usr/local/bin/camilladsp
       - name: Test degli script
         # CI=true e' impostata da GitHub: i test che saltano per uno strumento
         # mancante falliscono (SWEETSPOT_CI_STRICT=1 lo forza ovunque).
