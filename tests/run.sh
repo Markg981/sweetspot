@@ -1873,6 +1873,7 @@ expect "ritorno manuale all'altra versione" "a" "$(genv prova)"
 expect "file fuori dai dischi rifiutato" "file non valido" "$(upd file /etc/passwd)"
 cat > "$UPD/bin/curl" <<'EOF2'
 #!/bin/sh
+echo "$*" > "$0.args"
 cat <<'JSON'
 {"tag_name":"v2.0.0","published_at":"2026-11-01T10:00:00Z","body":"Novità: <b>prova</b>",
  "assets":[{"name":"sweetspot.img.xz","browser_download_url":"https://example.com/img","size":1},
@@ -1882,6 +1883,8 @@ EOF2
 chmod +x "$UPD/bin/curl"
 expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
 	"$(UPD_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+expect "ricerca: solo https e dimensione massima" "si|si|si" \
+	"$(grep -q -- '--proto =https' "$UPD/bin/curl.args" && echo si || echo no)|$(grep -q -- '--proto-redir =https' "$UPD/bin/curl.args" && echo si || echo no)|$(grep -q -- '--max-filesize' "$UPD/bin/curl.args" && echo si || echo no)"
 # Scaricamento che si interrompe a meta' (curl scrive una parte e fallisce):
 # la copia precedente (v1.3.0 nella copia A) resta intatta e avviabile.
 mkdir -p "$UPD/curl-meta"
