@@ -49,7 +49,9 @@ SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
    minuti) e la pagina Stato avvisa. Se il ripristino all'avvio non riesce,
    un marcatore in RAM (`dati.ripristino-fallito`) blocca salvataggio e
    checkpoint: la copia buona sulla chiavetta (valutazioni e statistiche
-   comprese) non viene sovrascritta da una RAM vuota. Il blocco cade da solo a
+   comprese) non viene sovrascritta da una RAM vuota. Lo stesso vale se
+   all'avvio la chiavetta non si monta e compare più tardi con dati già
+   salvati: basta riavviare per ripristinarli. Il blocco cade da solo a
    un ripristino riuscito, o a mano con `sweetspot-dati sblocca` /
    `sweetspot-dati salva --forza`. Il rallentamento usa un cgroup v2 (`cpu.max` 5%,
    `cpu.weight` minimo) e `ionice -c3`: i processi restano vivi, così lo scanner

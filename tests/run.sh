@@ -4376,6 +4376,36 @@ expect "dati: il rifiuto e' nel registro" 1 "$(grep -c 'salvataggio rifiutato' "
 rm -rf "$RF/stick/sweetspot-dati"; mkdir -p "$RF/s2"; tar -cf "$RF/s2/lyrion.tar" -C "$RF/lms" prefs
 rfdati "do_restore $RF/s2"; rc=$?
 expect "dati: un ripristino riuscito toglie il blocco" "0 no" "$rc $([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+# Chiavetta non letta all'avvio, poi compare: Lyrion ha un database nuovo e
+# vuoto che non deve sostituire la generazione salvata.
+RT=$WORK/riptardi
+mkdir -p "$RT/run" "$RT/lms/prefs" "$RT/stick/sweetspot-dati"
+echo "buona" > "$RT/stick/sweetspot-dati/lyrion.tar"
+echo nuovo > "$RT/lms/prefs/p"
+rtdati() { # esito-di-stick_mount comandi
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$RT/run SWEETSPOT_LOG=$RT/log SWEETSPOT_LMS_DATA=$RT/lms SWEETSPOT_STICK_DIR=$RT/stick \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dati
+		stick_mount() { return $1; }; stick_umount() { :; }; space_ok() { return 0; }
+		$2"
+}
+SWEETSPOT_TEST= SWEETSPOT_RUN=$RT/run SWEETSPOT_LOG=$RT/log SWEETSPOT_LMS_DATA=$RT/lms \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-dati" assente
+expect "dati: chiavetta assente all'avvio lascia il marcatore" si "$([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+rtdati 1 'do_save'; rc=$?
+expect "dati: chiavetta ancora assente, salvataggio rifiutato" "1 si" "$rc $([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+rtdati 0 'do_save'; rc=$?
+expect "dati: chiavetta comparsa con dati, salvataggio rifiutato" 1 "$rc"
+expect "dati: chiavetta comparsa con dati, la generazione resta intatta" buona "$(cat "$RT/stick/sweetspot-dati/lyrion.tar")"
+expect "dati: chiavetta comparsa con dati diventa ripristino fallito" "si no" \
+	"$([ -f "$RT/run/dati.ripristino-fallito" ] && echo si || echo no) $([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+rtdati 0 'do_checkpoint'; rc=$?
+expect "dati: chiavetta comparsa con dati, checkpoint rifiutato" 1 "$rc"
+rm -rf "$RT/run"/* "$RT/stick/sweetspot-dati"
+date +%s > "$RT/run/dati.non-ripristinato"
+rtdati 0 'do_save'; rc=$?
+expect "dati: chiavetta comparsa senza dati, il primo salvataggio procede" "0 no" \
+	"$rc $([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+expect "dati: chiavetta comparsa senza dati, generazione scritta" si "$([ -f "$RT/stick/sweetspot-dati/lyrion.tar" ] && echo si || echo no)"
 
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1

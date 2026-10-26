@@ -64,6 +64,12 @@ fingerprint() {
 # marcatore blocca salvataggio e checkpoint finche' un ripristino non riesce o
 # l'utente non lo toglie ("salva --forza" o "sblocca").
 RESTORE_FAIL=$RUN/dati.ripristino-fallito
+# Chiavetta non letta all'avvio (comparsa tardi, montaggio fallito): Lyrion
+# parte vuoto e, quando la chiavetta compare, il suo database nuovo
+# prenderebbe il posto della generazione buona. Se la chiavetta ha dati
+# salvati il caso diventa un ripristino fallito; se non ne ha non c'e' nulla
+# da perdere e il primo salvataggio e' legittimo.
+RESTORE_SKIPPED=$RUN/dati.non-ripristinato
 
 do_restore() {
 	if _restore "$@"; then
@@ -75,8 +81,26 @@ do_restore() {
 	return 1
 }
 
+# Falso finche' la chiavetta non letta all'avvio resta assente; quando compare
+# decide se il salvataggio e' sicuro (vedi RESTORE_SKIPPED).
+restore_skipped_check() {
+	local dst found=0
+	[ -f "$RESTORE_SKIPPED" ] || return 0
+	stick_mount ro || return 1
+	dst="$STICK_MNT/$DATA_DIR_NAME"
+	{ [ -d "$dst" ] || [ -d "$dst.vecchio" ]; } && found=1
+	stick_umount
+	rm -f "$RESTORE_SKIPPED"
+	if [ "$found" = 1 ]; then
+		date +%s > "$RESTORE_FAIL"
+		log "dati: la chiavetta non era leggibile all'avvio e contiene dati salvati: salvataggio bloccato, riavviare per ripristinarli"
+	fi
+	return 0
+}
+
 # Vero (e registra l'avviso una volta) se un ripristino fallito blocca i salvataggi.
 restore_blocked() {
+	restore_skipped_check || return 0
 	[ -f "$RESTORE_FAIL" ] || return 1
 	if [ ! -f "$RESTORE_FAIL.avvisato" ]; then
 		: > "$RESTORE_FAIL.avvisato"
@@ -410,13 +434,17 @@ case "$1" in
 		# Chiamato con la chiavetta gia' montata dallo script di avvio.
 		do_restore "${2:-$STICK_MNT/$DATA_DIR_NAME}"
 		;;
+	assente)
+		# Chiamato dallo script di avvio quando la chiavetta non si e' montata.
+		date +%s > "$RESTORE_SKIPPED"
+		;;
 	salva)
-		[ "${2:-}" = "--forza" ] && rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
+		[ "${2:-}" = "--forza" ] && rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato" "$RESTORE_SKIPPED"
 		do_save ;;
 	checkpoint) do_checkpoint ;;
 	sblocca)
-		rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato"
+		rm -f "$RESTORE_FAIL" "$RESTORE_FAIL.avvisato" "$RESTORE_SKIPPED"
 		log "dati: blocco del salvataggio tolto a mano" ;;
 	sorveglia) do_watch ;;
-	*) echo "uso: $0 ripristina|salva [--forza]|checkpoint|sblocca|sorveglia" >&2; exit 1 ;;
+	*) echo "uso: $0 ripristina|assente|salva [--forza]|checkpoint|sblocca|sorveglia" >&2; exit 1 ;;
 esac
