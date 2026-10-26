@@ -326,6 +326,7 @@ mkdir -p "$V"
 vrun() { # PASSWORD_WEB password
 	printf 'PASSWORD_WEB=%s\n' "$1" > "$V/s.txt"
 	printf '%s\n' "$2" | SWEETSPOT_RUN="$V/run" SWEETSPOT_LOG="$V/log" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" \
+		SWEETSPOT_VERIFICA_PAUSA=0 SWEETSPOT_VERIFICA_LIBERI=${VLIBERI:-20} \
 		sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $V/s.txt; SWEETSPOT_TEST=1; . $OVERLAY/usr/bin/sweetspot-accesso; verify && echo si || echo no"
 }
 # sweetspot-config finto: annota l'impronta riscritta dalla migrazione.
@@ -337,6 +338,19 @@ expect "password in chiaro in sweetspot.txt: giusta" "si" "$(vrun segreta segret
 rm -f "$V/riscritta"
 expect "password in chiaro in sweetspot.txt: sbagliata" "no" "$(vrun segreta altra)"
 expect "senza password impostata: sempre no" "no" "$(vrun '' x)"
+# Limite tenuto da root: vale anche per chi chiama "verifica" direttamente.
+rm -f "$V/run/accesso.errori"
+VLIBERI=3
+for i in 1 2 3; do vrun segreta altra > /dev/null; done
+expect "troppi errori di fila: anche la password giusta e' rifiutata" "no" "$(vrun segreta segreta)"
+expect "gli errori li conta root, nella sua cartella" "3" "$(cut -d' ' -f1 "$V/run/accesso.errori")"
+printf '3 %s\n' "$(( $(date +%s) - 31 ))" > "$V/run/accesso.errori"
+expect "passata l'attesa la password giusta vale" "si" "$(vrun segreta segreta)"
+expect "una password giusta azzera gli errori" "no" "$([ -f "$V/run/accesso.errori" ] && echo si || echo no)"
+rm -f "$V/riscritta"
+VLIBERI=20
+expect "verifica: un errore costa una pausa (2 secondi)" "1" "$(grep -c 'VERIFICA_PAUSA=${SWEETSPOT_VERIFICA_PAUSA:-2}' "$OVERLAY/usr/bin/sweetspot-accesso")"
+expect "verifica: le verifiche passano una alla volta" "1" "$(grep -c '^	flock 8$' "$OVERLAY/usr/bin/sweetspot-accesso")"
 expect "impronta di altro tipo: non vale come password in chiaro" "no" "$(vrun '$5$sale$impronta' '$5$sale$impronta')"
 expect "BusyBox con le impronte SHA-512-crypt" "1" "$(grep -c '^CONFIG_USE_BB_CRYPT_SHA=y' "$ROOT/board/sweetspot/common/busybox.fragment")"
 expect "l'impronta nuova non e' piu' quella MD5 dell'httpd" "0" "$(grep -c 'httpd -m' "$OVERLAY/usr/bin/sweetspot-accesso")"

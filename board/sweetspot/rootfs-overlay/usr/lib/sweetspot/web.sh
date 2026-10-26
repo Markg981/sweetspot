@@ -21,10 +21,11 @@ priv() {
 	fi
 }
 
-# Conferma forte per le operazioni che aprono root (SSH, pacchetti di
-# aggiornamento da disco): gettone monouso emesso da root + password del
-# pannello, riverificata da root. Senza PASSWORD_WEB la conferma non e'
-# possibile (nessuna password da richiedere): si imposta prima quella.
+# Conferma forte per le operazioni che aprono root o il pannello (SSH,
+# password del pannello, pacchetti di aggiornamento da disco): gettone
+# monouso emesso da root + password attuale del pannello, riverificata da
+# root. Senza PASSWORD_WEB la conferma non e' possibile (nessuna password da
+# richiedere): si imposta prima quella.
 confirm_token() {
 	if [ -x "$SWEETSPOT_PRIV" ]; then
 		"$SWEETSPOT_PRIV" @conferma-nuova 2>/dev/null
@@ -33,14 +34,17 @@ confirm_token() {
 	fi
 }
 
-# priv_confirm GETTONE PASSWORD COMANDO ARGOMENTI...
+# priv_confirm GETTONE PASSWORD COMANDO ARGOMENTI...: 126 se la conferma e'
+# rifiutata (nulla viene eseguito, come con l'helper), altrimenti l'esito
+# del comando.
 priv_confirm() {
 	local tok=$1 pw=$2
 	shift 2
 	if [ -x "$SWEETSPOT_PRIV" ]; then
 		printf '%s\n' "$pw" | "$SWEETSPOT_PRIV" @conferma "$tok" "$@"
 	else
-		printf '%s\n' "$pw" | sweetspot-accesso verifica && "$@"
+		printf '%s\n' "$pw" | sweetspot-accesso verifica || return 126
+		"$@"
 	fi
 }
 
