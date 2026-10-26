@@ -30,11 +30,28 @@ dlna_name() {
 	printf '%s (libreria)' "$(safe_name "$(conf NOME_PLAYER Sweetspot)")" | cut -c1-64
 }
 
+# Interfacce su cui il server ascolta (DLNA_INTERFACCE): nomi separati da
+# virgola, solo [A-Za-z0-9_.-]. Vuota o non valida: tutte, come prima.
+dlna_ifaces() {
+	local v
+	v=$(conf DLNA_INTERFACCE "")
+	case "$v" in
+		""|*[!A-Za-z0-9_.,-]*|,*|*,|*,,*) return 0 ;;
+	esac
+	printf '%s' "$v"
+}
+
 dlna_conf() { # cartella-musica
+	local ifc
+	ifc=$(dlna_ifaces)
+	[ -z "$ifc" ] || ifc="network_interface=$ifc"
 	cat <<EOF
 media_dir=A,$1
+# wide_links serve: /musica contiene solo collegamenti ai dischi e alle
+# cartelle di rete montati (sweetspot-dischi, sweetspot-rete).
 wide_links=yes
-root_container=M
+${ifc:+$ifc
+}root_container=M
 friendly_name=$(dlna_name)
 port=$DLNA_PORT
 db_dir=$DLNA_DIR
