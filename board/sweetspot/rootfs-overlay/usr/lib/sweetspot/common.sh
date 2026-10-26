@@ -1686,6 +1686,11 @@ io_counters() {
 # e dei dischi, e riaprirli li scioglierebbe.
 STICK_USERS=$RUN/chiavetta.utenti
 
+# La chiavetta e' montata scrivibile? (opzioni di montaggio in /proc/mounts)
+stick_is_rw() {
+	awk -v m="$STICK_MNT" '$2 == m { n = split($4, o, ","); for (i = 1; i <= n; i++) if (o[i] == "rw") ok = 1 } END { exit !ok }' "$PROC/mounts" 2>/dev/null
+}
+
 stick_mount() { # [ro|rw]
 	local dev mode=${1:-ro} n rc=0
 	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && { [ -d "$STICK_MNT" ]; return; }
@@ -1694,7 +1699,15 @@ stick_mount() { # [ro|rw]
 	flock 6
 	n=$(cat "$STICK_USERS" 2>/dev/null)
 	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
-		[ "$mode" = rw ] && mount -o remount,rw "$STICK_MNT" 2>/dev/null && evento chiavetta rimontata "rw"
+		if [ "$mode" = rw ]; then
+			# Il rimontaggio puo' riuscire a parole e lasciare la chiavetta in
+			# sola lettura (errori del filesystem): si controlla lo stato vero.
+			if mount -o remount,rw "$STICK_MNT" 2>/dev/null && stick_is_rw; then
+				evento chiavetta rimontata "rw"
+			else
+				rc=1
+			fi
+		fi
 	else
 		n=0
 		dev=$(stick_device)

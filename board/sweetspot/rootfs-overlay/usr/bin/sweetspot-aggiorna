@@ -511,7 +511,11 @@ do_other() {
 		echo "non c'e' un'altra versione installata"
 		return 1
 	fi
-	grubenv_set "$(boot_env)" "prova=$other"
+	if ! grubenv_set "$(boot_env)" "prova=$other"; then
+		stick_umount
+		echo "non riesco a scrivere sulla chiavetta"
+		return 1
+	fi
 	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/tryboot.txt" "$other"
 	stick_umount
 	log "aggiornamento: al prossimo avvio si prova la copia $other"
@@ -520,7 +524,11 @@ do_other() {
 # La versione in uso (avviata a mano dal menu) diventa quella predefinita.
 do_default() {
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
-	grubenv_set "$(boot_env)" "slot=$(running_slot)" prova= tentato=
+	if ! grubenv_set "$(boot_env)" "slot=$(running_slot)" prova= tentato=; then
+		stick_umount
+		echo "non riesco a scrivere sulla chiavetta"
+		return 1
+	fi
 	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)"
 	stick_umount
 }
@@ -741,12 +749,12 @@ healthy() {
 }
 
 do_confirm() {
-	local slot env def tried fail_reboot=0
+	local slot env def tried fail_reboot=0 werr=0
 	slot=$(running_slot)
 	mkdir -p "$DIR"
-	stick_mount rw || return 0
+	stick_mount rw || { log "aggiornamento: conferma non riuscita, chiavetta non scrivibile"; return 1; }
 	env=$(boot_env)
-	[ -f "$env" ] || grubenv_set "$env" "slot=$slot"
+	[ -f "$env" ] || grubenv_set "$env" "slot=$slot" || { stick_umount; log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"; return 1; }
 	def=$(grubenv_get "$env" slot)
 	tried=$(grubenv_get "$env" tentato)
 	if [ -n "$tried" ] && [ "$tried" != "$slot" ]; then
@@ -758,11 +766,15 @@ do_confirm() {
 			cp "$STICK_MNT/boot/conferma-fallita" "$DIR/fallita.motivo" 2>/dev/null
 			rm -f "$STICK_MNT/boot/conferma-fallita"
 		fi
-		grubenv_set "$env" tentato=
+		grubenv_set "$env" tentato= || werr=1
 		log "aggiornamento: la nuova versione (copia $tried) non e' partita, si e' tornati alla precedente"
 	elif [ "$tried" = "$slot" ]; then
 		if healthy; then
-			grubenv_set "$env" "slot=$slot" tentato=
+			if ! grubenv_set "$env" "slot=$slot" tentato=; then
+				stick_umount
+				log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"
+				return 1
+			fi
 			touch "$DIR/riuscita"
 			rm -f "$STICK_MNT/boot/conferma-fallita"
 			log "aggiornamento: la versione $(current_version) funziona ed e' ora quella in uso"
@@ -775,9 +787,10 @@ do_confirm() {
 			fail_reboot=1
 		fi
 	elif [ -z "$def" ]; then
-		grubenv_set "$env" "slot=$slot"
+		grubenv_set "$env" "slot=$slot" || werr=1
 	fi
 	stick_umount
+	[ "$werr" = 1 ] && { log "aggiornamento: scrittura su chiavetta fallita"; return 1; }
 	# Conferma fallita: si riavvia subito. La prova di GRUB e' a colpo unico
 	# (sul Pi config.txt resta sulla copia di prima), quindi riparte la copia
 	# precedente senza aspettare un riavvio manuale.
