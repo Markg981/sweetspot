@@ -142,6 +142,19 @@ expect "al massimo 8 raccolte di crash dump" "8" "$(ls "$STICKLOG/pstore" | wc -
 expect "restano le piu' recenti" "si" "$([ -d "$STICKLOG/pstore/$d1" ] && echo si || echo no)"
 rm -rf "$E/stick/diagnostica" "$E/run/"diario.*.off "$E/log" "$E/run/timeline.log"
 
+echo "Segreti filtrati sulla chiavetta"
+echo "2026-01-01 00:10:00 rete WIFI_PASSWORD=fintapw123 WIFI_PSK=fintapsk456 ssid=Casa" >> "$E/log"
+echo "panic: cmdline psk=fintapsk789 password=fintapw000 root=/dev/sda1" > "$E/pstore/dmesg-ramoops-9"
+D salva
+D avvio
+tutto=$(cat "$STICKLOG"/sweetspot.log* "$STICKLOG"/pstore/*/* 2>/dev/null)
+expect "chiavetta: nessuna password o PSK" "0" "$(printf '%s
+' "$tutto" | grep -c 'fintapw\|fintapsk')"
+expect "chiavetta: il resto della riga resta leggibile" "1|1" "$(printf '%s
+' "$tutto" | grep -c 'rete WIFI_PASSWORD=\*\*\* WIFI_PSK=\*\*\* ssid=Casa')|$(printf '%s
+' "$tutto" | grep -c 'panic: cmdline psk=\*\*\* password=\*\*\* root=/dev/sda1')"
+rm -rf "$STICKLOG" "$E/pstore"/* "$E"/run/diario.*.off
+
 echo "Con DIARIO=no non si scrive nulla"
 echo "DIARIO=no" >> "$E/run/sweetspot.conf"
 lib 'evento sistema avvio x'
