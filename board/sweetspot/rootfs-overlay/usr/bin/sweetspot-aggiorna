@@ -349,21 +349,22 @@ IN_PROVA="la versione in uso e' ancora in prova: attendi la conferma (fino a 10 
 # Confronta due versioni nel formato di "git describe" (v1.2.3, oppure
 # v1.2.3-5-gabcdef per i commit dopo il tag, con -dirty finale facoltativo):
 # stampa -1, 0 o 1 (la prima e' minore, uguale, maggiore) oppure ? se una
-# delle due non e' confrontabile (es. "sviluppo", un hash).
+# delle due non e' confrontabile (es. "sviluppo", un hash, v1.0.0-rc1).
+# Si confrontano fino a quattro componenti numeriche e poi i commit dopo il tag.
 version_cmp() { # versione_a versione_b
 	awk -v a="$1" -v b="$2" '
 	function parse(v, arr,   m, n, i, p) {
 		sub(/-dirty$/, "", v); sub(/^v/, "", v)
 		if (v !~ /^[0-9]+(\.[0-9]+)*(-[0-9]+-g[0-9a-f]+)?$/) return 0
-		arr[1] = arr[2] = arr[3] = arr[4] = 0
+		arr[1] = arr[2] = arr[3] = arr[4] = arr[5] = 0
 		n = split(v, m, "-"); split(m[1], p, ".")
-		for (i = 1; i <= 3; i++) arr[i] = p[i] + 0
-		if (n >= 2) arr[4] = m[2] + 0
+		for (i = 1; i <= 4; i++) arr[i] = p[i] + 0
+		if (n >= 2) arr[5] = m[2] + 0
 		return 1
 	}
 	BEGIN {
 		if (!parse(a, x) || !parse(b, y)) { print "?"; exit }
-		for (i = 1; i <= 4; i++) {
+		for (i = 1; i <= 5; i++) {
 			if (x[i] < y[i]) { print -1; exit }
 			if (x[i] > y[i]) { print 1; exit }
 		}
@@ -435,9 +436,12 @@ install_job() { # url|file SORGENTE
 	elif ! v=$(verify_package "$x"); then
 		state "errore|$v"
 		rc=1
-	elif cmp=$(version_cmp "$v" "$(current_version)"); [ "$cmp" = -1 ] && [ "$allow" != downgrade ]; then
+	elif cmp=$(version_cmp "$v" "$(current_version)"); [ "$allow" != downgrade ] &&
+		{ [ "$cmp" = -1 ] || { [ "$cmp" = "?" ] && [ "$(version_cmp "$(current_version)" "$(current_version)")" = 0 ]; }; }; then
 		# Una versione firmata ma vecchia puo' avere falle note: serve la
-		# conferma esplicita. Le versioni non confrontabili non bloccano.
+		# conferma esplicita. Se la versione in uso e' confrontabile, anche
+		# una non confrontabile (rc, hash) vale come possibile downgrade;
+		# se non lo sono entrambe non c'e' modo di giudicare.
 		state "errore|il pacchetto ($v) e' piu' vecchio della versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
 		rc=1
 	elif v=$(install_package "$x" "$d" "$other" "$v"); then
