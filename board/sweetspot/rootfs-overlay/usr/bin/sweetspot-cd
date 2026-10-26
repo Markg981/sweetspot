@@ -155,9 +155,28 @@ do_read() {
 # Nome di file sicuro su tutti i file system (anche FAT ed exFAT).
 # Nome di file valido su FAT, exFAT, NTFS e per Windows e Mac:
 # "Titolo: sottotitolo" diventa "Titolo - sottotitolo", AC/DC diventa AC-DC.
+# Il limite e' in byte, non in caratteri: NAME_MAX e' 255 byte su ext4 (e 255
+# unita' UTF-16 su exFAT/FAT, che 200 byte UTF-8 non superano). 200 lascia
+# spazio a "NN - " e ".flac"; con titoli CJK (3 byte a carattere) un limite in
+# caratteri darebbe nomi di oltre 255 byte e la scrittura fallirebbe.
 file_name() {
-	printf '%s' "$1" | tr -d '\000-\037' |
-		sed 's/: / - /g; s#[/:]#-#g; s/"/'"'"'/g; s/[\\*?<>|]/_/g; s/^[ .]*//; s/[ .]*$//' | cut -c1-120
+	local n
+	n=$(printf '%s' "$1" | tr -d '\000-\037' |
+		sed 's/: / - /g; s#[/:]#-#g; s/"/'"'"'/g; s/[\\*?<>|]/_/g; s/^[ .]*//; s/[ .]*$//')
+	cut_utf8 "$n" 200 | sed 's/[ .]*$//'
+}
+
+# Taglia a N byte senza spezzare una sequenza UTF-8: se il primo byte escluso
+# e' di continuazione (10xxxxxx), arretra fino all'inizio del carattere.
+cut_utf8() { # testo byte
+	local s=$1 max=$2 c
+	[ "$(printf '%s' "$s" | LC_ALL=C wc -c)" -gt "$max" ] || { printf '%s' "$s"; return; }
+	while [ "$max" -gt 0 ]; do
+		c=$(printf '%s' "$s" | LC_ALL=C cut -b$((max + 1)) | od -An -tu1 -N1 | tr -d ' ')
+		[ "${c:-0}" -ge 128 ] && [ "${c:-0}" -lt 192 ] || break
+		max=$((max - 1))
+	done
+	printf '%s' "$s" | LC_ALL=C cut -b1-"$max"
 }
 
 state() { echo "$1|$2|$3|$4" > "$DIR/stato"; }
