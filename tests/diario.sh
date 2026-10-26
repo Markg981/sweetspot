@@ -153,7 +153,7 @@ expect "chiavetta: nessuna password o PSK" "0" "$(printf '%s
 expect "chiavetta: il resto della riga resta leggibile" "1|1" "$(printf '%s
 ' "$tutto" | grep -c 'rete WIFI_PASSWORD=\*\*\* WIFI_PSK=\*\*\* ssid=Casa')|$(printf '%s
 ' "$tutto" | grep -c 'panic: cmdline psk=\*\*\* password=\*\*\* root=/dev/sda1')"
-rm -rf "$STICKLOG" "$E/pstore"/*
+rm -rf "$STICKLOG" "$E/pstore"/* "$E"/run/diario.*.off
 
 echo "Con DIARIO=no non si scrive nulla"
 echo "DIARIO=no" >> "$E/run/sweetspot.conf"
@@ -197,7 +197,6 @@ done
 expect "versioni: squeezelite e camilladsp" "1|1" "$(grep -c 'squeezelite: Squeezelite v2.0' "$B/versioni.txt")|$(grep -c 'camilladsp: CamillaDSP 3.0' "$B/versioni.txt")"
 expect "configurazione: valori normali conservati" "1" "$(grep -c '^WIFI_NOME=CasaRossi' "$B/configurazione.txt")"
 secrets=$(grep -rl 'segreto-web-123\|segreto-wifi-456\|segreto-ssh-789\|segreto-url-000\|hunter2\|abc123\|QWxhZGRpbjpvcGVu\|zzz9' "$B" 2>/dev/null | wc -l | tr -d ' ')
-[ "$secrets" = 0 ] || { grep -rnE "segreto-web-123|segreto-wifi-456|segreto-ssh-789|segreto-url-000|hunter2|abc123|QWxhZGRpbjpvcGVu|zzz9" "$B" | cut -c1-200; }
 expect "nessun segreto in nessun file del bundle" "0" "$secrets"
 expect "le chiavi sensibili sono oscurate, non omesse" "PASSWORD_WEB=***|WIFI_PASSWORD=***" "$(grep '^PASSWORD_WEB=' "$B/configurazione.txt" | sort -u)|$(grep '^WIFI_PASSWORD=' "$B/configurazione.txt" | sort -u)"
 expect "il bundle non tocca pstore in memoria" "1" "$(ls "$E/pstore" | grep -c dmesg-ramoops-2)"
