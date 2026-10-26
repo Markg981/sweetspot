@@ -117,7 +117,8 @@ avvia() {
 spegni() { # nome
 	guest poweroff > /dev/null 2>&1 || true
 	i=0
-	while kill -0 "$(cat "$W/qemu.pid")" 2>/dev/null && [ $i -lt 90 ]; do sleep 1; i=$((i + 1)); done
+	# Allo spegnimento QEMU cancella il pidfile: il ciclo finisce senza errori.
+	while kill -0 "$(cat "$W/qemu.pid" 2>/dev/null)" 2>/dev/null && [ $i -lt 90 ]; do sleep 1; i=$((i + 1)); done
 	[ $i -lt 90 ] || echo "  (spegnimento non concluso in 90 s: QEMU fermato)"
 	stop_vm
 	cp "$W/seriale.log" "$W/seriale-$1.log"
@@ -218,7 +219,9 @@ fi
 
 echo "== 4. Avvio dall'SSD, senza chiavetta"
 avvia ssd
-guest 'efibootmgr; echo; cat /proc/cmdline; blkid /dev/nvme0n1p4' > "$OUT/avvio-ssd.txt" 2>&1 || true
+# efivarfs lo monta solo sweetspot-installa: senza, efibootmgr non vede BootCurrent.
+guest 'grep -q " efivarfs " /proc/mounts || mount -t efivarfs efivarfs /sys/firmware/efi/efivars
+efibootmgr; echo; cat /proc/cmdline; blkid /dev/nvme0n1p4' > "$OUT/avvio-ssd.txt" 2>&1 || true
 cur=$(awk '/^BootCurrent:/ { print $2 }' "$OUT/avvio-ssd.txt")
 if [ -n "$cur" ] && grep -Eq "^Boot$cur\\*? Sweetspot" "$OUT/avvio-ssd.txt"; then
 	esito OK "avviato dalla voce UEFI Sweetspot (Boot$cur)"
