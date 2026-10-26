@@ -157,7 +157,7 @@ chmod 600 "$RUN/sweetspot.txt" 2>/dev/null # contiene le password: solo root
 config_build "$RUN/sweetspot.txt"
 reopen_onboarding
 while [ $# -gt 0 ]; do
-	case "$1" in
+	case "$(printf %s "$1" | tr a-z A-Z)" in
 		*PASSWORD*) log "impostazioni: $OP $1" ;;
 		*) if [ "$OP" = imposta ]; then log "impostazioni: $OP $1=$2"; else log "impostazioni: $OP $1"; fi ;;
 	esac
