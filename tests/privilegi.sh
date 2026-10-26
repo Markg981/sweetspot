@@ -480,6 +480,17 @@ printf 'PASSWORD_WEB=$1$vero$hash\nNOME_PLAYER=Visibile\n' > "$A/run/sweetspot.c
 expect "le pagine non vedono l'impronta" "*" "$(SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="$A/run" sh -c ". $OVERLAY/usr/lib/sweetspot/web.sh; conf PASSWORD_WEB")"
 expect "senza helper (test) vale la configurazione completa" '$1$vero$hash' "$(SWEETSPOT_PRIV=/nonexistent SWEETSPOT_RUN="$A/run" sh -c ". $OVERLAY/usr/lib/sweetspot/web.sh; conf PASSWORD_WEB")"
 
+echo "Renderer UPnP senza root"
+expect "utente renderer nella tabella degli utenti" "1" "$(grep -c '^renderer -1 renderer -1 ' "$ROOT/board/sweetspot/users.txt")"
+expect "renderer avviato con start-stop-daemon -c renderer" "1" "$(grep -c -- '-c renderer ' "$OVERLAY/etc/init.d/S70sweetspot-renderer")"
+expect "configurazione ridotta del renderer (5 chiavi)" "1" "$(grep -c 'RENDERER_UPNP|MODALITA|NOME_PLAYER|LYRION_UTENTE|LYRION_PASSWORD)=' "$OVERLAY/usr/lib/sweetspot/common.sh")"
+expect "il renderer non serve l'hotspot di configurazione" "1" "$(grep -c 'sockhost eq \$AP_IP' "$OVERLAY/usr/lib/sweetspot/renderer.pl")"
+R=$WORK/ren
+mkdir -p "$R"
+printf 'PASSWORD_WEB=$1$x\nRENDERER_UPNP=si\nLYRION_PASSWORD=pw\nWIFI_PASSWORD=zz\nNOME_PLAYER=Sala\n' > "$R/in.txt"
+SWEETSPOT_RUN="$R" sh -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $R/in.txt" > /dev/null 2>&1
+expect "renderer.conf: solo le chiavi del renderer" "LYRION_PASSWORD=pw NOME_PLAYER=Sala RENDERER_UPNP=si" "$(tr -d '\r' < "$R/renderer/renderer.conf" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+
 echo
 echo "Privilegi - superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ]
