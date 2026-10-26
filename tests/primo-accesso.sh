@@ -37,11 +37,10 @@ mv "$STICK/sweetspot.nuovo" "$STICK/sweetspot.txt"
 config_build "$STICK/sweetspot.txt"
 EOF
 chmod +x "$WORK/bin/sweetspot-config"
-# httpd finto: hash della password e decodifica dei moduli (percent-encoding).
+# httpd finto: decodifica dei moduli (percent-encoding).
 cat > "$WORK/bin/httpd" <<'EOF'
 #!/bin/sh
 case "$1" in
-	-m) printf '$1$prova$%s\n' "$(printf '%s' "$2" | md5sum | cut -c1-22)" ;;
 	-d) v=$(printf '%s' "$2" | sed 's/+/ /g; s/%\(..\)/\\x\1/g'); printf '%b' "$v" ;;
 	*) exit 1 ;;
 esac
@@ -49,11 +48,14 @@ EOF
 chmod +x "$WORK/bin/httpd"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/killall"
 chmod +x "$WORK/bin/killall"
-# mkpasswd finto coerente con l'httpd finto: serve a "verifica" (accesso normale).
+# mkpasswd finto: impronta ($1$ o $6$) con la sale data o "prova".
 cat > "$WORK/bin/mkpasswd" <<'EOF'
 #!/bin/sh
-# uso: mkpasswd -m md5 -S sale -- password
-printf '$1$%s$%s\n' "$4" "$(printf '%s' "$6" | md5sum | cut -c1-22)"
+# uso: mkpasswd -m md5|sha512 [-S sale] -- password
+case "$2" in md5) id=1 ;; sha512) id=6 ;; *) exit 1 ;; esac
+salt=prova
+[ "$3" = -S ] && { salt=$4; shift 2; }
+printf '$%s$%s$%s\n' "$id" "$salt" "$(printf '%s%s' "$id" "$4" | md5sum | cut -c1-22)"
 EOF
 chmod +x "$WORK/bin/mkpasswd"
 PATH=$WORK/bin:$OVERLAY/usr/bin:$PATH
@@ -143,7 +145,7 @@ out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codmin&password=lun
 expect "codice giusto (minuscolo, senza trattini): 303" "303|/cgi-bin/audio" "$(status "$out")|$(header "$out" Location)"
 case "$(header "$out" Set-Cookie)" in *HttpOnly*SameSite=Strict*) ok "sessione con cookie HttpOnly" ;; *) expect "cookie" "HttpOnly" "$(header "$out" Set-Cookie)" ;; esac
 expect "password salvata come impronta, non in chiaro" "0" "$(grep -c 'lungapassword1' "$STICK/sweetspot.txt")"
-expect "impronta salvata" "1" "$(grep -c '^PASSWORD_WEB=\$1\$' "$STICK/sweetspot.txt")"
+expect "impronta SHA-512-crypt salvata" "1" "$(grep -c '^PASSWORD_WEB=\$6\$' "$STICK/sweetspot.txt")"
 expect "codice e flag rimossi" "no" "$([ -e "$R/primo-accesso.codice" ] || [ -e "$R/primo-accesso.attivo" ] && echo si || echo no)"
 expect "file della chiavetta cancellato" "no" "$([ -e "$STICK/PRIMO-ACCESSO.txt" ] && echo si || echo no)"
 out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codice&password=altrapassword12&password2=altrapassword12")
@@ -182,7 +184,29 @@ printf 'NOME_PLAYER=Prova\nPASSWORD_WEB=vecchiapass\n' > "$STICK/sweetspot.txt"
 rm -f "$STICK/PRIMO-ACCESSO.txt"
 boot
 expect "password esistente conservata: nessun primo accesso" "no" "$([ -e "$R/primo-accesso.attivo" ] && echo si || echo no)"
-expect "password esistente non toccata" "1" "$(grep -c '^PASSWORD_WEB=vecchiapass' "$STICK/sweetspot.txt")"
+expect "password in chiaro sostituita dall'impronta all'avvio" "0|1" "$(grep -c 'vecchiapass' "$STICK/sweetspot.txt")|$(grep -c '^PASSWORD_WEB=\$6\$' "$STICK/sweetspot.txt")"
+verifica() { printf '%s\n' "$1" | E sh "$OVERLAY/usr/bin/sweetspot-accesso" verifica && echo si || echo no; }
+expect "dopo la migrazione vale la stessa password" "si" "$(verifica vecchiapass)"
+expect "dopo la migrazione il vecchio valore in chiaro non e' l'impronta" "no" "$(verifica "$(sed -n 's/^PASSWORD_WEB=//p' "$STICK/sweetspot.txt")")"
+
+echo "Migrazione: impronta MD5-crypt (\$1\$)"
+# Lo stesso mkpasswd di sweetspot-accesso: con SWEETSPOT_PATH (tests/run.sh)
+# e' quello di BusyBox, non quello finto.
+h1=$(E sh -c ". $SWEETSPOT_LIB/common.sh; mkpasswd -m md5 -S sale1234 -- vecchiapass")
+printf 'NOME_PLAYER=Prova\nPASSWORD_WEB=%s\n' "$h1" > "$STICK/sweetspot.txt"
+boot
+expect "all'avvio l'impronta \$1\$ resta (serve la password)" "1" "$(grep -c '^PASSWORD_WEB=\$1\$sale1234\$' "$STICK/sweetspot.txt")"
+expect "\$1\$: password sbagliata rifiutata" "no" "$(verifica sbagliatapass)"
+expect "\$1\$: con la password sbagliata non si riscrive" "1" "$(grep -c '^PASSWORD_WEB=\$1\$' "$STICK/sweetspot.txt")"
+expect "\$1\$: password giusta accettata" "si" "$(verifica vecchiapass)"
+expect "\$1\$: riscritta come SHA-512-crypt" "0|1" "$(grep -c '^PASSWORD_WEB=\$1\$' "$STICK/sweetspot.txt")|$(grep -c '^PASSWORD_WEB=\$6\$' "$STICK/sweetspot.txt")"
+expect "\$1\$: dopo la migrazione la password vale ancora" "si" "$(verifica vecchiapass)"
+
+echo "Impronte di altro tipo"
+printf 'NOME_PLAYER=Prova\nPASSWORD_WEB=$5$sale$impronta\n' > "$STICK/sweetspot.txt"
+boot
+expect "impronta sconosciuta: non vale come password in chiaro" "no" "$(verifica '$5$sale$impronta')"
+expect "impronta sconosciuta: non riscritta" "1" "$(grep -c '^PASSWORD_WEB=\$5\$sale\$impronta' "$STICK/sweetspot.txt")"
 
 echo "Nessuna password predefinita e impostazioni"
 expect "il CGI non contiene password predefinite" "0" "$(grep -ci 'admin:admin\|password=admin\|PASSWORD_WEB=.\+' "$CGI/primo-accesso")"
