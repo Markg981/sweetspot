@@ -153,6 +153,7 @@ expect "chiavetta: nessuna password o PSK" "0" "$(printf '%s
 expect "chiavetta: il resto della riga resta leggibile" "1|1" "$(printf '%s
 ' "$tutto" | grep -c 'rete WIFI_PASSWORD=\*\*\* WIFI_PSK=\*\*\* ssid=Casa')|$(printf '%s
 ' "$tutto" | grep -c 'panic: cmdline psk=\*\*\* password=\*\*\* root=/dev/sda1')"
+rm -rf "$STICKLOG" "$E/pstore"/*
 
 echo "Con DIARIO=no non si scrive nulla"
 echo "DIARIO=no" >> "$E/run/sweetspot.conf"
