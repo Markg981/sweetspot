@@ -11,10 +11,10 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Un nuovo invio sullo stesso ramo ferma la compilazione precedente.
+# Un nuovo invio su un ramo ferma la compilazione precedente; su main no, così ogni merge ha la sua immagine e le sue prove QEMU.
 concurrency:
   group: compila-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
