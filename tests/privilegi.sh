@@ -203,6 +203,18 @@ SSH=si")"
 		# @log: riga troppo lunga rifiutata.
 		"$WORK/priv" @log "$(printf '%0600d' 0)" > /dev/null 2>&1
 		expect "@log troppo lungo rifiutato" "126" "$?"
+		# Hardening all'avvio: umask stretta, core a zero, fd 0-2 sempre aperti.
+		printf '#!/bin/sh
+{ umask; ulimit -c; } > "%s/hard"
+' "$WORK" > "$B/sweetspot-check"
+		( umask 000; "$WORK/priv" sweetspot-check --dati > /dev/null 2>&1 )
+		expect "umask 077 e core a zero" "0077|0" "$(tr '
+' '|' < "$WORK/hard" | sed 's/|$//')"
+		printf '#!/bin/sh
+for f in 0 1 2; do [ -e /proc/self/fd/$f ] || exit 1; done
+' > "$B/sweetspot-check"
+		"$WORK/priv" sweetspot-check --dati <&- >&- 2>&-
+		expect "fd 0-2 chiusi dal chiamante: riaperti" "0" "$?"
 		# L'ambiente non passa agli script.
 		printf '#!/bin/sh\nenv > "%s/env"\n' "$WORK" > "$B/sweetspot-check"
 		SWEETSPOT_PATH=/evil LD_PRELOAD=/x IFS=x "$WORK/priv" sweetspot-check --dati > /dev/null 2>&1
