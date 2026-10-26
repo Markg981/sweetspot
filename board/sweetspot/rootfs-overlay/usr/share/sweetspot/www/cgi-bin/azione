@@ -683,7 +683,12 @@ case "$F_a" in
 		# Un pacchetto qualsiasi del disco sostituisce il sistema (anche uno
 		# firmato ma vecchio): conferma forte, come per SSH.
 		confirm_or_stop sistema "installare un pacchetto dal disco"
-		out=$(priv_confirm "$F_ct" "$F_conferma_password" sweetspot-aggiorna file "$F_file")
+		# Una versione piu' vecchia di quella in uso si installa solo con la
+		# casella "consenti downgrade": un pacchetto firmato ma vecchio puo'
+		# avere falle note.
+		sub=file
+		[ "${F_consenti_downgrade:-}" = si ] && sub=file-downgrade
+		out=$(priv_confirm "$F_ct" "$F_conferma_password" sweetspot-aggiorna "$sub" "$F_file")
 		rc=$?
 		[ $rc -eq 126 ] && confirm_refused sistema
 		[ $rc -eq 0 ] || done_to sistema "Aggiornamento non avviato: $out."

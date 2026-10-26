@@ -267,6 +267,10 @@ SSH=si")"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma vale il pacchetto dal disco" "sweetspot-aggiorna|file|/media/USB/pacchetto.tar" \
 			"$(sconf segreta @conferma "$tok" sweetspot-aggiorna file /media/USB/pacchetto.tar)"
+		expect "file-downgrade senza conferma: rifiutato" "NIENTE(126)" "$(priv sweetspot-aggiorna file-downgrade /media/USB/pacchetto.tar)"
+		tok=$("$WORK/priv" @conferma-nuova)
+		expect "la conferma vale il downgrade dal disco" "sweetspot-aggiorna|file-downgrade|/media/USB/pacchetto.tar" \
+			"$(sconf segreta @conferma "$tok" sweetspot-aggiorna file-downgrade /media/USB/pacchetto.tar)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "la conferma non basta con l'a capo nel valore" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH_PASSWORD "a
 SSH=si")"
