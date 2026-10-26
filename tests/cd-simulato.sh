@@ -48,6 +48,7 @@ exit 22
 printf 'CD_CERCA_TITOLI=no
 CD_ACCURATERIP=no
 ' >> "$W/run/sweetspot.txt"
+busybox sh -c ". $SWEETSPOT_LIB/common.sh; config_build $W/run/sweetspot.txt"
 busybox sh "$CD" leggi
 [ "$(jq -r .album "$W/run/cd/info.json")" = "CD sconosciuto" ] && [ "$(jq -r .cover "$W/run/cd/info.json")" = false ] || { echo "PROVA FALLITA: titoli online con CD_CERCA_TITOLI=no"; exit 1; }
 busybox sh "$CD" _copia
