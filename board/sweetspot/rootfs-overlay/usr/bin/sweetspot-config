@@ -130,7 +130,7 @@ edit_all() { # sorgente destinazione chiavi/valori...
 if [ -n "${SWEETSPOT_CONFIG_FILE:-}" ]; then
 	f=$SWEETSPOT_CONFIG_FILE
 	[ -f "$f" ] || : > "$f"
-	edit_all "$f" "$f.tmp" "$@" && mv "$f.tmp" "$f"
+	edit_all "$f" "$f.tmp" "$@" && fat_sostituisci "$f.tmp" "$f"
 	exit $?
 fi
 
@@ -141,7 +141,7 @@ flock 9
 if stick_mount rw; then
 	src="$STICK_MNT/sweetspot.txt"
 	[ -f "$src" ] || : > "$src"
-	if edit_all "$src" "$STICK_MNT/sweetspot.tmp" "$@" && mv "$STICK_MNT/sweetspot.tmp" "$src"; then
+	if edit_all "$src" "$STICK_MNT/sweetspot.tmp" "$@" && fat_sostituisci "$STICK_MNT/sweetspot.tmp" "$src"; then
 		cp "$src" "$RUN/sweetspot.txt"
 		saved=0
 	fi
