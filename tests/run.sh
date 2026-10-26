@@ -341,6 +341,18 @@ expect "piu' chiavi in una volta (tolte: tornano i predefiniti)" "dac|no|lineare
 expect "numero dispari di argomenti rifiutato" "1" "$(cfgset imposta VOLUME)"
 expect "un valore non valido blocca tutto" "1" "$(cfgset imposta VOLUME software NOME_PLAYER "$(printf 'x\ny')")"
 expect "niente cambiato dopo il rifiuto" "dac" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf VOLUME")"
+# Round-trip: quello che si scrive e' quello che si rilegge (anche con " #",
+# virgolette e spazi ai bordi); se non e' rappresentabile viene rifiutato.
+for v in 'Sala #2' '"Sala"' "'Sala'" ' Sala ' 'a\b$HOME' '"a" b' "l'ora #1"; do
+	cfgset imposta NOME_PLAYER "$v" >/dev/null
+	expect "round-trip del valore [$v]" "$v" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf NOME_PLAYER")"
+done
+cfgset imposta NOME_PLAYER Sala >/dev/null
+expect "valore con entrambe le virgolette e spazio ai bordi rifiutato" "1" "$(cfgset imposta NOME_PLAYER " \"a'b ")"
+expect "rifiutato: valore invariato" "Sala" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf NOME_PLAYER")"
+printf 'NOME_PLAYER="Sala" # nota\nDSD=auto # x\n' > "$CFG/v.txt"
+expect "compatibilita': virgolette seguite da commento come prima" "NOME_PLAYER=Sala|DSD=auto" \
+	"$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $CFG/v.txt" | tr '\n' '|' | sed 's/|$//')"
 
 echo "Nomi e percorsi"
 expect "nome di cartella sicuro" "Musica _rock_ 2024" "$(run "$ONE" "safe_name 'Musica /rock\$ 2024'")"
