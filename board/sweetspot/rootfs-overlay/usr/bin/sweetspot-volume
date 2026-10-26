@@ -140,8 +140,32 @@ cli_subscribe() {
 	echo "subscribe mixer,client"
 }
 
+# Un solo follower per volta: pidfile in $RUN. Se ne esiste uno vivo (altro
+# processo) questo esce; allo stop del servizio S60 lo ferma e lo rimuove.
+FOLLOWER_PID=${SWEETSPOT_VOLUME_PIDFILE:-$RUN/volume-follower.pid}
+
+follower_vivo() { # stampa il pid del follower vivo, altrimenti esce con 1
+	local p
+	p=$(cat "$FOLLOWER_PID" 2>/dev/null)
+	case "$p" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$p" != "$$" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return 0; }
+	return 1
+}
+
 follow() { # mac
-	local mac=$1 enc me=$$
+	local mac=$1 enc me=$$ n
+	# Un follower appena fermato dal supervisore puo' chiudersi un attimo dopo:
+	# si attende prima di concludere che ne resta uno vivo.
+	n=0
+	while follower_vivo > /dev/null; do
+		n=$((n + 1))
+		[ "$n" -gt "${SWEETSPOT_VOLUME_ATTESA_FOLLOWER:-6}" ] && return 0
+		sleep 0.5
+	done
+	mkdir -p "$(dirname "$FOLLOWER_PID")"
+	echo "$$" > "$FOLLOWER_PID"
+	trap 'rm -f "$FOLLOWER_PID"; kill $(jobs -p) 2>/dev/null' EXIT
+	trap 'exit 0' TERM INT HUP
 	# Controllo periodico: dopo un errore IPC o un riavvio di CamillaDSP il
 	# guadagno applicato torna quello richiesto.
 	( while kill -0 "$me" 2>/dev/null; do
@@ -169,6 +193,8 @@ case "$1" in
 	segui) follow "${2:?mac}" ;;
 	applica) apply "${2:?volume}" "${3:-0}" ;;
 	risincronizza) dsp_reapply ;;
+	ferma) p=$(follower_vivo) && { kill -- "-$p" 2>/dev/null || kill "$p" 2>/dev/null; }
+		rm -f "$FOLLOWER_PID" ;;
 	db) db "${2:?volume}"; echo ;;
 	*) echo "uso: $0 segui MAC | applica VOLUME MUTO | risincronizza | db VOLUME" >&2; exit 1 ;;
 esac

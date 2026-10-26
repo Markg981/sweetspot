@@ -1018,7 +1018,7 @@ prefs_divergenti() { # digitale [mac]
 }
 
 apply_player_prefs() {
-	local digital=0 vol_dsp=0 sig now div srv prefs LMS_HOST=$LMS_HOST
+	local digital=0 vol_dsp=0 sig now div srv prefs sicuro cur LMS_HOST=$LMS_HOST
 	if [ "$(mode)" != completa ]; then
 		# Server esterno: raggiungibile solo se indicato (SERVER); con la
 		# ricerca automatica non si sa dove sia.
@@ -1055,6 +1055,20 @@ apply_player_prefs() {
 		prefs_stato "applicate (volume $(volume_effettivo))"
 		return 0
 	fi
+	# Passaggio a caldo da volume fisso a software o dsp: in fisso Lyrion e'
+	# tenuto a 100, e con il controllo digitale acceso quel 100 diventerebbe
+	# il volume reale (picco). Prima di accenderlo si riporta a un valore
+	# sicuro, se il volume attuale lo supera.
+	if [ "$digital" = 1 ] && [ "${PREFS_FISSO:-0}" = 1 ]; then
+		sicuro=$(conf VOLUME_SICURO 25)
+		case "$sicuro" in ''|*[!0-9]*) sicuro=25 ;; esac
+		cur=$(LMS_TIMEOUT=5 lms_get '._volume' "$PLAYER_MAC" mixer volume '?')
+		case "$cur" in ''|*[!0-9]*) cur=100 ;; esac
+		if [ "$cur" -gt "$sicuro" ]; then
+			lms_json "$PLAYER_MAC" mixer volume "$sicuro" > /dev/null || return 1
+			log "player: passaggio dal volume fisso a $(volume_modalita): volume riportato da $cur a $sicuro"
+		fi
+	fi
 	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl "$digital" > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref replayGainMode 0 > /dev/null || return 1
 	lms_json "$PLAYER_MAC" playerpref transitionType 0 > /dev/null || return 1
@@ -1064,6 +1078,9 @@ apply_player_prefs() {
 	fi
 	PREFS_SET=1
 	PREFS_SIG=$sig
+	# Ricorda se il volume e' fisso (Lyrion a 100) per il prossimo cambio di modo.
+	PREFS_FISSO=0
+	[ "$digital" = 0 ] && PREFS_FISSO=1
 	div=$(prefs_divergenti "$digital")
 	if [ -n "$div" ]; then
 		prefs_stato "divergenti, non imponibili: $div"
