@@ -1304,7 +1304,13 @@ dsp 'VOLUME=dsp' prepara 1 > /dev/null
 yml=$(cat "$DSPE/run/camilladsp.yml")
 expect "volume a 64 bit, DAC a 16 bit: nessun filtro, guadagno 0, dither a 16 bit, mai sopra 0 dB" "0|0.0|bits: 16|volume_limit: 0.0" \
 	"$(printf '%s\n' "$yml" | grep -c 'type: Biquad')|$(printf '%s\n' "$yml" | sed -n 's/^      gain: //p' | head -n 1)|$(printf '%s\n' "$yml" | grep -o 'bits: 16')|$(printf '%s\n' "$yml" | grep -o 'volume_limit: 0.0')"
-expect "volume a 64 bit: primo avvio a -30 dB" "-30.0 0" "$(cat "$DSPE/run/camilladsp.volume")"
+expect "volume a 64 bit: primo avvio a -30 dB in sordina (silenzio, non volume udibile)" "-30.0 1" "$(cat "$DSPE/run/camilladsp.volume")"
+# file del volume assente o non valido: CamillaDSP parte in sordina (-m)
+rm -f "$DSPE/run/camilladsp.volume"
+expect "avvio senza file del volume: sordina (-m)" "-g-30.0 -m" "$(dsp 'VOLUME=dsp' avvio | sed -n 's/.*\(-g[^ ]* -m\).*/\1/p')"
+echo "spazzatura" > "$DSPE/run/camilladsp.volume"
+expect "avvio con file del volume non valido: sordina (-m)" "-g-30.0 -m" "$(dsp 'VOLUME=dsp' avvio | sed -n 's/.*\(-g[^ ]* -m\).*/\1/p')"
+echo "-30.0 1" > "$DSPE/run/camilladsp.volume"
 printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
 echo "-17.4 1" > "$DSPE/run/camilladsp.volume"
 dsp 'VOLUME=dsp' prepara 1 > /dev/null
