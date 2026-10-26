@@ -4066,6 +4066,28 @@ if command -v node > /dev/null 2>&1; then
 else
 	echo "studio-js: node assente, prova del JS saltata"
 fi
+# --- sweetspot-dati: ripristino fallito blocca il salvataggio (C15) ---
+RF=$WORK/ripfall
+mkdir -p "$RF/run" "$RF/lms/prefs" "$RF/stick/sweetspot-dati"
+echo "buona" > "$RF/stick/sweetspot-dati/lyrion.tar"   # non e' un tar: ripristino fallisce
+echo x > "$RF/lms/prefs/p"
+rfdati() {
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$RF/run SWEETSPOT_LOG=$RF/log SWEETSPOT_LMS_DATA=$RF/lms SWEETSPOT_STICK_DIR=$RF/stick \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dati
+		stick_mount() { return 0; }; stick_umount() { :; }; space_ok() { return 0; }
+		$1"
+}
+rfdati 'do_restore "$STICK_MNT/sweetspot-dati"'; rc=$?
+expect "dati: ripristino fallito, esito non zero" 1 "$rc"
+expect "dati: ripristino fallito lascia il marcatore" si "$([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+rfdati 'do_save'; rc=$?
+expect "dati: salvataggio rifiutato dopo ripristino fallito" 1 "$rc"
+expect "dati: la generazione precedente resta intatta" buona "$(cat "$RF/stick/sweetspot-dati/lyrion.tar")"
+expect "dati: il rifiuto e' nel registro" 1 "$(grep -c 'salvataggio rifiutato' "$RF/log")"
+rm -rf "$RF/stick/sweetspot-dati"; mkdir -p "$RF/s2"; tar -cf "$RF/s2/lyrion.tar" -C "$RF/lms" prefs
+rfdati "do_restore $RF/s2"; rc=$?
+expect "dati: un ripristino riuscito toglie il blocco" "0 no" "$rc $([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
