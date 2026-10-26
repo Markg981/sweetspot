@@ -140,6 +140,40 @@ class CdSaveTests(unittest.TestCase):
         self.assertIn("TITLE=Brano", tags)
         self.assertFalse(list(self.archive.rglob("*.part")))
 
+    def test_insufficient_space_is_refused_before_reading_or_touching_archive(self):
+        df = self.root / "bin/df"
+        df.write_text('#!/bin/sh\nprintf "File system 1024-blocks Used Available Capacity Mounted\\n/dev/x 100 90 10 90%% /\\n"\n')
+        df.chmod(0o755)
+        state = self.rip()
+        self.assertTrue(state.startswith("errore|"), state)
+        self.assertIn("Spazio insufficiente", state)
+        self.assertFalse((self.root / "events").exists())
+        self.assertFalse(list(self.archive.rglob("*")))
+
+    def test_orphans_of_a_killed_copy_are_removed_but_a_live_copy_is_kept(self):
+        stage = self.archive / "Artista/Album (2026)/.sweetspot-copia.AbC123"
+        stage.mkdir(parents=True)
+        (stage / "01.part").write_bytes(b"x")
+        other = self.archive / "Artista/Album (2026)/.altra-cartella"
+        other.mkdir()
+        work = self.run / "cd/lavoro.XyZ789"
+        work.mkdir()
+        (self.run / "cd/orfani").write_text(f"{stage}\n{other}\n")
+        (self.run / "cd/pid").write_text("999999\n")
+        (self.run / "cd/stato").write_text("copia|1|1|Brano\n")
+        script = '. "$CD_SCRIPT"; clean_orphans'
+        live = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(live.kill)
+        (self.run / "cd/pid").write_text(f"{live.pid}\n")
+        subprocess.run(["busybox", "sh", "-c", script], env=self.env, check=True)
+        self.assertTrue(stage.exists() and work.exists())
+        (self.run / "cd/pid").write_text("999999\n")
+        subprocess.run(["busybox", "sh", "-c", script], env=self.env, check=True)
+        self.assertFalse(stage.exists() or work.exists())
+        self.assertTrue(other.exists())
+        self.assertFalse((self.run / "cd/pid").exists())
+        self.assertTrue((self.run / "cd/stato").read_text().startswith("errore|"))
+
     def test_encoder_inherits_background_job_oom_priority(self):
         result = subprocess.run(
             ["busybox", "sh", str(OVERLAY / "usr/bin/sweetspot-cd"), "_copia"],
