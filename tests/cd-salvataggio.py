@@ -96,9 +96,9 @@ class CdSaveTests(unittest.TestCase):
                         DESTINATION=str(self.destination), OLD_FLAC=str(self.old_flac),
                         CD_SCRIPT=str(OVERLAY / "usr/bin/sweetspot-cd"))
 
-    def rip(self, fault=""):
+    def rip(self, fault="", prelude=""):
         result = subprocess.run(
-            ["busybox", "sh", "-c", '. "$CD_SCRIPT"; oom_adj() { :; }; sync() { :; }; rip'],
+            ["busybox", "sh", "-c", f'. "$CD_SCRIPT"; oom_adj() {{ :; }}; sync() {{ :; }}; {prelude} rip'],
             env=dict(self.env, ENCODER_FAULT=fault), capture_output=True, text=True, timeout=20)
         state = self.run / "cd/stato"
         self.assertTrue(state.exists(), result.stderr)
@@ -141,10 +141,7 @@ class CdSaveTests(unittest.TestCase):
         self.assertFalse(list(self.archive.rglob("*.part")))
 
     def test_insufficient_space_is_refused_before_reading_or_touching_archive(self):
-        df = self.root / "bin/df"
-        df.write_text('#!/bin/sh\nprintf "File system 1024-blocks Used Available Capacity Mounted\\n/dev/x 100 90 10 90%% /\\n"\n')
-        df.chmod(0o755)
-        state = self.rip()
+        state = self.rip(prelude="free_kb() { echo 10; };")
         self.assertTrue(state.startswith("errore|"), state)
         self.assertIn("Spazio insufficiente", state)
         self.assertFalse((self.root / "events").exists())
