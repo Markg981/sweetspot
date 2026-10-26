@@ -382,8 +382,11 @@ expect "riavvia: lo fa root, in sottofondo" "@riavvia" "$(cat "$A/priv.log")"
 act "a=spegni" > /dev/null
 expect "spegni: lo fa root, in sottofondo" "@spegni" "$(cat "$A/priv.log")"
 : > "$A/priv.log"
+printf 'PASSWORD_WEB=$1$x$y\n' > "$A/run/sweetspot.web"
 act "a=ripristina&conferma=si" > /dev/null
-expect "ripristino: config e accesso passano dall'helper" "sweetspot-config ripristina|sweetspot-accesso applica|@riavvia" "$(tr '\n' '|' < "$A/priv.log" | sed 's/|$//')"
+expect "ripristino: senza password nulla passa dall'helper" "" "$(cat "$A/priv.log")"
+act "a=ripristina&conferma=si&ct=gettone&conferma_password=segreta" > /dev/null
+expect "ripristino: config e accesso passano dall'helper con la conferma forte" "@conferma gettone sweetspot-config ripristina|sweetspot-accesso applica|@riavvia" "$(tr '\n' '|' < "$A/priv.log" | sed 's/|$//')"
 : > "$A/priv.log"
 act "a=aggiungi_condivisione&server=192.168.1.5&cartella=Musica&utente=&password=" > /dev/null
 expect "condivisione: provata dall'helper" "1" "$(grep -c '^sweetspot-rete prova 1$' "$A/priv.log")"

@@ -976,8 +976,14 @@ rm -f "$WEB/run/config.log"
 out=$(web_action "a=ripristina")
 case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
 expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+printf 'PASSWORD_WEB=$1$vecchia$impronta\n' >> "$WEB/run/sweetspot.conf"
 web_action "a=ripristina&conferma=si" > /dev/null
+expect "ripristino: senza password nessuna modifica" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si&ct=prova&conferma_password=sbagliata" > /dev/null
+expect "ripristino: con la password sbagliata nessuna modifica" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si&ct=prova&conferma_password=vecchia-password" > /dev/null
 expect "ripristino confermato" "ripristina" "$(tail -n 1 "$WEB/run/config.call")"
+cp "$WORK/sweetspot.conf.prima" "$WEB/run/sweetspot.conf"
 RS=$WORK/ripristino
 mkdir -p "$RS/avvio" "$RS/chiavetta" "$RS/run"
 printf 'VOLUME=fisso\r\n' > "$RS/avvio/sweetspot.txt"
