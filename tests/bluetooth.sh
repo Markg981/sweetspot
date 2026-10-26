@@ -99,9 +99,10 @@ printf 'Device AA:BB:CC:DD:EE:02 Pixel\n' > "$BTDIR/connected"
 # test si fermava: si prova la definizione e, se la shell non la accetta, si
 # ricade sulla shell di sistema, dove basta il PATH.
 : > "$T/shim.sh"
+BBSH=si
 if [ -n "$BB" ] && ! $BB sh -c 'start-stop-daemon() { :; }' 2>/dev/null; then
 	echo "  (BusyBox: nomi di funzione con il trattino non accettati, uso la shell di sistema)"
-	BB=
+	BBSH=no
 	SH=sh
 fi
 if [ -n "$BB" ]; then
