@@ -1984,7 +1984,6 @@ pi() { run "$PI" "SWEETSPOT_STICK_DIR=$PI/stick; STICK_MNT=$PI/stick; SWEETSPOT_
 expect "scheda e avvio del Pi" "rpi rpi Image.gz $PI/stick/b $PI/stick/sweetspot-avvio.env" \
 	"$(pi 'echo $(board) $(boot_type) $(kernel_file) $(slot_dir $STICK_MNT b) $(boot_env)')"
 expect "modello dall'albero dei dispositivi" "Raspberry Pi 4 Model B Rev 1.5" "$(pi cpu_model)"
-expect "non e' un avvio di prova (tryboot)" "no" "$(pi 'rpi_tryboot && echo si || echo no')"
 pi "rpi_boot_config $PI/stick/config.txt a"
 expect "config.txt dal modello, copia A" "os_prefix=a/|include sweetspot-scheda.txt" \
 	"$(grep -E '^(os_prefix|include)' "$PI/stick/config.txt" | tr '\n' '|' | sed 's/|$//')"
@@ -2072,7 +2071,6 @@ expect "riavvio normale senza prove in sospeso" "normale|" "$(cat "$PI/riavvio")
 # Parte la copia B (tryboot) e si conferma
 echo "coherent_pool=1M console=tty1 quiet sweetspot.slot=b" > "$PI/proc/cmdline"
 printf '\000\000\000\001' > "$PI/proc/device-tree/chosen/bootloader/tryboot"
-expect "avvio di prova riconosciuto" "si" "$(pi 'rpi_tryboot && echo si || echo no')"
 updpi sweetspot-aggiorna conferma
 expect "la copia B si conferma ed e' quella in uso" "b|" "$(penv slot)|$(penv tentato)"
 expect "config.txt ora avvia la copia B" "os_prefix=b/" "$(grep '^os_prefix' "$PI/stick/config.txt")"
@@ -2089,6 +2087,19 @@ pi "grubenv_set $PI/stick/sweetspot-avvio.env prova= tentato=a"
 updpi sweetspot-aggiorna conferma
 expect "versione non partita: si resta su B" "b||os_prefix=b/" "$(penv slot)|$(penv tentato)|$(grep '^os_prefix' "$PI/stick/config.txt")"
 expect "versione non partita segnalata" "fallita=v1.2.0" "$(updpi sweetspot-aggiorna stato | grep '^fallita=')"
+# Riconciliazione di config.txt e sweetspot-avvio.env (C18): vale config.txt
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=a prova= tentato="
+pi "rpi_boot_config $PI/stick/config.txt b"
+pi "rpi_riconcilia"
+expect "stato incoerente: avvio.env allineato a config.txt" "b" "$(penv slot)"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=b"
+pi "rpi_boot_config $PI/stick/config.txt a"
+pi "rpi_riconcilia"
+expect "stato incoerente al contrario: vale ancora config.txt" "a" "$(penv slot)"
+pi "rpi_boot_config $PI/stick/config.txt b"
+pi "grubenv_set $PI/stick/sweetspot-avvio.env slot=b"
+pi "rpi_riconcilia"
+expect "file concordi: nulla cambia" "b|os_prefix=b/" "$(penv slot)|$(grep '^os_prefix' "$PI/stick/config.txt")"
 mkpkg_pi v1.3.0 x86_64
 updpi sweetspot-aggiorna _lavoro file "$PI/media/USB/sweetspot-rpi-aggiornamento.tar"
 expect "pacchetto per PC rifiutato sul Pi" "errore|pacchetto per un altro tipo di computer (x86_64)" "$(cat "$PI/run/aggiornamento/stato")"

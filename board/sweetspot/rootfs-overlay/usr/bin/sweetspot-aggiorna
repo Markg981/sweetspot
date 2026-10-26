@@ -490,8 +490,8 @@ do_free() {
 	slot=$(running_slot)
 	other=$(other_slot "$slot")
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
-	grubenv_set "$(boot_env)" "slot=$slot" prova= tentato=
 	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$slot"
+	grubenv_set "$(boot_env)" "slot=$slot" prova= tentato=
 	clear_slot "$(slot_dir "$STICK_MNT" "$other")" "$other"
 	sync
 	stick_umount
@@ -524,12 +524,17 @@ do_other() {
 # La versione in uso (avviata a mano dal menu) diventa quella predefinita.
 do_default() {
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
+	# Sul Pi prima config.txt (quello che il firmware usa), poi lo stato.
+	if [ "$(boot_type)" = rpi ] && ! rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)"; then
+		stick_umount
+		echo "non riesco a scrivere sulla chiavetta"
+		return 1
+	fi
 	if ! grubenv_set "$(boot_env)" "slot=$(running_slot)" prova= tentato=; then
 		stick_umount
 		echo "non riesco a scrivere sulla chiavetta"
 		return 1
 	fi
-	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$(running_slot)"
 	stick_umount
 }
 
@@ -564,8 +569,8 @@ do_watchdog_reset() {
 	d=$(slot_dir "$STICK_MNT" "$other")
 	if [ "$n" -ge "$WATCHDOG_MAX" ] && [ -f "$d/$(kernel_file)" ] && [ -f "$d/rootfs.cpio.zst" ] &&
 		[ "$(grubenv_get "$env" slot)" != "$other" ]; then
-		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=
 		[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$other"
+		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=
 		echo "$other" > "$DIR/watchdog.ritorno"
 		log "aggiornamento: dal prossimo avvio parte la copia $other ($(cat "$STICK_MNT/boot/versioni/$other" 2>/dev/null || echo versione sconosciuta))"
 	fi
@@ -755,6 +760,9 @@ do_confirm() {
 	stick_mount rw || { log "aggiornamento: conferma non riuscita, chiavetta non scrivibile"; return 1; }
 	env=$(boot_env)
 	[ -f "$env" ] || grubenv_set "$env" "slot=$slot" || { stick_umount; log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"; return 1; }
+	# Sul Pi config.txt e avvio.env devono concordare prima di decidere (dopo
+	# il controllo del montaggio, perche' puo' scrivere sulla chiavetta).
+	rpi_riconcilia || werr=1
 	def=$(grubenv_get "$env" slot)
 	tried=$(grubenv_get "$env" tentato)
 	if [ -n "$tried" ] && [ "$tried" != "$slot" ]; then
@@ -770,6 +778,12 @@ do_confirm() {
 		log "aggiornamento: la nuova versione (copia $tried) non e' partita, si e' tornati alla precedente"
 	elif [ "$tried" = "$slot" ]; then
 		if healthy; then
+			# Sul Pi prima config.txt (quello che il firmware usa), poi lo stato.
+			if [ "$(boot_type)" = rpi ] && ! { rpi_boot_config "$STICK_MNT/config.txt" "$slot" && sync; }; then
+				stick_umount
+				log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"
+				return 1
+			fi
 			if ! grubenv_set "$env" "slot=$slot" tentato=; then
 				stick_umount
 				log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"

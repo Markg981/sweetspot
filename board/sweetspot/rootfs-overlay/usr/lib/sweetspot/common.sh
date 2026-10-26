@@ -1818,9 +1818,27 @@ rpi_tune() { # copia
 	sed -n 's/.*sweetspot\.slot=[ab] *//p' "$STICK_MNT/$1/cmdline.txt" 2>/dev/null | head -n 1
 }
 
-# Il Raspberry Pi e' partito con tryboot (prova di una copia nuova)?
-rpi_tryboot() {
-	[ "$(od -An -tx1 "$PROC/device-tree/chosen/bootloader/tryboot" 2>/dev/null | tr -d ' \n')" = 00000001 ]
+# Raspberry Pi: due file dicono quale copia e' in uso, config.txt (os_prefix,
+# quello che il firmware usa davvero) e sweetspot-avvio.env (slot). Dopo un
+# taglio di corrente fra le due scritture possono non concordare: vale
+# config.txt (se illeggibile, la copia avviata) e si corregge l'altro file.
+# Non agisce con un aggiornamento in prova (tentato/prova): li gestisce la conferma.
+rpi_riconcilia() {
+	local env real def
+	[ "$(boot_type)" = rpi ] || return 0
+	env=$(boot_env)
+	[ -z "$(grubenv_get "$env" tentato)" ] && [ -z "$(grubenv_get "$env" prova)" ] || return 0
+	real=$(sed -n 's|^os_prefix=\([ab]\)/*[[:space:]]*$|\1|p' "$STICK_MNT/config.txt" 2>/dev/null | head -n 1)
+	def=$(grubenv_get "$env" slot)
+	if [ -z "$real" ]; then
+		real=$(running_slot)
+		rpi_boot_config "$STICK_MNT/config.txt" "$real" || return 1
+		log "avvio: config.txt illeggibile, riscritto con la copia $real"
+	fi
+	if [ "$def" != "$real" ]; then
+		grubenv_set "$env" "slot=$real" || return 1
+		log "avvio: sweetspot-avvio.env indicava la copia '${def:-nessuna}', riallineato a config.txt (copia $real)"
+	fi
 }
 
 grubenv_get() { # file chiave
