@@ -577,7 +577,7 @@ liveness_round() { # momento
 	lv_lyrion "$1"
 	lv_player "$1"
 	[ -r "$LV_LMS" ] && read -r _ _ _ _ ln < "$LV_LMS"
-	[ -r "$LV_PLY" ] && read -r _ _ _ pn < "$LV_PLY"
+	[ -r "$LV_PLY" ] && read -r _ _ _ pn _ < "$LV_PLY"
 	LV_JSON=$(printf '"liveness":{"attiva":true,"lyrion":{"stato":"%s","fallimenti":%s,"riavvii":%s},"player":{"stato":"%s","riavvii":%s}}' \
 		"$LV_LYR_STATO" "$LV_LYR_FAILS" "${ln:-0}" "$LV_PLY_STATO" "${pn:-0}")
 	lv_fn_report
