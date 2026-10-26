@@ -3945,6 +3945,35 @@ if command -v perl >/dev/null; then
 else
 	echo "  (perl non installato, saltato)"
 fi
+echo "SSH: dropbear sicuro"
+SSHT=$WEB/ssh
+rm -rf "$SSHT"; mkdir -p "$SSHT/bin" "$SSHT/stick" "$SSHT/run"
+printf '#!/bin/sh\necho "$*" > "%s/args"\n' "$SSHT" > "$SSHT/bin/dropbear"
+printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done\necho nuova > "$f"\n' > "$SSHT/bin/dropbearkey"
+printf '#!/bin/sh\ncat > /dev/null\n' > "$SSHT/bin/chpasswd"
+chmod +x "$SSHT/bin/"*
+ssh_avvia() { # utente
+	printf 'SSH=si\nSSH_PASSWORD=segreta\nSSH_UTENTE=%s\n' "$1" > "$SSHT/run/sweetspot.conf"
+	rm -f "$SSHT/args"
+	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$SSHT/run SWEETSPOT_STICK_DIR=$SSHT/stick \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH=$SSHT/bin SWEETSPOT_SSH_KEYDIR=$SSHT/keys \
+		SWEETSPOT_SSH_HOME=$SSHT/home SWEETSPOT_SSH_PORT=2222 SWEETSPOT_LOG=$SSHT/log \
+		$TEST_SH "$OVERLAY/etc/init.d/S45sweetspot-ssh" start > /dev/null 2>&1
+}
+ssh_avvia root
+expect "ssh: senza chiavi resta la password, con limite ai tentativi" "1|1|0" \
+	"$(grep -c -e '-T 3' "$SSHT/args")|$(grep -c -e '-r .*dropbear_ed25519_host_key' "$SSHT/args")|$(grep -c -e ' -s' "$SSHT/args")"
+expect "ssh: chiave dell'host salvata sulla chiavetta" "nuova" "$(cat "$SSHT/stick/sweetspot-ssh-host-key" 2>/dev/null)"
+rm -rf "$SSHT/keys"; echo vecchia > "$SSHT/stick/sweetspot-ssh-host-key"
+ssh_avvia root
+expect "ssh: chiave dell'host gia' presente riusata, non rigenerata" "vecchia" "$(cat "$SSHT/keys/dropbear_ed25519_host_key")"
+echo 'ssh-ed25519 AAAA prova' > "$SSHT/stick/authorized_keys"
+ssh_avvia root
+expect "ssh: con chiavi password spente (-s) e per root (-g)" "1|1|ssh-ed25519 AAAA prova" \
+	"$(grep -c -e ' -s' "$SSHT/args")|$(grep -c -e ' -g' "$SSHT/args")|$(cat "$SSHT/home/.ssh/authorized_keys")"
+ssh_avvia assistenza
+expect "ssh: utente assistenza con chiavi, root disattivato (-w), niente -g" "1|1|0" \
+	"$(grep -c -e ' -s' "$SSHT/args")|$(grep -c -e ' -w' "$SSHT/args")|$(grep -c -e ' -g' "$SSHT/args")"
 echo "Media server UPnP/DLNA"
 MSD=$WEB/mediaserver
 mkdir -p "$MSD/run"
