@@ -236,7 +236,7 @@ SSH=si")"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "gettone: 32 cifre esadecimali" "1" "$(printf '%s' "$tok" | grep -cE '^[0-9a-f]{32}$')"
 		expect "gettone: file nella cartella di root" "si" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
-		expect "conferma con la password giusta" "sweetspot-config|imposta|SSH|si|SSH_PASSWORD|nuova" \
+		expect "conferma con la password giusta" "sweetspot-config|imposta|SSH|si|SSH_PASSWORD|nuovapassword1" \
 			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si SSH_PASSWORD nuovapassword1)"
 		expect "il gettone e' monouso" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si)"
 		expect "gettone consumato: il file non c'e' piu'" "no" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
@@ -433,8 +433,8 @@ expect "le altre impostazioni si salvano comunque" "1" "$(grep -c '^sweetspot-co
 act "$SISTEMA&ssh=no&ssh_password=" > /dev/null
 expect "senza cambiare SSH non serve alcuna conferma" "0" "$(grep -c '@conferma\|SSH' "$A/priv.log")"
 : > "$A/priv.log"
-act "$SISTEMA&ssh=no&ssh_password=&ssh_utente=assistenza&ct=g2&conferma_password=segreta" > /dev/null
-expect "cambio dell'utente SSH: conferma forte" "1" "$(grep -c '^@conferma g2 sweetspot-config imposta SSH no SSH_UTENTE assistenza$' "$A/priv.log")"
+act "$SISTEMA&ssh=no&ssh_password=&ssh_utente=root&ct=g2&conferma_password=segreta" > /dev/null
+expect "cambio dell'utente SSH: conferma forte" "1" "$(grep -c '^@conferma g2 sweetspot-config imposta SSH no SSH_UTENTE root$' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_utente=root%0aSSH%3dsi&ct=g3&conferma_password=segreta" > /dev/null
 expect "utente SSH inventato: ignorato, resta assistenza" "1" "$(grep -c '^@conferma g3 sweetspot-config imposta SSH si SSH_UTENTE assistenza$' "$A/priv.log")"
