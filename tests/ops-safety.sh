@@ -205,8 +205,10 @@ expect 'backup SQLite reale: integrità verificata' ok "$("$SQLITE3" "$D/stick/s
 wait "$WALPID"
 WALPID=
 restore_probe() { # sorgente destinazione RAM
+	# Run a parte: un ripristino fallito lascia il marcatore che blocca i salvataggi.
+	mkdir -p "$D/run-ripr"
 	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPOT_LMS_DATA=$2 \
-		SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log $TEST_SH -c '. "$1"; do_restore "$2"' sh \
+		SWEETSPOT_RUN=$D/run-riprSWEETSPOT_LOG=$D/log $TEST_SH -c '. "$1"; do_restore "$2"' sh \
 		"$OVERLAY/usr/bin/sweetspot-dati" "$1" >/dev/null 2>&1
 }
 # chmod non dimostra la sola lettura se il processo ha CAP_DAC_OVERRIDE.
