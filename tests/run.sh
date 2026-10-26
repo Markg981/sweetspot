@@ -1994,7 +1994,7 @@ ordine=$(pi "sync() { printf 'sync '; }; mv() { printf 'mv '; command mv \"\$@\"
 expect "fat_sostituisci: sync, mv, sync; .bak del precedente; contenuto nuovo" "sync mv sync |vecchio|os_prefix=b/" \
 	"$ordine|$(cat "$PI/stick/config.txt.bak")|$(grep '^os_prefix' "$PI/stick/config.txt")"
 pi "rpi_boot_config $PI/stick/config.txt a"
-pi "rpi_cmdline a 'cpuidle.off=1isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678'" > "$PI/stick/a/cmdline.txt"
+pi "rpi_cmdline a 'cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678'" > "$PI/stick/a/cmdline.txt"
 expect "parametri adattati letti da cmdline.txt" "cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678" "$(pi 'rpi_tune a')"
 expect "scheda I2S in sweetspot-scheda.txt" "dtparam=i2s=on|dtoverlay=hifiberry-dacplus" \
 	"$(pi 'rpi_scheda_txt hifiberry-dacplus' | grep -v '^#' | tr '\n' '|' | sed 's/|$//')"
