@@ -1059,7 +1059,7 @@ apply_player_prefs() {
 	# tenuto a 100, e con il controllo digitale acceso quel 100 diventerebbe
 	# il volume reale (picco). Prima di accenderlo si riporta a un valore
 	# sicuro, se il volume attuale lo supera.
-	if [ "$digital" = 1 ] && [ "${PREFS_FISSO:-0}" = 1 ]; then
+	if [ "$digital" = 1 ] && [ -f "$RUN/volume.fisso" ]; then
 		sicuro=$(conf VOLUME_SICURO 25)
 		case "$sicuro" in ''|*[!0-9]*) sicuro=25 ;; esac
 		cur=$(LMS_TIMEOUT=5 lms_get '._volume' "$PLAYER_MAC" mixer volume '?')
@@ -1079,8 +1079,9 @@ apply_player_prefs() {
 	PREFS_SET=1
 	PREFS_SIG=$sig
 	# Ricorda se il volume e' fisso (Lyrion a 100) per il prossimo cambio di modo.
-	PREFS_FISSO=0
-	[ "$digital" = 0 ] && PREFS_FISSO=1
+	# Il marcatore sta in $RUN (non in una variabile): sopravvive al riavvio del
+	# supervisore. Si toglie solo dopo la verifica del volume in software/dsp.
+	if [ "$digital" = 0 ]; then : > "$RUN/volume.fisso"; else rm -f "$RUN/volume.fisso"; fi
 	div=$(prefs_divergenti "$digital")
 	if [ -n "$div" ]; then
 		prefs_stato "divergenti, non imponibili: $div"

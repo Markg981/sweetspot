@@ -4067,9 +4067,10 @@ grep -q 'sweetspot-volume ferma' "$OVERLAY/etc/init.d/S60sweetspot-player" && ok
 vsw() { # modalita' volume_iniziale prefs_fisso
 	rm -f "$VF/mix" "$VF/log"
 	printf '%s\n' "$2" > "$VF/vol"
+	if [ "$3" = 1 ]; then : > "$VF/run/volume.fisso"; else rm -f "$VF/run/volume.fisso"; fi
 	SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
-		PLAYER_MAC=aa:bb; PREFS_SET=0; PREFS_FISSO=$3; LMS_HOST=127.0.0.1
+		PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
 		mode() { echo completa; }; volume_modalita() { echo $1; }; volume_effettivo() { echo x; }
 		lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) cat $VF/vol ;; playerpref) echo 1 ;; esac; }
 		lms_json() { [ \"\$2\" = mixer ] && echo \"\$4\" > $VF/mix; return 0; }
@@ -4081,6 +4082,28 @@ expect "player: da fisso a software con Lyrion a 100 il volume scende al valore 
 expect "player: da fisso a dsp con Lyrion a 100 il volume scende al valore sicuro" "25" "$(vsw dsp 100 1)"
 expect "player: dopo il passaggio il volume e' sotto la soglia (<= 25)" "si" "$([ "$(vsw software 100 1)" -le 25 ] && echo si || echo no)"
 expect "player: volume gia' sotto la soglia non viene toccato" "nessuno" "$(vsw software 10 1)"
+# Supervisore riavviato fra fisso e software: ogni invocazione e' un processo
+# nuovo, il marcatore in $RUN e' l'unica memoria. Il fisso lo lascia (digital=0).
+rm -f "$VF/run/volume.fisso"
+SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+	$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+	PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+	mode() { echo completa; }; volume_modalita() { echo fisso; }; volume_effettivo() { echo x; }
+	lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) echo 100 ;; playerpref) echo 0 ;; esac; }
+	lms_json() { return 0; }; prefs_divergenti() { :; }; prefs_stato() { :; }
+	apply_player_prefs" > /dev/null 2>&1
+expect "player: il fisso applicato lascia il marcatore in RUN" "si" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
+rm -f "$VF/mix"; echo 100 > "$VF/vol"
+SWEETSPOT_RUN=$VF/run SWEETSPOT_LOG=$VF/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_TEST=1 \
+	$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player
+	PLAYER_MAC=aa:bb; PREFS_SET=0; LMS_HOST=127.0.0.1
+	mode() { echo completa; }; volume_modalita() { echo software; }; volume_effettivo() { echo x; }
+	lms_get() { case \"\$3\" in connected) echo 1 ;; mixer) cat $VF/vol ;; playerpref) echo 1 ;; esac; }
+	lms_json() { [ \"\$2\" = mixer ] && echo \"\$4\" > $VF/mix; return 0; }
+	prefs_divergenti() { :; }; prefs_stato() { :; }
+	apply_player_prefs" > /dev/null 2>&1
+expect "player: supervisore riavviato fra fisso e software, volume <= soglia" "25" "$(cat "$VF/mix" 2>/dev/null)"
+expect "player: dopo la riduzione il marcatore e' rimosso" "no" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
 expect "player: avvio diretto in software (non da fisso) non tocca il volume" "nessuno" "$(vsw software 100 0)"
 
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
