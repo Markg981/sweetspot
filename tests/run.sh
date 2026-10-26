@@ -522,6 +522,28 @@ expect "liveness: play senza PCM RUNNING oltre la soglia, squeezelite fermato" "
 case "$(cat "$LV/run/stato.dati")" in *"ERRORE|Player|bloccato: Lyrion dice play"*) ok "liveness: stato player bloccato nella pagina" ;; *) ko "liveness player" "bloccato" "$(cat "$LV/run/stato.dati")" ;; esac
 case "$(cat "$LV/run/stato.json")" in *'"player":{"stato":"bloccato","riavvii":1}'*) ok "liveness: stato.json espone player bloccato" ;; *) ko "liveness json player" "bloccato" "$(cat "$LV/run/stato.json")" ;; esac
 case "$(cat "$LV/log")" in *"liveness: player bloccato"*"riavvio squeezelite"*) ok "liveness: riavvio del player registrato nel log" ;; *) ko "liveness log player" "evento" "$(cat "$LV/log")" ;; esac
+# Avvio lento (stream remoto): PCM non RUNNING da oltre la soglia ma il processo
+# lavora (CPU che avanza): niente kill. Con la CPU ferma fra due campioni, kill.
+sleep 7200 &
+LV_SQ_PID=$!
+echo "$LV_SQ_PID" > "$LV/run/squeezelite.pid"
+mkdir -p "$LV/proc/$LV_SQ_PID"
+lvcpu() { echo "$LV_SQ_PID (squeezelite) S 1 1 1 0 0 0 0 0 0 0 $1 0 0" > "$LV/proc/$LV_SQ_PID/stat"; }
+echo play > "$LV/modo"
+printf 'state: SETUP\n' > "$LV/proc/asound/card1/pcm0p/sub0/status"
+lvcpu 100
+echo "100000 0 0 0 100" > "$LV/run/liveness.player"
+lvcpu 200
+lv_round wget-ok
+sleep 1
+expect "liveness: avvio lento, PCM non RUNNING ma la CPU avanza, il player resta" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+lv_round wget-ok
+sleep 1
+expect "liveness: avvio lento, CPU ferma ma soglia ripartita, il player resta" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+echo "100000 0 0 0 200" > "$LV/run/liveness.player"
+lv_round wget-ok
+sleep 1
+expect "liveness: PCM non RUNNING oltre la soglia e CPU ferma, squeezelite fermato" "no" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
 # PCM RUNNING: tutto bene; "pause" o "stop": nessun intervento.
 sleep 7200 &
 LV_SQ_PID=$!
