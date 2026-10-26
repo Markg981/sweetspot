@@ -13,13 +13,23 @@ HOST=$(lower "$(conf NOME_RETE sweetspot)" | tr -c 'a-z0-9-' '-' | sed 's/^-*//;
 
 wifi_conf() {
 	local ssid pass
-	ssid=$(conf WIFI_NOME | sed 's/\\/\\\\/g; s/"/\\"/g')
-	pass=$(conf WIFI_PASSWORD | sed 's/\\/\\\\/g; s/"/\\"/g')
+	# Il nome va in esadecimale (ssid=<hex>, senza virgolette): #, virgolette,
+	# backslash, UTF-8 ed emoji arrivano a wpa_supplicant byte per byte.
+	ssid=$(conf WIFI_NOME | od -An -v -tx1 | tr -d ' \n')
+	# Tra virgolette wpa_supplicant NON interpreta escape: la password va
+	# scritta cruda. Con 64 cifre esadecimali e' invece la chiave gia' derivata.
+	pass=$(conf WIFI_PASSWORD)
 	{
 		echo "ctrl_interface=/run/wpa_supplicant"
 		echo "network={"
-		echo "	ssid=\"$ssid\""
-		if [ -n "$pass" ]; then echo "	psk=\"$pass\""; else echo "	key_mgmt=NONE"; fi
+		echo "	ssid=$ssid"
+		if [ -z "$pass" ]; then
+			echo "	key_mgmt=NONE"
+		elif [ "${#pass}" -eq 64 ] && [ -z "$(printf '%s' "$pass" | tr -d '0-9a-fA-F')" ]; then
+			echo "	psk=$pass"
+		else
+			echo "	psk=\"$pass\""
+		fi
 		echo "}"
 	} > "$RUN/wpa.conf"
 	chmod 600 "$RUN/wpa.conf"
