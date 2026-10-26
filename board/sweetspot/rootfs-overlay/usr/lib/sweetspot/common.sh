@@ -123,12 +123,15 @@ config_normalize() {
 			*[!A-Z0-9_]*|'') continue ;;
 		esac
 		val=${line#*=}
+		# Nome e password del Wi-Fi sono testo libero: '#' e virgolette fanno
+		# parte del valore (per loro i commenti esistono solo a inizio riga).
+		libero=
 		case "$key" in
-			*PASSWORD) ;;
+			WIFI_NOME|*PASSWORD) libero=1 ;;
 			*) val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
 		esac
 		val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-		case "$val" in
+		[ -n "$libero" ] || case "$val" in
 			\"*\") val=${val#\"}; val=${val%\"} ;;
 			\'*\') val=${val#\'}; val=${val%\'} ;;
 		esac

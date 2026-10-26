@@ -135,6 +135,13 @@ scan() { # scheda
 			print p "|" s
 		}' | sort -t'|' -k1,1nr | awk '!seen[substr($0, index($0, "|") + 1)]++')
 	[ -n "$out" ] || return 1
+	# iw scrive i byte non stampabili (UTF-8, emoji) come \xNN e il backslash
+	# raddoppiato: li riporta ai caratteri veri; scarta nomi con controlli.
+	out=$(printf '%s\n' "$out" | while IFS= read -r l; do
+		n=$(printf '%b' "${l#*|}")
+		[ -n "$n" ] && valid_value "$n" && printf '%s|%s\n' "${l%%|*}" "$n"
+	done)
+	[ -n "$out" ] || return 1
 	mkdir -p "$RUN"
 	printf '%s\n' "$out" > "$LIST.tmp" && mv "$LIST.tmp" "$LIST"
 }

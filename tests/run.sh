@@ -4058,6 +4058,48 @@ python3 "$ROOT/tests/player-avvio.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
 python3 "$ROOT/tests/squeezelite-mixer-dsd.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
+echo "Wi-Fi: nomi e password particolari, dalla scansione a wpa.conf"
+WS=$WORK/wifissid
+mkdir -p "$WS/bin" "$WS/run"
+# iw finto: come il vero, scrive UTF-8/emoji come \xNN e il backslash raddoppiato.
+cat > "$WS/bin/iw" <<'EOF'
+#!/bin/sh
+printf 'BSS aa:bb:cc:00:00:01(on wlan0)\n\tsignal: -40.00 dBm\n\tSSID: Casa #2\nBSS aa:bb:cc:00:00:02(on wlan0)\n\tsignal: -50.00 dBm\n\tSSID: Caff\\xc3\\xa8 \\xf0\\x9f\\x8e\\xb5\nBSS aa:bb:cc:00:00:03(on wlan0)\n\tsignal: -60.00 dBm\n\tSSID: "Q" a\\\\b\n'
+EOF
+chmod +x "$WS/bin/iw"
+printf '1\n' > /dev/null
+echo wlan0 > "$WS/run/hotspot.attivo"
+SWEETSPOT_IW=$WS/bin/iw SWEETSPOT_RUN=$WS/run SWEETSPOT_LOG=$WS/log SWEETSPOT_TEST=1 \
+	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH "$OVERLAY/usr/bin/sweetspot-hotspot" scansiona
+expect "wifi scan: nomi decodificati" 'Caffè 🎵|Casa #2|"Q" a\b' \
+	"$(cut -d'|' -f2- "$WS/run/wifi-scan.list" | tr '\n' '|' | sed 's/|$//')"
+# wifi_conf, estratta da S40sweetspot-net, per ogni nome (prelevato dalla lista).
+sed -n '/^wifi_conf() {/,/^}/p' "$OVERLAY/etc/init.d/S40sweetspot-net" > "$WS/wifi_conf.sh"
+wifi_prova() { # nome password -> wpa.conf
+	printf 'WIFI_NOME=%s\nWIFI_PASSWORD=%s\n' "$1" "$2" > "$WS/s.txt"
+	SWEETSPOT_RUN=$WS/run SWEETSPOT_LOG=$WS/log SWEETSPOT_DEFAULTS=$WS/nessuno \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WS/s.txt; . $WS/wifi_conf.sh; wifi_conf; cat \$RUN/wpa.conf"
+}
+hexs() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
+while IFS= read -r nome; do
+	w=$(wifi_prova "$nome" "pw")
+	expect "wifi wpa.conf: ssid in esadecimale ($nome)" "ssid=$(hexs "$nome")" "$(printf '%s\n' "$w" | grep -o 'ssid=.*')"
+done <<'EOF'
+Casa #2
+"Casa"
+a\b"c
+Caffè 🎵
+EOF
+w=$(wifi_prova 'Casa' 'pa#ss "x" \y')
+expect "wifi wpa.conf: password cruda, senza escape ne' commento" 'psk="pa#ss "x" \y"' "$(printf '%s\n' "$w" | grep -o 'psk=.*')"
+w=$(wifi_prova 'Casa' '')
+expect "wifi wpa.conf: rete aperta" "key_mgmt=NONE" "$(printf '%s\n' "$w" | grep -o 'key_mgmt=.*')"
+k=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+expect "wifi wpa.conf: chiave di 64 cifre senza virgolette" "psk=$k" "$(wifi_prova 'Casa' "$k" | grep -o 'psk=.*')"
+printf '# commento\nWIFI_NOME = Casa #2 \nHOTSPOT=si # nota\n' > "$WS/n.txt"
+expect "config_normalize: # solo a inizio riga per il nome Wi-Fi" "WIFI_NOME=Casa #2|HOTSPOT=si" \
+	"$(SWEETSPOT_RUN=$WS/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $WS/n.txt" | tr '\n' '|' | sed 's/|$//')"
+
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
 python3 "$ROOT/tests/reference-studio.py" || exit 1
