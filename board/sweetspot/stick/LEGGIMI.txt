@@ -62,6 +62,9 @@ Windows. All'accensione un menu chiede se avviare Sweetspot o Windows.
 Se parte subito Windows, apri il menu di avvio del computer (F12, F11, F8
 o Esc) e scegli Sweetspot, o mettilo primo nel BIOS/UEFI. Serve un disco
 GPT; il Secure Boot resta spento.
+Con BitLocker, Windows avviato dal menu di Sweetspot (e il Secure Boot
+spento) puo' chiedere la chiave di ripristino: tienila a portata di mano.
+Per evitarlo avvia Windows dal menu di avvio del computer (F12, F11...).
 
 Aggiornamenti
 -------------

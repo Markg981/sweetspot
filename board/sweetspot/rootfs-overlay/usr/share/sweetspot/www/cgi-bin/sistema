@@ -346,6 +346,9 @@ e una voce di avvio. All'accensione un menu chiede se avviare Sweetspot o Window
 Le partizioni che ci sono già non vengono toccate né ridimensionate: se il disco è tutto occupato, prima libera almeno 4 GB
 da Windows (Gestione disco, "Riduci volume") e poi torna qui. Serve un disco GPT e la chiavetta avviata in modalità UEFI.
 Prima di cambiare le partizioni di un disco conviene comunque avere una copia dei dati importanti.</p>
+<p class="sub"><b>BitLocker:</b> se Windows è cifrato, avviarlo dal menu di Sweetspot (con il Secure Boot spento) cambia le misure del TPM e
+Windows può chiedere la chiave di ripristino a 48 cifre. Prima di procedere verifica di averla (account Microsoft o l'amministratore del computer),
+oppure sospendi la protezione da Windows. Per evitarlo avvia Windows dal menu di avvio del computer (F12, F11, F8 o Esc) e non da qui.</p>
 HTML
 if [ ! -d "$SYS/firmware/efi" ]; then
 	info_row "" "Avvio non UEFI" "Sweetspot è partito in modalità BIOS (legacy): riavvia la chiavetta in modalità UEFI per installarlo accanto a Windows."
@@ -401,6 +404,15 @@ form_start ripristina
 cat <<'HTML'
 <p class="sub">Riporta sweetspot.txt com'era alla prima accensione: modalità, audio, rete (anche il Wi-Fi), password e opzioni tornano quelle iniziali, poi Sweetspot si riavvia. Musica, archivio, libreria di Lyrion e filtri della correzione restano.</p>
 <label class="check"><input type="checkbox" name="conferma" value="si" required> Ho capito: tutte le impostazioni torneranno quelle iniziali</label>
+HTML
+if [ -n "$(conf PASSWORD_WEB)" ]; then
+	printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
+	echo '<label for="cpw-rip">Password di queste pagine</label>'
+	echo '<input id="cpw-rip" name="conferma_password" type="password" autocomplete="current-password" required>'
+else
+	echo '<p class="sub">Per ripristinare da qui imposta prima una password per queste pagine.</p>'
+fi
+cat <<'HTML'
 <button class="danger">Ripristina le impostazioni iniziali</button>
 </form>
 </div>

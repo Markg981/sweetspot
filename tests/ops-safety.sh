@@ -418,6 +418,11 @@ expect 'stick_mount rw: rimontata scrivibile, successo' 0 "$(stickrw rw,noatime 
 expect 'stick_mount rw: remount che fallisce, errore' 1 "$(stickrw ro,noatime 1)"
 expect 'stick_mount rw: remount "riuscito" ma ancora ro, errore' 1 "$(stickrw ro,noatime 0)"
 
+# B6: dischi e chiavetta si montano sempre con nosuid,nodev,noexec.
+expect 'dischi: ogni montaggio ha nosuid,nodev,noexec' 0 "$(grep -c 'mount -t.*-o' "$OVERLAY/usr/bin/sweetspot-dischi" >/dev/null; grep 'noload' "$OVERLAY/usr/bin/sweetspot-dischi" | grep -vc 'nosuid,nodev,noexec')"
+expect 'dischi: opzioni comuni aggiunte' 1 "$(grep -c 'opts="$opts,nosuid,nodev,noexec"' "$OVERLAY/usr/bin/sweetspot-dischi")"
+expect 'chiavetta: montata con nosuid,nodev,noexec' 1 "$(grep -c 'noatime,nosuid,nodev,noexec,codepage' "$OVERLAY/usr/lib/sweetspot/common.sh")"
+
 grubfail() { # comando
 	rm -f "$C/riavvio"
 	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$C/run SWEETSPOT_LOG=$C/log SWEETSPOT_PROCFS=$C/proc \

@@ -116,6 +116,9 @@ mount_one() {
 		hfsplus|hfs) fstype=hfsplus; opts=noatime; rw="" ;;
 		*) return 0 ;;
 	esac
+	# Dal supporto non deve eseguire nulla: niente setuid, file di
+	# dispositivo ne' binari (per ogni file system).
+	opts="$opts,nosuid,nodev,noexec"
 	if [ -n "$rw" ]; then
 		# Archivio: scrivibile da tutti (Lyrion, la condivisione in rete,
 		# la copia dei CD) sui file system senza permessi Unix.
@@ -141,7 +144,7 @@ mount_one() {
 		if [ "$fstype" = ext4 ]; then
 			blockdev --setro "$dev" 2>/dev/null
 		fi
-		if [ "$fstype" = ext4 ] && mount -t ext4 -o ro,noatime,noload "$dev" "$mp" 2>/dev/null; then
+		if [ "$fstype" = ext4 ] && mount -t ext4 -o ro,noatime,noload,nosuid,nodev,noexec "$dev" "$mp" 2>/dev/null; then
 			how=ro
 			log "dischi: $dev montato senza recuperare il diario (non era stato chiuso correttamente)"
 		else

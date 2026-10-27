@@ -84,6 +84,9 @@ case "$1" in
 			log "impostazioni lette dalla chiavetta"
 			echo "fatto"
 		else
+			# Lyrion parte senza la libreria salvata: niente salvataggi sopra
+			# la copia della chiavetta se compare piu' tardi.
+			sweetspot-dati assente
 			log "chiavetta non trovata: impostazioni predefinite"
 			echo "chiavetta non trovata, uso i valori predefiniti"
 		fi
