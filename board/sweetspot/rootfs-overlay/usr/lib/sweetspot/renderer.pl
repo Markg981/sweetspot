@@ -808,6 +808,21 @@ sub announce {
 }
 
 my @pending_resp;    # [ due, ip, port, nt, usn ]
+# Le risposte vanno alla porta sorgente della M-SEARCH, che si falsifica: coda e
+# frequenza hanno un tetto, così non si amplifica né si riempie la memoria.
+my $MAX_PENDING = 64;
+my $SSDP_RATE_MAX = 8;       # M-SEARCH accettate per IP in ogni finestra
+my $SSDP_RATE_WIN = 10;      # secondi
+my %ssdp_rate;               # ip => [ inizio finestra, conteggio ]
+
+sub ssdp_rate_ok {
+	my ($ip) = @_;
+	my $now = time;
+	%ssdp_rate = () if keys %ssdp_rate > 1024;    # tetto anche alla tabella
+	my $r = $ssdp_rate{$ip};
+	if (!$r || $now - $r->[0] >= $SSDP_RATE_WIN) { $ssdp_rate{$ip} = [ $now, 1 ]; return 1 }
+	return ++$r->[1] <= $SSDP_RATE_MAX;
+}
 
 sub handle_ssdp {
 	my ($data, $from) = @_;
@@ -821,8 +836,10 @@ sub handle_ssdp {
 	$mx = 5 if $mx > 5;
 	my ($port, $addr) = unpack_sockaddr_in($from);
 	my $ip = inet_ntoa($addr);
+	return unless ssdp_rate_ok($ip);
 	for my $e (nt_list()) {
 		next unless $st eq 'ssdp:all' || lc($st) eq lc($e->[0]);
+		last if @pending_resp >= $MAX_PENDING;
 		push @pending_resp, [ time + rand($mx * 0.4), $ip, $port, @$e ];
 	}
 }
@@ -855,7 +872,7 @@ sub join_multicast {
 sub http_reply {
 	my ($c, $status, $ctype, $body, %extra) = @_;
 	my %text = (200 => 'OK', 400 => 'Bad Request', 404 => 'Not Found', 405 => 'Method Not Allowed',
-		412 => 'Precondition Failed', 500 => 'Internal Server Error', 503 => 'Service Unavailable');
+		412 => 'Precondition Failed', 413 => 'Payload Too Large', 500 => 'Internal Server Error', 503 => 'Service Unavailable');
 	my $head_only = delete $extra{HEAD};
 	my $h = "HTTP/1.1 $status " . ($text{$status} // 'OK') . "\r\n";
 	$h .= "Content-Type: $ctype\r\n" if defined $ctype;
@@ -864,6 +881,8 @@ sub http_reply {
 	$h .= "$_: $extra{$_}\r\n" for sort keys %extra;
 	print $c $h . "\r\n" . ($head_only ? '' : ($body // ''));
 }
+
+my $MAX_BODY = 32768;    # una azione SOAP è di poche centinaia di byte
 
 sub read_request {
 	my ($c) = @_;
@@ -876,12 +895,13 @@ sub read_request {
 		my $n = sysread($c, my $chunk, 8192);
 		last unless $n;
 		$buf .= $chunk;
+		return (undef, undef, 413) if !defined $head && length($buf) > 16384;
 		if (!defined $head && $buf =~ /\r?\n\r?\n/) {
 			$head = substr($buf, 0, $+[0]);
 			$buf = substr($buf, $+[0]);
 			($len) = $head =~ /^Content-Length:\s*(\d+)/mi;
 			$len //= 0;
-			return undef if $len > 262144;
+			return (undef, undef, 413) if $len > $MAX_BODY;
 		}
 		last if defined $head && length($buf) >= $len;
 	}
@@ -889,9 +909,34 @@ sub read_request {
 	return ($head, $buf);
 }
 
+# Argomenti di una azione SOAP, in tempo lineare: le espressioni con (.*) e
+# backtracking su un corpo grande bloccavano il ciclo per decine di secondi.
+sub soap_args {
+	my ($body, $name) = @_;
+	my %in;
+	return %in unless $body =~ m{<(?:\w+:)?\Q$name\E\b[^<>]*>}g;
+	my $pos = pos($body);
+	my $end = length $body;
+	for (my $i = rindex($body, '</'); $i >= $pos; $i = $i > 0 ? rindex($body, '</', $i - 1) : -1) {
+		if (substr($body, $i, 80) =~ m{^</(?:\w+:)?\Q$name\E>}) { $end = $i; last }
+	}
+	my $args = substr($body, $pos, $end - $pos);
+	while ($args =~ m{\G.*?<(\w+)((?:\s[^<>]*)?)(/?)>}sgc) {
+		my ($tag, $selfclose) = ($1, $3);
+		if ($selfclose) { $in{$tag} = ''; next }
+		my $close = index($args, "</$tag>", pos($args));
+		next if $close < 0;
+		$in{$tag} = substr($args, pos($args), $close - pos($args));
+		pos($args) = $close + length($tag) + 3;
+	}
+	return %in;
+}
+
 sub handle_http {
 	my ($c) = @_;
-	my ($head, $body) = read_request($c);
+	my ($head, $body, $err) = read_request($c);
+	return http_reply($c, 413, 'text/plain', "corpo troppo grande
+") if ($err // 0) == 413;
 	return http_reply($c, 400, 'text/plain', "richiesta non valida\n") unless defined $head;
 	my ($method, $path) = $head =~ m{^(\w+)\s+(\S+)\s+HTTP/1\.[01]};
 	return http_reply($c, 400, 'text/plain', "richiesta non valida\n") unless defined $method;
@@ -917,12 +962,7 @@ sub handle_http {
 		return http_reply($c, 500, 'text/xml; charset="utf-8"', soap_fault(401, 'Invalid Action'))
 			unless $stype eq $SERVICES{$svc}{type};
 		my %in;
-		if ($body =~ m{<(?:\w+:)?\Q$name\E\b[^>]*>(.*)</(?:\w+:)?\Q$name\E>}s) {
-			my $args = $1;
-			while ($args =~ m{<(\w+)(?:\s[^>]*)?>(.*?)</\1>|<(\w+)\s*/>}sg) {
-				$in{ defined $1 ? $1 : $3 } = defined $2 ? $2 : '';
-			}
-		}
+		%in = soap_args($body, $name);
 		my ($vals, $code, $text) = action($svc, $name, \%in);
 		if (!defined $vals) {
 			logm("$svc.$name: errore $code ($text)");
