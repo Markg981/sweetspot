@@ -190,6 +190,8 @@ expect "login CSRF: cookie di un altro modulo: 403" "403" "$(status "$out")"
 out=$(req "$CGI/accesso" POST "sweetspot_lt=$lt" "t=$tk&password=segreta")
 expect "gettone e cookie del modulo: si entra" "303" "$(status "$out")"
 sidx=$(cookie_id "$out")
+# Il registro conta solo l'azione, non le verifiche della password di prima.
+: > "$PRIVLOG"
 out=$(req "$CGI/azione" POST "sweetspot_sid=$sidx" "t=$tk&a=riavvia")
 expect "il gettone del modulo di accesso non vale per le azioni" "0" "$(wc -c < "$PRIVLOG" | tr -d ' ')"
 out=$(req "$A/pagina-tok" GET "" "")
