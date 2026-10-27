@@ -133,7 +133,20 @@ config_normalize() {
 		libero=
 		case "$key" in
 			WIFI_NOME|*PASSWORD) libero=1 ;;
-			*) val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
+			*) val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+				# Valore tutto fra virgolette (senza altre dello stesso tipo
+				# dentro): e' letterale, anche con " #" o spazi ai bordi.
+				# E' la forma che scrive sweetspot-config.
+				case "$val" in
+					\"?*\"|\'?*\')
+						q=${val%"${val#?}"}
+						inner=${val#?}; inner=${inner%?}
+						case "$inner" in
+							*"$q"*) ;;
+							*) printf '%s=%s\n' "$key" "$inner"; continue ;;
+						esac ;;
+				esac
+				val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
 		esac
 		val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 		[ -n "$libero" ] || case "$val" in
