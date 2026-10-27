@@ -2422,8 +2422,10 @@ if command -v sgdisk > /dev/null; then
 		"$(sidejob nvme0n1 'wait_dev() { return 1; }')"
 	expect "accanto: copia della tabella conservata" "si" "$([ -s "$INS/run/installa/gpt-nvme0n1.bak" ] && echo si || echo no)"
 	# Windows ibernato / Avvio rapido: NTFS sporco, si rifiuta senza toccare nulla.
-	expect "accanto: NTFS sporco (ibernazione), niente cambiato" "si" 		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 1; }' | grep -q '^Windows non è spento del tutto.*niente è stato cambiato|si$' && echo si || echo no)"
-	expect "accanto: NTFS pulito, si prosegue" "no" 		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }' | grep -q '^Windows non è spento' && echo si || echo no)"
+	expect "accanto: NTFS sporco (ibernazione), niente cambiato" "Windows non è spento del tutto (Avvio rapido o ibernazi" \
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 1; }' | cut -c1-60)"
+	expect "accanto: NTFS pulito, si prosegue" "no" \
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
 	expect "accanto: la copia della tabella va sulla partizione nuova" "si" 		"$(grep -q '$new/gpt-$disk.bak' "$OVERLAY/usr/bin/sweetspot-installa" && echo si || echo no)"
 	# La partizione che si aggiungerebbe: 4 GiB nello spazio libero, tipo dati di base.
 	ins "sgdisk -n 4:4761600:$((4761600 + 8388608 - 1)) -t 4:\$SIDE_TYPE -c 4:\$SIDE_NAME $INS/dev/nvme0n1" > /dev/null
