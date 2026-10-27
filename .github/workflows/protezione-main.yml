@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Verifica ogni giorno che su main sia richiesto il controllo "esito" (job
+# finale di build.yml). Se la protezione manca o e' stata allentata il job
+# fallisce e GitHub avvisa. Per ripristinarla: aggiungere "esito" ai controlli
+# richiesti del ruleset "Protect Main" (serve essere admin).
+# Legge le regole effettive su main con rules/branches (basta il GITHUB_TOKEN con
+# contents: read). Vede solo i ruleset: la protezione classica del ramo
+# (scripts/proteggi-main.sh) richiede permessi admin e qui non e' leggibile.
+name: Protezione main
+
+on:
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/protezione-main.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  protezione:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Il controllo "esito" e' richiesto su main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          regole=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main")
+          if echo "$regole" | jq -e '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context] | any(. == "esito")' > /dev/null; then
+            echo "main richiede il controllo \"esito\"."
+          else
+            echo "::error::main non richiede il controllo \"esito\": aggiungerlo al ruleset Protect Main (Impostazioni > Rules) o lanciare scripts/proteggi-main.sh --applica da amministratore."
+            exit 1
+          fi
