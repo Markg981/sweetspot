@@ -1716,7 +1716,7 @@ stick_mount() { # [ro|rw]
 		dev=$(stick_device)
 		if [ -n "$dev" ]; then
 			mkdir -p "$STICK_MNT"
-			if mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null; then
+			if mount -t vfat -o "$mode,noatime,nosuid,nodev,noexec,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null; then
 				evento chiavetta montata "$mode"
 			else
 				rc=1
