@@ -490,5 +490,16 @@ STICKRC=1
 expect 'do_confirm: chiavetta non scrivibile, errore' 1 "$(grubfail confirm)"
 unset STICKRC
 
+# grubenv_set concorrenti: ogni chiave scritta da un processo deve sopravvivere.
+GL=$WORK/grubenv-lock
+mkdir -p "$GL/run"
+( . "$SWEETSPOT_LIB/common.sh"; RUN=$GL/run
+  grubenv_set "$GL/env" a0=0
+  for i in 1 2 3 4 5 6 7 8; do
+	( n=0; while [ $n -lt 5 ]; do grubenv_set "$GL/env" "k${i}_$n=$n"; n=$((n + 1)); done ) &
+  done
+  wait ) >/dev/null 2>&1
+expect 'grubenv_set concorrenti: nessuna scrittura persa' 41 "$(grep -c '^[a-z0-9_]*=' "$GL/env")"
+
 printf '\nOperazioni: %s passati, %s falliti\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
