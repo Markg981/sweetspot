@@ -403,6 +403,15 @@ form_start ripristina
 cat <<'HTML'
 <p class="sub">Riporta sweetspot.txt com'era alla prima accensione: modalità, audio, rete (anche il Wi-Fi), password e opzioni tornano quelle iniziali, poi Sweetspot si riavvia. Musica, archivio, libreria di Lyrion e filtri della correzione restano.</p>
 <label class="check"><input type="checkbox" name="conferma" value="si" required> Ho capito: tutte le impostazioni torneranno quelle iniziali</label>
+HTML
+if [ -n "$(conf PASSWORD_WEB)" ]; then
+	printf '<input type="hidden" name="ct" value="%s">\n' "$(esc "$(confirm_token)")"
+	echo '<label for="cpw-rip">Password di queste pagine</label>'
+	echo '<input id="cpw-rip" name="conferma_password" type="password" autocomplete="current-password" required>'
+else
+	echo '<p class="sub">Per ripristinare da qui imposta prima una password per queste pagine.</p>'
+fi
+cat <<'HTML'
 <button class="danger">Ripristina le impostazioni iniziali</button>
 </form>
 </div>
