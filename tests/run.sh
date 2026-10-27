@@ -269,26 +269,20 @@ CP=$WORK/copia; mkdir -p "$CP/bin" "$CP/media/Album" "$CP/arch" "$CP/run"
 echo musica > "$CP/media/Album/a.flac"
 printf '#!/bin/sh\necho "$CP/arch"\n' > "$CP/bin/sweetspot-dischi"
 printf '#!/bin/sh\nexit 0\n' > "$CP/bin/sweetspot-lms"
-# Il cp finto e' una funzione iniettata nella shell del lavoro (setsid finto):
-# scrive una parte e poi fallisce, come a disco pieno.
-cat > "$CP/pre.sh" <<'EOF'
-cp() {
-	if [ -f "$CP/rompi" ]; then
-		mkdir -p "${3%/}/$(basename "$2")"; echo parziale > "${3%/}/$(basename "$2")/a.flac"
-		return 1
-	fi
-	command cp "$@"
-}
-EOF
-printf '#!/bin/sh\ns=$3; shift 3\nexec sh -c ". \\"$CP/pre.sh\\"; $s" "$@"\n' > "$CP/bin/setsid"
-chmod +x "$CP/bin/"*
-copia() { CP=$CP SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
+copia() { SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
 	SWEETSPOT_MEDIA=$CP/media $TEST_SH "$OVERLAY/usr/bin/sweetspot-copia" "$@"; }
-touch "$CP/rompi"
-copia avvia "$CP/media/Album" > /dev/null; sleep 2
-expect "copia fallita: stato errore" errore "$(cat "$CP/run/copia.stato")"
-expect "copia fallita: nell'archivio non resta nulla" "" "$(ls -A "$CP/arch")"
-rm -f "$CP/rompi"
+# Errore vero a meta' copia: un file illeggibile fa fallire cp -a dopo aver
+# copiato il resto (con BusyBox le applet passano davanti a un cp finto nel PATH).
+echo resto > "$CP/media/Album/b.flac"
+chmod 000 "$CP/media/Album/b.flac"
+if cat "$CP/media/Album/b.flac" > /dev/null 2>&1; then
+	salta "utente senza privilegi (copia fallita)"
+else
+	copia avvia "$CP/media/Album" > /dev/null; sleep 2
+	expect "copia fallita: stato errore" errore "$(cat "$CP/run/copia.stato")"
+	expect "copia fallita: nell'archivio non resta nulla" "" "$(ls -A "$CP/arch")"
+fi
+chmod 644 "$CP/media/Album/b.flac"
 copia avvia "$CP/media/Album" > /dev/null; sleep 2
 expect "copia riuscita: stato finita" finita "$(cat "$CP/run/copia.stato")"
 expect "copia riuscita: cartella al suo posto, niente temporanei" Album "$(ls -A "$CP/arch")"
