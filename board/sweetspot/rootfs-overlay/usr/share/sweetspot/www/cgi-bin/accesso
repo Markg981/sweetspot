@@ -27,11 +27,12 @@ reply_login() { # codice-stato messaggio
 }
 
 login_page() {
+	login_prepare
 	page_start "Accesso" accesso
 	[ -n "$1" ] && printf '<p class="msg">%s</p>\n' "$(esc "$1")"
 	cat <<HTML
 <form method="post" action="/cgi-bin/accesso" class="card">
-<input type="hidden" name="t" value="$(token)">
+<input type="hidden" name="t" value="$(login_token)">
 <div class="row"><div class="grow">
 <label for="pw">Password dell'amministratore</label>
 <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
@@ -70,9 +71,9 @@ fi
 # --- Entrata -------------------------------------------------------------------
 auth_enabled || { redirect /cgi-bin/audio; exit 0; }
 
-# Il gettone anti-CSRF prima di tutto: un modulo inviato da una pagina esterna
+# Il gettone anti-CSRF del modulo (legato al suo cookie) prima di tutto: un modulo inviato da una pagina esterna
 # non arriva a contare come tentativo sbagliato.
-if [ -z "$F_t" ] || [ "$F_t" != "$(token)" ]; then
+if ! login_token_ok "$F_t"; then
 	reply_login "403 Forbidden" "Modulo scaduto: ricarica la pagina e riprova."
 	exit 0
 fi
@@ -85,7 +86,7 @@ if [ "$w" -gt 0 ]; then
 	exit 0
 fi
 
-if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso verifica; then
+if [ -n "$F_password" ] && printf '%s\n' "$F_password" | priv sweetspot-accesso verifica "$(client_ip)"; then
 	id=$(session_new)
 	if [ -z "$id" ]; then
 		reply_login "500 Internal Server Error" "Non riesco a creare la sessione: riprova."

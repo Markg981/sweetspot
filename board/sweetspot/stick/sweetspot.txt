@@ -215,6 +215,15 @@ HTTPS_REINDIRIZZA=no
 # Solo con MODALITA=completa. Si accende anche dalla pagina Sistema.
 RENDERER_UPNP=no
 
+# Copia dei CD: servizi online interrogati, sempre in HTTPS.
+# CD_CERCA_TITOLI: titoli e copertina da MusicBrainz e Cover Art Archive
+# (ricevono l'identificativo del disco, che rivela cosa si copia).
+# CD_ACCURATERIP: verifica delle tracce con AccurateRip (riceve l'indice del
+# disco). Con no la copia funziona lo stesso: titoli generici, senza
+# copertina e/o senza verifica.
+CD_CERCA_TITOLI=si
+CD_ACCURATERIP=si
+
 # Media server UPnP/DLNA: la libreria compare come archivio negli streamer e
 # nei DAC di rete (es. Gustard, guidati da BubbleUPnP o mconnect), che leggono
 # i file da soli. I file partono senza conversioni: DSF e DFF arrivano in DSD,

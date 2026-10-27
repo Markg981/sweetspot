@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Integrazione Reference Studio: preferenze Material e shell CGI reale."""
 from html.parser import HTMLParser
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -126,6 +127,8 @@ class StudioApiTests(unittest.TestCase):
     """CGI del Reference Studio con un sweetspot-priv FINTO: provano accesso,
     gettone, validazione e istradamento dei comandi, non Lyrion vero."""
     SID = "0123456789abcdef0123456789abcdef"
+    # Gettone legato alla sessione, come lo calcola web.sh: sha256("sessione:<sid>:<segreto>")[:32].
+    TOKEN = hashlib.sha256(("sessione:%s:tok123" % SID).encode()).hexdigest()[:32]
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="sweetspot-studio-api-")
@@ -238,7 +241,7 @@ esac
         status, _, _ = self.cgi("studio-api.json", "POST", body=body, token="sbagliato")
         self.assertEqual(status, 403)
         self.assertEqual(self.calls(), [])
-        status, _, _ = self.cgi("studio-api.json", "POST", body=body, token="tok123")
+        status, _, _ = self.cgi("studio-api.json", "POST", body=body, token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertIn("play", self.calls()[0])
 
@@ -249,14 +252,14 @@ esac
                "op=volume&v=5&player=;rm")
         for body in bad:
             with self.subTest(body=body):
-                status, _, _ = self.cgi("studio-api.json", "POST", body=body, token="tok123")
+                status, _, _ = self.cgi("studio-api.json", "POST", body=body, token=self.TOKEN)
                 self.assertEqual(status, 400)
         self.assertEqual(self.calls(), [])
-        self.cgi("studio-api.json", "POST", body="op=volume&v=40&" + mac, token="tok123")
-        self.cgi("studio-api.json", "POST", body="op=carica&kind=album&id=7&mode=add&" + mac, token="tok123")
+        self.cgi("studio-api.json", "POST", body="op=volume&v=40&" + mac, token=self.TOKEN)
+        self.cgi("studio-api.json", "POST", body="op=carica&kind=album&id=7&mode=add&" + mac, token=self.TOKEN)
         self.assertIn("mixer volume 40", self.calls()[0])
         self.assertIn("playlistcontrol cmd:add album_id:7", self.calls()[1])
-        self.cgi("studio-api.json", "POST", body="op=carica&kind=folder&id=12&mode=load&" + mac, token="tok123")
+        self.cgi("studio-api.json", "POST", body="op=carica&kind=folder&id=12&mode=load&" + mac, token=self.TOKEN)
         self.assertIn("playlistcontrol cmd:load folder_id:12", self.calls()[2])
 
     def test_priv_refusal_and_bad_json_are_distinct_errors(self):
@@ -272,7 +275,7 @@ esac
         parser = Elements()
         parser.feed(page)
         metas = {a.get("name"): a.get("content") for t, a in parser.elements if t == "meta"}
-        self.assertEqual(metas.get("sweetspot-token"), "tok123")
+        self.assertEqual(metas.get("sweetspot-token"), self.TOKEN)
         srcs = [a.get("src") for t, a in parser.elements if t == "script"]
         self.assertTrue(any(s.startswith("/studio.js") for s in srcs))
         self.assertTrue(any(t == "nav" and a.get("aria-label") for t, a in parser.elements))

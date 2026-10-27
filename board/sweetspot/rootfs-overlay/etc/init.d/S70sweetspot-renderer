@@ -10,12 +10,17 @@ PIDFILE=$RUN/renderer.pid
 
 case "$1" in
 	start)
-		mkdir -p "$RUN"
+		mkdir -p "$RUN" "$RUN/renderer"
+		# Utente "renderer": analizza XML e HTTP della rete, niente root. Ha una cartella
+		# sua (stato, registro, configurazione ridotta); $RUN/renderer.json ci rimanda.
+		chown renderer:renderer "$RUN/renderer" 2>/dev/null
+		chmod 755 "$RUN/renderer"
+		ln -sf renderer/renderer.json "$RUN/renderer.json"
 		cpu_layout
 		hk=$(join_list "$LAYOUT_HK")
 		[ -n "$hk" ] || hk=$(join_list "$(cpu_online)")
 		# Core di sistema e priorita' minima: mai sui core dell'audio.
-		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/taskset -- -c "$hk" nice -n 10 /usr/bin/perl /usr/lib/sweetspot/renderer.pl
+		start-stop-daemon -S -b -m -c renderer -p "$PIDFILE" -x /usr/bin/taskset -- -c "$hk" nice -n 10 /usr/bin/perl /usr/lib/sweetspot/renderer.pl
 		;;
 	stop)
 		# TERM: il demone annuncia l'uscita (ssdp:byebye) e si ferma.

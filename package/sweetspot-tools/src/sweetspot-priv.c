@@ -83,7 +83,7 @@ struct regola {
 static const struct regola REGOLE[] = {
 	{"sweetspot-accesso", "applica", "", "", 0},
 	{"sweetspot-accesso", "hash", "s", "", 0},
-	{"sweetspot-accesso", "verifica", "", "", 0}, // password dall'ingresso standard
+	{"sweetspot-accesso", "verifica", "s", "", 0}, // sorgente (IP) come argomento, password dall'ingresso standard
 	{"sweetspot-accesso", "primo", "", "", 0},    // codice e password nuova dall'ingresso standard
 	{"sweetspot-aggiorna", "altra", "", "", 0},
 	{"sweetspot-aggiorna", "annulla", "", "", 0},
@@ -774,6 +774,24 @@ static int conferma_usa(const char *tok)
 	return time(NULL) - st.st_mtime <= CONFERMA_VALIDITA;
 }
 
+// Chi chiede la conferma (IP del client, lo passa la pagina in
+// SWEETSPOT_SORGENTE; letto prima che ambiente() ripulisca l'ambiente): serve
+// a sweetspot-accesso per contare gli errori per sorgente. Solo caratteri di
+// un indirizzo, altrimenti "locale".
+static char sorgente_conferma[64] = "locale";
+
+static void sorgente_leggi(void)
+{
+	const char *s = getenv("SWEETSPOT_SORGENTE");
+	size_t i;
+	if (!s || !*s || strlen(s) >= sizeof sorgente_conferma)
+		return;
+	for (i = 0; s[i]; i++)
+		if (!isxdigit((unsigned char)s[i]) && s[i] != '.' && s[i] != ':')
+			return;
+	strcpy(sorgente_conferma, s);
+}
+
 // Password del pannello dall'ingresso standard, verificata da sweetspot-accesso
 // (che la confronta con PASSWORD_WEB: senza password del pannello rifiuta sempre).
 static int password_ok(void)
@@ -794,7 +812,7 @@ static int password_ok(void)
 		return 0;
 	if (pid == 0) {
 		char sub[] = "verifica";
-		char *a[] = {BIN_DIR "sweetspot-accesso", sub, NULL};
+		char *a[] = {BIN_DIR "sweetspot-accesso", sub, sorgente_conferma, NULL};
 		dup2(p[0], 0);
 		close(p[0]);
 		close(p[1]);
@@ -887,6 +905,7 @@ int main(int argc, char **argv)
 #else
 	(void)io;
 #endif
+	sorgente_leggi();
 	ambiente();
 	chiudi_descrittori();
 	if (argc < 2)

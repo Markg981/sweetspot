@@ -25,6 +25,10 @@ ARCHIVE_LABEL="Sweetspot Musica"
 SECT_MIB=2048                      # settori da 512 byte in 1 MiB
 FREE_MIN=$((4096 * SECT_MIB))      # almeno 4 GiB liberi
 MBR_LIMIT=4294967295               # una tabella MBR arriva a 2 TiB
+# Creazione in corso: sulla chiavetta, che sopravvive al riavvio (la RAM no).
+# Resta finche' il file system non e' scritto: se manca la corrente, la volta
+# dopo la creazione riprende dalla formattazione.
+MARKER=$STICK_MNT/sweetspot-spazio.corso
 
 state() { mkdir -p "$DIR"; echo "$*" > "$DIR/stato"; }
 
@@ -45,11 +49,26 @@ free_plan() { # settori_disco inizio1 settori1
 	echo "$start $size $free"
 }
 
+# Contenuto del marcatore "creazione in corso": "inizio settori".
+marker_read() {
+	stick_mount ro || return 0
+	cat "$MARKER" 2>/dev/null
+	stick_umount
+}
+
+# Scrive (con $1) o toglie (senza) il marcatore, e lo sincronizza.
+marker_set() {
+	stick_mount rw || return 1
+	if [ $# -gt 0 ]; then echo "$1" > "$MARKER"; else rm -f "$MARKER"; fi
+	sync
+	stick_umount
+}
+
 # Esamina il disco di avvio: imposta S_DISK, S_START, S_SIZE e stampa la
 # riga di stato.
 examine() {
-	local disk total t1 st1 n1 e2 e3 e4 gb
-	S_DISK="" S_START=0 S_SIZE=0
+	local disk total t1 st1 n1 t2 st2 n2 e2 e3 e4 gb
+	S_DISK="" S_START=0 S_SIZE=0 S_RESUME=0
 	disk=$(stick_disk) || { echo "||no|disco di Sweetspot non trovato"; return 1; }
 	S_DISK=$disk
 	total=$(cat "$SYS/block/$disk/size" 2>/dev/null || echo 0)
@@ -59,18 +78,27 @@ examine() {
 	# shellcheck disable=SC2046
 	set -- $(mbr_read "$DEV/$disk" | tr '\n' ' ')
 	[ $# -eq 12 ] || { echo "$disk|0|no|tabella delle partizioni non leggibile"; return 1; }
-	t1=$1 st1=$2 n1=$3 e2="$4$5$6" e3="$7$8$9" e4="${10}${11}${12}"
+	t1=$1 st1=$2 n1=$3 t2=$4 st2=$5 n2=$6 e2="$4$5$6" e3="$7$8$9" e4="${10}${11}${12}"
 	case "$t1" in
 		238) echo "$disk|0|no|tabella delle partizioni GPT"; return 1 ;;
 		11|12) ;;
 		*) echo "$disk|0|no|prima partizione non FAT32"; return 1 ;;
 	esac
-	if [ "$e2" != 000 ] || [ "$e3" != 000 ] || [ "$e4" != 000 ]; then
+	if [ "$e3" != 000 ] || [ "$e4" != 000 ]; then
 		echo "$disk|0|no|il disco ha gia' altre partizioni"; return 1
 	fi
 	# shellcheck disable=SC2046
 	set -- $(free_plan "$total" "$st1" "$n1")
 	S_START=$1 S_SIZE=$2
+	if [ "$e2" != 000 ]; then
+		# La seconda voce e' nostra solo se una creazione e' rimasta a meta'
+		# e la voce ha esattamente inizio e dimensione del piano.
+		if [ "$(marker_read)" = "$S_START $S_SIZE" ] && [ "$t2 $st2 $n2" = "131 $S_START $S_SIZE" ]; then
+			S_RESUME=1
+		else
+			echo "$disk|0|no|il disco ha gia' altre partizioni"; return 1
+		fi
+	fi
 	gb=$(($3 / 2097152))
 	[ "$S_SIZE" -gt 0 ] || { echo "$disk|$gb|no|spazio libero insufficiente"; return 1; }
 	echo "$disk|$gb|si|"
@@ -91,7 +119,7 @@ wait_dev() {
 }
 
 job() {
-	local dev p2 now
+	local dev p2 pn now
 	# Gli eventi dei dischi (udev) aspettano la fine: la nuova partizione
 	# entra nella libreria solo quando e' gia' formattata.
 	exec 9> "$RUN/dischi.lock"
@@ -100,29 +128,50 @@ job() {
 	examine > /dev/null || fail "il disco non e' piu' adatto" || return 1
 	dev=$DEV/$S_DISK
 	blockdev --setrw "$dev" 2>/dev/null
-	# Prima MiB della nuova partizione azzerata: nessuna traccia di file
-	# system precedenti.
-	dd if=/dev/zero of="$dev" bs=512 seek="$S_START" count="$SECT_MIB" conv=notrunc,fsync 2>/dev/null ||
-		fail "scrittura sul disco non riuscita" || return 1
-	# Seconda voce della tabella (byte 462-477): Linux (0x83).
-	mbr_entry 0 131 "$S_START" "$S_SIZE" |
-		dd of="$dev" bs=1 seek=462 count=16 conv=notrunc,fsync 2>/dev/null ||
-		fail "scrittura della tabella delle partizioni non riuscita" || return 1
-	sync
+	if [ "$S_RESUME" = 1 ]; then
+		log "archivio nello spazio libero: ripresa della creazione interrotta"
+	else
+		# Prima di ogni scrittura sul disco: un taglio di corrente da qui in
+		# poi si riprende invece di lasciare una partizione senza file system.
+		marker_set "$S_START $S_SIZE" || fail "scrittura sulla chiavetta non riuscita" || return 1
+		# Prima MiB della nuova partizione azzerata: nessuna traccia di file
+		# system precedenti.
+		dd if=/dev/zero of="$dev" bs=512 seek="$S_START" count="$SECT_MIB" conv=notrunc,fsync 2>/dev/null ||
+			fail "scrittura sul disco non riuscita" || return 1
+		# Seconda voce della tabella (byte 462-477): Linux (0x83).
+		mbr_entry 0 131 "$S_START" "$S_SIZE" |
+			dd of="$dev" bs=1 seek=462 count=16 conv=notrunc,fsync 2>/dev/null ||
+			fail "scrittura della tabella delle partizioni non riuscita" || return 1
+		sync
+	fi
 	now=$(mbr_read "$dev" | sed -n 2p)
 	[ "$now" = "131 $S_START $S_SIZE" ] || fail "la tabella delle partizioni non e' quella attesa ($now)" || return 1
-	p2=$DEV/$(part_name "$S_DISK" 2)
+	pn=$(part_name "$S_DISK" 2)
+	p2=$DEV/$pn
 	if [ ! -b "$p2" ]; then
 		sweetspot-partizione "$dev" 2 "$S_START" "$S_SIZE" 2>/dev/null ||
 			blockdev --rereadpt "$dev" 2>/dev/null
 	fi
 	wait_dev "$p2" || fail "il kernel non vede ancora la nuova partizione: riavvia, poi riprova da qui" || return 1
+	# Il nodo deve essere proprio la nostra partizione: mai formattare un
+	# nodo con inizio o dimensione diversi.
+	if [ "$(cat "$SYS/class/block/$pn/start" 2>/dev/null)" != "$S_START" ] ||
+		[ "$(cat "$SYS/class/block/$pn/size" 2>/dev/null)" != "$S_SIZE" ]; then
+		fail "la partizione vista dal kernel non e' quella attesa: riavvia, poi riprova da qui" || return 1
+	fi
 
-	state "formatta|formattazione (da qualche secondo a qualche minuto)"
-	blockdev --setrw "$p2" 2>/dev/null
-	# shellcheck disable=SC2086
-	mkfs.ext4 $MKFS_ARCHIVIO -L "$ARCHIVE_LABEL" "$p2" > /dev/null 2>&1 ||
-		fail "formattazione non riuscita" || return 1
+	# Un file system gia' presente e' della formattazione di questo stesso
+	# lavoro (il primo MiB era stato azzerato): non si rifa'.
+	if [ -z "$(blkid -s TYPE -o value "$p2" 2>/dev/null)" ]; then
+		state "formatta|formattazione (da qualche secondo a qualche minuto)"
+		blockdev --setrw "$p2" 2>/dev/null
+		# shellcheck disable=SC2086
+		mkfs.ext4 $MKFS_ARCHIVIO -L "$ARCHIVE_LABEL" "$p2" > /dev/null 2>&1 ||
+			fail "formattazione non riuscita" || return 1
+	fi
+	sync
+	# Solo ora, a formattazione scritta, la creazione non e' piu' in corso.
+	marker_set || fail "scrittura sulla chiavetta non riuscita" || return 1
 
 	state "monta|apertura dell'archivio"
 	sweetspot-config imposta ARCHIVIO "$ARCHIVE_LABEL" > /dev/null 2>&1

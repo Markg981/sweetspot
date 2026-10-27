@@ -6,7 +6,7 @@ e controllo del percorso audio. Le correzioni di un singolo commit non
 esauriscono questo obiettivo. Una superiorità sonora richiede prove sullo
 stesso hardware, DAC e livello d'ascolto.
 
-Questa analisi riguarda il codice di `main` al commit `7549436`. Le funzioni presenti
+Questa analisi riguarda il codice di `main` al commit `3295d58`. Le funzioni presenti
 nel codice non sono automaticamente certificate sui dispositivi reali.
 
 ## Baseline Daphile da raggiungere e conservare
@@ -28,7 +28,7 @@ Stato verificato leggendo il codice di `main`. Colonna **Verifica**:
 in QEMU) che non richiedono un DAC; *hardware* = provato su un DAC o un
 computer reale con rapporto in [`compatibilita/`](compatibilita/); *non
 verificato* = nessuna delle due. Al momento nessuna riga ha una verifica
-su hardware: la matrice non contiene ancora rapporti.
+su hardware: la matrice (`docs/compatibilita.md`) non contiene ancora rapporti.
 
 | Area | Stato su main | Verifica | Cosa manca |
 | --- | --- | --- | --- |
@@ -38,26 +38,29 @@ su hardware: la matrice non contiene ancora rapporti.
 | Più DAC locali | Implementati come zone con `ALTRI_DAC=si`: un Squeezelite per ogni altro DAC USB, MAC stabile da identificativo USB e numero di serie, avvio e arresto con il collegamento, il principale resta fisso per tutto l'avvio. | CI (scelta e conservazione del DAC principale); non verificato su hardware | Due DAC reali in contemporanea; sincronizzazione fra zone, delegata ai gruppi di Lyrion, non provata. |
 | Renderer UPnP/DLNA in ingresso | `RENDERER_UPNP=si` (`S70sweetspot-renderer`, `renderer.pl`): SweetSpot compare come MediaRenderer; l'audio passa da Lyrion e dal player. Di serie spento. | CI (`tests/renderer-upnp.py`, prova Lyrion); non verificato con le app reali | Prova con BubbleUPnP, JPlay, mconnect; gapless e formati da app. |
 | Media server UPnP/DLNA | `SERVER_UPNP=si` (`S71sweetspot-mediaserver`, `sweetspot-mediaserver`, MiniDLNA): la libreria in rete per streamer e DAC di rete; DSF/DFF inviati senza conversione. Di serie spento. | CI (configurazione, pannello, stato, helper privilegiato); non verificato con renderer reali | Prova con un renderer DSD in rete (es. Gustard R26) fino a DSD512; librerie grandi; cartelle di rete aggiornate da altri computer. |
-| PCM→DSD | `-R` configura ricampionamento PCM; le opzioni DSD gestiscono sorgenti già DSD. Non c'è conversione PCM→DSD. | non implementato | Conversione opzionale, backend e modulatore, limiti di CPU e DAC. |
-| Primo avvio Wi-Fi | Hotspot di configurazione `Sweetspot-XXXX` (`sweetspot-hotspot`, `hostapd`, `udhcpd`/`dnsd`) quando dopo `HOTSPOT_ATTESA` non c'è rete e un adattatore supporta AP; scelta della rete dalla pagina Rete, recupero se la rete salvata non si collega. | CI (logica); non verificato su hardware | Prova con Intel, Realtek, Broadcom del Pi; rilevamento portale captive dei telefoni. |
-| Ambito hardware | Target x86_64 (`sweetspot_x86_64_defconfig`) e aarch64 per Pi 4/5 (`sweetspot_rpi_defconfig`). Nessun target x86 a 32 bit né ARM a 32 bit. | CI (compilazione delle due immagini) | Matrice pubblica vuota; decisione sul target x86 a 32 bit. |
+| PCM→DSD | `-R` configura ricampionamento PCM; le opzioni DSD gestiscono sorgenti già DSD. Non c'è conversione PCM→DSD e non è prevista, per scelta: costo di CPU del modulatore, rischio di peggiorare il suono su hardware modesto, supporto dei DAC; motivi in [`pcm-dsd.md`](pcm-dsd.md). | non implementato, non previsto | Nessuno. |
+| Primo avvio Wi-Fi | Hotspot di configurazione `Sweetspot-XXXX` (`sweetspot-hotspot`, `hostapd`, `udhcpd`/`dnsd`) quando dopo `HOTSPOT_ATTESA` non c'è rete e un adattatore supporta AP; scelta della rete dalla pagina Rete, recupero se la rete salvata non si collega. Firewall dell'hotspot (`S41sweetspot-firewall`, `firewall.nft`): sulla sola scheda dell'AP ammette DNS, DHCP, HTTP e HTTPS, il resto del traffico resta com'era; Lyrion, SMB e DLNA non vi sono esposti. Pagine per il portale captive (`hotspot-detect.html`, `canonical.html`) che portano alla pagina Rete. | CI (logica dell'hotspot, contenuto del firewall e `nft -c` sulle regole se `nft` è disponibile, pagine del portale); non verificato su hardware | Prova con Intel, Realtek, Broadcom del Pi; comportamento reale del portale captive su iPhone, Android, Windows. |
+| Ambito hardware | Target x86_64 (`sweetspot_x86_64_defconfig`) e aarch64 per Pi 4/5 (`sweetspot_rpi_defconfig`). x86 a 32 bit e ARM a 32 bit non sono supportati e sono fuori ambito. Il rapporto (`sweetspot-rapporto`) e la matrice generata (`tools/matrice-compatibilita.py`, `docs/compatibilita.md`, controllata dalla CI con `--verifica`) esistono. | CI (compilazione delle due immagini, generazione e coerenza della matrice) | Matrice pubblica ancora senza rapporti reali. |
 | RAAT / Roon | Assente. Roon Ready richiede SDK e certificazione ufficiali di Roon Labs: non si dichiara compatibilità. | non applicabile | Fuori ambito finché non esiste un accordo con Roon. |
 | WASAPI / CoreAudio | Fuori ambito: SweetSpot è un'appliance Linux con ALSA diretto. | non applicabile | Nessuno. |
 
 Streaming e ingressi hanno una tabella di stato dedicata nel
 [README](../README.md#servizi-in-streaming-e-ingressi-stato-e-qualificazione).
 
-Funzioni in PR aperte (#82, #84, #87, #89) non sono su `main` e non sono
-descritte qui: questa tabella va rivista dopo il loro merge, in particolare
-Bluetooth come sorgente
-(#87), alterazioni del segnale e volume (#82), demone a eventi dello stato
-(#84) e drain al cambio di frequenza (#89).
+Le PR #82 (alterazioni del segnale e volume), #84 (demone a eventi dello
+stato), #87 (Bluetooth come sorgente) e #89 (drain al cambio di frequenza)
+sono ora su `main`, con test in `tests/` (`demone-eventi.sh`, `bluetooth.sh`
+e i controlli di `tests/run.sh`), ma non hanno ancora una riga propria in
+questa tabella. Altre PR aperte non sono su `main` e non sono descritte qui.
 
 Evidenze nel codice:
 
 - `usr/lib/sweetspot/common.sh`: `player_buffers`, `dac_find`, `dac_wanted`, `dac_is_zone`.
 - `usr/bin/sweetspot-player`: `resample_args`, `run_player`, zone `ALTRI_DAC`.
 - `usr/bin/sweetspot-precarico`: precarico della coda.
+- `usr/bin/sweetspot-hotspot`, `usr/bin/sweetspot-firewall`, `etc/init.d/S41sweetspot-firewall`, `etc/sweetspot/firewall.nft`: hotspot e suo firewall.
+- `etc/init.d/S21sweetspot-watchdog` (e l'opzione `WATCHDOG` in `etc/init.d/S03sweetspot-early`); `CONFIG_WATCHDOG` in `board/sweetspot/common/linux.fragment` e `busybox.fragment`.
+- `tools/matrice-compatibilita.py` e `docs/compatibilita.md`.
 - `usr/bin/sweetspot-dsp`: `parse_rew`, `fir_ok`, `write_filters_yaml`, `write_config`.
 - `usr/lib/sweetspot/renderer.pl` e `etc/init.d/S70sweetspot-renderer`.
 - `usr/bin/sweetspot-mediaserver` e `etc/init.d/S71sweetspot-mediaserver`.
@@ -72,23 +75,39 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
    Sweetspot aggiunge target Raspberry Pi e deve pubblicare risultati per
    release, computer, DAC, firmware e adattatori di rete. Separare riconoscimento,
    funzionamento verificato e certificazione audio. Non promettere ogni dispositivo.
-2. **Recupero verificato.** A/B, firme e backup sono presenti. La conferma
+2. **Recupero verificato.** A/B, firme e backup sono presenti, compresi un watchdog hardware e il
+   ritorno automatico dopo riavvii ripetuti. La conferma
    controlla ora impostazioni leggibili, `/cgi-bin/vivo`, supervisore del
    player in esecuzione, Lyrion che risponde (solo in modalità completa, con
    attesa fino a 10 minuti per il primo avvio su Raspberry Pi) e accesso a
    musica e dati di Lyrion; il controllo fallito è registrato (pagina Sistema,
    rapporto, registro). L'assenza di un DAC opzionale ("in attesa del DAC")
-   non provoca un ciclo di rollback. Restano da fare: inizializzazione del
-   percorso audio richiesto. Provare anche aggiornamenti interrotti,
-   database corrotti e perdita di alimentazione. Il ritorno attuale avviene
-   al prossimo avvio, non tramite un watchdog che riavvia una macchina bloccata.
+   non provoca un ciclo di rollback. Il watchdog (`S21sweetspot-watchdog`, attivo di serie,
+   `WATCHDOG=no` lo spegne) usa il watchdog del chipset (iTCO, SP5100, Raspberry
+   Pi) o `softdog`, e riavvia una macchina bloccata; se l'avvio precedente è
+   finito per il watchdog, `sweetspot-aggiorna watchdog` conta i riavvii e al
+   secondo di seguito avvia l'altra copia dal prossimo avvio. In CI: conteggio
+   dei riavvii e passaggio alla copia B (`tests/run.sh`); watchdog i6300ESB di
+   QEMU attivo e computer che riparte da un blocco simulato, con player di nuovo
+   attivo (`tests/prova-robustezza-qemu.sh`, solo x86). Scaricamento
+   interrotto con copia precedente intatta e copia troncata da un taglio di
+   corrente sono coperti da `tests/run.sh`. Restano da fare:
+   inizializzazione del percorso audio richiesto nella conferma, database
+   corrotti, aggiornamenti interrotti e perdita di alimentazione su hardware
+   reale, watchdog su Raspberry Pi e su chipset reali (non verificati).
 3. **Audio diagnosticabile.** Mostrare trasformazioni del server, volume,
    DSP, formato realmente aperto, clipping e underrun delle singole fasi.
    Le misure dello scheduler non sono misure del clock del DAC. Valutare le
    ottimizzazioni CPU/IRQ contro un profilo conservativo usando dati.
-4. **Distribuzione utilizzabile.** Provisioning delle chiavi degli aggiornamenti,
-   protezione amministrativa del pannello e ripristino semplice delle impostazioni.
-   Il token POST esistente protegge dalle richieste incrociate, non costituisce un login.
+4. **Distribuzione utilizzabile.** La chiave pubblica degli aggiornamenti è nel
+   repository e la CI rifiuta release non firmate o con firma non valida
+   (`tests/release-gates.py`); la privata sta in un ambiente GitHub limitato ai tag
+   `v*` ([`aggiornamenti.md`](aggiornamenti.md)), cosa che nessun test verifica.
+   Il pannello ha una password amministrativa con sessione (`PASSWORD_WEB`,
+   `tests/accesso.sh`); il token POST protegge dalle richieste incrociate, non è
+   un login. Il modello di minaccia è deciso: LAN fidata, hotspot non fidato
+   ([docs/modello-minaccia.md](modello-minaccia.md)). Resta da fare
+   il ripristino semplice delle impostazioni.
 
 ## Ordine di realizzazione e criteri di accettazione
 
@@ -96,7 +115,7 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
 | --- | --- | --- |
 | 1 — Percorso audio verificabile | Harness di confronto dei campioni e transizioni; matrice PCM/DSD/DoP, cambio frequenza, hotplug e carico. | Report collegato alla release; bit-perfect PCM e gapless dimostrati per ogni combinazione certificata; guasti riproducibili e diagnosticati. |
 | 2 — RAM e FIR | Precaricamento esplicito e convoluzione opzionale; mantenere biquad REW e modalità originale. | Per un file finito che rientra nel budget, carico completato prima della riproduzione e prova del comportamento dichiarato su rete/disco; FIR validati con risposta e headroom verificati, senza regressioni gapless. |
-| 3 — Parità funzionale | Più DAC locali, PCM→DSD opzionale, hotspot e definizione del supporto x86 a 32 bit. | Scenari di uso coperti su dispositivi compatibili, limiti visibili e nessuna modifica involontaria del percorso originale. |
+| 3 — Parità funzionale | Più DAC locali, hotspot (con firewall), renderer e media server UPnP/DLNA (PCM→DSD e x86 a 32 bit sono fuori ambito). | Scenari di uso coperti su dispositivi compatibili, limiti visibili e nessuna modifica involontaria del percorso originale. |
 | 4 — Distribuzione | Autenticazione, chiavi, controlli A/B completi, recupero e matrice hardware pubblica. | Nuova installazione senza terminale, aggiornamento firmato verificato, recupero di fallimenti provato e test di alimentazione su hardware reale. |
 
 **Avanzamento del traguardo 1:** prima copertura del confronto PCM e dei
@@ -128,7 +147,16 @@ Un caso a parte (`tests/camilladsp-sessione.py`) prova CamillaDSP di sessione:
 una sola istanza con il plugin cdsp, un cambio di frequenza 44,1 → 96 kHz dal
 websocket, stesso PID prima e dopo e tono a 1 kHz corretto a entrambe le
 frequenze; salta se l'immagine non include CamillaDSP.
-Il traguardo resta parziale: DSD nativo, DAC reali, cambi PCM/DSD, cambi
+**Avanzamento dei traguardi 2-4:** la RAM (`sweetspot-precarico`) e i FIR
+(`sweetspot-dsp`) sono implementati e coperti dalla CI, non verificati su
+hardware né con misure a valle. Del traguardo 3 sono su `main` più DAC locali,
+hotspot con firewall, renderer e media server UPnP/DLNA, tutti coperti dalla CI
+e nessuno provato su dispositivi reali. Del traguardo 4 sono presenti il ritorno
+A/B con watchdog, la firma degli aggiornamenti, la password del pannello e la
+matrice di compatibilità (strumento e pagina generata, senza rapporti); mancano
+i test di alimentazione e i rapporti su hardware reale.
+
+Il traguardo 1 resta parziale: DSD nativo, DAC reali, cambi PCM/DSD, cambi
 frequenza su ALSA e sui DAC, hotplug, rete e carico prolungato richiedono
 ancora prove.
 
@@ -137,3 +165,5 @@ livello e impostazioni equivalenti. La correzione ambientale può migliorare
 il risultato acustico; per confrontarla bisogna verificare anche le misure
 della stanza e la risposta dei filtri. Non si dichiara un vantaggio sonoro
 generale dalla sola scelta del player, del kernel o dei buffer.
+
+Modello di minaccia e requisiti di sicurezza: [modello-minaccia.md](modello-minaccia.md).

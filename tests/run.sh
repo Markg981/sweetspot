@@ -959,8 +959,11 @@ expect "CSRF Lyrion: livello 2 scelto dall'utente resta" "csrfProtectionLevel: 2
 printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\n[ "$1" = verifica ] && { read -r pw; [ "$pw" = vecchia-password ] || exit 1; }\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
-	local body
-	body="t=$(cat "$WEB/run/web.token")&$1"
+	local body tk
+	# Il gettone come lo calcola la pagina: con PASSWORD_WEB dipende dalla sessione.
+	tk=$(SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c '. "$SWEETSPOT_LIB/web.sh"; token')
+	body="t=$tk&$1"
 	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
 		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
@@ -1688,6 +1691,11 @@ printf '\002\276\023\005\000\061\042\033\000\006\366\004\064\005\104\063\042\021
 expect "database AccurateRip letto" "1 5 11223344|2 7 55667788|1 2 aabbccdd|2 1 01020304" "$(cdrun "ar_parse $CD/db.bin" | tr '\n' '|' | sed 's/|$//')"
 expect "nomi di file validi ovunque" "AC-DC - Back in Black_" "$(cdrun "file_name 'AC/DC: Back in Black?'")"
 expect "nomi di file: virgolette e punti finali" "Sinfonia 'Eroica'" "$(cdrun "file_name ' Sinfonia \"Eroica\"...'")"
+# Titolo CJK lungo (3 byte a carattere): il nome resta entro 255 byte con ".flac" e prefisso e non spezza i caratteri
+cjk=$(i=0; while [ $i -lt 150 ]; do printf '音楽'; i=$((i + 1)); done)
+exp=$(i=0; while [ $i -lt 33 ]; do printf '音楽'; i=$((i + 1)); done)
+expect "nomi di file: CJK tagliato a 198 byte senza spezzare caratteri" "$exp" "$(cdrun "file_name '$cjk'")"
+expect "nomi di file: corto invariato" "音楽" "$(cdrun "file_name '音楽'")"
 expect "posizione sul disco" "21:12.62" "$(cdrun "sect_time 95462")"
 
 echo "Dischi nella libreria"
@@ -2428,7 +2436,7 @@ rm -rf "$INS/sys/firmware"
 echo "Archivio nello spazio libero del disco di avvio"
 SP=$WORK/spazio
 SPD=$SP/sys/devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0
-mkdir -p "$SPD/queue" "$SPD/mmcblk0p1" "$SP/sys/class/block" "$SP/sys/block" "$SP/dev" "$SP/run" "$SP/proc" "$SP/bin"
+mkdir -p "$SPD/queue" "$SPD/mmcblk0p1" "$SP/sys/class/block" "$SP/sys/block" "$SP/dev" "$SP/run" "$SP/proc" "$SP/bin" "$SP/chiavetta"
 echo "console=tty1 sweetspot.slot=a" > "$SP/proc/cmdline"
 echo 512 > "$SPD/queue/logical_block_size"
 ln -s ../devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0 "$SP/sys/block/mmcblk0"
@@ -2436,7 +2444,7 @@ ln -s ../../devices/platform/emmc2/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0/mmcblk0
 sp() { # comando (funzioni di sweetspot-spazio)
 	SWEETSPOT_SYSFS=$SP/sys SWEETSPOT_PROCFS=$SP/proc SWEETSPOT_RUN=$SP/run SWEETSPOT_LOG=$SP/log \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_DEV=$SP/dev \
-		SWEETSPOT_STICK_DEV=$SP/dev/mmcblk0p1 SWEETSPOT_TEST=1 SWEETSPOT_PATH="$SP/bin:$SWEETSPOT_PATH" \
+		SWEETSPOT_STICK_DEV=$SP/dev/mmcblk0p1 SWEETSPOT_STICK_DIR=$SP/chiavetta SWEETSPOT_TEST=1 SWEETSPOT_PATH="$SP/bin:$SWEETSPOT_PATH" \
 		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-spazio; $1"
 }
 # Scheda SD come quella scritta dall'immagine del Pi: partizione FAT32 da
@@ -2462,7 +2470,7 @@ mkcard 32 12 131
 expect "disco con altre partizioni non toccato" "mmcblk0|0|no|il disco ha gia' altre partizioni" "$(sp examine)"
 # Creazione, con il kernel e la formattazione simulati
 mkcard 32
-printf '#!/bin/sh\necho "$*" > %s/partizione.args\n: > %s/dev/mmcblk0p2\n' "$SP" "$SP" > "$SP/bin/sweetspot-partizione"
+printf '#!/bin/sh\necho "$*" > %s/partizione.args\n: > %s/dev/mmcblk0p2\nmkdir -p %s/sys/class/block/mmcblk0p2\necho $3 > %s/sys/class/block/mmcblk0p2/start\necho $4 > %s/sys/class/block/mmcblk0p2/size\n' "$SP" "$SP" "$SP" "$SP" "$SP" > "$SP/bin/sweetspot-partizione"
 printf '#!/bin/sh\necho "$*" > %s/mkfs.args\n' "$SP" > "$SP/bin/mkfs.ext4"
 printf '#!/bin/sh\necho "$*" >> %s/config.args\n' "$SP" > "$SP/bin/sweetspot-config"
 printf '#!/bin/sh\ncase "$1" in archivio) [ -f %s/montato ] && echo "/media/Sweetspot Musica" ;; monta) : > %s/montato ;; esac\nexit 0\n' "$SP" "$SP" > "$SP/bin/sweetspot-dischi"
@@ -4253,6 +4261,12 @@ expect "media server: tutta la libreria, anche dietro i collegamenti" "1|1|1" 	"
 ' "$msconf" | grep -c '^media_dir=A,/musica$')|$(printf '%s
 ' "$msconf" | grep -c '^wide_links=yes$')|$(printf '%s
 ' "$msconf" | grep -c '^inotify=yes$')"
+msif() {
+	printf 'DLNA_INTERFACCE=%s
+' "$1" > "$MSD/run/sweetspot.conf"
+	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica" | grep -c '^network_interface='
+}
+expect "media server: interfacce solo se valide, vuote = tutte" "1|0|0|0|0" 	"$(msif eth0,wlan0.1)|$(msif '')|$(msif 'eth0;rm')|$(msif 'eth0,,wlan0')|$(msif ',eth0')"
 expect "media server: senza privilegi, nome del player ripulito" "1|1" 	"$(printf '%s
 ' "$msconf" | grep -c '^user=dlna$')|$(printf '%s
 ' "$msconf" | grep -c '^friendly_name=Salotto_rm (libreria)$')"
@@ -4558,6 +4572,67 @@ if command -v gcc > /dev/null 2>&1; then
 else
 	salta "gcc"
 fi
+
+echo "Archivio nello spazio libero: creazione ripresa dopo un taglio di corrente"
+SR=$WORK/spazio
+mkdir -p "$SR/bin" "$SR/dev" "$SR/run" "$SR/stick" "$SR/sys/block/sdx/queue" "$SR/sys/class/block/sdx2"
+echo 512 > "$SR/sys/block/sdx/queue/logical_block_size"
+echo 25165824 > "$SR/sys/block/sdx/size"
+for c in sync flock blockdev sweetspot-config sweetspot-nas sweetspot-lms sweetspot-partizione; do
+	printf '#!/bin/sh\nexit 0\n' > "$SR/bin/$c"
+done
+printf '#!/bin/sh\necho /media/archivio-finto\n' > "$SR/bin/sweetspot-dischi"
+# mkfs finto: scrive il file system in un file accanto alla partizione.
+printf '#!/bin/sh\necho "$*" >> "%s/mkfs.log"\n[ ! -f "%s/taglio" ] || exit 1\nfor a; do :; done\necho ext4 > "$a.fs"\n' "$SR" "$SR" > "$SR/bin/mkfs.ext4"
+printf '#!/bin/sh\nfor a; do :; done\n[ -f "$a.fs" ] && echo ext4\nexit 0\n' > "$SR/bin/blkid"
+# dd finto: l'azzeramento del primo MiB (a un offset di GB) non serve nel test.
+printf '#!/bin/sh\ncase "$1" in if=/dev/zero) case "$*" in *seek=2*) exit 0 ;; esac ;; esac\nexec %s "$@"\n' "$(command -v dd)" > "$SR/bin/dd"
+chmod +x "$SR/bin/"*
+spazio_disco() { # disco finto con la sola partizione FAT32 da 1 GiB
+	: > "$SR/dev/sdx2"
+	rm -f "$SR/dev/sdx2.fs" "$SR/stick/sweetspot-spazio.corso" "$SR/mkfs.log" "$SR/taglio"
+	dd if=/dev/zero of="$SR/dev/sdx" bs=512 count=1 2>/dev/null
+	# In una subshell: common.sh cambia PATH e il resto dei test non deve vederlo.
+	(. "$OVERLAY/usr/lib/sweetspot/common.sh"; mbr_entry 0 12 2048 2097152) | dd of="$SR/dev/sdx" bs=1 seek=446 conv=notrunc 2>/dev/null
+	printf '\125\252' | dd of="$SR/dev/sdx" bs=1 seek=510 conv=notrunc 2>/dev/null
+}
+spazio() { # comandi eseguiti dopo aver incluso lo script
+	SWEETSPOT_TEST=1 SWEETSPOT_PATH="$SR/bin:$SWEETSPOT_PATH" SWEETSPOT_SYSFS=$SR/sys SWEETSPOT_RUN=$SR/run \
+		SWEETSPOT_LOG=$SR/log SWEETSPOT_DEV=$SR/dev SWEETSPOT_STICK_DIR=$SR/stick SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-spazio; stick_disk() { echo sdx; }; $1" 2>&1
+}
+spazio_disco
+set -- $(spazio 'examine >/dev/null; echo $S_START $S_SIZE')
+SR_START=$1 SR_SIZE=$2
+echo "$SR_START" > "$SR/sys/class/block/sdx2/start"
+echo "$SR_SIZE" > "$SR/sys/class/block/sdx2/size"
+# Taglio dopo la tabella: il file system non viene scritto.
+: > "$SR/taglio"
+spazio 'job' > /dev/null
+expect "spazio: dopo il taglio resta il marcatore" "$SR_START $SR_SIZE" "$(cat "$SR/stick/sweetspot-spazio.corso" 2>/dev/null)"
+expect "spazio: dopo il taglio la tabella ha la seconda voce" "131 $SR_START $SR_SIZE" "$(spazio 'mbr_read $DEV/sdx | sed -n 2p')"
+expect "spazio: dopo il taglio l'esame riconosce la ripresa" "si|1" "$(spazio 'examine >/dev/null && echo "si|$S_RESUME"')"
+rm -f "$SR/taglio"
+spazio 'job' > /dev/null
+expect "spazio: la ripresa formatta" "2" "$(wc -l < "$SR/mkfs.log" | tr -d ' ')"
+expect "spazio: la ripresa toglie il marcatore" no "$([ -e "$SR/stick/sweetspot-spazio.corso" ] && echo si || echo no)"
+expect "spazio: la ripresa finisce" "finita" "$(cut -d'|' -f1 "$SR/run/spazio/stato")"
+# Voce presente senza marcatore, o diversa dal piano: nessuna formattazione.
+spazio_disco
+mbr_entry 0 131 "$SR_START" "$SR_SIZE" | dd of="$SR/dev/sdx" bs=1 seek=462 conv=notrunc 2>/dev/null
+expect "spazio: voce presente senza marcatore rifiutata" "no" "$(spazio 'examine | cut -d"|" -f3')"
+spazio 'job' > /dev/null
+expect "spazio: voce senza marcatore, nessun mkfs" no "$([ -e "$SR/mkfs.log" ] && echo si || echo no)"
+echo "$SR_START $SR_SIZE" > "$SR/stick/sweetspot-spazio.corso"
+mbr_entry 0 131 "$SR_START" $((SR_SIZE - 2048)) | dd of="$SR/dev/sdx" bs=1 seek=462 conv=notrunc 2>/dev/null
+spazio 'job' > /dev/null
+expect "spazio: voce con dimensione diversa, nessun mkfs" no "$([ -e "$SR/mkfs.log" ] && echo si || echo no)"
+# Il nodo del kernel ha un inizio diverso: la tabella e' nostra, ma non si formatta.
+spazio_disco
+echo $((SR_START + 2048)) > "$SR/sys/class/block/sdx2/start"
+spazio 'job' > /dev/null
+expect "spazio: nodo con inizio diverso, nessun mkfs" no "$([ -e "$SR/mkfs.log" ] && echo si || echo no)"
+expect "spazio: nodo con inizio diverso, errore" errore "$(cut -d'|' -f1 "$SR/run/spazio/stato")"
 
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
