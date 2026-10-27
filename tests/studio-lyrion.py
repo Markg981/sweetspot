@@ -14,6 +14,7 @@ Si lancia da tests/prova-studio-lyrion.sh, che prepara i container:
 
 Senza LYRION_HOST le prove vengono saltate.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -119,7 +120,9 @@ def prepara_lyrion():
 
 class StudioLyrionTests(unittest.TestCase):
     SID = "0123456789abcdef0123456789abcdef"
-    TOKEN = "tok123"
+    SECRET = "tok123"
+    # Gettone legato alla sessione, come lo calcola web.sh: sha256("sessione:<sid>:<segreto>")[:32].
+    TOKEN = hashlib.sha256(("sessione:%s:%s" % (SID, SECRET)).encode()).hexdigest()[:32]
 
     @classmethod
     def setUpClass(cls):
@@ -132,7 +135,7 @@ class StudioLyrionTests(unittest.TestCase):
         (root / "run/sweetspot.conf").write_text("MODALITA=completa\nPASSWORD_WEB=x\n")
         (root / "run/sweetspot.web").write_text("MODALITA=completa\nPASSWORD_WEB=x\n")
         (root / "run/web/sessioni" / cls.SID).write_text(str(2 ** 31))
-        (root / "run/web.token").write_text(cls.TOKEN + "\n")
+        (root / "run/web.token").write_text(cls.SECRET + "\n")
         # lms_in_esecuzione guarda questo pid: il processo di prova e' vivo.
         (root / "run/lms.pid").write_text("%d\n" % os.getpid())
         # sweetspot-priv finto: esegue il comando (qui non c'e' separazione
