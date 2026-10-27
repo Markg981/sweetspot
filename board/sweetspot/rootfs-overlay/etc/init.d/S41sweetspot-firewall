@@ -1,0 +1,12 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - firewall dell'hotspot di configurazione. All'avvio non c'e'
+# hotspot e quindi niente da limitare; le regole le carica sweetspot-hotspot
+# quando lo accende. Vedi sweetspot-firewall.
+
+case "$1" in
+	start|restart) sweetspot-firewall applica ;;
+	stop) sweetspot-firewall ferma ;;
+	*) echo "uso: $0 start|stop|restart" ;;
+esac
+exit 0

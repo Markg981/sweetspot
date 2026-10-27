@@ -95,8 +95,17 @@ printf 'Device AA:BB:CC:DD:EE:02 Pixel\n' > "$BTDIR/connected"
 # passano davanti al PATH: funzioni che richiamano i programmi finti.
 # (Senza BusyBox la shell di sistema non accetta il trattino nei nomi di
 # funzione, ma li' le applet non ci sono e basta il PATH.)
+# Anche l'ash di BusyBox 1.36 rifiuta quei nomi ("bad function name") e il
+# test si fermava: si prova la definizione e, se la shell non la accetta, si
+# ricade sulla shell di sistema, dove basta il PATH.
 : > "$T/shim.sh"
-if [ -n "$BB" ]; then
+BBSH=si
+if [ -n "$BB" ] && ! $BB sh -c 'start-stop-daemon() { :; }' 2>/dev/null; then
+	echo "  (BusyBox: nomi di funzione con il trattino non accettati, uso la shell di sistema)"
+	BBSH=no
+	SH=sh
+fi
+if [ "$BBSH" = si ] && [ -n "$BB" ]; then
 	for p in taskset start-stop-daemon killall modprobe pidof bluetoothctl dbus-send dbus-uuidgen dbus-daemon bluealsa-aplay; do
 		printf '%s() { "%s/bin/%s" "$@"; }\n' "$p" "$T" "$p"
 	done > "$T/shim.sh"

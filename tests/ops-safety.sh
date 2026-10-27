@@ -445,6 +445,11 @@ expect 'stick_guardia: nessun utilizzatore vivo da meno di 5 minuti, resta rw' "
 expect 'stick_guardia: utilizzatore vivo, resta rw' "" "$(stickm12 '4242
 ' '1000 0' stick_guardia)"
 
+# B6: dischi e chiavetta si montano sempre con nosuid,nodev,noexec.
+expect 'dischi: ogni montaggio ha nosuid,nodev,noexec' 0 "$(grep -c 'mount -t.*-o' "$OVERLAY/usr/bin/sweetspot-dischi" >/dev/null; grep 'noload' "$OVERLAY/usr/bin/sweetspot-dischi" | grep -vc 'nosuid,nodev,noexec')"
+expect 'dischi: opzioni comuni aggiunte' 1 "$(grep -c 'opts="$opts,nosuid,nodev,noexec"' "$OVERLAY/usr/bin/sweetspot-dischi")"
+expect 'chiavetta: montata con nosuid,nodev,noexec' 1 "$(grep -c 'noatime,nosuid,nodev,noexec,codepage' "$OVERLAY/usr/lib/sweetspot/common.sh")"
+
 grubfail() { # comando
 	rm -f "$C/riavvio"
 	SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$C/run SWEETSPOT_LOG=$C/log SWEETSPOT_PROCFS=$C/proc \

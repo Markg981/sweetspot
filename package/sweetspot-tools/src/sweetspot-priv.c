@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -661,6 +662,31 @@ static void chiudi_descrittori(void)
 		close(fd);
 }
 
+// Messo in sicurezza all'avvio: niente core dump (la memoria contiene
+// password), umask stretta, limiti sani (il chiamante non puo' far fallire
+// scritture a meta') e fd 0-2 sempre aperti, cosi' un open() successivo non
+// finisce per ricevere 1 o 2 e scrivere l'output in un file privilegiato.
+static void irrobustisci(void)
+{
+	struct rlimit rl;
+	int fd;
+
+	umask(077);
+	prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+	rl.rlim_cur = rl.rlim_max = 0;
+	setrlimit(RLIMIT_CORE, &rl);
+	rl.rlim_cur = rl.rlim_max = RLIM_INFINITY; // niente tetto alla dimensione dei file
+	setrlimit(RLIMIT_FSIZE, &rl);
+	if (!getrlimit(RLIMIT_NOFILE, &rl) && rl.rlim_max >= 1024 && rl.rlim_cur < 1024) {
+		rl.rlim_cur = 1024;
+		setrlimit(RLIMIT_NOFILE, &rl);
+	}
+	for (fd = 0; fd < 3; fd++)
+		if (fcntl(fd, F_GETFD) < 0 && errno == EBADF &&
+		    open("/dev/null", fd ? O_WRONLY : O_RDONLY) < 0)
+			_exit(1);
+}
+
 static void esegui(char *const argv[])
 {
 	execv(argv[0], argv);
@@ -842,13 +868,15 @@ static int azione_interna(const char *nome, int argc, char **argv)
 
 int main(int argc, char **argv)
 {
-	uid_t web = uid_web(), io = getuid();
+	uid_t web, io = getuid();
 	const struct regola *r = NULL;
 	char **av;
 	char *percorso;
 	size_t i, nfissi, nrip, n;
 	int rc;
 
+	irrobustisci();
+	web = uid_web();
 #ifndef SWEETSPOT_PRIV_PROVA
 	if (io != 0 && (web == (uid_t)-1 || io != web)) {
 		fprintf(stderr, "sweetspot-priv: non autorizzato\n");

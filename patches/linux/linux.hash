@@ -1,0 +1,3 @@
+# Kernel x86 (versione personalizzata): sha256 da kernel.org (v7.x/sha256sums.asc).
+# Va aggiornato insieme a BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE.
+sha256  87363c24f10e06321eb362765521094e94471f6bff8bce2d6b3e40f39f004953  linux-7.3.tar.xz
