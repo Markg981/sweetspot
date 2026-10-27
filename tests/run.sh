@@ -4449,6 +4449,13 @@ rc=$?
 expect "firewall: caricamento fallito, esito 0 e errore nel registro" "0|1" \
 	"$rc|$(grep -c 'firewall: regole non caricate' "$FWE/log")"
 
+# --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
+if command -v gcc > /dev/null 2>&1; then
+	expect "alsa-cdsp: dopo un timeout nella FIFO solo frame interi" "0" "$(sh "$ROOT/tests/alsa-cdsp-frame.sh" > "$WORK/frame.out" 2>&1; echo $?)"
+else
+	salta "gcc"
+fi
+
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
