@@ -118,6 +118,19 @@ expect "dimensione totale limitata (3 x 16 KB + un blocco)" "si" "$([ "$tot" -le
 expect "l'ultimo blocco e' nel file corrente" "1" "$(grep -c 'blocco 12 riga 39' "$STICKLOG/sweetspot.log")"
 rm -rf "$E/stick/diagnostica" "$E/run/"diario.*.off "$E/log" "$E/run/timeline.log"
 
+echo "Troncamento della sorgente e JSON"
+rm -rf "$E/stick/diagnostica" "$E/run/"diario.*.off "$E/log"
+echo "2026-01-01 00:00:00 prima riga molto lunga per alzare l'offset del diario" > "$E/log"
+D salva
+: > "$E/log"
+D salva
+echo "nuova" > "$E/log"
+echo '{"password": "segretojson1", "Wifi_Token":"segretojson2", "ssid":"Casa"}' >> "$E/log"
+D salva
+expect "troncamento: la riga dopo lo svuotamento arriva" "1" "$(grep -c '^nuova' "$STICKLOG/sweetspot.log")"
+expect "JSON: valori oscurati, altri conservati" "0|1" "$(grep -c segretojson "$STICKLOG/sweetspot.log")|$(grep -c '"ssid":"Casa"' "$STICKLOG/sweetspot.log")"
+rm -rf "$E/stick/diagnostica" "$E/run/"diario.*.off "$E/log" "$E/run/timeline.log"
+
 echo "Avvio, spegnimento ordinato e pstore"
 mkdir -p "$E/pstore"
 echo "panic: oops" > "$E/pstore/dmesg-ramoops-0"
