@@ -151,6 +151,14 @@ snapshot_valid() {
 generation_valid() {
 	local src="$1" f found=0
 	[ -d "$src" ] || return 1
+	# Il manifest elenca i file attesi ed e' scritto per ultimo: un file
+	# mancante (taglio di corrente su FAT) rende la generazione incompleta.
+	# Le generazioni vecchie senza manifest restano valide come prima.
+	if [ -f "$src/manifest" ]; then
+		while read -r f; do
+			[ -z "$f" ] || [ -f "$src/$f" ] || return 1
+		done < "$src/manifest"
+	fi
 	if [ -f "$src/lyrion.tar" ]; then
 		tar -tf "$src/lyrion.tar" > /dev/null 2>&1 || return 1
 		found=1
@@ -231,6 +239,7 @@ save_generation() {
 		found=1
 	done
 	[ "$found" = 1 ] || { rm -rf "$tmp"; return 0; }
+	for f in lyrion.tar $DBS; do [ -f "$tmp/$f" ] && echo "$f"; done > "$tmp/manifest"
 	generation_valid "$tmp" || { save_failed "$tmp" ""; return 1; }
 	if ! stick_mount rw; then
 		rm -rf "$tmp"
@@ -348,7 +357,7 @@ checkpoint_dbs() {
 	for f in $n; do
 		rm -f "$dst/$f.nuovo"
 		if sqlite3 "$CACHE/$f" ".timeout 10000" ".backup '$dst/$f.nuovo'" 2> /dev/null &&
-			snapshot_valid "$dst/$f.nuovo" && sync && mv -f "$dst/$f.nuovo" "$dst/$f"; then
+			snapshot_valid "$dst/$f.nuovo" && sync && mv -f "$dst/$f.nuovo" "$dst/$f" && sync; then
 			done_any=1
 		else
 			rm -f "$dst/$f.nuovo"
