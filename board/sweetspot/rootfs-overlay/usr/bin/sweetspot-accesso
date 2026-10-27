@@ -146,7 +146,7 @@ verify() {
 	local pw n last w src file
 	# Sorgente: solo caratteri da indirizzo (finisce in un nome di file).
 	src=$(printf '%s' "${1:-locale}" | tr -c 'a-zA-Z0-9.:-' '_' | cut -c1-64)
-	[ -n "$src" ] || src=locale
+	[ -n "$src" ] || src='locale'
 	file=$VERIFICA_ERRORI.$src
 	IFS= read -r pw
 	mkdir -p "$RUN"
