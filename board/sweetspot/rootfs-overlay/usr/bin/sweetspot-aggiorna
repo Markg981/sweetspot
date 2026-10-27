@@ -483,12 +483,19 @@ install_job() { # url|file SORGENTE
 		state "errore|$v"
 		rc=1
 	elif cmp=$(version_cmp "$v" "$(current_version)"); [ "$allow" != downgrade ] &&
-		{ [ "$cmp" = -1 ] || { [ "$cmp" = "?" ] && [ "$(version_cmp "$(current_version)" "$(current_version)")" = 0 ]; }; }; then
+		{ [ "$cmp" = -1 ] || [ "$cmp" = "?" ]; }; then
 		# Una versione firmata ma vecchia puo' avere falle note: serve la
-		# conferma esplicita. Se la versione in uso e' confrontabile, anche
-		# una non confrontabile (rc, hash) vale come possibile downgrade;
-		# se non lo sono entrambe non c'e' modo di giudicare.
-		state "errore|il pacchetto ($v) e' piu' vecchio della versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
+		# conferma esplicita. Se una delle due versioni non e' confrontabile
+		# (rc, hash, "sviluppo") non c'e' modo di escludere un downgrade:
+		# si rifiuta, e file-downgrade (con conferma) e' il percorso forzato.
+		# Limite noto: a parita' di stringa di versione il pacchetto firmato
+		# non porta un identificativo monotono (la firma lega solo versione
+		# e architettura), quindi una build piu' vecchia non si distingue.
+		if [ "$cmp" = "?" ]; then
+			state "errore|impossibile confrontare il pacchetto ($v) con la versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
+		else
+			state "errore|il pacchetto ($v) e' piu' vecchio della versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
+		fi
 		rc=1
 	elif v=$(install_package "$x" "$d" "$other" "$v"); then
 		state "pronto|$v"

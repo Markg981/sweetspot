@@ -2023,10 +2023,18 @@ upd _lavoro file "$PKG"
 expect "versione maggiore: accettata" "pronto|v3.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
 mkpkg v1.0.0-rc1 x86_64
 upd _lavoro file "$PKG"
-expect "versione rc non confrontabile: rifiutata come downgrade" "errore|il pacchetto (v1.0.0-rc1) e' piu' vecchio della versione in uso (v3.0.0)" \
+expect "versione rc non confrontabile: rifiutata come downgrade" "errore|impossibile confrontare il pacchetto (v1.0.0-rc1) con la versione in uso (v3.0.0)" \
 	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
 upd _lavoro file "$PKG" downgrade
 expect "versione rc con conferma esplicita: accettata" "pronto|v1.0.0-rc1" "$(cat "$UPD/run/aggiornamento/stato")"
+# Versione in uso non confrontabile (build di sviluppo): niente via libera
+# implicito, serve la conferma esplicita come per ogni possibile downgrade.
+echo "sviluppo (2026-10-01)" > "$UPD/version"
+mkpkg v9.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "versione in uso non confrontabile: rifiutata" "errore|impossibile confrontare il pacchetto (v9.0.0) con la versione in uso (sviluppo)" 	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "versione in uso non confrontabile con conferma: accettata" "pronto|v9.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
 
 if command -v minisign > /dev/null; then
