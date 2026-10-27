@@ -111,7 +111,12 @@ evento_da_log() {
 # note di Windows) e stampa righe CHIAVE=valore pulite. Non esegue mai il
 # contenuto del file.
 config_normalize() {
+	# Il Blocco note puo' salvare con il BOM UTF-8 (EF BB BF): senza toglierlo
+	# la prima chiave non sarebbe valida e la riga andrebbe persa. Il BOM e'
+	# costruito con printf: il sed di BusyBox non garantisce \xHH.
+	bom=$(printf '\357\273\277')
 	tr -d '\r' < "$1" | while IFS= read -r line || [ -n "$line" ]; do
+		line=${line#"$bom"}
 		line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
 		case "$line" in
 			''|'#'*|';'*) continue ;;
@@ -128,7 +133,20 @@ config_normalize() {
 		libero=
 		case "$key" in
 			WIFI_NOME|*PASSWORD) libero=1 ;;
-			*) val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
+			*) val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+				# Valore tutto fra virgolette (senza altre dello stesso tipo
+				# dentro): e' letterale, anche con " #" o spazi ai bordi.
+				# E' la forma che scrive sweetspot-config.
+				case "$val" in
+					\"?*\"|\'?*\')
+						q=${val%"${val#?}"}
+						inner=${val#?}; inner=${inner%?}
+						case "$inner" in
+							*"$q"*) ;;
+							*) printf '%s=%s\n' "$key" "$inner"; continue ;;
+						esac ;;
+				esac
+				val=$(printf '%s' "$val" | sed 's/[[:space:]]#.*$//') ;;
 		esac
 		val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 		[ -n "$libero" ] || case "$val" in
@@ -1722,7 +1740,7 @@ stick_mount() { # [ro|rw]
 		dev=$(stick_device)
 		if [ -n "$dev" ]; then
 			mkdir -p "$STICK_MNT"
-			if mount -t vfat -o "$mode,noatime,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null; then
+			if mount -t vfat -o "$mode,noatime,nosuid,nodev,noexec,codepage=437,iocharset=iso8859-1" "$dev" "$STICK_MNT" 2>/dev/null; then
 				evento chiavetta montata "$mode"
 			else
 				rc=1
@@ -1803,11 +1821,13 @@ boot_env() {
 
 # Sostituisce un file critico della FAT con la versione nuova: sync del
 # temporaneo prima del mv (senza, un taglio di corrente puo' lasciare il file
-# vuoto), copia .bak del precedente, mv e sync finale.
+# vuoto), mv (un rename nella stessa cartella: o c'e' il vecchio o il nuovo) e
+# sync finale. Niente copia .bak: nessuno la ripristinava e conservava i
+# segreti (sweetspot.txt) in chiaro; quelle rimaste da versioni precedenti si
+# eliminano alla prima sostituzione riuscita.
 fat_sostituisci() { # temporaneo destinazione
 	sync
-	[ -s "$2" ] && cp -p "$2" "$2.bak" 2>/dev/null
-	mv "$1" "$2" && sync
+	mv "$1" "$2" && sync && rm -f "$2.bak"
 }
 
 # Raspberry Pi: scrive config.txt o tryboot.txt dal modello con la copia

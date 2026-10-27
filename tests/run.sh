@@ -341,6 +341,18 @@ expect "piu' chiavi in una volta (tolte: tornano i predefiniti)" "dac|no|lineare
 expect "numero dispari di argomenti rifiutato" "1" "$(cfgset imposta VOLUME)"
 expect "un valore non valido blocca tutto" "1" "$(cfgset imposta VOLUME software NOME_PLAYER "$(printf 'x\ny')")"
 expect "niente cambiato dopo il rifiuto" "dac" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf VOLUME")"
+# Round-trip: quello che si scrive e' quello che si rilegge (anche con " #",
+# virgolette e spazi ai bordi); se non e' rappresentabile viene rifiutato.
+for v in 'Sala #2' '"Sala"' "'Sala'" ' Sala ' 'a\b$HOME' '"a" b' "l'ora #1"; do
+	cfgset imposta NOME_PLAYER "$v" >/dev/null
+	expect "round-trip del valore [$v]" "$v" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf NOME_PLAYER")"
+done
+cfgset imposta NOME_PLAYER Sala >/dev/null
+expect "valore con entrambe le virgolette e spazio ai bordi rifiutato" "1" "$(cfgset imposta NOME_PLAYER " \"a'b ")"
+expect "rifiutato: valore invariato" "Sala" "$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; conf NOME_PLAYER")"
+printf 'NOME_PLAYER="Sala" # nota\nDSD=auto # x\n' > "$CFG/v.txt"
+expect "compatibilita': virgolette seguite da commento come prima" "NOME_PLAYER=Sala|DSD=auto" \
+	"$(SWEETSPOT_RUN=$CFG/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $CFG/v.txt" | tr '\n' '|' | sed 's/|$//')"
 
 echo "Nomi e percorsi"
 expect "nome di cartella sicuro" "Musica _rock_ 2024" "$(run "$ONE" "safe_name 'Musica /rock\$ 2024'")"
@@ -522,6 +534,28 @@ expect "liveness: play senza PCM RUNNING oltre la soglia, squeezelite fermato" "
 case "$(cat "$LV/run/stato.dati")" in *"ERRORE|Player|bloccato: Lyrion dice play"*) ok "liveness: stato player bloccato nella pagina" ;; *) ko "liveness player" "bloccato" "$(cat "$LV/run/stato.dati")" ;; esac
 case "$(cat "$LV/run/stato.json")" in *'"player":{"stato":"bloccato","riavvii":1}'*) ok "liveness: stato.json espone player bloccato" ;; *) ko "liveness json player" "bloccato" "$(cat "$LV/run/stato.json")" ;; esac
 case "$(cat "$LV/log")" in *"liveness: player bloccato"*"riavvio squeezelite"*) ok "liveness: riavvio del player registrato nel log" ;; *) ko "liveness log player" "evento" "$(cat "$LV/log")" ;; esac
+# Avvio lento (stream remoto): PCM non RUNNING da oltre la soglia ma il processo
+# lavora (CPU che avanza): niente kill. Con la CPU ferma fra due campioni, kill.
+sleep 7200 &
+LV_SQ_PID=$!
+echo "$LV_SQ_PID" > "$LV/run/squeezelite.pid"
+mkdir -p "$LV/proc/$LV_SQ_PID"
+lvcpu() { echo "$LV_SQ_PID (squeezelite) S 1 1 1 0 0 0 0 0 0 0 $1 0 0" > "$LV/proc/$LV_SQ_PID/stat"; }
+echo play > "$LV/modo"
+printf 'state: SETUP\n' > "$LV/proc/asound/card1/pcm0p/sub0/status"
+lvcpu 100
+echo "100000 0 0 0 100" > "$LV/run/liveness.player"
+lvcpu 200
+lv_round wget-ok
+sleep 1
+expect "liveness: avvio lento, PCM non RUNNING ma la CPU avanza, il player resta" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+lv_round wget-ok
+sleep 1
+expect "liveness: avvio lento, CPU ferma ma soglia ripartita, il player resta" "yes" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
+echo "100000 0 0 0 200" > "$LV/run/liveness.player"
+lv_round wget-ok
+sleep 1
+expect "liveness: PCM non RUNNING oltre la soglia e CPU ferma, squeezelite fermato" "no" "$(kill -0 $LV_SQ_PID 2>/dev/null && echo yes || echo no)"
 # PCM RUNNING: tutto bene; "pause" o "stop": nessun intervento.
 sleep 7200 &
 LV_SQ_PID=$!
@@ -976,8 +1010,14 @@ rm -f "$WEB/run/config.log"
 out=$(web_action "a=ripristina")
 case "$out" in *"Location: /cgi-bin/sistema"*) ok "ripristino: senza conferma non parte" ;; *) ko "ripristino senza conferma" "torna a sistema" "$out" ;; esac
 expect "ripristino: nessuna modifica senza conferma" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+printf 'PASSWORD_WEB=$1$vecchia$impronta\n' >> "$WEB/run/sweetspot.conf"
 web_action "a=ripristina&conferma=si" > /dev/null
+expect "ripristino: senza password nessuna modifica" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si&ct=prova&conferma_password=sbagliata" > /dev/null
+expect "ripristino: con la password sbagliata nessuna modifica" "0" "$(grep -c ripristina "$WEB/run/config.call")"
+web_action "a=ripristina&conferma=si&ct=prova&conferma_password=vecchia-password" > /dev/null
 expect "ripristino confermato" "ripristina" "$(tail -n 1 "$WEB/run/config.call")"
+cp "$WORK/sweetspot.conf.prima" "$WEB/run/sweetspot.conf"
 RS=$WORK/ripristino
 mkdir -p "$RS/avvio" "$RS/chiavetta" "$RS/run"
 printf 'VOLUME=fisso\r\n' > "$RS/avvio/sweetspot.txt"
@@ -1784,6 +1824,31 @@ upd conferma
 expect "la nuova versione si conferma" "b|" "$(genv slot)|$(genv tentato)"
 expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riuscita=')"
 expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
+# GRUB per BIOS: un file al posto del disco; dd che fallisce al secondo
+# stadio (rimesso com'era) o al primo (anche il secondo ripristinato).
+GB=$UPD/grubbios
+mkdir -p "$GB/bin" "$GB/run/aggiornamento"
+head -c 1100 /dev/zero | tr '\0' 'N' > "$GB/avvio-grub.img"
+head -c 512 /dev/zero | tr '\0' 'B' > "$GB/avvio-boot.img"
+printf '#!/bin/sh\ncase "$*" in *"$DD_FALLISCI"*) [ -n "$DD_FALLISCI" ] && exit 1 ;; esac\nexec dd "$@"\n' > "$GB/bin/dd"
+chmod +x "$GB/bin/dd"
+grubbios() { # fallimento: stringa che fa fallire un dd
+	head -c 4096 /dev/zero | tr '\0' 'V' > "$GB/disco"
+	cp "$GB/disco" "$GB/disco.prima"
+	SWEETSPOT_RUN=$GB/run SWEETSPOT_LOG=$GB/log SWEETSPOT_AVVIO=$GB SWEETSPOT_TEST=1 DD_FALLISCI=$1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-aggiorna; AVVIO=$GB; DIR=$GB/run/aggiornamento
+		cp $GB/avvio-grub.img $GB/grub.img; cp $GB/avvio-boot.img $GB/boot.img
+		dd() { $GB/bin/dd \"\$@\"; }
+		dd if=$GB/disco bs=512 skip=1 count=3 2>/dev/null | head -c 1100 > \$DIR/grub.ora
+		dd if=$GB/disco bs=440 count=1 2>/dev/null > \$DIR/mbr.ora
+		head -c 440 $GB/boot.img > \$DIR/mbr.nuovo
+		blockdev() { :; }
+		scrivi_grub_bios $GB/disco 3; echo \$?"
+}
+expect "GRUB per BIOS scritto e riletto" "0|1" "$(grubbios '' | tail -1)|$(cmp -s "$GB/disco" "$GB/disco.prima" && echo 0 || echo 1)"
+expect "GRUB per BIOS: primo stadio nuovo" "BBB" "$(dd if="$GB/disco" bs=1 count=3 2>/dev/null)"
+expect "GRUB per BIOS: dd del secondo stadio fallito, disco com'era" "1|0" "$(grubbios 'grub.img' | tail -1)|$(cmp -s "$GB/disco" "$GB/disco.prima" && echo 0 || echo 1)"
+expect "GRUB per BIOS: dd del primo stadio fallito, disco com'era" "1|0" "$(grubbios 'mbr.nuovo' | tail -1)|$(cmp -s "$GB/disco" "$GB/disco.prima" && echo 0 || echo 1)"
 # Con la password delle pagine l'httpd risponde 401 a chi non si presenta:
 # la conferma usa l'utente sweetspot con la chiave di questo avvio.
 printf '#!/bin/sh\nfor a; do case "$a" in *jsonrpc*) echo "{\\"result\\":{\\"_version\\":\\"9\\"}}"; exit 0 ;; http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
@@ -1873,6 +1938,7 @@ expect "ritorno manuale all'altra versione" "a" "$(genv prova)"
 expect "file fuori dai dischi rifiutato" "file non valido" "$(upd file /etc/passwd)"
 cat > "$UPD/bin/curl" <<'EOF2'
 #!/bin/sh
+echo "$*" > "$0.args"
 cat <<'JSON'
 {"tag_name":"v2.0.0","published_at":"2026-11-01T10:00:00Z","body":"Novità: <b>prova</b>",
  "assets":[{"name":"sweetspot.img.xz","browser_download_url":"https://example.com/img","size":1},
@@ -1882,6 +1948,8 @@ EOF2
 chmod +x "$UPD/bin/curl"
 expect "ricerca su GitHub" "versione=v2.0.0 url=https://example.com/upd.tar dimensione=104857600 data=2026-11-01" \
 	"$(UPD_PATH="$UPD/bin:$SWEETSPOT_PATH" upd cerca | tr '\n' ' ' | sed 's/ $//')"
+expect "ricerca: solo https e dimensione massima" "si|si|si" \
+	"$(grep -q -- '--proto =https' "$UPD/bin/curl.args" && echo si || echo no)|$(grep -q -- '--proto-redir =https' "$UPD/bin/curl.args" && echo si || echo no)|$(grep -q -- '--max-filesize' "$UPD/bin/curl.args" && echo si || echo no)"
 # Scaricamento che si interrompe a meta' (curl scrive una parte e fallisce):
 # la copia precedente (v1.3.0 nella copia A) resta intatta e avviabile.
 mkdir -p "$UPD/curl-meta"
@@ -1925,6 +1993,11 @@ expect "confronto: maggiore" "1" "$(SWEETSPOT_TEST=1 vcmp v1.10.0 v1.2.9)"
 expect "confronto: uguale (anche -dirty)" "0" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-dirty v1.2.0)"
 expect "confronto: commit dopo il tag e' piu' recente" "1" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-3-gabc1234 v1.2.0)"
 expect "confronto: versione di sviluppo non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp sviluppo v1.2.0)"
+expect "confronto: quarto componente maggiore" "1" "$(SWEETSPOT_TEST=1 vcmp v1.2.3.4 v1.2.3.1)"
+expect "confronto: quarto componente minore" "-1" "$(SWEETSPOT_TEST=1 vcmp v1.2.3.1 v1.2.3.4)"
+expect "confronto: quarto componente uguale" "0" "$(SWEETSPOT_TEST=1 vcmp v1.2.3.4 v1.2.3.4)"
+expect "confronto: rc non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp v1.0.0-rc1 v1.2.0)"
+expect "confronto: hash non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp 79ba3e4 v1.2.0)"
 echo "v3.0.0 (2026-10-01)" > "$UPD/version"
 PKG=$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar
 mkpkg v2.0.0 x86_64
@@ -1940,6 +2013,12 @@ expect "stessa versione: reinstallazione ammessa" "pronto|v3.0.0" "$(cat "$UPD/r
 mkpkg v3.1.0 x86_64
 upd _lavoro file "$PKG"
 expect "versione maggiore: accettata" "pronto|v3.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v1.0.0-rc1 x86_64
+upd _lavoro file "$PKG"
+expect "versione rc non confrontabile: rifiutata come downgrade" "errore|il pacchetto (v1.0.0-rc1) e' piu' vecchio della versione in uso (v3.0.0)" \
+	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "versione rc con conferma esplicita: accettata" "pronto|v1.0.0-rc1" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
 
 if command -v minisign > /dev/null; then
@@ -2018,6 +2097,20 @@ expect "senza l'altra copia installata: conteggio ma nessun cambio" "2|a|no" "$(
 setenv slot=a prova= tentato= riavvii= riavvii_copia=
 rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
 
+# Copia interrotta da un taglio di corrente: file presenti ma senza il marcatore
+# boot/versioni/<copia> (scritto per ultimo) non e' valida ne' per "altra" ne' per il watchdog.
+echo "Copia a meta': senza marcatore non e' valida"
+echo "kernel vB" > "$UPD/stick/b/bzImage"; echo "rootfs vB" > "$UPD/stick/b/rootfs.cpio.zst"; rm -f "$UPD/stick/boot/versioni/b"
+setenv slot=a prova= tentato= riavvii=1 riavvii_copia=a
+upd watchdog
+expect "senza marcatore: il watchdog non passa alla copia B" "a|no" "$(genv slot)|$([ -f "$UPD/run/aggiornamento/watchdog.ritorno" ] && echo si || echo no)"
+expect "senza marcatore: 'altra' rifiutata" "non c'e' un'altra versione installata|" "$(upd altra 2>&1)|$(genv prova)"
+echo v9.9.9 > "$UPD/stick/boot/versioni/b"
+upd altra
+expect "con il marcatore: 'altra' ammessa" "b" "$(genv prova)"
+setenv slot=a prova= tentato= riavvii= riavvii_copia=
+rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
+
 echo "Raspberry Pi"
 PI=$WORK/rpi
 mkdir -p "$PI/proc/device-tree/chosen/bootloader" "$PI/run" "$PI/sys/devices/system/cpu/smt" "$PI/stick/a/overlays" \
@@ -2047,11 +2140,12 @@ expect "modello dall'albero dei dispositivi" "Raspberry Pi 4 Model B Rev 1.5" "$
 pi "rpi_boot_config $PI/stick/config.txt a"
 expect "config.txt dal modello, copia A" "os_prefix=a/|include sweetspot-scheda.txt" \
 	"$(grep -E '^(os_prefix|include)' "$PI/stick/config.txt" | tr '\n' '|' | sed 's/|$//')"
-# Scrittura sicura dei file critici della FAT: sync prima del mv, .bak, sync dopo.
+# Scrittura sicura dei file critici della FAT: sync prima del mv, sync dopo, nessun .bak.
 echo "vecchio" > "$PI/stick/config.txt"
+echo "segreto" > "$PI/stick/config.txt.bak"
 ordine=$(pi "sync() { printf 'sync '; }; mv() { printf 'mv '; command mv \"\$@\"; }; rpi_boot_config $PI/stick/config.txt b")
-expect "fat_sostituisci: sync, mv, sync; .bak del precedente; contenuto nuovo" "sync mv sync |vecchio|os_prefix=b/" \
-	"$ordine|$(cat "$PI/stick/config.txt.bak")|$(grep '^os_prefix' "$PI/stick/config.txt")"
+expect "fat_sostituisci: sync, mv, sync; contenuto nuovo; .bak vecchio eliminato" "sync mv sync |os_prefix=b/|no" \
+	"$ordine|$(grep '^os_prefix' "$PI/stick/config.txt")|$([ -e "$PI/stick/config.txt.bak" ] && echo si || echo no)"
 pi "rpi_boot_config $PI/stick/config.txt a"
 pi "rpi_cmdline a 'cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678'" > "$PI/stick/a/cmdline.txt"
 expect "parametri adattati letti da cmdline.txt" "cpuidle.off=1 isolcpus=managed_irq,domain,2,3 sweetspot.tune=12345678" "$(pi 'rpi_tune a')"
@@ -3742,8 +3836,8 @@ expect "hotspot: senza rete si accende su wlan0 con nome dal MAC" "1|1" \
 expect "hotspot: indirizzo 192.168.4.1 sulla scheda, DHCP e DNS avviati" "1|1|1" \
 	"$(hs_calls 'ip addr add 192.168.4.1/24 dev wlan0')|$(hs_calls udhcpd)|$(hs_calls dnsd)"
 pw=$(sed -n 's/^Password: //p' "$HS/console" | head -n 1)
-expect "hotspot: password sullo schermo (10 caratteri), non nel registro" "1|0" \
-	"$(grep -c '^Password: [a-z2-9]\{10\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
+expect "hotspot: password sullo schermo (16 caratteri, 80 bit), non nel registro" "1|0" \
+	"$(grep -c '^Password: [a-z2-9]\{4\}\(-[a-z2-9]\{4\}\)\{3\}$' "$HS/console")|$(grep -c "$pw" "$HS/log")"
 expect "hotspot: elenco reti ordinato per segnale, senza nomi vuoti" "100|Casa Rossi,Vicino" \
 	"$(head -n 1 "$HS/run/wifi-scan.list" | cut -d'|' -f1)|$(cut -d'|' -f2 "$HS/run/wifi-scan.list" | tr '\n' ',' | sed 's/,$//')"
 expect "hotspot: arrivato il cavo si spegne e le radio tornano spente" "1|0|1" \
@@ -3766,7 +3860,7 @@ echo '[ "$n" -ge 2 ] && echo 1 > "$HS_DIR/sys/class/net/eth0/carrier"' > "$HS/on
 hs_run
 pw1=$(sed -n 's/^Password: //p' "$HS/stick/sweetspot-hotspot.txt" | head -n 1)
 expect "hotspot: nome e password scritti sulla partizione di avvio" "1|1" \
-	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{10\}$')"
+	"$(grep -c '^Rete Wi-Fi: Sweetspot-5E6F$' "$HS/stick/sweetspot-hotspot.txt")|$(printf '%s' "$pw1" | grep -c '^[a-z2-9]\{4\}\(-[a-z2-9]\{4\}\)\{3\}$')"
 expect "hotspot: codice QR WIFI: sulla partizione di avvio (SVG) e sullo schermo" "1|1|1" \
 	"$(sort -u "$HS/qrtesti" | grep -c "^WIFI:T:WPA;S:Sweetspot-5E6F;P:$pw1;;\$")|$(grep -c '<svg' "$HS/stick/sweetspot-hotspot.svg")|$(grep -c '^\[QR\]$' "$HS/console")"
 rm -f "$HS/run/hotspot.attivo"
@@ -4222,6 +4316,7 @@ verifica_salti
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
+sh "$ROOT/tests/renderer-limiti.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
@@ -4345,6 +4440,9 @@ expect "wifi wpa.conf: chiave di 64 cifre senza virgolette" "psk=$k" "$(wifi_pro
 printf '# commento\nWIFI_NOME = Casa #2 \nHOTSPOT=si # nota\n' > "$WS/n.txt"
 expect "config_normalize: # solo a inizio riga per il nome Wi-Fi" "WIFI_NOME=Casa #2|HOTSPOT=si" \
 	"$(SWEETSPOT_RUN=$WS/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $WS/n.txt" | tr '\n' '|' | sed 's/|$//')"
+printf '\357\273\277X=1\r\nY=2\r\n' > "$WS/n.txt"
+expect "config_normalize: BOM UTF-8 e CRLF non fanno perdere la prima riga" "X=1|Y=2" \
+	"$(SWEETSPOT_RUN=$WS/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $WS/n.txt" | tr '\n' '|' | sed 's/|$//')"
 
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
@@ -4376,6 +4474,69 @@ expect "dati: il rifiuto e' nel registro" 1 "$(grep -c 'salvataggio rifiutato' "
 rm -rf "$RF/stick/sweetspot-dati"; mkdir -p "$RF/s2"; tar -cf "$RF/s2/lyrion.tar" -C "$RF/lms" prefs
 rfdati "do_restore $RF/s2"; rc=$?
 expect "dati: un ripristino riuscito toglie il blocco" "0 no" "$rc $([ -f "$RF/run/dati.ripristino-fallito" ] && echo si || echo no)"
+# Chiavetta non letta all'avvio, poi compare: Lyrion ha un database nuovo e
+# vuoto che non deve sostituire la generazione salvata.
+RT=$WORK/riptardi
+mkdir -p "$RT/run" "$RT/lms/prefs" "$RT/stick/sweetspot-dati"
+echo "buona" > "$RT/stick/sweetspot-dati/lyrion.tar"
+echo nuovo > "$RT/lms/prefs/p"
+rtdati() { # esito-di-stick_mount comandi
+	SWEETSPOT_TEST=1 SWEETSPOT_RUN=$RT/run SWEETSPOT_LOG=$RT/log SWEETSPOT_LMS_DATA=$RT/lms SWEETSPOT_STICK_DIR=$RT/stick \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-dati
+		stick_mount() { return $1; }; stick_umount() { :; }; space_ok() { return 0; }
+		$2"
+}
+SWEETSPOT_TEST= SWEETSPOT_RUN=$RT/run SWEETSPOT_LOG=$RT/log SWEETSPOT_LMS_DATA=$RT/lms \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-dati" assente
+expect "dati: chiavetta assente all'avvio lascia il marcatore" si "$([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+rtdati 1 'do_save'; rc=$?
+expect "dati: chiavetta ancora assente, salvataggio rifiutato" "1 si" "$rc $([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+rtdati 0 'do_save'; rc=$?
+expect "dati: chiavetta comparsa con dati, salvataggio rifiutato" 1 "$rc"
+expect "dati: chiavetta comparsa con dati, la generazione resta intatta" buona "$(cat "$RT/stick/sweetspot-dati/lyrion.tar")"
+expect "dati: chiavetta comparsa con dati diventa ripristino fallito" "si no" \
+	"$([ -f "$RT/run/dati.ripristino-fallito" ] && echo si || echo no) $([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+rtdati 0 'do_checkpoint'; rc=$?
+expect "dati: chiavetta comparsa con dati, checkpoint rifiutato" 1 "$rc"
+rm -rf "$RT/run"/* "$RT/stick/sweetspot-dati"
+date +%s > "$RT/run/dati.non-ripristinato"
+rtdati 0 'do_save'; rc=$?
+expect "dati: chiavetta comparsa senza dati, il primo salvataggio procede" "0 no" \
+	"$rc $([ -f "$RT/run/dati.non-ripristinato" ] && echo si || echo no)"
+expect "dati: chiavetta comparsa senza dati, generazione scritta" si "$([ -f "$RT/stick/sweetspot-dati/lyrion.tar" ] && echo si || echo no)"
+
+# --- Firewall dell'hotspot -----------------------------------------------------
+FWR=$OVERLAY/etc/sweetspot/firewall.nft
+for porta in 53 67 80 443; do
+	atteso=1
+	[ "$porta" = 53 ] && atteso=2 # UDP e TCP
+	expect "firewall: la porta $porta e' ammessa" "$atteso" "$(grep -cE "dport \{[^}]*\b$porta\b.*accept" "$FWR")"
+done
+expect "firewall: solo la scheda dell'AP, il resto accept" "1|1" \
+	"$(grep -c 'iifname != \$AP_IF accept' "$FWR")|$(grep -c 'policy accept' "$FWR")"
+expect "firewall: Lyrion, SMB e DLNA non sono aperti" 0 "$(grep -cE '\b(9000|3483|445|8200)\b' "$FWR")"
+if command -v nft > /dev/null 2>&1; then
+	{ echo 'define AP_IF = "wlan0"'; cat "$FWR"; } > "$WORK/fw.nft"
+	nft -c -f "$WORK/fw.nft" > /dev/null 2>&1
+	expect "firewall: nft -c accetta le regole" 0 "$?"
+else
+	salta nft
+fi
+# Se nft fallisce il firewall lascia tutto aperto e lo scrive nel registro.
+FWE=$WORK/fw; mkdir -p "$FWE/run"
+printf '#!/bin/sh\nexit 1\n' > "$FWE/nft"; chmod +x "$FWE/nft"
+SWEETSPOT_NFT=$FWE/nft SWEETSPOT_RUN=$FWE/run SWEETSPOT_LOG=$FWE/log \
+	$TEST_SH "$OVERLAY/usr/bin/sweetspot-firewall" applica wlan0
+rc=$?
+expect "firewall: caricamento fallito, esito 0 e errore nel registro" "0|1" \
+	"$rc|$(grep -c 'firewall: regole non caricate' "$FWE/log")"
+
+# --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
+if command -v gcc > /dev/null 2>&1; then
+	expect "alsa-cdsp: dopo un timeout nella FIFO solo frame interi" "0" "$(sh "$ROOT/tests/alsa-cdsp-frame.sh" > "$WORK/frame.out" 2>&1; echo $?)"
+else
+	salta "gcc"
+fi
 
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1

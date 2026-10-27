@@ -979,6 +979,10 @@ EOF
 	# Stato per Stato/Audio, con la verifica sugli argomenti reali.
 	volume_stato_scrivi "$VOL_MODO" "$VOL_MOTIVO"
 	session_start
+	# Da volume fisso a software/dsp Squeezelite ripartirebbe con il guadagno
+	# di Lyrion ancora a 100: si abbassa prima, se Lyrion conosce gia' il
+	# player; altrimenti resta la riduzione alla connessione (apply_player_prefs).
+	if [ "$VOL_MODO" = software ] || [ "$VOL_MODO" = dsp ]; then volume_sicuro_prima; fi
 	SWEETSPOT_DSD_MARGINE_DB=$(dsd_margine_db) taskset -c "$HK" squeezelite "$@" &
 	PID=$!
 	echo "$PID" > "$RUN/squeezelite.pid"
@@ -1015,6 +1019,20 @@ prefs_divergenti() { # digitale [mac]
 		[ "$got" = "$valore" ] || out="$out${out:+ }$nome=${got:-?}(richiesto $valore)"
 	done
 	printf '%s' "$out"
+}
+
+# Prima di riavviare Squeezelite dal volume fisso: volume sicuro in Lyrion e
+# controllo digitale acceso, cosi' alla connessione non arriva il 100. Best
+# effort: se Lyrion non risponde, apply_player_prefs riduce alla connessione.
+volume_sicuro_prima() {
+	local sicuro
+	[ -f "$RUN/volume.fisso" ] || return 0
+	[ "$(mode)" = completa ] || [ -n "$(conf SERVER)" ] || return 0
+	sicuro=$(conf VOLUME_SICURO 25)
+	case "$sicuro" in ''|*[!0-9]*) sicuro=25 ;; esac
+	LMS_TIMEOUT=5 lms_json "$PLAYER_MAC" mixer volume "$sicuro" > /dev/null || return 0
+	lms_json "$PLAYER_MAC" playerpref digitalVolumeControl 1 > /dev/null || return 0
+	log "player: passaggio dal volume fisso a $VOL_MODO: volume di Lyrion portato a $sicuro prima di riavviare"
 }
 
 apply_player_prefs() {
