@@ -175,6 +175,19 @@ SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPO
 	SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log $TEST_SH -c '. "$1"; do_restore "$STICK_MNT/sweetspot-dati"' sh \
 	"$OVERLAY/usr/bin/sweetspot-dati" >/dev/null 2>&1
 expect 'generazione vecchia dopo interruzione: ripristinata' current "$(cat "$D/lms/prefs/server.prefs")"
+# Generazione con manifest ma senza persist.db (taglio di corrente): scartata.
+rm -rf "$D/stick/sweetspot-dati" "$D/stick/sweetspot-dati.vecchio"
+mkdir -p "$D/stick/sweetspot-dati"
+(cd "$D/lms" && tar -cf "$D/stick/sweetspot-dati/lyrion.tar" prefs)
+printf 'lyrion.tar
+persist.db
+' > "$D/stick/sweetspot-dati/manifest"
+gv() { SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPOT_LMS_DATA=$D/lms 	SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log $TEST_SH -c '. "$1"; generation_valid "$2"' sh 	"$OVERLAY/usr/bin/sweetspot-dati" "$1"; }
+if gv "$D/stick/sweetspot-dati"; then rc=0; else rc=1; fi
+expect 'generazione senza persist.db atteso dal manifest: non valida' 1 "$rc"
+rm -f "$D/stick/sweetspot-dati/manifest"
+if gv "$D/stick/sweetspot-dati"; then rc=0; else rc=1; fi
+expect 'generazione vecchia senza manifest: ancora valida' 0 "$rc"
 python3 - "$D/lms/cache/library.db" "$D/wal-ready" "$D/wal-stop" <<'PY' &
 import pathlib
 import sqlite3
@@ -491,6 +504,17 @@ gptcheck() { # immagine
 expect 'aggiorna: disco GPT riconosciuto' gpt "$(gptcheck "$GP")"
 expect 'aggiorna: disco MBR non e GPT' mbr "$(gptcheck "$MB")"
 expect 'aggiorna: refresh_boot_grub salta il BIOS su GPT' 1 "$(sed -n '/^refresh_boot_grub() {/,/^}/p' "$OVERLAY/usr/bin/sweetspot-aggiorna" | grep -c 'if disco_gpt')"
+
+# grubenv_set concorrenti: ogni chiave scritta da un processo deve sopravvivere.
+GL=$WORK/grubenv-lock
+mkdir -p "$GL/run"
+( . "$SWEETSPOT_LIB/common.sh"; RUN=$GL/run
+  grubenv_set "$GL/env" a0=0
+  for i in 1 2 3 4 5 6 7 8; do
+	( n=0; while [ $n -lt 5 ]; do grubenv_set "$GL/env" "k${i}_$n=$n"; n=$((n + 1)); done ) &
+  done
+  wait ) >/dev/null 2>&1
+expect 'grubenv_set concorrenti: nessuna scrittura persa' 41 "$(grep -c '^[a-z0-9_]*=' "$GL/env")"
 
 printf '\nOperazioni: %s passati, %s falliti\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

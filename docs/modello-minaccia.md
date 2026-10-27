@@ -132,6 +132,16 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
   (`etc/init.d/S70sweetspot-renderer`, `start-stop-daemon` senza `-c`). La
   **PR aperta #187** introduce utente dedicato, configurazione ridotta ed
   esclusione dell'hotspot.
+- **Proprietà dichiarata: SSRF cieco da `SetAVTransportURI`.** Il renderer non
+  ha autenticazione: un host della LAN può far aprire a Lyrion (che gira
+  sull'apparecchio) qualunque URL `http(s)://`, compresi loopback e indirizzi
+  interni (`renderer.pl:460-478`; l'unico filtro è lo schema). L'esito non
+  torna al chiamante (cieco), ma la richiesta GET parte dall'apparecchio.
+  Mitigazione: renderer spento di serie (`RENDERER_UPNP=no`). Non si filtrano
+  gli indirizzi locali perché il contenuto può stare sull'apparecchio stesso
+  (MiniDLNA) e un filtro sui nomi si aggira con DNS. Rischio residuo: con il
+  renderer acceso, ogni host della LAN può provocare GET verso servizi
+  interni (es. Lyrion su 127.0.0.1:9000).
 - **Con LAN non fidata.** Renderer spento (`RENDERER_UPNP=no`, predefinito, `renderer.pl:13`
   in `sweetspot.txt`), usare solo il controllo da Lyrion con autenticazione.
 

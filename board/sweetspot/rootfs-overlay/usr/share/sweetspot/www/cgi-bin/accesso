@@ -30,6 +30,8 @@ login_page() {
 	login_prepare
 	page_start "Accesso" accesso
 	[ -n "$1" ] && printf '<p class="msg">%s</p>\n' "$(esc "$1")"
+	# In HTTP la password viaggia in chiaro: lo si dice e si indica dove accendere HTTPS.
+	is_https || printf '<p class="msg" id="avviso-http">Connessione non protetta (HTTP): la password viaggia in chiaro sulla rete. Se la rete non e'"'"' fidata, dopo l'"'"'accesso accendi HTTPS in <a href="/cgi-bin/sistema#sezione-https">Sistema</a>.</p>\n'
 	cat <<HTML
 <form method="post" action="/cgi-bin/accesso" class="card">
 <input type="hidden" name="t" value="$(login_token)">
