@@ -1947,14 +1947,15 @@ grubenv_get() { # file chiave
 # Le chiamate sono serializzate da un lock (CGI, avvio e conferma possono
 # incrociarsi): senza, leggi-modifica-scrivi perde una delle due scritture.
 grubenv_set() {
-	local rc
-	mkdir -p "$RUN"
-	(
-		flock 5
+	# Se il lock non si puo' creare (RUN assente) si scrive comunque, come prima.
+	if mkdir -p "$RUN" 2>/dev/null && : >> "$RUN/grubenv.lock" 2>/dev/null; then
+		(
+			flock 5
+			grubenv_set_locked "$@"
+		) 5> "$RUN/grubenv.lock"
+	else
 		grubenv_set_locked "$@"
-	) 5> "$RUN/grubenv.lock"
-	rc=$?
-	return $rc
+	fi
 }
 
 grubenv_set_locked() {
