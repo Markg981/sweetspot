@@ -3122,6 +3122,13 @@ expect "backoff: primo errore subito dopo l'avvio" "2" "$(dspfn 1 'backoff_next 
 expect "backoff: raddoppia fino a 60 s" "4|8|16|32|60|60" \
 	"$(dspfn 1 'backoff_next 2 1; backoff_next 4 1; backoff_next 8 1; backoff_next 16 1; backoff_next 32 1; backoff_next 60 1' | tr '\n' '|' | sed 's/|$//')"
 expect "backoff: azzerato dopo un funzionamento stabile" "0" "$(dspfn 1 'backoff_next 60 30')"
+echo "Supervisore: sorveglianza dei processi ausiliari"
+expect "ausiliari: follower del volume morto, riavviato" "riavvio|1" 	"$(dspfn 1 'start_volume_watch() { echo riavvio; VOLPID=""; }; LATPID=""; VOLPID=999999; WATCH_N=0; watch_check; echo $WATCH_N' | tr '
+' '|' | sed 's/|$//')"
+expect "ausiliari: l'evento e' nel log" "1" "$(grep -c "follower del volume" "$DSP/log")"
+expect "ausiliari: oltre il limite non riavvia e rinuncia" "5|" 	"$(dspfn 1 'start_latency_watch() { echo X; }; VOLPID=""; LATPID=999999; WATCH_N=5; watch_check; echo "$WATCH_N|$LATPID"' | tr '
+' '|' | sed 's/|$//')"
+
 kill "$zpid" 2>/dev/null
 rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3" "$DSP/proc/asound/card4" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone" "$DSP/sys" "$DSP/run/dac.principale"
 rm -f "$DSP/run/sweetspot.conf"
