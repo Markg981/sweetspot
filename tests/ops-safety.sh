@@ -491,6 +491,21 @@ STICKRC=1
 expect 'do_confirm: chiavetta non scrivibile, errore' 1 "$(grubfail confirm)"
 unset STICKRC
 
+# A1: su un disco GPT (installazione accanto a Windows) l'aggiornamento non
+# scrive GRUB per BIOS: LBA1 ("EFI PART") e le voci restano intatte.
+GP=$WORK/gpt.img
+dd if=/dev/zero of="$GP" bs=512 count=64 2>/dev/null
+printf 'EFI PART' | dd of="$GP" bs=512 seek=1 conv=notrunc 2>/dev/null
+MB=$WORK/mbr.img
+dd if=/dev/zero of="$MB" bs=512 count=64 2>/dev/null
+gptcheck() { # immagine
+	$TEST_SH -c "$(sed -n '/^disco_gpt() {/,/^}/p' "$OVERLAY/usr/bin/sweetspot-aggiorna")"'
+		disco_gpt "$1" && echo gpt || echo mbr' sh "$1"
+}
+expect 'aggiorna: disco GPT riconosciuto' gpt "$(gptcheck "$GP")"
+expect 'aggiorna: disco MBR non e GPT' mbr "$(gptcheck "$MB")"
+expect 'aggiorna: refresh_boot_grub salta il BIOS su GPT' 1 "$(sed -n '/^refresh_boot_grub() {/,/^}/p' "$OVERLAY/usr/bin/sweetspot-aggiorna" | grep -c 'if disco_gpt')"
+
 # grubenv_set concorrenti: ogni chiave scritta da un processo deve sopravvivere.
 GL=$WORK/grubenv-lock
 mkdir -p "$GL/run"

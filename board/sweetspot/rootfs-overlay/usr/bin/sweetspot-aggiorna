@@ -755,6 +755,14 @@ scrivi_grub_bios() { # disco n
 	return 1
 }
 
+# Vero se il disco ha una GPT (LBA1 = "EFI PART"): e' il caso
+# dell'installazione accanto a Windows, dove il settore 1 e le voci di
+# partizione non vanno toccati e GRUB per BIOS (che vive in quei settori)
+# non si scrive.
+disco_gpt() { # dispositivo
+	[ "$(dd if="$1" bs=512 skip=1 count=1 2>/dev/null | head -c 8)" = "EFI PART" ]
+}
+
 refresh_boot_grub() {
 	local disk dev start n bios=0
 	replace_file "$AVVIO/BOOTX64.EFI" "$STICK_MNT/EFI/BOOT/BOOTX64.EFI"
@@ -766,7 +774,9 @@ refresh_boot_grub() {
 	if [ -n "$disk" ] && [ -b "/dev/$disk" ] && [ -f "$AVVIO/grub.img" ]; then
 		start=$(cat "$SYS/class/block/${dev##*/}/start" 2>/dev/null || echo 0)
 		n=$((($(wc -c < "$AVVIO/grub.img") + 511) / 512))
-		if [ "$start" -gt $((n + 1)) ]; then
+		if disco_gpt "/dev/$disk"; then
+			log "aggiornamento: disco GPT su /dev/$disk, GRUB per BIOS non toccato"
+		elif [ "$start" -gt $((n + 1)) ]; then
 			dd if="/dev/$disk" bs=512 skip=1 count=$n 2>/dev/null | head -c "$(wc -c < "$AVVIO/grub.img")" > "$DIR/grub.ora"
 			dd if="/dev/$disk" bs=440 count=1 2>/dev/null > "$DIR/mbr.ora"
 			head -c 440 "$AVVIO/boot.img" > "$DIR/mbr.nuovo"
