@@ -175,24 +175,25 @@ minisign -G -W -f -p "$W/prova.pub" -s "$W/prova.key" > /dev/null
 minisign -S -W -s "$W/prova.key" -m "$W/pkg/SHA256SUMS" -x "$W/pkg/SHA256SUMS.minisig" \
 	-t "Sweetspot $VERSIONE_PROVA x86_64" > /dev/null
 (cd "$W/pkg" && tar --sort=name --owner=0 --group=0 --numeric-owner -cf "$W/$PKG" -- *)
-# "sync" finto davanti a quello vero (SWEETSPOT_PATH): nel punto scelto da
-# TAGLIO segnala di essere arrivato e si ferma, prima di scrivere su disco.
-# Cosi' il taglio cade tra due scritture note, senza gare di tempo.
-cat > "$W/guest-cut/sync" <<'FINTO'
-#!/bin/sh
+# Guardiano nel guest: aspetta il punto scelto, ferma tutto il lavoro di
+# aggiornamento (SIGSTOP al gruppo) e scrive su disco quello che c'e' fino a
+# quel momento; poi segnala. Il taglio vero (kill -9 di QEMU) lo fa l'host.
+# Cosi' il taglio cade tra due scritture note, senza gare di tempo. (Un sync
+# finto davanti al vero non e' affidabile: BusyBox non lo cerca nel PATH.)
+cat > "$W/guest-cut/ferma.sh" <<'FINTO'
 S=/run/sweetspot/chiavetta
-fermo=no
-echo "sync TAGLIO=${TAGLIO:-} b=$(ls $S/b 2>&1 | tr '\n' ' ') v=$(ls $S/boot/versioni 2>&1 | tr '\n' ' ')" >> /tmp/cut/chiamate
-case "${TAGLIO:-}" in
-	scrittura) [ -f "$S/b/bzImage" ] && [ ! -f "$S/b/rootfs.cpio.zst" ] && fermo=si ;;
-	marcatore) [ -f "$S/boot/versioni/b.nuovo" ] && fermo=si ;;
-esac
-if [ "$fermo" = si ]; then
-	: > /tmp/cut/raggiunto
-	sleep 3600
-fi
-PATH=/usr/sbin:/usr/bin:/sbin:/bin
-exec busybox sync
+D=/run/sweetspot/aggiornamento
+while :; do
+	case "$1" in
+		scrittura) [ -f "$S/b/bzImage" ] && [ ! -f "$S/b/rootfs.cpio.zst" ] && break ;;
+		marcatore) [ -f "$D/hash.copia" ] && break ;;
+	esac
+done
+pid=$(cat "$D/pid" 2>/dev/null)
+kill -STOP "-$pid"
+echo "fermo con: b=$(ls "$S/b" 2>&1 | tr '\n' ' ') versioni=$(ls "$S/boot/versioni" 2>&1 | tr '\n' ' ')" > /tmp/cut/raggiunto.tmp
+sync
+mv /tmp/cut/raggiunto.tmp /tmp/cut/raggiunto
 FINTO
 # Legge "tentato" da grubenv nel guest (montando la chiavetta in sola lettura).
 cat > "$W/guest-cut/tentato.sh" <<'FINTO'
@@ -222,12 +223,13 @@ prepara_guest() {
 	guest 'rm -rf /tmp/cut; mkdir -p /tmp/cut/bin /tmp/cut/media'
 	guest 'cat > /tmp/cut/media/'"$PKG" < "$W/$PKG"
 	guest 'cat > /tmp/cut/prova.pub' < "$W/prova.pub"
-	guest 'cat > /tmp/cut/bin/sync; chmod +x /tmp/cut/bin/sync' < "$W/guest-cut/sync"
+	guest 'cat > /tmp/cut/ferma.sh' < "$W/guest-cut/ferma.sh"
 	guest 'cat > /tmp/cut/tentato.sh' < "$W/guest-cut/tentato.sh"
 }
 # Avvia l'aggiornamento col "sync" finto; $1 = punto del taglio (vuoto: nessuno).
 avvia_aggiornamento() {
-	guest "TAGLIO='$1' SWEETSPOT_PATH=/tmp/cut/bin:/usr/sbin:/usr/bin:/sbin:/bin SWEETSPOT_MEDIA=/tmp/cut/media SWEETSPOT_CHIAVE_FIRMA=/tmp/cut/prova.pub sweetspot-aggiorna file-downgrade /tmp/cut/media/$PKG"
+	[ -z "$1" ] || guest "setsid sh /tmp/cut/ferma.sh '$1' > /dev/null 2>&1 < /dev/null &"
+	guest "SWEETSPOT_MEDIA=/tmp/cut/media SWEETSPOT_CHIAVE_FIRMA=/tmp/cut/prova.pub sweetspot-aggiorna file-downgrade /tmp/cut/media/$PKG"
 }
 attendi_guest() { # comando secondi
 	i=0
@@ -263,7 +265,7 @@ taglio_aggiornamento() {
 	avvia_aggiornamento "$2"
 	if ! attendi_guest 'test -f /tmp/cut/raggiunto' 180; then
 		esito NO "$nome: l'aggiornamento non e' arrivato al punto del taglio ($(guest 'cat /run/sweetspot/aggiornamento/stato' 2>&1))"
-		guest 'ls -l /tmp/cut/bin; cat /tmp/cut/chiamate; mount | grep -i chiavetta' 2>&1 | sed 's/^/    diag: /'
+		guest 'ls -l /tmp/cut /run/sweetspot/aggiornamento /run/sweetspot/chiavetta/b; ps | grep -c ferma' 2>&1 | sed 's/^/    diag: /'
 		taglia "$nome"
 		return 0
 	fi
