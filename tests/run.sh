@@ -4358,6 +4358,9 @@ expect "wifi wpa.conf: chiave di 64 cifre senza virgolette" "psk=$k" "$(wifi_pro
 printf '# commento\nWIFI_NOME = Casa #2 \nHOTSPOT=si # nota\n' > "$WS/n.txt"
 expect "config_normalize: # solo a inizio riga per il nome Wi-Fi" "WIFI_NOME=Casa #2|HOTSPOT=si" \
 	"$(SWEETSPOT_RUN=$WS/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $WS/n.txt" | tr '\n' '|' | sed 's/|$//')"
+printf '\357\273\277X=1\r\nY=2\r\n' > "$WS/n.txt"
+expect "config_normalize: BOM UTF-8 e CRLF non fanno perdere la prima riga" "X=1|Y=2" \
+	"$(SWEETSPOT_RUN=$WS/run $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_normalize $WS/n.txt" | tr '\n' '|' | sed 's/|$//')"
 
 python3 "$ROOT/tests/dsp-salvataggio.py" || exit 1
 python3 "$ROOT/tests/cd-salvataggio.py" || exit 1
