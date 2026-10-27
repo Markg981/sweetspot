@@ -269,6 +269,7 @@ CP=$WORK/copia; mkdir -p "$CP/bin" "$CP/media/Album" "$CP/arch" "$CP/run"
 echo musica > "$CP/media/Album/a.flac"
 printf '#!/bin/sh\necho "$CP/arch"\n' > "$CP/bin/sweetspot-dischi"
 printf '#!/bin/sh\nexit 0\n' > "$CP/bin/sweetspot-lms"
+chmod +x "$CP/bin/"*
 copia() { SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
 	SWEETSPOT_MEDIA=$CP/media $TEST_SH "$OVERLAY/usr/bin/sweetspot-copia" "$@"; }
 # Errore vero a meta' copia: un file illeggibile fa fallire cp -a dopo aver
