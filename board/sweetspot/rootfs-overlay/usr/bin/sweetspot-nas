@@ -80,11 +80,14 @@ start() {
 	fi
 	mkdir -p "$KSMBD_DIR"
 	ksmbd_conf "$path" > "$KSMBD_DIR/ksmbd.conf"
+	# L'hash NT delle password e' leggibile solo da root: creato gia' 600
+	# (non 644 per la umask), e riportato a 600 dopo ksmbd.adduser.
 	rm -f "$KSMBD_DIR/ksmbdpwd.db"
-	: > "$KSMBD_DIR/ksmbdpwd.db"
+	(umask 077; : > "$KSMBD_DIR/ksmbdpwd.db")
 	if [ -n "$(conf ARCHIVIO_PASSWORD)" ]; then
 		ksmbd.adduser -P "$KSMBD_DIR/ksmbdpwd.db" -C "$KSMBD_DIR/ksmbd.conf" -a "$SHARE_USER" -p "$(conf ARCHIVIO_PASSWORD)" > /dev/null 2>&1
 	fi
+	chmod 600 "$KSMBD_DIR/ksmbdpwd.db"
 	# Il server di rete lavora sui core di sistema, mai su quello dell'audio.
 	cpu_layout
 	taskset -c "$(join_list "$LAYOUT_HK")" ksmbd.mountd > /dev/null 2>&1 ||
