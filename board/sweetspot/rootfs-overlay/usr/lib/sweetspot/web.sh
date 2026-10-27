@@ -370,12 +370,12 @@ read_form() {
 		*[!0-9]*|??????????*) CONTENT_LENGTH=-1 ;;
 		esac
 		if [ "$CONTENT_LENGTH" -lt 0 ] || [ "$CONTENT_LENGTH" -gt "$WEB_MAX_POST" ]; then
-			printf 'Status: 413 Payload Too Large
-Content-Type: text/plain
-Cache-Control: no-store
+			printf 'Status: 413 Payload Too Large
+Content-Type: text/plain
+Cache-Control: no-store
 '
 			sec_headers
-			printf '
+			printf '
 Richiesta troppo grande
 '
 			exit 0
