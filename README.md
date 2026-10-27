@@ -836,6 +836,14 @@ annullata proprio perché il registro di prima del riavvio non c'era),
   `/proc/asound` e `stato.json`. Password, chiavi, token, credenziali negli
   indirizzi e intestazioni di autorizzazione sono oscurati.
 
+## Sicurezza
+
+Sweetspot parte dall'ipotesi che la rete di casa sia fidata, che il
+dispositivo non sia esposto su Internet e che l'hotspot del primo avvio non lo
+sia. Ipotesi, superfici di attacco, difese, rischi accettati e requisiti
+verificabili (RS-1, RS-2, ...) sono in
+[docs/modello-minaccia.md](docs/modello-minaccia.md).
+
 ## Verifiche
 
 | Verifica | Come |

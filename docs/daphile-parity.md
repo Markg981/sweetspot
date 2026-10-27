@@ -137,3 +137,5 @@ livello e impostazioni equivalenti. La correzione ambientale può migliorare
 il risultato acustico; per confrontarla bisogna verificare anche le misure
 della stanza e la risposta dei filtri. Non si dichiara un vantaggio sonoro
 generale dalla sola scelta del player, del kernel o dei buffer.
+
+Modello di minaccia e requisiti di sicurezza: [modello-minaccia.md](modello-minaccia.md).
