@@ -109,7 +109,7 @@ static const struct regola REGOLE[] = {
 	{"sweetspot-check", "--dati", "", "", 0},
 	{"sweetspot-config", "imposta", "", "ks", 0},
 	{"sweetspot-config", "rimuovi", "", "k", 0},
-	{"sweetspot-config", "ripristina", "", "", 0},
+	{"sweetspot-config", "ripristina", "", "", 1}, // azzera la configurazione e riavvia: solo con @conferma
 	{"sweetspot-copia", "annulla", "", "", 0},
 	{"sweetspot-copia", "avvia", "s", "", 0},
 	{"sweetspot-copia", "elimina", "s", "", 0},

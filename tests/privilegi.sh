@@ -245,6 +245,7 @@ for f in 0 1 2; do [ -e /proc/self/fd/$f ] || exit 1; done
 		expect "config PASSWORD_WEB in coda: rifiutata" "NIENTE(126)" "$(priv sweetspot-config imposta NOME_PLAYER x PASSWORD_WEB '$1$x$y')"
 		expect "config rimuovi PASSWORD_WEB senza conferma: rifiutata" "NIENTE(126)" "$(priv sweetspot-config rimuovi PASSWORD_WEB)"
 		expect "aggiorna file senza conferma: rifiutato" "NIENTE(126)" "$(priv sweetspot-aggiorna file /media/USB/pacchetto.tar)"
+		expect "config ripristina senza conferma: rifiutato" "NIENTE(126)" "$(priv sweetspot-config ripristina)"
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "gettone: 32 cifre esadecimali" "1" "$(printf '%s' "$tok" | grep -cE '^[0-9a-f]{32}$')"
 		expect "gettone: file nella cartella di root" "si" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
