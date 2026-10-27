@@ -321,6 +321,17 @@ jobs:
           path: output/images/sweetspot-${{ matrix.scheda }}-aggiornamento.tar
           archive: false
           if-no-files-found: error
+  # Reference Studio contro un Lyrion vero (container ufficiale con versione
+  # fissata, libreria generata, player finto): non dipende dalla compilazione
+  # dell'immagine, quindi gira in ogni esecuzione.
+  studio-lyrion:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reference Studio con Lyrion 9.1.1
+        run: sh tests/prova-studio-lyrion.sh
+
   # Lyrion nel sistema appena compilato, su un server della stessa
   # architettura: per il Raspberry Pi e' la prova che i moduli compilati per
   # ARM funzionano con il Perl del sistema.
@@ -455,13 +466,14 @@ jobs:
   # Una sola pubblicazione, dopo il successo di entrambe le compilazioni e
   # di entrambi i test Lyrion. Un gate fallito, saltato o annullato la blocca.
   release:
-    needs: [test, build, firma, lyrion]
+    needs: [test, build, firma, lyrion, studio-lyrion]
     if: >-
       ${{ startsWith(github.ref, 'refs/tags/v') &&
           needs.test.result == 'success' &&
           needs.build.result == 'success' &&
           needs.firma.result == 'success' &&
-          needs.lyrion.result == 'success' }}
+          needs.lyrion.result == 'success' &&
+          needs.studio-lyrion.result == 'success' }}
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -542,7 +554,7 @@ jobs:
   # nessun job necessario e' fallito o annullato; "saltato" e' ammesso perche'
   # le pull request che non toccano l'immagine non compilano.
   esito:
-    needs: [modifiche, test, build, lyrion]
+    needs: [modifiche, test, build, lyrion, studio-lyrion]
     if: ${{ always() }}
     runs-on: ubuntu-26.04
     steps:

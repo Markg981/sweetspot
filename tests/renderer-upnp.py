@@ -566,7 +566,11 @@ def run(args):
             check("dopo UNSUBSCRIBE si puo' di nuovo sottoscrivere", subscribe(base, "ConnectionManager", "http://127.0.0.1:%d/z" % sink.port)[0] == 200)
             # C16: la CALLBACK deve puntare al richiedente (anti-SSRF) ed essere http.
             for label, cbk in (("verso un altro IP", "http://127.0.0.2:%d/ev" % sink.port), ("https", "https://127.0.0.1:%d/ev" % sink.port),
-                               ("mista (una sola ammessa)", "http://127.0.0.1:%d/ev>,<http://127.0.0.2:%d/ev" % (sink.port, sink.port))):
+                               ("mista (una sola ammessa)", "http://127.0.0.1:%d/ev>,<http://127.0.0.2:%d/ev" % (sink.port, sink.port)),
+                               ("con #@ (bypass userinfo)", "http://127.0.0.2:%d#@127.0.0.1/x" % sink.port),
+                               ("con ?@ (bypass userinfo)", "http://127.0.0.2:%d?@127.0.0.1/x" % sink.port),
+                               ("con userinfo", "http://127.0.0.2:%d@127.0.0.1/x" % sink.port),
+                               ("con backslash", "http://127.0.0.2:%d\\@127.0.0.1/x" % sink.port)):
                 try:
                     subscribe(base, "AVTransport", cbk)
                     got = 200

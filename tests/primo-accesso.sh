@@ -84,6 +84,14 @@ req() { # SCRIPT METODO COOKIE CORPO
 		REQUEST_METHOD="$method" CONTENT_LENGTH=${#body} HTTP_COOKIE="$cookie" REQUEST_URI=/cgi-bin/audio \
 		SCRIPT_NAME="${SCRIPT_NAME_T:-/cgi-bin/prova}" QUERY_STRING= sh "$script" 2>&1 | tr -d '\r'
 }
+# Invio del modulo vero: gettone e cookie arrivano dalla pagina (GET).
+lpost() { # SCRIPT CORPO
+	local g lt tk
+	g=$(req "$1" GET "" "")
+	lt=$(printf '%s\n' "$g" | sed -n 's/^Set-Cookie: sweetspot_lt=\([0-9a-f]*\);.*/\1/p' | head -n 1)
+	tk=$(printf '%s\n' "$g" | sed -n 's/.*name="t" value="\([0-9a-f]*\)".*/\1/p' | head -n 1)
+	req "$1" POST "sweetspot_lt=$lt" "t=$tk&$2"
+}
 status() { printf '%s\n' "$1" | sed -n 's/^Status: \([0-9]*\).*/\1/p' | head -n 1; }
 header() { printf '%s\n' "$1" | sed -n "s/^$2: //p" | head -n 1; }
 
@@ -123,32 +131,35 @@ out=$(req "$CGI/accesso" GET "" "")
 expect "accesso normale senza password: va al primo accesso (via audio)" "303" "$(status "$out")"
 out=$(req "$CGI/primo-accesso" GET "" "")
 expect "modulo di primo accesso mostrato" "1" "$(printf '%s' "$out" | grep -c 'name="codice"')"
+expect "il gettone del modulo non e' il segreto dell'avvio, c'e' il suo cookie" "0|1" "$(printf '%s' "$out" | grep -c tokenfinto)|$(printf '%s' "$out" | grep -c '^Set-Cookie: sweetspot_lt=')"
 
 echo "Scelta della password"
 out=$(req "$CGI/primo-accesso" POST "" "codice=$codice&password=lungapassword1&password2=lungapassword1")
 expect "senza gettone: 403" "403" "$(status "$out")"
-out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=ZZZZ-ZZZZ-ZZZZ&password=lungapassword1&password2=lungapassword1")
+out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codice&password=lungapassword1&password2=lungapassword1")
+expect "col segreto dell'avvio e senza cookie del modulo: 403" "403" "$(status "$out")"
+out=$(lpost "$CGI/primo-accesso" "codice=ZZZZ-ZZZZ-ZZZZ&password=lungapassword1&password2=lungapassword1")
 expect "codice sbagliato: 401" "401" "$(status "$out")"
 expect "codice sbagliato: nessuna password salvata" "0" "$(grep -c '^PASSWORD_WEB=' "$STICK/sweetspot.txt")"
-out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codice&password=lungapassword1&password2=diversa12345")
+out=$(lpost "$CGI/primo-accesso" "codice=$codice&password=lungapassword1&password2=diversa12345")
 expect "password diverse: 400" "400" "$(status "$out")"
-out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codice&password=corta&password2=corta")
+out=$(lpost "$CGI/primo-accesso" "codice=$codice&password=corta&password2=corta")
 expect "password corta: 400" "400" "$(status "$out")"
 expect "password corta: non salvata" "0" "$(grep -c '^PASSWORD_WEB=' "$STICK/sweetspot.txt")"
 # tentativi: dopo gli errori liberi si attende, anche con il codice giusto
-for _ in 1 2 3 4 5; do req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=AAAA-AAAA-AAAA&password=lungapassword1&password2=lungapassword1" >/dev/null; done
-out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codice&password=lungapassword1&password2=lungapassword1")
+for _ in 1 2 3 4 5; do lpost "$CGI/primo-accesso" "codice=AAAA-AAAA-AAAA&password=lungapassword1&password2=lungapassword1" >/dev/null; done
+out=$(lpost "$CGI/primo-accesso" "codice=$codice&password=lungapassword1&password2=lungapassword1")
 expect "troppi tentativi: 429 anche con il codice giusto" "429" "$(status "$out")"
 rm -rf "$R/web/tentativi"
 codmin=$(printf '%s' "$codice" | tr 'A-Z' 'a-z' | tr -d '-')
-out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codmin&password=lungapassword1&password2=lungapassword1")
+out=$(lpost "$CGI/primo-accesso" "codice=$codmin&password=lungapassword1&password2=lungapassword1")
 expect "codice giusto (minuscolo, senza trattini): 303" "303|/cgi-bin/audio" "$(status "$out")|$(header "$out" Location)"
 case "$(header "$out" Set-Cookie)" in *HttpOnly*SameSite=Strict*) ok "sessione con cookie HttpOnly" ;; *) expect "cookie" "HttpOnly" "$(header "$out" Set-Cookie)" ;; esac
 expect "password salvata come impronta, non in chiaro" "0" "$(grep -c 'lungapassword1' "$STICK/sweetspot.txt")"
 expect "impronta SHA-512-crypt salvata" "1" "$(grep -c '^PASSWORD_WEB=\$6\$' "$STICK/sweetspot.txt")"
 expect "codice e flag rimossi" "no" "$([ -e "$R/primo-accesso.codice" ] || [ -e "$R/primo-accesso.attivo" ] && echo si || echo no)"
 expect "file della chiavetta cancellato" "no" "$([ -e "$STICK/PRIMO-ACCESSO.txt" ] && echo si || echo no)"
-out=$(req "$CGI/primo-accesso" POST "" "t=tokenfinto&codice=$codice&password=altrapassword12&password2=altrapassword12")
+out=$(lpost "$CGI/primo-accesso" "codice=$codice&password=altrapassword12&password2=altrapassword12")
 expect "il codice non si riusa per cambiare la password" "303|/cgi-bin/accesso" "$(status "$out")|$(header "$out" Location)"
 
 echo "Dopo la scelta: accesso normale"
