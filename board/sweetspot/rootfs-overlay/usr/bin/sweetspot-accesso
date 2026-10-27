@@ -58,9 +58,11 @@ HTTPD_CONF=$RUN/httpd.conf
 VIVO_KEY=$RUN/vivo.chiave
 
 # Impronta SHA-512-crypt ($6$sale$...), sale casuale scelta da mkpasswd.
+# La password passa da stdin (-P 0), mai da argv: /proc/*/cmdline e ps la
+# mostrerebbero a tutti.
 hash() {
 	local h
-	h=$(mkpasswd -m sha512 -- "$1" 2>/dev/null) || return 1
+	h=$(printf '%s\n' "$1" | mkpasswd -m sha512 -P 0 2>/dev/null) || return 1
 	case "$h" in
 		'$6$'*) printf '%s\n' "$h" ;;
 		*) return 1 ;;
@@ -106,7 +108,7 @@ crypt_check() {
 	local salt calc
 	salt=${3#"$2"}
 	salt=${salt%%'$'*}
-	calc=$(mkpasswd -m "$1" -S "$salt" -- "$4" 2>/dev/null) || return 1
+	calc=$(printf '%s\n' "$4" | mkpasswd -m "$1" -S "$salt" -P 0 2>/dev/null) || return 1
 	[ "$calc" = "$3" ]
 }
 

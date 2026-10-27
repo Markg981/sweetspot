@@ -55,7 +55,13 @@ MAX_TEXT=20000
 # --- Lettura dei filtri di REW --------------------------------------------------
 
 parse_rew() { # file
-	tr -d '\r' < "$1" | head -c "$MAX_TEXT" | awk '
+	# Mai troncare in silenzio: un file oltre il limite si rifiuta con un errore
+	# nello stesso formato degli altri (errore|riga|messaggio).
+	if [ "$(tr -d '\r' < "$1" | wc -c)" -gt "$MAX_TEXT" ]; then
+		echo "errore|0|file troppo grande (al massimo $MAX_TEXT caratteri)"
+		return 1
+	fi
+	tr -d '\r' < "$1" | awk '
 	function num(s) { gsub(/,/, ".", s); return s + 0 }
 	function isnum(s) { gsub(/,/, ".", s); return s ~ /^[-+]?[0-9]*\.?[0-9]+$/ }
 	function bad(msg) { printf "errore|%d|%s\n", NR, msg; errors++ }
@@ -367,7 +373,11 @@ correction_problem() {
 fir_margin() {
 	local m
 	m=$(conf FIR_MARGINE_DB 3)
-	case "$m" in ''|*[!0-9.]*) m=3 ;; esac
+	# Numero decimale semplice (non ".", "1.2.3") tra 0 e 30 dB; altrimenti 3.
+	case "$m" in
+		''|*[!0-9.]*|.*|*.|*.*.*) m=3 ;;
+		*) [ "$(awk -v m="$m" 'BEGIN { print (m + 0 <= 30) }')" = 1 ] || m=3 ;;
+	esac
 	echo "$m"
 }
 
@@ -937,7 +947,8 @@ do_save() ( # file_sinistro file_destro
 		fi
 		if [ -n "$src" ] && [ -s "$src" ]; then
 			if ! tr -d '\r' < "$src" > "$tmp/testo" ||
-				! head -c "$MAX_TEXT" "$tmp/testo" > "$tmp/ram/$side.txt"; then
+				[ "$(wc -c < "$tmp/testo")" -gt "$MAX_TEXT" ] ||
+				! cp "$tmp/testo" "$tmp/ram/$side.txt"; then
 				log "correzione: preparazione del $side non riuscita, filtri precedenti conservati"
 				return 1
 			fi

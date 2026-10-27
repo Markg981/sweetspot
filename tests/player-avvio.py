@@ -76,5 +76,67 @@ class PlayerLaunchTests(unittest.TestCase):
                     self.assertEqual((work / name).read_text().strip(), expected, name)
 
 
+ORDINE = r'''
+. "$PLAYER_SCRIPT"
+HK=0
+ZONE_LOGDIR=$TEST_ROOT
+dac_id() { echo TestDAC; }
+dac_playback_dev() { echo 0; }
+dac_name() { echo TestDAC; }
+dac_formats() { echo S32_LE; }
+dac_native_dsd() { :; }
+dac_unity_gain() { :; }
+announced_max_rate() { echo 192000; }
+player_mac() { echo 02:00:00:00:00:01; }
+common_args() { :; }
+cap_write() { :; }
+volume_stato_scrivi() { :; }
+session_start() { :; }
+oom_adj() { :; }
+taskset() { shift 2; "$@"; }
+lms_json() { shift; echo "lms $*" >> "$TEST_ROOT/ordine"; }
+run_player 1
+wait "$PID"
+'''
+
+
+class PlayerVolumeSicuroTests(unittest.TestCase):
+    def test_fisso_a_software_abbassa_prima_di_avviare_squeezelite(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            for child in ("run", "proc", "sys", "bin"):
+                (work / child).mkdir()
+            (work / "run/sweetspot.conf").write_text(
+                "VOLUME=software\nMODALITA=completa\nDSD=pcm\nVOLUME_SICURO=20\n")
+            (work / "run/volume.fisso").write_text("")
+            commands = {
+                "sweetspot-dsp": '#!/bin/sh\n[ "$1" = problema ]\n',
+                "squeezelite": '#!/bin/sh\necho squeezelite >> "$TEST_ROOT/ordine"\n',
+            }
+            for name, content in commands.items():
+                path = work / "bin" / name
+                path.write_text(content)
+                path.chmod(0o755)
+            env = dict(os.environ, SWEETSPOT_TEST="1",
+                       SWEETSPOT_LIB=str(OVERLAY / "usr/lib/sweetspot"),
+                       SWEETSPOT_RUN=str(work / "run"),
+                       SWEETSPOT_PROCFS=str(work / "proc"),
+                       SWEETSPOT_SYSFS=str(work / "sys"),
+                       SWEETSPOT_DEFAULTS=str(OVERLAY / "etc/sweetspot/defaults.conf"),
+                       SWEETSPOT_LOG=str(work / "log"),
+                       SWEETSPOT_PATH=str(work / "bin"),
+                       TEST_ROOT=str(work),
+                       PLAYER_SCRIPT=str(OVERLAY / "usr/bin/sweetspot-player"))
+            result = subprocess.run(["busybox", "sh"], input=ORDINE, text=True,
+                                    capture_output=True, env=env, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            # Nessun istante a volume pieno: prima il volume sicuro, poi il player.
+            self.assertEqual((work / "ordine").read_text().split("\n")[:-1], [
+                "lms mixer volume 20",
+                "lms playerpref digitalVolumeControl 1",
+                "squeezelite",
+            ])
+
+
 if __name__ == "__main__":
     unittest.main()

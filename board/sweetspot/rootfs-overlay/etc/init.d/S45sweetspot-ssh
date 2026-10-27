@@ -46,10 +46,17 @@ case "$1" in
 		# In Buildroot /etc/dropbear e' un collegamento a /var/run/dropbear (tmpfs):
 		# senza altro le chiavi dell'host cambierebbero a ogni avvio. La chiave
 		# si crea una volta e si salva sulla chiavetta, poi si riusa.
+		# ATTENZIONE: la chiave privata e' salvata IN CHIARO sulla chiavetta (FAT,
+		# senza permessi): e' voluto, cosi' l'identita' dell'host resta la stessa
+		# fra un aggiornamento e l'altro e i client non segnalano un falso attacco.
+		# Il rischio: chi ha la chiavetta in mano puo' leggerla e impersonare il
+		# dispositivo (man in the middle verso chi si collega). Non da' accesso al
+		# dispositivo, che resta protetto da password o authorized_keys. Per
+		# rigenerarla: cancellare sweetspot-ssh-host-key dalla chiavetta e riavviare.
 		mkdir -p "$keydir"
 		hostkey=$keydir/dropbear_ed25519_host_key
 		if [ ! -s "$hostkey" ] && stick_mount ro 2> /dev/null; then
-			[ -s "$STICK_MNT/sweetspot-ssh-host-key" ] && cp "$STICK_MNT/sweetspot-ssh-host-key" "$hostkey"
+			[ -s "$STICK_MNT/sweetspot-ssh-host-key" ] && (umask 077; cp "$STICK_MNT/sweetspot-ssh-host-key" "$hostkey")
 			stick_umount
 		fi
 		if [ ! -s "$hostkey" ]; then
