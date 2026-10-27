@@ -357,11 +357,29 @@ https_redirect
 auth_gate
 
 # Legge i campi di un modulo inviato (POST) in variabili F_nome.
+# Tetto al corpo: i moduli sono di poche centinaia di byte (il piu' grande, i
+# profili DSP incollati, sta ben sotto 256 KiB); non ci sono upload di file.
+# Lunghezza non numerica o oltre il tetto: 413 e fine, senza leggere nulla.
+WEB_MAX_POST=${WEB_MAX_POST:-262144}
 read_form() {
 	local body pair k v
 	set -f
 	body=""
 	if [ "$REQUEST_METHOD" = POST ] && [ -n "$CONTENT_LENGTH" ]; then
+		case "$CONTENT_LENGTH" in
+		*[!0-9]*|??????????*) CONTENT_LENGTH=-1 ;;
+		esac
+		if [ "$CONTENT_LENGTH" -lt 0 ] || [ "$CONTENT_LENGTH" -gt "$WEB_MAX_POST" ]; then
+			printf 'Status: 413 Payload Too Large
+Content-Type: text/plain
+Cache-Control: no-store
+'
+			sec_headers
+			printf '
+Richiesta troppo grande
+'
+			exit 0
+		fi
 		body=$(head -c "$CONTENT_LENGTH")
 	fi
 	for pair in $(printf '%s' "$body" | tr '&' ' '); do
