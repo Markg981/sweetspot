@@ -105,8 +105,8 @@ I percorsi `usr/` ed `etc/` sono relativi a `board/sweetspot/rootfs-overlay/`.
    `v*` ([`aggiornamenti.md`](aggiornamenti.md)), cosa che nessun test verifica.
    Il pannello ha una password amministrativa con sessione (`PASSWORD_WEB`,
    `tests/accesso.sh`); il token POST protegge dalle richieste incrociate, non è
-   un login. **Decisione aperta:** il modello di minaccia, in `docs/modello-minaccia.md`
-   (scritto a parte; ipotesi di partenza: LAN fidata). Resta da fare
+   un login. Il modello di minaccia è deciso: LAN fidata, hotspot non fidato
+   ([docs/modello-minaccia.md](modello-minaccia.md)). Resta da fare
    il ripristino semplice delle impostazioni.
 
 ## Ordine di realizzazione e criteri di accettazione
