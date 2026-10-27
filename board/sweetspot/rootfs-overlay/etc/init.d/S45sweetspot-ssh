@@ -75,9 +75,10 @@ case "$1" in
 		fi
 		chmod 600 "$hostkey" 2> /dev/null
 		# shellcheck disable=SC2086
-		# dropbear parte per connessione (-i) sotto tcpsvd, al massimo 2 per indirizzo:
-		# il wrapper conta gli errori e rallenta chi sbaglia.
-		tcpsvd -c 8 -C 2 0.0.0.0 "${SWEETSPOT_SSH_PORT:-22}" sweetspot-ssh-conn $opts -r "$hostkey" &
+		# dropbear parte per connessione (-i) sotto tcpsvd, al massimo 4 per indirizzo
+		# (una sessione con scp e la cattura delle prove audio ne aprono 3): il
+		# wrapper conta gli errori e rallenta chi sbaglia.
+		tcpsvd -c 8 -C 4 0.0.0.0 "${SWEETSPOT_SSH_PORT:-22}" sweetspot-ssh-conn $opts -r "$hostkey" &
 		log "ssh: attivo (utente $user$([ -n "$authkeys" ] && echo ", solo chiavi"))"
 		;;
 	stop) killall tcpsvd dropbear 2>/dev/null ;;

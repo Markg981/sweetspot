@@ -16,7 +16,9 @@ if [ "$n" -ge 5 ]; then
 	[ "$attesa" -gt 60 ] && attesa=60
 	sleep "${SWEETSPOT_SSH_ATTESA:-$attesa}"
 fi
-out=$dir/$ip.log
+# Un registro per connessione: quelle contemporanee dallo stesso indirizzo
+# non devono leggere (o cancellare) quello di un'altra.
+out=$dir/$ip.$$.log
 dropbear -i -E "$@" 2> "$out"
 if grep -q 'auth succeeded' "$out"; then
 	rm -f "$cnt"
