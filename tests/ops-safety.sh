@@ -418,6 +418,33 @@ expect 'stick_mount rw: rimontata scrivibile, successo' 0 "$(stickrw rw,noatime 
 expect 'stick_mount rw: remount che fallisce, errore' 1 "$(stickrw ro,noatime 1)"
 expect 'stick_mount rw: remount "riuscito" ma ancora ro, errore' 1 "$(stickrw ro,noatime 0)"
 
+# M12: la chiavetta non resta scrivibile se chi l'ha montata muore (SIGKILL,
+# OOM) o se lo smontaggio fallisce.
+S=$WORK/stickm12
+mkdir -p "$S/run/chiavetta" "$S/proc/4242"
+stickm12() { # utenti-nel-file "uptime [marca-orfana]" comando...  (i rimontaggi finiscono in $S/mount.log)
+	printf '/dev/sda1 %s/run/chiavetta vfat rw,noatime 0 0\n' "$S" > "$S/proc/mounts"
+	printf '%s' "$1" > "$S/run/chiavetta.utenti"
+	echo "${2%% *} 0" > "$S/proc/uptime"
+	case "$2" in *' '*) echo "${2#* }" > "$S/run/chiavetta.orfana" ;; *) rm -f "$S/run/chiavetta.orfana" ;; esac
+	: > "$S/mount.log"
+	shift 2
+	SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_RUN=$S/run SWEETSPOT_PROCFS=$S/proc SWEETSPOT_LOG=$S/log \
+		$TEST_SH -c '. "$1"; shift; mount() { echo "$*" >> "$S/mount.log"; }; umount() { return 1; }; "$@"' \
+		sh "$OVERLAY/usr/lib/sweetspot/common.sh" "$@" >/dev/null 2>&1
+	cat "$S/mount.log"
+}
+export S
+expect 'stick_umount: smontaggio fallito, rimontata in sola lettura' "-o remount,ro $S/run/chiavetta" "$(stickm12 '' 0 stick_umount)"
+expect 'stick_guardia: processo morto, la prima volta si annota soltanto' "" "$(stickm12 '99999
+' 1000 stick_guardia)"
+expect 'stick_guardia: nessun utilizzatore vivo da 5 minuti, torna ro' "-o remount,ro $S/run/chiavetta" "$(stickm12 '99999
+' '1000 0' stick_guardia)"
+expect 'stick_guardia: nessun utilizzatore vivo da meno di 5 minuti, resta rw' "" "$(stickm12 '99999
+' '1000 800' stick_guardia)"
+expect 'stick_guardia: utilizzatore vivo, resta rw' "" "$(stickm12 '4242
+' '1000 0' stick_guardia)"
+
 # B6: dischi e chiavetta si montano sempre con nosuid,nodev,noexec.
 expect 'dischi: ogni montaggio ha nosuid,nodev,noexec' 0 "$(grep -c 'mount -t.*-o' "$OVERLAY/usr/bin/sweetspot-dischi" >/dev/null; grep 'noload' "$OVERLAY/usr/bin/sweetspot-dischi" | grep -vc 'nosuid,nodev,noexec')"
 expect 'dischi: opzioni comuni aggiunte' 1 "$(grep -c 'opts="$opts,nosuid,nodev,noexec"' "$OVERLAY/usr/bin/sweetspot-dischi")"

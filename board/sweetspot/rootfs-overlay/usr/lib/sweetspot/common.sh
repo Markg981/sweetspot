@@ -1705,21 +1705,36 @@ io_counters() {
 # Il primo che chiede la scrittura la rimonta scrivibile. Il blocco usa il
 # descrittore 6: 8 e 9 sono dei blocchi di sweetspot-dati, sweetspot-config
 # e dei dischi, e riaprirli li scioglierebbe.
+# Gli utilizzatori sono i PID, uno per riga: un processo morto (SIGKILL,
+# OOM) senza stick_umount non tiene piu' la chiavetta occupata.
 STICK_USERS=$RUN/chiavetta.utenti
+# Da quando la chiavetta e' scrivibile senza utilizzatori vivi (stick_guardia)
+STICK_ORFANA=$RUN/chiavetta.orfana
 
 # La chiavetta e' montata scrivibile? (opzioni di montaggio in /proc/mounts)
 stick_is_rw() {
 	awk -v m="$STICK_MNT" '$2 == m { n = split($4, o, ","); for (i = 1; i <= n; i++) if (o[i] == "rw") ok = 1 } END { exit !ok }' "$PROC/mounts" 2>/dev/null
 }
 
+# Toglie dall'elenco i PID che non esistono piu' (con il blocco preso).
+stick_users_prune() {
+	local p keep=''
+	[ -f "$STICK_USERS" ] || return 0
+	while read -r p; do
+		[ -n "$p" ] && [ -d "$PROC/$p" ] && keep="$keep$p
+"
+	done < "$STICK_USERS"
+	printf '%s' "$keep" > "$STICK_USERS"
+}
+
 stick_mount() { # [ro|rw]
-	local dev mode=${1:-ro} n rc=0
+	local dev mode=${1:-ro} rc=0
 	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && { [ -d "$STICK_MNT" ]; return; }
 	mkdir -p "$RUN"
 	exec 6> "$RUN/chiavetta.lock"
 	flock 6
-	n=$(cat "$STICK_USERS" 2>/dev/null)
 	if grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null; then
+		stick_users_prune
 		if [ "$mode" = rw ]; then
 			# Il rimontaggio puo' riuscire a parole e lasciare la chiavetta in
 			# sola lettura (errori del filesystem): si controlla lo stato vero.
@@ -1730,7 +1745,7 @@ stick_mount() { # [ro|rw]
 			fi
 		fi
 	else
-		n=0
+		rm -f "$STICK_USERS"
 		dev=$(stick_device)
 		if [ -n "$dev" ]; then
 			mkdir -p "$STICK_MNT"
@@ -1743,27 +1758,71 @@ stick_mount() { # [ro|rw]
 			rc=1
 		fi
 	fi
-	[ $rc -eq 0 ] && echo $((${n:-0} + 1)) > "$STICK_USERS"
+	[ $rc -eq 0 ] && echo $$ >> "$STICK_USERS"
 	flock -u 6
 	exec 6>&-
 	return $rc
 }
 
 stick_umount() {
-	local n
 	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && return 0
 	exec 6> "$RUN/chiavetta.lock"
 	flock 6
-	n=$(($(cat "$STICK_USERS" 2>/dev/null || echo 1) - 1))
+	# Toglie una sola voce di questo processo (le chiamate possono annidarsi).
+	if [ -f "$STICK_USERS" ]; then
+		awk -v p=$$ '$1 == p && !d { d = 1; next } { print }' "$STICK_USERS" > "$STICK_USERS.nuovo" &&
+			mv "$STICK_USERS.nuovo" "$STICK_USERS"
+	fi
+	stick_users_prune
 	sync
-	if [ $n -le 0 ]; then
-		umount "$STICK_MNT" 2>/dev/null && evento chiavetta smontata
-		rm -f "$STICK_USERS"
-	else
-		echo $n > "$STICK_USERS"
+	if [ ! -s "$STICK_USERS" ]; then
+		if umount "$STICK_MNT" 2>/dev/null; then
+			evento chiavetta smontata
+			rm -f "$STICK_USERS"
+		elif mount -o remount,ro "$STICK_MNT" 2>/dev/null; then
+			# Occupata (un terminale aperto nella cartella...): almeno in sola
+			# lettura, cosi' un taglio di corrente non lascia la FAT sporca.
+			evento chiavetta rimontata "ro (smontaggio non riuscito)"
+		fi
 	fi
 	flock -u 6
 	exec 6>&-
+}
+
+# Controllo periodico (lo chiama il demone sweetspot-stato): la chiavetta
+# scrivibile senza utilizzatori vivi da almeno $1 minuti (predefinito 5) si
+# riporta in sola lettura. Succede dopo un SIGKILL o un OOM di chi l'aveva
+# montata. Il blocco e' in una subshell: nel demone il descrittore 6 e' suo.
+stick_guardia() {
+	[ -n "${SWEETSPOT_STICK_DIR:-}" ] && return 0
+	[ -d "$RUN" ] || return 0
+	(
+		local now u
+		exec 6> "$RUN/chiavetta.lock"
+		flock 6
+		if ! grep -q " $STICK_MNT " "$PROC/mounts" 2>/dev/null || ! stick_is_rw; then
+			rm -f "$STICK_ORFANA"
+			exit 0
+		fi
+		stick_users_prune
+		if [ -s "$STICK_USERS" ]; then
+			rm -f "$STICK_ORFANA"
+			exit 0
+		fi
+		read -r u _ < "$PROC/uptime" 2>/dev/null
+		now=${u%%.*}
+		if [ ! -f "$STICK_ORFANA" ]; then
+			echo "${now:-0}" > "$STICK_ORFANA"
+			exit 0
+		fi
+		read -r u < "$STICK_ORFANA"
+		[ $((${now:-0} - ${u:-0})) -ge $((${1:-5} * 60)) ] || exit 0
+		sync
+		if mount -o remount,ro "$STICK_MNT" 2>/dev/null; then
+			evento chiavetta rimontata "ro (nessun utilizzatore)"
+			rm -f "$STICK_ORFANA"
+		fi
+	)
 }
 
 # --- Due copie del sistema (aggiornamenti con ritorno automatico) ----------------
