@@ -138,11 +138,13 @@ controlla_fat() { # nome
 	fsck.fat -n "$W/fat.img" > "$OUT/fsck-$1.txt" 2>&1 || rc=$?
 	if [ $rc -eq 0 ]; then
 		esito OK "$1: FAT integra (fsck.fat)"
-	elif grep -Eqi "$GUASTI" "$OUT/fsck-$1.txt"; then
-		esito NO "$1: FAT corrotta: $(grep -Ei "$GUASTI" "$OUT/fsck-$1.txt" | head -n 3 | tr '\n' ' ')"
+	elif grep -Ei "$GUASTI" "$OUT/fsck-$1.txt" | grep -vxFf "$OUT/fsck-base.txt" > "$OUT/nuovi-$1.txt" && [ -s "$OUT/nuovi-$1.txt" ]; then
+		esito NO "$1: FAT corrotta (errori nuovi rispetto all'immagine integra): $(head -n 3 "$OUT/nuovi-$1.txt" | tr '\n' ' ')"
 	else
 		fsck.fat -a "$W/fat.img" >> "$OUT/fsck-$1.txt" 2>&1 || true
-		if fsck.fat -n "$W/fat.img" >> "$OUT/fsck-$1.txt" 2>&1; then
+		fsck.fat -n "$W/fat.img" > "$OUT/fsck2-$1.txt" 2>&1 && rc=0 || rc=$?
+		cat "$OUT/fsck2-$1.txt" >> "$OUT/fsck-$1.txt"
+		if [ $rc -eq 0 ] || ! { grep -Ei "$GUASTI" "$OUT/fsck2-$1.txt" | grep -qvxFf "$OUT/fsck-base.txt"; }; then
 			esito OK "$1: FAT senza errori di struttura (solo bit di sporco, sistemato da fsck -a)"
 		else
 			esito NO "$1: FAT non riparabile: $(tail -n 3 "$OUT/fsck-$1.txt" | tr '\n' ' ')"
@@ -163,6 +165,13 @@ mcopy -o -i "$W/disco.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
 printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nBLUETOOTH=no\nLYRION_UTENTE=prova\nLYRION_PASSWORD=%s\n' \
 	"$SSHPASS" "$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/disco.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
+# Segnalazioni gia' presenti nell'immagine prima di ogni taglio (ad esempio la
+# copia del settore di avvio): non dipendono dal taglio e non si contano.
+dd if="$W/disco.img" of="$W/fat.img" bs=1M skip=1 status=none
+fsck.fat -n "$W/fat.img" > "$OUT/fsck-base.txt" 2>&1 || true
+grep -Ei "$GUASTI" "$OUT/fsck-base.txt" > "$OUT/fsck-base.guasti" 2>/dev/null || true
+mv "$OUT/fsck-base.guasti" "$OUT/fsck-base.txt"
+rm -f "$W/fat.img"
 
 echo "== Pacchetto di prova firmato con una chiave creata qui"
 mkdir -p "$W/pkg" "$W/guest-cut"
