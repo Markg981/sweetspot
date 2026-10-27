@@ -135,7 +135,7 @@ sed -i 's/quiet loglevel=3 /console=tty0 console=ttyS0,115200 /' "$W/grub.cfg"
 mcopy -o -i "$W/chiavetta.img@@1M" "$W/grub.cfg" ::/boot/grub/grub.cfg
 mcopy -o -i "$W/chiavetta.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
 # Le impostazioni della chiavetta passano al disco: SSH anche dopo.
-printf '\nSSH=si\nSSH_PASSWORD=%s\n' "$SSHPASS" >> "$W/sweetspot.txt"
+printf '\nSSH=si\nSSH_UTENTE=root\nSSH_PASSWORD=%s\n' "$SSHPASS" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/chiavetta.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
 
 echo "== SSD con Windows e 5 GB non allocati"

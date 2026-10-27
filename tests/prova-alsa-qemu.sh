@@ -67,7 +67,7 @@ mcopy -o -i "$W/disco.img@@1M" ::/boot/grub/grub.cfg "$W/grub.cfg"
 sed -i 's/quiet loglevel=3 /console=tty0 console=ttyS0,115200 /' "$W/grub.cfg"
 mcopy -o -i "$W/disco.img@@1M" "$W/grub.cfg" ::/boot/grub/grub.cfg
 mcopy -o -i "$W/disco.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
-printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nDAC=prova-alsa-nessun-dac\nLYRION_UTENTE=%s\nLYRION_PASSWORD=%s\n' \
+printf '\nSSH=si\nSSH_UTENTE=root\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nDAC=prova-alsa-nessun-dac\nLYRION_UTENTE=%s\nLYRION_PASSWORD=%s\n' \
 	"$SSHPASS" "$LYRION_UTENTE" "$LYRION_PASSWORD" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/disco.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
 

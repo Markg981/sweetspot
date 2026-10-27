@@ -4207,15 +4207,28 @@ rm -rf "$SSHT"; mkdir -p "$SSHT/bin" "$SSHT/stick" "$SSHT/run"
 printf '#!/bin/sh\necho "$*" > "%s/args"\n' "$SSHT" > "$SSHT/bin/dropbear"
 printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done\necho nuova > "$f"\n' > "$SSHT/bin/dropbearkey"
 printf '#!/bin/sh\ncat > /dev/null\n' > "$SSHT/bin/chpasswd"
+printf '#!/bin/sh\nshift 5\necho "$*" > "%s/args"\n' "$SSHT" > "$SSHT/bin/tcpsvd"
 chmod +x "$SSHT/bin/"*
 ssh_avvia() { # utente
-	printf 'SSH=si\nSSH_PASSWORD=segreta\nSSH_UTENTE=%s\n' "$1" > "$SSHT/run/sweetspot.conf"
-	rm -f "$SSHT/args"
+	printf 'SSH=si\nSSH_PASSWORD=%s\nSSH_UTENTE=%s\n' "${2:-segretissima1}" "$1" > "$SSHT/run/sweetspot.conf"
+	rm -f "$SSHT/args" "$SSHT/log"
 	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$SSHT/run SWEETSPOT_STICK_DIR=$SSHT/stick \
 		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH=$SSHT/bin SWEETSPOT_SSH_KEYDIR=$SSHT/keys \
 		SWEETSPOT_SSH_HOME=$SSHT/home SWEETSPOT_SSH_PORT=2222 SWEETSPOT_LOG=$SSHT/log \
 		$TEST_SH "$OVERLAY/etc/init.d/S45sweetspot-ssh" start > /dev/null 2>&1
+	# tcpsvd parte in secondo piano: si attende che scriva gli argomenti.
+	i=0; while [ ! -e "$SSHT/args" ] && ! grep -q 'troppo corta' "$SSHT/log" 2> /dev/null && [ $i -lt 20 ]; do sleep 0.2; i=$((i + 1)); done
 }
+ssh_avvia root corta8ch
+expect "ssh: password di 8 caratteri rifiutata, dropbear non parte" "no|1" 	"$([ -e "$SSHT/args" ] && echo si || echo no)|$(grep -c 'password troppo corta' "$SSHT/log")"
+ssh_avvia root 123456789012
+expect "ssh: password di 12 caratteri accettata" "si" "$([ -e "$SSHT/args" ] && echo si || echo no)"
+printf 'SSH=si
+SSH_PASSWORD=segretissima1
+' > "$SSHT/run/sweetspot.conf"; rm -f "$SSHT/args"
+SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$SSHT/run SWEETSPOT_STICK_DIR=$SSHT/stick 	SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_PATH=$SSHT/bin SWEETSPOT_SSH_KEYDIR=$SSHT/keys 	SWEETSPOT_SSH_HOME=$SSHT/home SWEETSPOT_LOG=$SSHT/log $TEST_SH "$OVERLAY/etc/init.d/S45sweetspot-ssh" start > /dev/null 2>&1
+sleep 1
+expect "ssh: utente predefinito assistenza (con -w, root escluso)" "si|assistenza" 	"$(grep -q -e ' -w' "$SSHT/args" && echo si || echo no)|$(grep -h '^SSH_UTENTE=' "$OVERLAY/etc/sweetspot/defaults.conf" | cut -d= -f2)"
 ssh_avvia root
 expect "ssh: senza chiavi resta la password, con limite ai tentativi" "1|1|0" \
 	"$(grep -c -e '-T 3' "$SSHT/args")|$(grep -c -e '-r .*dropbear_ed25519_host_key' "$SSHT/args")|$(grep -c -e ' -s' "$SSHT/args")"
@@ -4230,6 +4243,14 @@ expect "ssh: con chiavi password spente (-s) e per root (-g)" "1|1|ssh-ed25519 A
 ssh_avvia assistenza
 expect "ssh: utente assistenza con chiavi, root disattivato (-w), niente -g" "1|1|0" \
 	"$(grep -c -e ' -s' "$SSHT/args")|$(grep -c -e ' -w' "$SSHT/args")|$(grep -c -e ' -g' "$SSHT/args")"
+printf '#!/bin/sh
+echo "Bad password attempt for x" >&2
+' > "$SSHT/bin/dropbear"; chmod +x "$SSHT/bin/dropbear"
+rm -rf "$SSHT/st"
+for i in 1 2 3 4 5 6; do
+	TCPREMOTEIP=10.0.0.9 SWEETSPOT_SSH_STATE=$SSHT/st SWEETSPOT_SSH_ATTESA=0 PATH=$SSHT/bin:$PATH 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-ssh-conn" > /dev/null 2>&1
+done
+expect "ssh: errori contati per indirizzo, dopo 5 scatta il ritardo" "6" "$(cat "$SSHT/st/10.0.0.9")"
 echo "Media server UPnP/DLNA"
 MSD=$WEB/mediaserver
 mkdir -p "$MSD/run"

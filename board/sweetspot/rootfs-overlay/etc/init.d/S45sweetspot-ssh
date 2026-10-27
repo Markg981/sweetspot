@@ -8,15 +8,18 @@
 case "$1" in
 	start)
 		is_yes "$(conf SSH no)" || exit 0
-		user=$(lower "$(conf SSH_UTENTE root)")
+		user=$(lower "$(conf SSH_UTENTE assistenza)")
 		case "$user" in
 			root|assistenza) ;;
 			*) log "ssh: utente $user non ammesso, non avviato"; exit 0 ;;
 		esac
+		# Utente predefinito: assistenza, senza privilegi. root solo se lo si
+		# sceglie in modo esplicito.
 		# Chiavi autorizzate: file "authorized_keys" sulla chiavetta. Se ci sono,
 		# le password sono spente del tutto (-s) e root non entra con la password
 		# (-g): niente brute force. Altrimenti resta la password, con al massimo
-		# 3 tentativi per connessione (-T).
+		# 3 tentativi per connessione (-T) e, tra le connessioni, il ritardo
+		# crescente di sweetspot-ssh-conn dopo 5 errori dallo stesso indirizzo.
 		keydir=${SWEETSPOT_SSH_KEYDIR:-/var/run/dropbear}
 		home=${SWEETSPOT_SSH_HOME:-$(if [ "$user" = root ]; then echo /root; else echo "/home/$user"; fi)}
 		authkeys=""
@@ -24,7 +27,7 @@ case "$1" in
 			[ -s "$STICK_MNT/authorized_keys" ] && authkeys=$(cat "$STICK_MNT/authorized_keys")
 			stick_umount
 		fi
-		opts="-R -T 3"
+		opts="-T 3"
 		[ "$user" = root ] || opts="$opts -w"
 		pass=$(conf SSH_PASSWORD)
 		if [ -n "$authkeys" ]; then
@@ -37,6 +40,9 @@ case "$1" in
 			[ "$user" = root ] && opts="$opts -g"
 		elif [ -z "$pass" ]; then
 			log "ssh: attivato senza password ne' chiavi, non avviato"
+			exit 0
+		elif [ "${#pass}" -lt 12 ]; then
+			log "errore: ssh: password troppo corta (minimo 12 caratteri), non avviato"
 			exit 0
 		else
 			# La password arriva a chpasswd dall'ingresso standard, mai nella riga di comando.
@@ -69,9 +75,12 @@ case "$1" in
 		fi
 		chmod 600 "$hostkey" 2> /dev/null
 		# shellcheck disable=SC2086
-		dropbear $opts -r "$hostkey" -p "${SWEETSPOT_SSH_PORT:-22}"
+		# dropbear parte per connessione (-i) sotto tcpsvd, al massimo 4 per indirizzo
+		# (una sessione con scp e la cattura delle prove audio ne aprono 3): il
+		# wrapper conta gli errori e rallenta chi sbaglia.
+		tcpsvd -c 8 -C 4 0.0.0.0 "${SWEETSPOT_SSH_PORT:-22}" sweetspot-ssh-conn $opts -r "$hostkey" &
 		log "ssh: attivo (utente $user$([ -n "$authkeys" ] && echo ", solo chiavi"))"
 		;;
-	stop) killall dropbear 2>/dev/null ;;
+	stop) killall tcpsvd dropbear 2>/dev/null ;;
 	*) echo "uso: $0 start|stop" ;;
 esac
