@@ -102,6 +102,11 @@ jobs:
         run: |
           sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass dosfstools
           sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-robustezza-qemu.sh sweetspot.img.xz
+      - name: Taglio di corrente durante l'aggiornamento in QEMU
+        if: ${{ !cancelled() && inputs.qemu && matrix.scheda == 'x86_64' }}
+        run: |
+          sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass dosfstools minisign
+          sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-taglio-corrente-qemu.sh sweetspot.img.xz
       - name: Evidenza delle prove
         if: ${{ always() && inputs.qemu && matrix.scheda == 'x86_64' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
