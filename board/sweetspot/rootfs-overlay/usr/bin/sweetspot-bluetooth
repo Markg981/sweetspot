@@ -47,6 +47,7 @@ BT_SORV_PID=$RUN/bluetooth.pid
 BT_D_PID=$RUN/bluetoothd.pid
 BT_A_PID=$RUN/bluealsa.pid
 BT_P_PID=$RUN/bluealsa-aplay.pid
+BT_V_PID=$RUN/bluealsa-tetto.pid
 BT_STICK_FILE=sweetspot-dati/bluetooth.tar
 SUPERVISORE_PID=$RUN/supervisore.pid
 BT_SONDA=${SWEETSPOT_BT_SONDA:-1}
@@ -190,7 +191,7 @@ start_services() {
 
 stop_services() {
 	local f p
-	for f in "$BT_P_PID" "$BT_A_PID" "$BT_D_PID"; do
+	for f in "$BT_V_PID" "$BT_P_PID" "$BT_A_PID" "$BT_D_PID"; do
 		p=$(cat "$f" 2>/dev/null)
 		[ -n "$p" ] && kill "$p" 2>/dev/null
 		rm -f "$f"
@@ -400,6 +401,51 @@ aplay_start() { # dispositivo ALSA
 	running "$BT_P_PID"
 }
 
+# Tetto di volume: bluealsa-aplay suona su hw: senza CamillaDSP ne' limitatore,
+# quindi il livello dipende dal telefono. BLUETOOTH_VOLUME_MAX (0-100, % della
+# scala A2DP 0-127) e' il massimo: ogni PCM A2DP sopra il tetto viene riportato
+# al tetto (compreso il primo livello del telefono); sotto il tetto il telefono
+# regola liberamente. Serve bluealsa-cli; senza, avviso e comportamento di prima.
+bt_tetto_max() {
+	local v
+	v=$(conf BLUETOOTH_VOLUME_MAX 25)
+	case "$v" in ''|*[!0-9]*) v=25 ;; esac
+	[ "$v" -gt 100 ] && v=100
+	echo $(( v * 127 / 100 ))
+}
+
+# Una passata: per ogni PCM porta al tetto i canali che lo superano.
+bt_tetto_applica() { # tetto
+	local pcm n alto
+	for pcm in $(bluealsa-cli list-pcms 2>/dev/null | grep '^/'); do
+		alto=0
+		for n in $(bluealsa-cli volume "$pcm" 2>/dev/null | sed -n 's/^[Vv]olume[^0-9]*//p'); do
+			case "$n" in ''|*[!0-9]*) continue ;; esac
+			[ "$n" -gt "$1" ] && alto=1
+		done
+		[ "$alto" = 1 ] || continue
+		bluealsa-cli volume "$pcm" "$1" "$1" > /dev/null 2>&1 || bluealsa-cli volume "$pcm" "$1" > /dev/null 2>&1
+	done
+}
+
+tetto_start() {
+	local t
+	command -v bluealsa-cli > /dev/null 2>&1 || {
+		log "bluetooth: ATTENZIONE bluealsa-cli assente, nessun tetto di volume sul telefono"
+		return 0
+	}
+	t=$(bt_tetto_max)
+	bt_tetto_applica "$t"
+	(
+		while :; do
+			sleep 1
+			bt_tetto_applica "$t"
+		done
+	) > /dev/null 2>&1 &
+	echo $! > "$BT_V_PID"
+	log "bluetooth: tetto di volume del telefono a $t/127 (BLUETOOTH_VOLUME_MAX=$(conf BLUETOOTH_VOLUME_MAX 25))"
+}
+
 handoff_start() {
 	local card dev
 	card=$(dac_find) || card=""
@@ -412,6 +458,7 @@ handoff_start() {
 	echo "$$" > "$BT_DAC"
 	stop_player
 	echo "$card" > "$BT_ATTIVO"
+	tetto_start
 	# Prima l'uscita diretta (hw:); se il DAC non accetta il formato A2DP
 	# (44,1 o 48 kHz, 16 bit) ripiego su plughw: con avviso nel registro.
 	if aplay_start "hw:$card,$dev"; then
@@ -428,6 +475,9 @@ handoff_start() {
 
 handoff_end() {
 	local p
+	p=$(cat "$BT_V_PID" 2>/dev/null)
+	[ -n "$p" ] && kill "$p" 2>/dev/null
+	rm -f "$BT_V_PID"
 	p=$(cat "$BT_P_PID" 2>/dev/null)
 	[ -n "$p" ] && kill "$p" 2>/dev/null
 	rm -f "$BT_P_PID" "$BT_ATTIVO"
