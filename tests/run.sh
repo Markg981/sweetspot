@@ -1688,6 +1688,11 @@ printf '\002\276\023\005\000\061\042\033\000\006\366\004\064\005\104\063\042\021
 expect "database AccurateRip letto" "1 5 11223344|2 7 55667788|1 2 aabbccdd|2 1 01020304" "$(cdrun "ar_parse $CD/db.bin" | tr '\n' '|' | sed 's/|$//')"
 expect "nomi di file validi ovunque" "AC-DC - Back in Black_" "$(cdrun "file_name 'AC/DC: Back in Black?'")"
 expect "nomi di file: virgolette e punti finali" "Sinfonia 'Eroica'" "$(cdrun "file_name ' Sinfonia \"Eroica\"...'")"
+# Titolo CJK lungo (3 byte a carattere): il nome resta entro 255 byte con ".flac" e prefisso e non spezza i caratteri
+cjk=$(i=0; while [ $i -lt 150 ]; do printf '音楽'; i=$((i + 1)); done)
+exp=$(i=0; while [ $i -lt 33 ]; do printf '音楽'; i=$((i + 1)); done)
+expect "nomi di file: CJK tagliato a 198 byte senza spezzare caratteri" "$exp" "$(cdrun "file_name '$cjk'")"
+expect "nomi di file: corto invariato" "音楽" "$(cdrun "file_name '音楽'")"
 expect "posizione sul disco" "21:12.62" "$(cdrun "sect_time 95462")"
 
 echo "Dischi nella libreria"
