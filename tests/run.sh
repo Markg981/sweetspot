@@ -1824,6 +1824,31 @@ upd conferma
 expect "la nuova versione si conferma" "b|" "$(genv slot)|$(genv tentato)"
 expect "aggiornamento riuscito segnalato" "riuscita=1" "$(upd stato | grep '^riuscita=')"
 expect "menu di avvio aggiornato dopo la conferma" "menu nuovo" "$(cat "$UPD/stick/boot/grub/grub.cfg")"
+# GRUB per BIOS: un file al posto del disco; dd che fallisce al secondo
+# stadio (rimesso com'era) o al primo (anche il secondo ripristinato).
+GB=$UPD/grubbios
+mkdir -p "$GB/bin" "$GB/run/aggiornamento"
+head -c 1100 /dev/zero | tr '\0' 'N' > "$GB/avvio-grub.img"
+head -c 512 /dev/zero | tr '\0' 'B' > "$GB/avvio-boot.img"
+printf '#!/bin/sh\ncase "$*" in *"$DD_FALLISCI"*) [ -n "$DD_FALLISCI" ] && exit 1 ;; esac\nexec dd "$@"\n' > "$GB/bin/dd"
+chmod +x "$GB/bin/dd"
+grubbios() { # fallimento: stringa che fa fallire un dd
+	head -c 4096 /dev/zero | tr '\0' 'V' > "$GB/disco"
+	cp "$GB/disco" "$GB/disco.prima"
+	SWEETSPOT_RUN=$GB/run SWEETSPOT_LOG=$GB/log SWEETSPOT_AVVIO=$GB SWEETSPOT_TEST=1 DD_FALLISCI=$1 \
+		$TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-aggiorna; AVVIO=$GB; DIR=$GB/run/aggiornamento
+		cp $GB/avvio-grub.img $GB/grub.img; cp $GB/avvio-boot.img $GB/boot.img
+		dd() { $GB/bin/dd \"\$@\"; }
+		dd if=$GB/disco bs=512 skip=1 count=3 2>/dev/null | head -c 1100 > \$DIR/grub.ora
+		dd if=$GB/disco bs=440 count=1 2>/dev/null > \$DIR/mbr.ora
+		head -c 440 $GB/boot.img > \$DIR/mbr.nuovo
+		blockdev() { :; }
+		scrivi_grub_bios $GB/disco 3; echo \$?"
+}
+expect "GRUB per BIOS scritto e riletto" "0|1" "$(grubbios '' | tail -1)|$(cmp -s "$GB/disco" "$GB/disco.prima" && echo 0 || echo 1)"
+expect "GRUB per BIOS: primo stadio nuovo" "BBB" "$(dd if="$GB/disco" bs=1 count=3 2>/dev/null)"
+expect "GRUB per BIOS: dd del secondo stadio fallito, disco com'era" "1|0" "$(grubbios 'grub.img' | tail -1)|$(cmp -s "$GB/disco" "$GB/disco.prima" && echo 0 || echo 1)"
+expect "GRUB per BIOS: dd del primo stadio fallito, disco com'era" "1|0" "$(grubbios 'mbr.nuovo' | tail -1)|$(cmp -s "$GB/disco" "$GB/disco.prima" && echo 0 || echo 1)"
 # Con la password delle pagine l'httpd risponde 401 a chi non si presenta:
 # la conferma usa l'utente sweetspot con la chiave di questo avvio.
 printf '#!/bin/sh\nfor a; do case "$a" in *jsonrpc*) echo "{\\"result\\":{\\"_version\\":\\"9\\"}}"; exit 0 ;; http://sweetspot:0123456789abcdef0123456789abcdef@127.0.0.1/cgi-bin/vivo) exit 0 ;; esac; done\nexit 1\n' > "$UPD/bin/wget-401"
