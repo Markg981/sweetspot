@@ -280,11 +280,11 @@ class StudioLyrionTests(unittest.TestCase):
     def test_trasporto_volume_seek_e_coda(self):
         a = self.album("Alpha")
         self.post(op="carica", kind="album", id=a["id"], mode="load")
-        attendi("in riproduzione", lambda: self.stato().get("mode") == "play")
-        self.post(op="pausa", v="1")
-        attendi("in pausa", lambda: self.stato().get("mode") == "pause")
-        self.post(op="pausa", v="0")
-        attendi("riparte", lambda: self.stato().get("mode") == "play")
+        # Il brano deve essere davvero in corso (non solo in caricamento).
+        attendi("brano in corso", lambda: float(self.stato().get("time", 0)) > 1)
+        # Pausa e ripresa sono idempotenti: si ripetono finche' il player segue.
+        attendi("in pausa", lambda: self.post(op="pausa", v="1") and self.stato().get("mode") == "pause", 30)
+        attendi("riparte", lambda: self.post(op="pausa", v="0") and self.stato().get("mode") == "play", 30)
         self.post(op="volume", v="37")
         self.assertEqual(int(self.stato()["mixer volume"]), 37)
         self.post(op="seek", v="20")
