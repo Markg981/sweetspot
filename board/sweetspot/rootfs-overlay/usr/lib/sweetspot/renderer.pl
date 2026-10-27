@@ -996,6 +996,12 @@ sub handle_http {
 			return http_reply($c, 412, 'text/plain', "CALLBACK mancante\n") unless @urls;
 			return http_reply($c, 412, 'text/plain', "CALLBACK troppo lungo\n") if grep { length $_ > $MAX_CB_LEN } @urls;
 			splice @urls, $MAX_CALLBACKS if @urls > $MAX_CALLBACKS;
+			# Anti-SSRF: niente userinfo, frammento, query, backslash, spazi o caratteri di controllo: con
+			# 'http://127.0.0.1:9000#@IP/x' cb_host vedrebbe IP mentre HTTP::Tiny contatterebbe 127.0.0.1.
+			if (grep { !m{^http://[^/@#?\\[:space:][:cntrl:]]+(?:/[^@#?\\[:space:][:cntrl:]]*)?$}i } @urls) {
+				logm("SUBSCRIBE rifiutato: CALLBACK con caratteri non ammessi");
+				return http_reply($c, 412, 'text/plain', "CALLBACK non ammessa\n");
+			}
 			# Anti-SSRF: il NOTIFY parte solo verso chi ha chiesto l'abbonamento, mai verso altri host della LAN.
 			my $peer = lc($c->peerhost // '');
 			$peer =~ s/^::ffff://;
