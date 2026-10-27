@@ -20,7 +20,7 @@
 LMS_WEB=1
 export LMS_WEB
 
-JT='tags:acdltyoITrKe'
+JT='tags:acdltyoITrKeA'
 
 rispondi() { # CODICE_HTTP JSON
 	[ "$1" = 200 ] || printf 'Status: %s\r\n' "$1"

@@ -103,9 +103,19 @@ L'interfaccia **Material** di Lyrion resta raggiungibile dal collegamento
 nessuna preferenza esistente viene cancellata. Funzionano anche le app per
 Lyrion (iPeng, Squeezer, Material) e gli altri player Squeezebox della casa.
 Il frontend è provato con Lyrion e `sweetspot-priv` simulati
-(`tests/reference-studio.py` e prove in browser a 320, 390, 768 e 1440 px),
-non ancora con un Lyrion vero (limite noto: la prova con un Lyrion reale
-non è stata fatta).
+(`tests/reference-studio.py` e prove in browser a 320, 390, 768 e 1440 px) e,
+lato server, con un Lyrion vero: `tests/prova-studio-lyrion.sh` (job
+`studio-lyrion` della CI) avvia il container ufficiale Lyrion 9.1.1, una
+libreria generata (FLAC sintetici, due album, una copertina incorporata) e
+un player finto (squeezelite con scheda audio simulata a tempo reale) e fa
+girare le vere CGI `studio-api.json` e `studio-copertina` con la vera
+`sweetspot-lms`: elenchi di album, artisti, generi, brani, cartelle e player,
+ricerca (anche con accenti e più parole), copertine JPEG, e i comandi al
+player (carica/aggiungi, play, pausa, stop, avanti, indietro, salta, togli,
+svuota, volume, posizione, zona) verificati sullo stato reale del player.
+Non coperti: la separazione di utenti di `sweetspot-priv` (nella prova è un
+passacarte), Lyrion protetto da password, la pagina `studio.js` in un
+browser contro il Lyrion vero, e l'audio su hardware.
 
 L'aspetto **Reference Studio** usa grafite, blu e controlli leggibili su
 telefono, tablet e computer. Le impostazioni SweetSpot hanno la stessa
