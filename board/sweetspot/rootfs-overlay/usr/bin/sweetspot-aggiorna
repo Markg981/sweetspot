@@ -51,6 +51,17 @@ PAUSABLE=$RUN/sospendibili
 # AGGIORNAMENTI_URL in sweetspot.txt: un altro indirizzo (es. per una copia
 # del progetto su GitHub), nella forma dell'API delle release di GitHub.
 RELEASES=${SWEETSPOT_RELEASES:-$(conf AGGIORNAMENTI_URL https://api.github.com/repos/Markg981/sweetspot/releases/latest)}
+# Solo https anche dopo un redirect, salvo un AGGIORNAMENTI_URL http scelto
+# apposta (stessa regola del controllo dell'indirizzo del pacchetto).
+case "$RELEASES" in
+	http://*) CURL_PROTO="=http,https" ;;
+	*) CURL_PROTO="=https" ;;
+esac
+# Tetti alla dimensione: la risposta dell'API e' un JSON di pochi KB (1 MB e'
+# larghissimo); il pacchetto (kernel + rootfs compressi) sta nell'ordine delle
+# centinaia di MB, 1 GiB blocca un file enorme prima che riempia disco o tmpfs.
+MAX_JSON=1048576
+MAX_PKG=${SWEETSPOT_MAX_PKG:-1073741824}
 AVVIO=${SWEETSPOT_AVVIO:-/usr/share/sweetspot/avvio}
 # Scheda del sistema (x86_64, rpi): il pacchetto deve essere per lei.
 ARCH=${SWEETSPOT_ARCH:-$(board)}
@@ -120,7 +131,7 @@ do_check() {
 	local json tag url size
 	mkdir -p "$DIR"
 	rm -f "$DIR/disponibile" "$DIR/note"
-	json=$(curl -fsSL --max-time 30 -H 'Accept: application/vnd.github+json' "$RELEASES" 2>/dev/null) ||
+	json=$(curl -fsSL --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" --max-filesize "$MAX_JSON" --max-time 30 -H 'Accept: application/vnd.github+json' "$RELEASES" 2>/dev/null) ||
 		{ echo "errore=impossibile contattare GitHub: controlla la connessione a internet"; return 1; }
 	tag=$(printf '%s' "$json" | jq -r '.tag_name // empty')
 	url=$(printf '%s' "$json" | jq -r --arg n "$PKG_NAME" '.assets[]? | select(.name == $n) | .browser_download_url' | head -n 1)
@@ -156,7 +167,9 @@ prepare_slot() {
 	other=$(other_slot "$slot")
 	env=$(boot_env)
 	grubenv_set "$env" "slot=$slot" prova= tentato= || return 1
+	# Anche i resti di un'esecuzione interrotta di colpo (corrente, SIGKILL).
 	rm -rf "$STICK_MNT/aggiornamento.tmp"
+	rm -f "$STICK_MNT/aggiornamento.tar.tmp"
 	mkdir -p "$STICK_MNT/aggiornamento.tmp" || return 1
 	sync
 	slot_dir "$STICK_MNT" "$other"
@@ -336,6 +349,9 @@ install_package() { # cartella_estratta cartella_copia copia versione
 release_stick() {
 	[ "${STICK_HELD:-0}" = 1 ] || return 0
 	STICK_HELD=0
+	# Su ogni uscita (errore, SIGTERM) non restano file temporanei sulla chiavetta.
+	rm -rf "$STICK_MNT/aggiornamento.tmp"
+	rm -f "$STICK_MNT/aggiornamento.tar.tmp"
 	stick_umount
 }
 
@@ -410,7 +426,7 @@ install_job() { # url|file SORGENTE
 		# Se la modalita' ascolto sospende lo scaricamento a lungo, la
 		# connessione puo' cadere: si riprova da capo, fino a 5 volte.
 		while :; do
-			curl -fsSL --connect-timeout 30 --speed-time 120 --speed-limit 1 -o "$archive" "$src" 2>/dev/null && break
+			curl -fsSL --proto "$CURL_PROTO" --proto-redir "$CURL_PROTO" --max-filesize "$MAX_PKG" --connect-timeout 30 --speed-time 120 --speed-limit 1 -o "$archive" "$src" 2>/dev/null && break
 			if [ $try -ge 5 ]; then
 				err="scaricamento non riuscito: controlla la connessione a internet e riprova"
 				break
