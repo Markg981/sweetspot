@@ -4237,6 +4237,12 @@ expect "media server: tutta la libreria, anche dietro i collegamenti" "1|1|1" 	"
 ' "$msconf" | grep -c '^media_dir=A,/musica$')|$(printf '%s
 ' "$msconf" | grep -c '^wide_links=yes$')|$(printf '%s
 ' "$msconf" | grep -c '^inotify=yes$')"
+msif() {
+	printf 'DLNA_INTERFACCE=%s
+' "$1" > "$MSD/run/sweetspot.conf"
+	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica" | grep -c '^network_interface='
+}
+expect "media server: interfacce solo se valide, vuote = tutte" "1|0|0|0|0" 	"$(msif eth0,wlan0.1)|$(msif '')|$(msif 'eth0;rm')|$(msif 'eth0,,wlan0')|$(msif ',eth0')"
 expect "media server: senza privilegi, nome del player ripulito" "1|1" 	"$(printf '%s
 ' "$msconf" | grep -c '^user=dlna$')|$(printf '%s
 ' "$msconf" | grep -c '^friendly_name=Salotto_rm (libreria)$')"
