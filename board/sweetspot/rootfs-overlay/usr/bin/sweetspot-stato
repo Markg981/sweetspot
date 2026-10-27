@@ -242,7 +242,7 @@ lv_lyrion() { # momento
 }
 
 lv_player() { # momento
-	local now=$1 since=0 last=0 bo=0 nrest=0 pid mac mode_now T
+	local now=$1 since=0 last=0 bo=0 nrest=0 pid mac mode_now T cpu pcpu=''
 	LV_PLY_STATO=n/d
 	# Il DAC e' del Bluetooth (sweetspot-bluetooth): non e' un blocco.
 	if bt_dac_busy; then
@@ -256,7 +256,8 @@ lv_player() { # momento
 		rm -f "$LV_PLY"
 		return 0
 	fi
-	[ -r "$LV_PLY" ] && read -r since last bo nrest < "$LV_PLY"
+	[ -r "$LV_PLY" ] && read -r since last bo nrest pcpu < "$LV_PLY"
+	[ "$pcpu" = - ] && pcpu=''
 	T=$(lv_num LIVENESS_PLAYER_SECONDI 20)
 	LV_PLY_STATO=ok
 	if dac_playing; then
@@ -271,6 +272,13 @@ lv_player() { # momento
 		return 0
 	fi
 	[ "${since:-0}" -gt 0 ] || since=$now
+	# Avvio lento (stream remoto, UPnP): il PCM non e' RUNNING ma il processo
+	# lavora (la CPU avanza fra due campioni). Come nel controllo funzionale
+	# e' attesa di dati, non un blocco: il conteggio riparte e non si uccide.
+	cpu=$(lv_cpu "$pid")
+	if [ -n "$cpu" ] && [ -n "$pcpu" ] && [ "$cpu" != "$pcpu" ]; then
+		since=$now
+	fi
 	if [ $(( now - since )) -ge "$T" ]; then
 		LV_PLY_STATO=bloccato
 		lv_row ERRORE "Player" "bloccato: Lyrion dice play ma il PCM ALSA non e' RUNNING da $(( now - since )) s (soglia $T s, riavvii ${nrest:-0})"
@@ -289,7 +297,7 @@ lv_player() { # momento
 			since=$now
 		fi
 	fi
-	lv_save "$LV_PLY" "$since ${last:-0} ${bo:-0} ${nrest:-0}"
+	lv_save "$LV_PLY" "$since ${last:-0} ${bo:-0} ${nrest:-0} ${cpu:--}"
 }
 
 # --- Limite di riavvii e controlli funzionali ----------------------------------
@@ -569,7 +577,7 @@ liveness_round() { # momento
 	lv_lyrion "$1"
 	lv_player "$1"
 	[ -r "$LV_LMS" ] && read -r _ _ _ _ ln < "$LV_LMS"
-	[ -r "$LV_PLY" ] && read -r _ _ _ pn < "$LV_PLY"
+	[ -r "$LV_PLY" ] && read -r _ _ _ pn _ < "$LV_PLY"
 	LV_JSON=$(printf '"liveness":{"attiva":true,"lyrion":{"stato":"%s","fallimenti":%s,"riavvii":%s},"player":{"stato":"%s","riavvii":%s}}' \
 		"$LV_LYR_STATO" "$LV_LYR_FAILS" "${ln:-0}" "$LV_PLY_STATO" "${pn:-0}")
 	lv_fn_report

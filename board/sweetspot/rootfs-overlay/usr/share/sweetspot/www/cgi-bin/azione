@@ -741,8 +741,12 @@ case "$F_a" in
 
 	ripristina)
 		[ "$F_conferma" = si ] || done_to sistema "Per ripristinare conferma che tutte le impostazioni torneranno quelle iniziali."
-		priv sweetspot-config ripristina
+		# Azzera la configurazione e riavvia: conferma forte (password di
+		# queste pagine e gettone monouso), non basta la sessione.
+		confirm_or_stop sistema "ripristinare le impostazioni iniziali"
+		priv_confirm "$F_ct" "$F_conferma_password" sweetspot-config ripristina
 		rc=$?
+		[ $rc -eq 126 ] && confirm_refused sistema
 		[ $rc -eq 1 ] && done_to sistema "Ripristino non riuscito."
 		# Senza chiavetta un riavvio riporterebbe le impostazioni di prima.
 		[ $rc -eq 2 ] && done_to sistema "Chiavetta non trovata: le impostazioni iniziali valgono solo fino al riavvio."

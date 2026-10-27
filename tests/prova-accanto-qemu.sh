@@ -205,6 +205,17 @@ if [ "$p4" = "0700 Sweetspot" ] && [ "$(len 4)" = 8388608 ]; then
 else
 	esito NO "partizione 4: '$p4' ($(len 4 2>/dev/null) settori)"
 fi
+# Bit 62 (nascosta) e 63 (niente lettera di unita') perche' Windows non la proponga come disco.
+if sgdisk -i 4 "$W/ssd.img" | grep -qi 'Attribute flags: C000000000000000'; then
+	esito OK "partizione 4 nascosta a Windows (attributi GPT 62 e 63)"
+else
+	esito NO "attributi GPT della partizione 4: $(sgdisk -i 4 "$W/ssd.img" | grep -i 'Attribute flags')"
+fi
+if mtype -i "$W/ssd.img@@$(($(off 4) * 512))" ::/boot/grub/esp.cfg 2> /dev/null | grep -q '^set sweetspot_esp=.\+'; then
+	esito OK "esp.cfg con l'UUID della partizione EFI di Windows"
+else
+	esito NO "manca esp.cfg (UUID della partizione EFI) nella partizione nuova"
+fi
 impronte "$OUT/impronte-dopo.txt"
 if cmp -s "$OUT/impronte-prima.txt" "$OUT/impronte-dopo.txt"; then
 	esito OK "partizioni di Windows identiche (EFI, MSR, Windows)"

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - firewall dell'hotspot di configurazione (nftables).
+# Caricato da sweetspot-firewall con "define AP_IF" davanti. Riguarda solo i
+# pacchetti in ingresso dalla scheda dell'access point: chi si collega a
+# "Sweetspot-XXXX" raggiunge DHCP, DNS e le pagine (80, 443), nient'altro
+# (Lyrion, SMB, DLNA, renderer, SSH restano chiusi). Cavo e Wi-Fi di casa non
+# sono toccati: la politica della catena e' accept.
+table inet sweetspot_hotspot {
+	chain ingresso {
+		type filter hook input priority 0; policy accept;
+		iifname != $AP_IF accept
+		ct state established,related accept
+		udp dport { 53, 67 } accept
+		tcp dport { 53, 80, 443 } accept
+		drop
+	}
+}

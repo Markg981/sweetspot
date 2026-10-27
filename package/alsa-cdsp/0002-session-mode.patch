@@ -61,7 +61,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
  } cdsp_t;
  
  #if SND_LIB_VERSION < 0x010106
-@@ -234,6 +252,281 @@
+@@ -234,6 +252,285 @@
  }
  #endif
  
@@ -197,7 +197,11 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
 +      if(w < 0 && errno == EINTR) continue;
 +      if(w < 0 && errno != EAGAIN) { rc = -1; break; }
 +      clock_gettime(CLOCK_MONOTONIC, &t);
-+      if((t.tv_sec - t0.tv_sec) * 1000L + (t.tv_nsec - t0.tv_nsec) / 1000000L > limit_ms) {
++      // A frame left half written in the FIFO would shift every following
++      // sample: after the timeout, finish the current frame (within a grace
++      // period) and only then stop, so the total is a whole number of frames.
++      if((t.tv_sec - t0.tv_sec) * 1000L + (t.tv_nsec - t0.tv_nsec) / 1000000L > limit_ms +
++         (off % SESSION_FRAME_BYTES ? 2000 : 0)) {
 +        rc = -1;
 +        break;
 +      }
@@ -343,7 +347,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
  // Helper function for closing PCM transport.
  static int close_transport(cdsp_t *pcm) {
    int rv = 0;
-@@ -423,6 +716,7 @@
+@@ -423,6 +720,7 @@
        head += ret;
        len -= ret;
      } while (len != 0);
@@ -351,7 +355,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
      io_thread_update_delay(pcm, io_hw_ptr);
      // Things tend to run a little smoother if writes take at least
      // some time.  So slow down when the pipe was empty enough that the
-@@ -463,6 +757,8 @@
+@@ -463,6 +761,8 @@
  }
  
  static int start_camilla(cdsp_t *pcm) {
@@ -360,7 +364,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    char sformat[20];
    switch (pcm->io.format) {
      case SND_PCM_FORMAT_S16_LE:
-@@ -767,6 +1063,10 @@
+@@ -767,6 +1067,10 @@
      free((void *)(*pcm)->start_cmd);
    if((*pcm)->camilla_exit_cmd)
      free((void *)(*pcm)->camilla_exit_cmd);
@@ -371,7 +375,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    pthread_mutex_destroy(&(*pcm)->mutex);
    pthread_cond_destroy(&(*pcm)->pause_cond);
    free((void *)*pcm);
-@@ -795,8 +1095,8 @@
+@@ -795,8 +1099,8 @@
    // it is possible to modify the size of this buffer we will set is to some
    // low value, but big enough to prevent audio tearing. Note, that the size
    // will be rounded up to the page size (typically 4096 bytes).
@@ -382,7 +386,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
  
    info("FIFO buffer size: %ld frames\n", pcm->delay_fifo_size);
  
-@@ -823,6 +1123,13 @@
+@@ -823,6 +1127,13 @@
        SNDERR("Error executing camilla_exit_cmd %s\n", pcm->camilla_exit_cmd);
      }
    } 
@@ -396,7 +400,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    debug("Stopping Camilla\n");
    if (close_transport(pcm) == -1)
      return -errno;
-@@ -1322,6 +1629,32 @@
+@@ -1322,6 +1633,32 @@
        if((err = alloc_copy_string(&pcm->start_cmd, temp)) < 0) goto _err;
        continue;
      }
@@ -429,7 +433,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
      if(strcmp(id, "camilla_exit_cmd") == 0) {
        if((err = snd_config_get_string(n, &temp)) < 0) goto _err;
        if((err = alloc_copy_string(&pcm->camilla_exit_cmd, temp)) < 0) goto _err;
-@@ -1356,6 +1689,12 @@
+@@ -1356,6 +1693,12 @@
      }
    }
  
@@ -442,7 +446,7 @@ Signed-off-by: Sweetspot <noreply@sweetspot>
    if(!pcm->cargs[1]) {
      SNDERR("Must supply config_out file parameter.");
      err = -EINVAL;
-@@ -1475,7 +1814,11 @@
+@@ -1475,7 +1818,11 @@
      SND_PCM_FORMAT_FLOAT_LE,
      SND_PCM_FORMAT_FLOAT64_LE
    };
