@@ -31,6 +31,7 @@ echo 'sweetspot.slot=a' > "$U/proc/cmdline"
 echo x86_64 > "$U/scheda"
 echo A-kernel > "$U/stick/bzImage"
 echo A-rootfs > "$U/stick/rootfs.cpio.zst"
+echo "v1 (2026-01-01)" > "$U/version"
 mkpkg() {
 	rm -rf "$U/pkg"; mkdir -p "$U/pkg"
 	echo B-kernel > "$U/pkg/bzImage"
@@ -44,14 +45,14 @@ upd() {
 	SWEETSPOT_TEST=${CLI_TEST:-cli} SWEETSPOT_ALLOW_UNSIGNED=${ALLOW_UNSIGNED:-1} SWEETSPOT_CHIAVE_FIRMA=${UPDATE_PUB:-$U/missing.pub} \
 		SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_ARCH=${UPDATE_ARCH:-x86_64} SWEETSPOT_SCHEDA_FILE=$U/scheda SWEETSPOT_STICK_DIR=$U/stick \
 		SWEETSPOT_AVVIO=$U/avvio \
-		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log \
+		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log SWEETSPOT_VERSION_FILE=$U/version \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" _lavoro file "$U/update.tar" >/dev/null 2>&1
 }
 upd_state() { cut -d'|' -f1 "$U/run/aggiornamento/stato"; }
 upd_probe() { # mutazione dopo l'ispezione, oppure copia locale fallita
 	SWEETSPOT_TEST=1 SWEETSPOT_ALLOW_UNSIGNED=1 SWEETSPOT_CHIAVE_FIRMA=$U/missing.pub \
 		SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_ARCH=x86_64 SWEETSPOT_SCHEDA_FILE=$U/scheda SWEETSPOT_STICK_DIR=$U/stick \
-		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log \
+		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log SWEETSPOT_VERSION_FILE=$U/version \
 		$TEST_SH -c '. "$1"; sourcepkg=$2; replacement=$3; probe=$4
 			tar() {
 				command tar "$@"; result=$?
