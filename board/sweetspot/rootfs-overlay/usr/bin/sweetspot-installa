@@ -334,6 +334,8 @@ install_job() { # disco si|no
 	release_disk "$disk" || { fail 1 "il disco è in uso e non si può liberare"; return 1; }
 	# La libreria si copia dalla chiavetta: senza un salvataggio riuscito
 	# il disco nuovo avrebbe dati vecchi.
+	ntfs_dirty "$disk" &&
+		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, scegli Riavvia e riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
 	sweetspot-dati salva > /dev/null 2>&1 || { fail 1 "salvataggio della libreria non riuscito: niente è stato cancellato"; return 1; }
 	kb=$(system_kb)
 	[ -n "$kb" ] || { fail 1 "chiavetta non leggibile: niente è stato cancellato"; return 1; }
@@ -388,6 +390,26 @@ install_job() { # disco si|no
 	rmdir "$new" 2>/dev/null
 	state "finita|7|7|$disk"
 	log "installazione: Sweetspot installato su $dev (archivio musicale: $want)"
+}
+
+# Partizioni NTFS del disco (le sole che Windows puo' lasciare "sporche").
+ntfs_parts() { # disco
+	local p
+	for p in "$SYS/block/$1/$1"*; do
+		[ -f "$p/partition" ] || continue
+		blkid "$DEV/${p##*/}" 2>/dev/null | grep -q 'TYPE="ntfs"' && echo "$DEV/${p##*/}"
+	done
+}
+
+# Windows ibernato o spento con Avvio rapido lascia NTFS "sporco": ntfsfix -n lo
+# segnala senza scrivere. Se lo strumento manca non si puo' sapere: si va avanti.
+ntfs_dirty() { # disco
+	local p
+	command -v ntfsfix > /dev/null || return 1
+	for p in $(ntfs_parts "$1"); do
+		ntfsfix -n "$p" > /dev/null 2>&1 || return 0
+	done
+	return 1
 }
 
 # Errore dopo aver scritto la tabella: si rimette quella di prima.
@@ -467,6 +489,9 @@ side_job() { # disco
 	fi
 	stick_umount
 	sync
+	# La copia della tabella nella RAM sparisce al riavvio: ne resta una sulla nuova partizione.
+	cp "$bak" "$new/gpt-$disk.bak" 2>/dev/null || log "installazione: copia della tabella non salvata sulla partizione ($bak)"
+	sync
 	umount "$new" || { fail 4 "chiusura della partizione non riuscita"; return 1; }
 	rmdir "$new" 2>/dev/null
 
@@ -475,7 +500,7 @@ side_job() { # disco
 	state "avvio|5|6|voce di avvio UEFI"
 	efi_entry "$disk" "$num" || efi=no
 	state "finita|6|6|accanto $disk $efi"
-	log "installazione: Sweetspot installato accanto al sistema esistente su $p (voce UEFI: $efi)"
+	log "installazione: Sweetspot installato accanto al sistema esistente su $p (voce UEFI: $efi); copia della tabella delle partizioni: gpt-$disk.bak sulla partizione SWEETSPOT (ripristino: sgdisk --load-backup)"
 }
 
 do_side() { # disco GB
