@@ -129,7 +129,7 @@ if [ -n "$lyr_st" ]; then
 	echo '<input id="lyrp" name="lyrion_password" type="password" autocomplete="new-password" minlength="10" maxlength="64">'
 	echo '<p class="sub">Da 10 a 64 caratteri, senza spazi e senza il segno %. Lyrion si riavvia per applicarla (la musica in corso si ferma) e va reinserita nelle app e in Material.</p>'
 fi)
-<label for="https">Connessione protetta (HTTPS)</label>
+<span id="sezione-https"></span><label for="https">Connessione protetta (HTTPS)</label>
 <select id="https" name="https">
 $(option no "Spenta: pagine solo in chiaro (http)" "$(if is_yes "$(conf HTTPS no)"; then echo si; else echo no; fi)")
 $(option si "Accesa: anche https://$(web_host)/ con certificato autofirmato" "$(if is_yes "$(conf HTTPS no)"; then echo si; else echo no; fi)")
