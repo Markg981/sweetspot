@@ -100,13 +100,14 @@ case "$1" in
 		# Senza password: codice di primo accesso (console e chiavetta).
 		sweetspot-accesso avvio || log "primo accesso: preparazione non riuscita"
 		# Cartella scrivibile dalle pagine (utente "web"): bozze dei filtri e
-		# stato della prova DoP. Il gettone anti-CSRF lo crea root: le pagine
-		# lo leggono soltanto.
+		# stato della prova DoP. Il segreto dei gettoni anti-CSRF lo crea root:
+		# le pagine lo leggono soltanto (mai nelle pagine, solo derivati).
 		mkdir -p "$RUN/web/correzione"
 		chown -R web:web "$RUN/web" 2>/dev/null
 		chmod 700 "$RUN/web" "$RUN/web/correzione"
 		head -c 16 /dev/urandom | md5sum | cut -c1-24 > "$RUN/web.token"
-		chmod 644 "$RUN/web.token"
+		chown root:web "$RUN/web.token" 2>/dev/null
+		chmod 640 "$RUN/web.token"
 		mkdir -p /etc/default
 		echo 'HTTPD_ARGS="-p 80 -u web:web -h /usr/share/sweetspot/www -c /run/sweetspot/httpd.conf"' > /etc/default/httpd
 		;;

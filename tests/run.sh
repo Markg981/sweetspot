@@ -959,8 +959,11 @@ expect "CSRF Lyrion: livello 2 scelto dall'utente resta" "csrfProtectionLevel: 2
 printf '#!/bin/sh\n[ "$1" = hash ] && echo "\\$1\\$prova\\$impronta"\n[ "$1" = verifica ] && { read -r pw; [ "$pw" = vecchia-password ] || exit 1; }\nexit 0\n' > "$WEB/actionbin/sweetspot-accesso"
 chmod +x "$WEB/actionbin/sweetspot-accesso"
 web_action() { # corpo senza gettone
-	local body
-	body="t=$(cat "$WEB/run/web.token")&$1"
+	local body tk
+	# Il gettone come lo calcola la pagina: con PASSWORD_WEB dipende dalla sessione.
+	tk=$(SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
+		$TEST_SH -c '. "$SWEETSPOT_LIB/web.sh"; token')
+	body="t=$tk&$1"
 	printf '%s' "$body" | SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run \
 		SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf \
 		SWEETSPOT_PATH="$WEB/actionbin:$SWEETSPOT_PATH" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \

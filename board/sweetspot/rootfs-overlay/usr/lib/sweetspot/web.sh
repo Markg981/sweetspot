@@ -91,15 +91,31 @@ lms_avviso() {
 # Testo sicuro dentro l'HTML (anche tra virgolette negli attributi).
 esc() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'; }
 
-# Gettone anti-CSRF valido fino al riavvio: una pagina esterna non puo'
-# leggerlo, quindi non puo' inviare comandi al player al posto dell'utente.
-token() {
+# Segreto anti-CSRF di questo avvio: non esce mai in una pagina, serve solo a
+# derivare i gettoni (sessione e modulo di accesso).
+token_secret() {
 	# Sull'immagine lo crea root all'avvio (S03); qui solo se manca (test).
 	if [ ! -s "$RUN/web.token" ]; then
 		mkdir -p "$RUN"
 		head -c 16 /dev/urandom | md5sum | cut -c1-24 > "$RUN/web.token"
 	fi
 	cat "$RUN/web.token"
+}
+
+# Gettone derivato dal segreto e da un contesto (sessione o modulo di accesso).
+token_derive() {
+	printf '%s:%s' "$1" "$(token_secret)" | sha256sum | cut -c1-32
+}
+
+# Gettone anti-CSRF legato alla sessione: lo vede solo chi ha fatto l'accesso
+# (le pagine che lo mostrano stanno dietro auth_gate), una pagina esterna non
+# puo' leggerlo e quello di un'altra sessione non vale. Senza PASSWORD_WEB (solo
+# prove: sull'immagine le pagine sono chiuse finche' non c'e') resta il segreto.
+token() {
+	local id
+	auth_enabled || { token_secret; return 0; }
+	id=$(session_valid && session_id) || id=nessuna
+	token_derive "sessione:$id"
 }
 
 # --- Autenticazione dell'amministratore ------------------------------------------
@@ -120,17 +136,20 @@ LOGIN_FREE=${SWEETSPOT_TENTATIVI_LIBERI:-5}
 
 auth_enabled() { [ -n "$(conf PASSWORD_WEB)" ]; }
 
-# ID della sessione dal cookie (solo 32 cifre esadecimali, altrimenti niente).
-session_id() {
+# Valore esadecimale di 32 cifre di un cookie (altrimenti niente).
+cookie_hex() { # nome
 	local c id
 	c=$(printf ';%s;' "${HTTP_COOKIE:-}" | tr -d ' ')
-	case "$c" in *";$SESSION_COOKIE="*) ;; *) return 1 ;; esac
-	id=${c#*";$SESSION_COOKIE="}
+	case "$c" in *";$1="*) ;; *) return 1 ;; esac
+	id=${c#*";$1="}
 	id=${id%%;*}
 	case "$id" in *[!0-9a-f]*|'') return 1 ;; esac
 	[ ${#id} -eq 32 ] || return 1
 	printf '%s' "$id"
 }
+
+# ID della sessione dal cookie.
+session_id() { cookie_hex "$SESSION_COOKIE"; }
 
 session_valid() {
 	local id exp
@@ -181,6 +200,29 @@ session_cookie() {
 	else
 		printf 'Set-Cookie: %s=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0%s\r\n' "$SESSION_COOKIE" "$sec"
 	fi
+}
+
+# Gettone dei moduli di accesso (accesso, primo accesso), quando ancora non c'e'
+# una sessione: legato a un cookie casuale dato da questa stessa pagina
+# (SameSite=Strict), cosi' una pagina esterna non puo' far entrare il browser
+# dell'utente con una password scelta da lei (login CSRF) e il gettone non
+# vale per le azioni. login_prepare va chiamata dopo la riga Status e prima di
+# page_start, nella shell principale (non in $(...)).
+LOGIN_COOKIE=sweetspot_lt
+LOGIN_LT=""
+login_prepare() {
+	local sec=""
+	LOGIN_LT=$(cookie_hex "$LOGIN_COOKIE") && return 0
+	LOGIN_LT=$(od -An -N16 -tx1 "${SWEETSPOT_URANDOM:-/dev/urandom}" | tr -d ' \n')
+	is_https && sec="; Secure"
+	printf 'Set-Cookie: %s=%s; Path=/cgi-bin; HttpOnly; SameSite=Strict; Max-Age=3600%s\r\n' "$LOGIN_COOKIE" "$LOGIN_LT" "$sec"
+}
+login_token() { token_derive "accesso:$LOGIN_LT"; }
+# Il gettone ricevuto vale solo con il cookie del modulo.
+login_token_ok() { # gettone
+	local lt
+	lt=$(cookie_hex "$LOGIN_COOKIE") || return 1
+	[ -n "$1" ] && [ "$1" = "$(token_derive "accesso:$lt")" ]
 }
 
 # Limitazione dei tentativi di accesso, solo per indirizzo di chi li fa: un

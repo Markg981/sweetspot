@@ -370,7 +370,10 @@ exit 0
 EOF
 chmod +x "$A/priv"
 act() { # corpo senza gettone
-	local body="t=tokenfinto&$1"
+	local body tk
+	# Il gettone come lo calcola la pagina: con PASSWORD_WEB dipende dalla sessione.
+	tk=$(SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="$A/run" SWEETSPOT_LOG="$A/log" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" sh -c ". $OVERLAY/usr/lib/sweetspot/web.sh; token")
+	body="t=$tk&$1"
 	printf '%s' "$body" | SWEETSPOT_PRIV="$A/priv" SWEETSPOT_RUN="$A/run" SWEETSPOT_LOG="$A/log" \
 		SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" REQUEST_METHOD=POST CONTENT_LENGTH=${#body} \
 		sh "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
