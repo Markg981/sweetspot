@@ -42,7 +42,10 @@ salta() {
 }
 verifica_salti() {
 	[ -n "$SALTATE" ] || return 0
-	echo "Sezioni saltate per strumenti mancanti:$SALTATE"
+	echo "=================================================================="
+	echo "ATTENZIONE: sezioni saltate per strumenti mancanti:$SALTATE"
+	echo "La suite NON ha verificato tutto: installali per una prova completa."
+	echo "=================================================================="
 	case "${SWEETSPOT_CI_STRICT:-${CI:-}}" in
 	1 | true)
 		echo "NO  in modalita' rigorosa (CI) i salti sono un errore"
@@ -4639,3 +4642,7 @@ python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
+rc=$?
+# Riepilogo finale: include anche i salti successivi all'ultimo controllo.
+verifica_salti
+exit $rc
