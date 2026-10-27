@@ -1,0 +1,38 @@
+name: squeezelite-sorgente
+
+# Esegue i test delle patch di Squeezelite sul sorgente upstream vero (stesso
+# commit del pacchetto Buildroot) e controlla che le fixture lo rispecchino.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'patches/squeezelite/**'
+      - 'tests/squeezelite-*.py'
+      - 'tests/fixtures/squeezelite-*'
+      - '.github/workflows/squeezelite-sorgente.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sorgente-reale:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scarica squeezelite al commit pinnato
+        run: |
+          git init -q "$RUNNER_TEMP/squeezelite"
+          cd "$RUNNER_TEMP/squeezelite"
+          git fetch -q --depth 1 https://github.com/ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+          git checkout -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = 72e1fd8abfa9b2f8e9636f033247526920878718
+      - name: Fixture e patch coerenti con il sorgente vero
+        run: python3 tests/squeezelite-sorgente-reale.py "$RUNNER_TEMP/squeezelite"
+      - name: Test del dither sul output_pack.c vero
+        run: SQUEEZELITE_SRC="$RUNNER_TEMP/squeezelite" python3 tests/squeezelite-dither.py
+      - name: Altri test squeezelite (fixture verificate)
+        run: |
+          for t in dff-padding strict-hw dsd-decimation mixer-dsd; do
+            python3 tests/squeezelite-$t.py
+          done
