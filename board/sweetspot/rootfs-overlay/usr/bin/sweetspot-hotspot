@@ -29,6 +29,7 @@ AP_PID=$RUN/hotspot
 LIST=$RUN/wifi-scan.list
 RICHIESTA=$RUN/hotspot.richiesta
 ATTESA=$RUN/hotspot.attesa
+FIREWALL=${SWEETSPOT_FIREWALL:-sweetspot-firewall}
 NET_INIT=${SWEETSPOT_NET_INIT:-/etc/init.d/S40sweetspot-net}
 # Sostituibili nei test: la shell di BusyBox preferisce le sue applet al PATH.
 IW=${SWEETSPOT_IW:-iw}
@@ -150,7 +151,9 @@ scan() { # scheda
 # Password: HOTSPOT_PASSWORD (8-63 caratteri) se scritta in sweetspot.txt;
 # altrimenti quella gia' scritta in sweetspot-hotspot.txt sulla partizione di
 # avvio (stessa a ogni accensione, cosi' si legge da un PC senza schermo);
-# altrimenti una nuova casuale (che ap_start salva li').
+# altrimenti una nuova casuale (che ap_start salva li'): 16 caratteri di un
+# alfabeto di 32 senza ambigui (niente l, o, 0, 1), cioe' 80 bit da /dev/urandom,
+# a gruppi di 4 con il trattino (xxxx-xxxx-xxxx-xxxx) per digitarla senza errori.
 pass_ok() { [ "${#1}" -ge 8 ] && [ "${#1}" -le 63 ] && valid_value "$1"; }
 ap_pass() {
 	local p
@@ -164,7 +167,7 @@ ap_pass() {
 		stick_umount
 		pass_ok "$p" && { printf '%s' "$p"; return 0; }
 	fi
-	tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 10
+	tr -dc 'a-km-np-z2-9' < /dev/urandom 2>/dev/null | head -c 16 | sed 's/..../&-/g; s/-$//'
 }
 
 # Valore per il codice QR del Wi-Fi: \ ; , : " si proteggono con la barra.
@@ -240,6 +243,8 @@ ap_start() { # scheda
 	scan "$i"
 	"$IPC" addr flush dev "$i" 2>/dev/null
 	"$IPC" addr add "$AP_IP/24" dev "$i" || return 1
+	# Prima di accendere la rete: l'AP raggiunge solo DHCP, DNS e le pagine.
+	"$FIREWALL" applica "$i" 2>/dev/null
 	(
 		umask 077
 		cat > "$AP_PID.conf" <<HOSTAPD
@@ -306,6 +311,7 @@ ap_stop() {
 		[ -n "$p" ] && kill "$p" 2>/dev/null
 		rm -f "$f"
 	done
+	"$FIREWALL" ferma 2>/dev/null
 	rm -f "$AP_PID".dns.conf "$AP_PID".udhcpd.conf "$AP_PID".leases "$RUN/hotspot.attivo" "$RUN/hotspot.ssid" "$RUN/hotspot.password"
 	if [ -n "$i" ]; then
 		"$IPC" addr flush dev "$i" 2>/dev/null

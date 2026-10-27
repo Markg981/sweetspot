@@ -204,10 +204,36 @@ sect_time() { printf '%d:%02d.%02d' $(($1 / 4500)) $(($1 / 75 % 60)) $(($1 % 75)
 
 # --- Copia -------------------------------------------------------------------------
 
+# Spazio libero (KiB) del file system che contiene il percorso.
+free_kb() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+
+# Dopo un SIGKILL, uno spegnimento o l'estrazione del supporto i trap non
+# girano: restano la memoria di lavoro (in RAM) e la cartella temporanea
+# nell'album. Si tolgono solo se nessuna copia e' viva e solo quelle
+# registrate in $DIR/orfani da questo modulo.
+clean_orphans() {
+	local p
+	[ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null && return 0
+	if [ -f "$DIR/orfani" ]; then
+		while read -r p; do
+			case "$p" in
+				*/.sweetspot-copia.??????) [ -d "$p" ] && [ ! -L "$p" ] && rm -rf "$p" ;;
+			esac
+		done < "$DIR/orfani"
+		rm -f "$DIR/orfani"
+	fi
+	rm -rf "$DIR"/lavoro.??????
+	rm -f "$DIR/pid" "$PAUSABLE/cd"
+	case "$(cat "$DIR/stato" 2>/dev/null)" in
+		copia\|*) state errore 0 0 "copia interrotta: avviala di nuovo"; log "cd: copia interrotta, pulizia dei file temporanei" ;;
+	esac
+	return 0
+}
+
 rip() ( # album artista anno
-	local dev arch album artist year disc discs n dest work="" stage="" t title tartist num ids off db v1v2 v1 v2 conf
+	local need have have_run dev arch album artist year disc discs n dest work="" stage="" t title tartist num ids off db v1v2 v1 v2 conf
 	local file pending report=sweetspot-copia.txt report_error=0 ok=0 bad=0
-	trap '[ -z "$stage" ] || rm -rf "$stage"; [ -z "$work" ] || rm -rf "$work"' EXIT
+	trap '[ -z "$stage" ] || rm -rf "$stage"; [ -z "$work" ] || rm -rf "$work"; rm -f "$DIR/orfani"' EXIT
 	trap 'exit 143' TERM
 	trap 'exit 130' INT
 	dev=$(drive) || { state errore 0 0 "nessun lettore CD"; return 1; }
@@ -233,11 +259,27 @@ rip() ( # album artista anno
 		fi
 		t=$((t + 1))
 	done
+	# Spazio: il FLAC non supera il WAV (settori da 2352 byte); la memoria
+	# di lavoro tiene al piu' una traccia WAV alla volta. Stima prudente
+	# con 16 MiB di margine, prima di toccare l'archivio.
+	need=$(awk '{ t += $3; if ($3 > m) m = $3 } END { printf "%d %d", t * 2352 / 1024 + 16384, m * 2352 / 1024 + 16384 }' "$DIR/indice")
+	have=$(free_kb "$arch"); have_run=$(free_kb "$DIR")
+	if [ "$have" -lt "${need% *}" ] 2>/dev/null; then
+		state errore 0 "$n" "Spazio insufficiente nell'archivio: servono circa $((${need% *} / 1024)) MB, ne restano $((have / 1024)) MB. Libera spazio e riprova."
+		log "cd: copia rifiutata, spazio insufficiente in $arch ($have KiB)"
+		return 1
+	fi
+	if [ "$have_run" -lt "${need#* }" ] 2>/dev/null; then
+		state errore 0 "$n" "Memoria di lavoro insufficiente: servono circa $((${need#* } / 1024)) MB, ne restano $((have_run / 1024)) MB."
+		log "cd: copia rifiutata, memoria di lavoro insufficiente ($have_run KiB)"
+		return 1
+	fi
 	mkdir -p "$dest" || { state errore 0 "$n" "archivio non scrivibile"; return 1; }
 	work=$(mktemp -d "$DIR/lavoro.XXXXXX") ||
 		{ state errore 0 "$n" "memoria di lavoro non disponibile"; return 1; }
 	stage=$(mktemp -d "$dest/.sweetspot-copia.XXXXXX") ||
 		{ state errore 0 "$n" "archivio non scrivibile o pieno"; return 1; }
+	echo "$stage" >> "$DIR/orfani"
 	if [ -f "$DIR/copertina.jpg" ] && [ ! -e "$dest/cover.jpg" ] && [ ! -L "$dest/cover.jpg" ]; then
 		if ! cp "$DIR/copertina.jpg" "$stage/cover.part" ||
 			! "$PUBLISH" "$stage/cover.part" "$dest/cover.jpg"; then
@@ -350,6 +392,7 @@ rip() ( # album artista anno
 do_copy() {
 	[ -s "$INFO" ] || { echo "leggi prima il CD"; return 1; }
 	[ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null && { echo "copia gia' in corso"; return 1; }
+	clean_orphans
 	[ -n "$(sweetspot-dischi archivio)" ] || { echo "nessun archivio musicale: sceglilo nella pagina Archivio"; return 1; }
 	mkdir -p "$PAUSABLE"
 	state copia 0 "$(wc -l < "$DIR/indice")" "preparazione"
@@ -362,7 +405,7 @@ do_copy() {
 
 case "$1" in
 	lettore) drive ;;
-	leggi) do_read ;;
+	leggi) clean_orphans; do_read ;;
 	copia) shift; do_copy "$@" ;;
 	_copia)
 		shift

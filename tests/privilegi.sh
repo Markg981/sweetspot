@@ -198,11 +198,23 @@ SSH=si")"
 		# Gli script che accettano un '-' iniziale non lo trattano da opzione.
 		expect "accesso hash: '-n' arriva come argomento" "sweetspot-accesso|hash|-n" "$(priv sweetspot-accesso hash -n)"
 		expect "cd copia: nomi con '-' iniziale ammessi" "sweetspot-cd|copia|-e|--help|-n" "$(priv sweetspot-cd copia -e --help -n)"
-		expect "accesso: mkpasswd con -- davanti alla password" "1" "$(grep -c 'mkpasswd -m "\$1" -S "\$salt" -- "\$4"' "$OVERLAY/usr/bin/sweetspot-accesso")"
+		expect "accesso: mkpasswd legge la password da stdin, non da argv" "1" "$(grep -c '"$4" | mkpasswd -m "$1" -S "$salt" -P 0' "$OVERLAY/usr/bin/sweetspot-accesso")"
 		expect "config: i valori passano da ENVIRON, non da opzioni" "0" "$(grep -c 'awk -v VAL\|echo "\$VAL"' "$OVERLAY/usr/bin/sweetspot-config")"
 		# @log: riga troppo lunga rifiutata.
 		"$WORK/priv" @log "$(printf '%0600d' 0)" > /dev/null 2>&1
 		expect "@log troppo lungo rifiutato" "126" "$?"
+		# Hardening all'avvio: umask stretta, core a zero, fd 0-2 sempre aperti.
+		printf '#!/bin/sh
+{ umask; ulimit -c; } > "%s/hard"
+' "$WORK" > "$B/sweetspot-check"
+		( umask 000; "$WORK/priv" sweetspot-check --dati > /dev/null 2>&1 )
+		expect "umask 077 e core a zero" "0077|0" "$(tr '
+' '|' < "$WORK/hard" | sed 's/|$//')"
+		printf '#!/bin/sh
+for f in 0 1 2; do [ -e /proc/self/fd/$f ] || exit 1; done
+' > "$B/sweetspot-check"
+		"$WORK/priv" sweetspot-check --dati <&- >&- 2>&-
+		expect "fd 0-2 chiusi dal chiamante: riaperti" "0" "$?"
 		# L'ambiente non passa agli script.
 		printf '#!/bin/sh\nenv > "%s/env"\n' "$WORK" > "$B/sweetspot-check"
 		SWEETSPOT_PATH=/evil LD_PRELOAD=/x IFS=x "$WORK/priv" sweetspot-check --dati > /dev/null 2>&1
@@ -382,8 +394,11 @@ expect "riavvia: lo fa root, in sottofondo" "@riavvia" "$(cat "$A/priv.log")"
 act "a=spegni" > /dev/null
 expect "spegni: lo fa root, in sottofondo" "@spegni" "$(cat "$A/priv.log")"
 : > "$A/priv.log"
+printf 'PASSWORD_WEB=$1$x$y\n' > "$A/run/sweetspot.web"
 act "a=ripristina&conferma=si" > /dev/null
-expect "ripristino: config e accesso passano dall'helper" "sweetspot-config ripristina|sweetspot-accesso applica|@riavvia" "$(tr '\n' '|' < "$A/priv.log" | sed 's/|$//')"
+expect "ripristino: senza password nulla passa dall'helper" "" "$(cat "$A/priv.log")"
+act "a=ripristina&conferma=si&ct=gettone&conferma_password=segreta" > /dev/null
+expect "ripristino: config e accesso passano dall'helper con la conferma forte" "@conferma gettone sweetspot-config ripristina|sweetspot-accesso applica|@riavvia" "$(tr '\n' '|' < "$A/priv.log" | sed 's/|$//')"
 : > "$A/priv.log"
 act "a=aggiungi_condivisione&server=192.168.1.5&cartella=Musica&utente=&password=" > /dev/null
 expect "condivisione: provata dall'helper" "1" "$(grep -c '^sweetspot-rete prova 1$' "$A/priv.log")"

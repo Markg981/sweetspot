@@ -21,7 +21,7 @@ echo "== README allineato al codice"
 for c in ripristina salva checkpoint sblocca sorveglia; do
 	has "^	$c)" "$OV/usr/bin/sweetspot-dati"; t "sweetspot-dati gestisce '$c'" $?
 done
-has 'ripristina|salva \[--forza\]|checkpoint|sblocca|sorveglia' "$OV/usr/bin/sweetspot-dati"; t "sweetspot-dati: l'uso elenca checkpoint e sblocca" $?
+has 'ripristina|assente|salva \[--forza\]|checkpoint|sblocca|sorveglia' "$OV/usr/bin/sweetspot-dati"; t "sweetspot-dati: l'uso elenca checkpoint e sblocca" $?
 
 # Il pannello non e' mai "senza login": PASSWORD_WEB e' obbligatoria.
 ! has 'senza login' "$R"; t "README: nessun pannello 'senza login'" $?
