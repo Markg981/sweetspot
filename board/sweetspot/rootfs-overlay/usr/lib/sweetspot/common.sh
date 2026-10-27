@@ -1797,11 +1797,13 @@ boot_env() {
 
 # Sostituisce un file critico della FAT con la versione nuova: sync del
 # temporaneo prima del mv (senza, un taglio di corrente puo' lasciare il file
-# vuoto), copia .bak del precedente, mv e sync finale.
+# vuoto), mv (un rename nella stessa cartella: o c'e' il vecchio o il nuovo) e
+# sync finale. Niente copia .bak: nessuno la ripristinava e conservava i
+# segreti (sweetspot.txt) in chiaro; quelle rimaste da versioni precedenti si
+# eliminano alla prima sostituzione riuscita.
 fat_sostituisci() { # temporaneo destinazione
 	sync
-	[ -s "$2" ] && cp -p "$2" "$2.bak" 2>/dev/null
-	mv "$1" "$2" && sync
+	mv "$1" "$2" && sync && rm -f "$2.bak"
 }
 
 # Raspberry Pi: scrive config.txt o tryboot.txt dal modello con la copia
