@@ -334,8 +334,6 @@ install_job() { # disco si|no
 	release_disk "$disk" || { fail 1 "il disco è in uso e non si può liberare"; return 1; }
 	# La libreria si copia dalla chiavetta: senza un salvataggio riuscito
 	# il disco nuovo avrebbe dati vecchi.
-	ntfs_dirty "$disk" &&
-		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, scegli Riavvia e riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
 	sweetspot-dati salva > /dev/null 2>&1 || { fail 1 "salvataggio della libreria non riuscito: niente è stato cancellato"; return 1; }
 	kb=$(system_kb)
 	[ -n "$kb" ] || { fail 1 "chiavetta non leggibile: niente è stato cancellato"; return 1; }
@@ -442,6 +440,8 @@ side_job() { # disco
 	end=$((start + SYS_SECTORS - 1))
 	num=$(gpt_slot "$dev")
 	[ -n "$num" ] || { fail 1 "la tabella delle partizioni è piena: niente è stato cambiato"; return 1; }
+	ntfs_dirty "$disk" &&
+		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, scegli Riavvia e riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
 	sweetspot-dati salva > /dev/null 2>&1 || { fail 1 "salvataggio della libreria non riuscito: niente è stato cambiato"; return 1; }
 	kb=$(system_kb)
 	[ -n "$kb" ] || { fail 1 "chiavetta non leggibile: niente è stato cambiato"; return 1; }
