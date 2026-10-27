@@ -36,13 +36,18 @@ use Time::HiRes qw(time sleep);
 
 $| = 1;
 my $RUN       = $ENV{SWEETSPOT_RUN} // '/run/sweetspot';
-my $CONF      = "$RUN/sweetspot.conf";
+# Da utente senza privilegi: configurazione ridotta (renderer.conf) e stato nella
+# cartella $RUN/renderer; se non c'e' (prove, sviluppo) si usa $RUN come prima.
+my $DIR       = $ENV{SWEETSPOT_RENDERER_DIR} // "$RUN/renderer";
+$DIR = $RUN unless -d $DIR;
+my $CONF      = -r "$DIR/renderer.conf" ? "$DIR/renderer.conf" : "$RUN/sweetspot.conf";
+my $AP_IP     = $ENV{SWEETSPOT_AP_IP} // '192.168.4.1';    # hotspot di configurazione: mai servito
 my $LMS_HOST  = $ENV{SWEETSPOT_LMS_HOST} // '127.0.0.1';
 my $LMS_PORT  = $ENV{SWEETSPOT_LMS_HTTP_PORT} // 9000;
 my $HTTP_PORT = $ENV{SWEETSPOT_RENDERER_PORTA} // 49494;
 my $SSDP_PORT = $ENV{SWEETSPOT_RENDERER_SSDP_PORTA} // 1900;
 my $SSDP_ADDR = '239.255.255.250';
-my $LOGFILE   = $ENV{SWEETSPOT_LOG} // '/var/log/sweetspot.log';
+my $LOGFILE   = $ENV{SWEETSPOT_LOG} // ($DIR ne $RUN ? "$DIR/renderer.log" : '/var/log/sweetspot.log');
 my $SERVER_ID = 'Linux/6 UPnP/1.0 Sweetspot/1';
 my $MAX_AGE   = 1800;
 # Limiti GENA: un abbonato lento o ostile non deve poter consumare memoria o processi.
@@ -752,11 +757,11 @@ sub notify_services {
 
 sub local_addrs {
 	if (defined $ENV{SWEETSPOT_RENDERER_ADDR} && length $ENV{SWEETSPOT_RENDERER_ADDR}) {
-		return grep { /^\d+\.\d+\.\d+\.\d+$/ } split /,/, $ENV{SWEETSPOT_RENDERER_ADDR};
+		return grep { /^\d+\.\d+\.\d+\.\d+$/ && $_ ne $AP_IP } split /,/, $ENV{SWEETSPOT_RENDERER_ADDR};
 	}
 	my @ips;
 	if (open my $p, '-|', 'ip', '-4', '-o', 'addr', 'show', 'scope', 'global') {
-		while (my $l = <$p>) { push @ips, $1 if $l =~ /\binet (\d+\.\d+\.\d+\.\d+)/ }
+		while (my $l = <$p>) { push @ips, $1 if $l =~ /\binet (\d+\.\d+\.\d+\.\d+)/ && $1 ne $AP_IP }
 		close $p;
 	}
 	return @ips;
@@ -836,6 +841,7 @@ sub handle_ssdp {
 	$mx = 5 if $mx > 5;
 	my ($port, $addr) = unpack_sockaddr_in($from);
 	my $ip = inet_ntoa($addr);
+	return if (addr_for_peer($ip) // '') eq $AP_IP;    # arriva dall'hotspot di configurazione
 	return unless ssdp_rate_ok($ip);
 	for my $e (nt_list()) {
 		next unless $st eq 'ssdp:all' || lc($st) eq lc($e->[0]);
@@ -1042,12 +1048,12 @@ sub write_state {
 		comandi => $S{commands} + 0, ultima_azione => $S{last_action}, trasporto => $S{state},
 		abbonati => scalar(keys %SUBS) + 0, aggiornato => int(time),
 	);
-	my $tmp = "$RUN/renderer.json.tmp";
+	my $tmp = "$DIR/renderer.json.tmp";
 	if (open my $f, '>', $tmp) {
 		print $f JSON::PP->new->canonical->utf8->encode(\%j), "\n";
 		close $f;
 		chmod 0644, $tmp;
-		rename $tmp, "$RUN/renderer.json";
+		rename $tmp, "$DIR/renderer.json";
 	}
 }
 
@@ -1126,6 +1132,8 @@ while (!$stop_requested) {
 			handle_ssdp($data, $from) if defined $from && length $data;
 		} elsif ($h == $listen) {
 			my $c = $listen->accept or next;
+			# Il socket ascolta su tutte le schede: chi arriva dall'hotspot di configurazione non si serve.
+			if ($c->sockhost eq $AP_IP) { close $c; next }
 			$c->autoflush(1);
 			eval { handle_http($c); 1 } or logm("richiesta HTTP: $@");
 			close $c;

@@ -170,6 +170,12 @@ config_build() {
 	sed 's/^\([A-Z0-9_]*PASSWORD[A-Z0-9_]*\)=..*$/\1=*/' "$CONF" > "$CONF_WEB.tmp"
 	chmod 644 "$CONF_WEB.tmp"
 	mv "$CONF_WEB.tmp" "$CONF_WEB"
+	# Il renderer UPnP gira senza root: gli basta un estratto di poche chiavi.
+	mkdir -p "$RUN/renderer"
+	grep -E '^(RENDERER_UPNP|MODALITA|NOME_PLAYER|LYRION_UTENTE|LYRION_PASSWORD)=' "$CONF" > "$RUN/renderer/renderer.conf.tmp"
+	chmod 600 "$RUN/renderer/renderer.conf.tmp"
+	chown renderer:renderer "$RUN/renderer" "$RUN/renderer/renderer.conf.tmp" 2>/dev/null
+	mv "$RUN/renderer/renderer.conf.tmp" "$RUN/renderer/renderer.conf"
 }
 
 # conf CHIAVE [predefinito]: l'ultima riga vince.

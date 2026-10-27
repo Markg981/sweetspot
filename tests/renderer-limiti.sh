@@ -24,6 +24,8 @@ $code .= $1 if $src =~ /^(# Argomenti di una azione SOAP.*?^\}\n)/ms;
 $code .= $1 if $src =~ /^(my \@pending_resp.*?^\}\n.*?^\}\n)/ms;
 our @NT = map { [ "urn:x:$_", "uuid:x::$_" ] } 1 .. 6;
 sub nt_list { @NT }
+our $AP_IP = '192.168.4.1';
+sub addr_for_peer { '10.0.0.1' }    # i peer del test non arrivano dall'hotspot
 our (@pending_resp, %ssdp_rate);
 $code =~ s{^my (@pending_resp|%ssdp_rate)}{our $1}mg;
 eval "$code; 1" or die $@;
