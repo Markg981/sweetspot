@@ -438,6 +438,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass dosfstools
           sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-robustezza-qemu.sh sweetspot.img.xz
+      # Taglio di corrente (SIGKILL a QEMU) durante la scrittura della copia,
+      # prima del marcatore e prima della conferma: riparte la copia buona.
+      - name: Taglio di corrente durante l'aggiornamento in QEMU
+        if: ${{ !cancelled() && steps.immagine.outcome == 'success' && matrix.scheda == 'x86_64' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 mtools xz-utils sshpass dosfstools minisign
+          sudo env SWEETSPOT_AUDIO_REPORT_DIR="${{ runner.temp }}/sweetspot-audio-evidence" sh tests/prova-taglio-corrente-qemu.sh sweetspot.img.xz
       # SSD con Windows (finto) in UEFI: installazione nello spazio libero,
       # partizioni di Windows intatte, avvio senza chiavetta.
       - name: Installazione accanto a Windows in QEMU
