@@ -132,19 +132,29 @@ file_in_b() { mdir -b -i "$(chiavetta)" ::/b 2>/dev/null | grep -qi "/b/$1\$"; }
 # bene" (bit di sporco, riepilogo dei cluster liberi) e' atteso; qualunque
 # altro errore, o un fsck -a che non basta a rimetterla a posto, no.
 GUASTI='cross-linked|contains a free cluster|truncat|reclaim|does not point|bad file|invalid|differences between|beyond|lost'
+# Righe di guasto di un'uscita di fsck.fat. Il bit di sporco (byte 65 della
+# FAT32) Linux lo scrive solo nel settore di avvio, non nella copia: se e'
+# l'unica differenza fra i due non e' un guasto; un altro byte diverso si'.
+guasti() { # file
+	if grep -Eqx ' *65:[0-9a-f]{2}/[0-9a-f]{2}' "$1"; then
+		grep -Ei "$GUASTI" "$1" | grep -v 'differences between boot sector'
+	else
+		grep -Ei "$GUASTI" "$1"
+	fi
+}
 controlla_fat() { # nome
 	dd if="$W/disco.img" of="$W/fat.img" bs=1M skip=1 status=none
 	rc=0
 	fsck.fat -n "$W/fat.img" > "$OUT/fsck-$1.txt" 2>&1 || rc=$?
 	if [ $rc -eq 0 ]; then
 		esito OK "$1: FAT integra (fsck.fat)"
-	elif grep -Ei "$GUASTI" "$OUT/fsck-$1.txt" | grep -vxFf "$OUT/fsck-base.txt" > "$OUT/nuovi-$1.txt" && [ -s "$OUT/nuovi-$1.txt" ]; then
+	elif guasti "$OUT/fsck-$1.txt" | grep -vxFf "$OUT/fsck-base.txt" > "$OUT/nuovi-$1.txt" && [ -s "$OUT/nuovi-$1.txt" ]; then
 		esito NO "$1: FAT corrotta (errori nuovi rispetto all'immagine integra): $(head -n 3 "$OUT/nuovi-$1.txt" | tr '\n' ' ')"
 	else
 		fsck.fat -a "$W/fat.img" >> "$OUT/fsck-$1.txt" 2>&1 || true
 		fsck.fat -n "$W/fat.img" > "$OUT/fsck2-$1.txt" 2>&1 && rc=0 || rc=$?
 		cat "$OUT/fsck2-$1.txt" >> "$OUT/fsck-$1.txt"
-		if [ $rc -eq 0 ] || ! { grep -Ei "$GUASTI" "$OUT/fsck2-$1.txt" | grep -qvxFf "$OUT/fsck-base.txt"; }; then
+		if [ $rc -eq 0 ] || ! { guasti "$OUT/fsck2-$1.txt" | grep -qvxFf "$OUT/fsck-base.txt"; }; then
 			esito OK "$1: FAT senza errori di struttura (solo bit di sporco, sistemato da fsck -a)"
 		else
 			esito NO "$1: FAT non riparabile: $(tail -n 3 "$OUT/fsck-$1.txt" | tr '\n' ' ')"
