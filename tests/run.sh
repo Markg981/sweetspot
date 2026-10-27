@@ -269,8 +269,18 @@ CP=$WORK/copia; mkdir -p "$CP/bin" "$CP/media/Album" "$CP/arch" "$CP/run"
 echo musica > "$CP/media/Album/a.flac"
 printf '#!/bin/sh\necho "$CP/arch"\n' > "$CP/bin/sweetspot-dischi"
 printf '#!/bin/sh\nexit 0\n' > "$CP/bin/sweetspot-lms"
-printf '#!/bin/sh\nexec "$@"\n' > "$CP/bin/setsid"
-printf '#!/bin/sh\n# cp finto: scrive una parte e poi fallisce, come a disco pieno\nif [ -f "$CP/rompi" ]; then d=${3%%/}/$(basename "$2"); mkdir -p "$d"; echo parziale > "$d/a.flac"; exit 1; fi\nexec /bin/cp "$@"\n' > "$CP/bin/cp"
+# Il cp finto e' una funzione iniettata nella shell del lavoro (setsid finto):
+# scrive una parte e poi fallisce, come a disco pieno.
+cat > "$CP/pre.sh" <<'EOF'
+cp() {
+	if [ -f "$CP/rompi" ]; then
+		mkdir -p "${3%/}/$(basename "$2")"; echo parziale > "${3%/}/$(basename "$2")/a.flac"
+		return 1
+	fi
+	command cp "$@"
+}
+EOF
+printf '#!/bin/sh\ns=$3; shift 3\nexec sh -c ". \\"$CP/pre.sh\\"; $s" "$@"\n' > "$CP/bin/setsid"
 chmod +x "$CP/bin/"*
 copia() { CP=$CP SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
 	SWEETSPOT_MEDIA=$CP/media $TEST_SH "$OVERLAY/usr/bin/sweetspot-copia" "$@"; }
