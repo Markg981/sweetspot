@@ -4396,8 +4396,8 @@ spazio_disco() { # disco finto con la sola partizione FAT32 da 1 GiB
 	: > "$SR/dev/sdx2"
 	rm -f "$SR/dev/sdx2.fs" "$SR/stick/sweetspot-spazio.corso" "$SR/mkfs.log" "$SR/taglio"
 	dd if=/dev/zero of="$SR/dev/sdx" bs=512 count=1 2>/dev/null
-	. "$OVERLAY/usr/lib/sweetspot/common.sh"
-	mbr_entry 0 12 2048 2097152 | dd of="$SR/dev/sdx" bs=1 seek=446 conv=notrunc 2>/dev/null
+	# In una subshell: common.sh cambia PATH e il resto dei test non deve vederlo.
+	(. "$OVERLAY/usr/lib/sweetspot/common.sh"; mbr_entry 0 12 2048 2097152) | dd of="$SR/dev/sdx" bs=1 seek=446 conv=notrunc 2>/dev/null
 	printf '\125\252' | dd of="$SR/dev/sdx" bs=1 seek=510 conv=notrunc 2>/dev/null
 }
 spazio() { # comandi eseguiti dopo aver incluso lo script
