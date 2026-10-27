@@ -29,6 +29,7 @@ AP_PID=$RUN/hotspot
 LIST=$RUN/wifi-scan.list
 RICHIESTA=$RUN/hotspot.richiesta
 ATTESA=$RUN/hotspot.attesa
+FIREWALL=${SWEETSPOT_FIREWALL:-sweetspot-firewall}
 NET_INIT=${SWEETSPOT_NET_INIT:-/etc/init.d/S40sweetspot-net}
 # Sostituibili nei test: la shell di BusyBox preferisce le sue applet al PATH.
 IW=${SWEETSPOT_IW:-iw}
@@ -242,6 +243,8 @@ ap_start() { # scheda
 	scan "$i"
 	"$IPC" addr flush dev "$i" 2>/dev/null
 	"$IPC" addr add "$AP_IP/24" dev "$i" || return 1
+	# Prima di accendere la rete: l'AP raggiunge solo DHCP, DNS e le pagine.
+	"$FIREWALL" applica "$i" 2>/dev/null
 	(
 		umask 077
 		cat > "$AP_PID.conf" <<HOSTAPD
@@ -308,6 +311,7 @@ ap_stop() {
 		[ -n "$p" ] && kill "$p" 2>/dev/null
 		rm -f "$f"
 	done
+	"$FIREWALL" ferma 2>/dev/null
 	rm -f "$AP_PID".dns.conf "$AP_PID".udhcpd.conf "$AP_PID".leases "$RUN/hotspot.attivo" "$RUN/hotspot.ssid" "$RUN/hotspot.password"
 	if [ -n "$i" ]; then
 		"$IPC" addr flush dev "$i" 2>/dev/null
