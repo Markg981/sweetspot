@@ -433,6 +433,12 @@ else
 	echo "  (mkpasswd di BusyBox con SHA-512 non disponibile: verifica delle impronte saltata)"
 fi
 
+echo "Avviso HTTP nella pagina di accesso"
+out=$(req "$CGI/accesso" GET "" "")
+expect "in HTTP la pagina di accesso avvisa" "1" "$(printf '%s\n' "$out" | grep -c 'id="avviso-http"')"
+out=$(HTTPS=on req "$CGI/accesso" GET "" "")
+expect "in HTTPS l'avviso non compare" "0" "$(printf '%s\n' "$out" | grep -c 'id="avviso-http"')"
+
 echo
 echo "Accesso - superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ]

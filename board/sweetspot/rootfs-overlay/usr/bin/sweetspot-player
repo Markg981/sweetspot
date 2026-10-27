@@ -476,6 +476,35 @@ start_volume_watch() {
 	VOLPID=$!
 }
 
+# Sorveglia i sorveglianti: se il follower del volume o la misura di latenza
+# muoiono, si riavviano (al massimo WATCH_MAX volte per sessione, per non
+# entrare in un ciclo stretto) e l'evento va nel log. Solo con la shell:
+# kill -0 e' un builtin.
+WATCH_MAX=5
+WATCH_N=0
+watch_check() {
+	if [ -n "$VOLPID" ] && ! kill -0 "$VOLPID" 2>/dev/null; then
+		if [ "$WATCH_N" -lt "$WATCH_MAX" ]; then
+			WATCH_N=$((WATCH_N + 1))
+			log "player: il follower del volume e' morto, lo riavvio ($WATCH_N/$WATCH_MAX)"
+			start_volume_watch
+		else
+			log "player: il follower del volume e' morto, troppi riavvii: lo lascio fermo"
+			VOLPID=""
+		fi
+	fi
+	if [ -n "$LATPID" ] && ! kill -0 "$LATPID" 2>/dev/null; then
+		if [ "$WATCH_N" -lt "$WATCH_MAX" ]; then
+			WATCH_N=$((WATCH_N + 1))
+			log "player: la misura di latenza e' morta, la riavvio ($WATCH_N/$WATCH_MAX)"
+			start_latency_watch
+		else
+			log "player: la misura di latenza e' morta, troppi riavvii: la lascio ferma"
+			LATPID=""
+		fi
+	fi
+}
+
 stop_watch() { # pid
 	[ -n "$1" ] || return 0
 	kill -- "-$1" 2>/dev/null || kill "$1" 2>/dev/null
@@ -1159,6 +1188,7 @@ player_loop() {
 		t0=$(date +%s)
 		LOST=0
 		say "attivo su $(dac_name "$card")"
+		WATCH_N=0
 		start_latency_watch
 		start_volume_watch
 		# Sorveglia: se il DAC sparisce si ferma il player e si ricomincia.
@@ -1193,6 +1223,7 @@ player_loop() {
 				kill "$PID" 2>/dev/null
 				break
 			fi
+			watch_check
 			read -r adesso_s _ < /proc/uptime
 			adesso_s=${adesso_s%%.*}
 			# Giro completo ogni 2 s solo mentre il DAC riproduce (correzione

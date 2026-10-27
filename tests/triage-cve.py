@@ -50,17 +50,15 @@ class TriageGate(unittest.TestCase):
             if r["decisione"] == "accettata":
                 self.assertGreater(r["scadenza"], TODAY, r["cve"])
 
-    def test_snapshot_fails_only_on_cves_fixed_by_the_upgrades(self):
+    def test_snapshot_is_fully_triaged(self):
+        # the snapshot is the report of the last green build of main: it
+        # must pass, and every High/Critical match must be pinned to the
+        # exact version in the table
         rows, _ = triage.leggi_triage(TABLE)
         report = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
         problems, _ = triage.controlla(report, rows, TODAY)
-        missing = sorted(p.split()[0] for p in problems)
-        self.assertEqual(missing, sorted([
-            # mov.c: the mov demuxer is compiled (ALAC), fixed in ffmpeg 9.0
-            "CVE-2026-40962", "CVE-2026-96611", "CVE-2026-52297",
-            # openssl 3.6.4, fixed by Buildroot 2026.08.1 (3.6.5)
-            "CVE-2026-54873", "CVE-2026-72897", "CVE-2026-84782", "CVE-2026-84784",
-        ]))
+        self.assertEqual(problems, [])
+        self.assertNotIn("*", {r["versione"] for r in rows})
 
     def test_curl_without_http2_holds(self):
         # CVE-2026-92392 is non-affetta only while curl is built without nghttp2

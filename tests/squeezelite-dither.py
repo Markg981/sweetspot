@@ -189,7 +189,11 @@ class Dither(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="sweetspot-dither-")
         cls.work = Path(cls.temp.name)
-        shutil.copyfile(FIXTURE, cls.work / "output_pack.c")
+        # SQUEEZELITE_SRC: sorgente upstream vero al commit pinnato (in CI);
+        # senza, la fixture (verificata identica da squeezelite-sorgente-reale.py).
+        reale = os.environ.get("SQUEEZELITE_SRC")
+        origine = Path(reale) / "output_pack.c" if reale else FIXTURE
+        shutil.copyfile(origine, cls.work / "output_pack.c")
         subprocess.run(["git", "apply", "--include=output_pack.c", str(PATCH)], cwd=cls.work, check=True)
         (cls.work / "squeezelite.h").write_text(STUB_HEADER, encoding="utf-8")
         (cls.work / "harness.c").write_text(HARNESS, encoding="utf-8")

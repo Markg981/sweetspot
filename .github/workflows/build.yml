@@ -235,18 +235,16 @@ jobs:
           if-no-files-found: error
       # Ogni CVE Critical o High deve avere una decisione in docs/triage-cve.tsv
       # (non affetta, o accettata con una data di revisione non scaduta):
-      # altrimenti la compilazione fallisce e niente si pubblica. Senza
-      # scansione un tag v* si ferma; gli altri rami ricevono un avviso.
+      # altrimenti la compilazione fallisce e niente si pubblica. Anche senza
+      # scansione la compilazione si ferma, su ogni ramo.
       - name: Triage delle CVE gravi
         env:
           SCHEDA: ${{ matrix.scheda }}
           SCANSIONE: ${{ steps.sbom.outcome }}
         run: |
           if [ "$SCANSIONE" != success ]; then
-            case "$GITHUB_REF" in
-              refs/tags/v*) echo "::error::scansione delle vulnerabilita' non riuscita: triage non verificabile"; exit 1 ;;
-              *) echo "::warning::scansione delle vulnerabilita' non riuscita: triage non verificato"; exit 0 ;;
-            esac
+            echo "::error::scansione delle vulnerabilita' non riuscita: triage non verificabile"
+            exit 1
           fi
           rc=0
           python3 scripts/triage-cve.py "sbom/grype-$SCHEDA.json" > triage.txt 2>&1 || rc=$?

@@ -7,6 +7,8 @@ DAC nel modo più pulito possibile. Gira su un PC (da una chiavetta USB o, dopo
 l'installazione, dal disco interno) o su un Raspberry Pi 4 o 5 (dalla scheda
 SD), copia tutto in RAM e si usa dal browser del telefono o del computer.
 
+Interfaccia e documentazione sono solo in italiano; un piano per la localizzazione è in `docs/localizzazione.md`.
+
 ## Cosa fa all'accensione
 
 1. GRUB parte dalla chiavetta o dal disco interno (BIOS o UEFI a 64/32 bit),
