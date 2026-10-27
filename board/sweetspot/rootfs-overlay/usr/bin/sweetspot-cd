@@ -20,6 +20,13 @@
 # (offset) si trova da sola al primo CD presente nel database e resta
 # salvata in LETTORE_OFFSET.
 #
+# Servizi contattati (tutti in HTTPS), disattivabili in sweetspot.txt:
+#   CD_CERCA_TITOLI=si|no   MusicBrainz e Cover Art Archive: ricevono
+#                           l'identificativo del disco (rivela cosa si copia)
+#   CD_ACCURATERIP=si|no    AccurateRip: riceve l'indice del disco
+# Con "no" la copia funziona lo stesso: titoli generici, nessuna copertina,
+# nessuna verifica AccurateRip (e nessuna ricerca della correzione).
+#
 # Il lettore lavora solo quando lo si chiede: Sweetspot non lo interroga di
 # continuo (sarebbe attivita' inutile mentre si ascolta).
 
@@ -103,16 +110,18 @@ ar_parse() { # file.bin
 ar_fetch() { # tracce id1 id2 cddb destinazione
 	local n=$1 id1=$2 id2=$3 cddb=$4
 	local a b c
+	is_yes "$(conf CD_ACCURATERIP si)" || return 1
 	a=$(printf '%s' "$id1" | tail -c 1)
 	b=$(printf '%s' "$id1" | tail -c 2 | head -c 1)
 	c=$(printf '%s' "$id1" | tail -c 3 | head -c 1)
 	curl -s -f -m 30 -A "$UA" -o "$5" \
-		"http://www.accuraterip.com/accuraterip/$a/$b/$c/dBAR-$(printf '%03d' "$n")-$id1-$id2-$cddb.bin"
+		"https://www.accuraterip.com/accuraterip/$a/$b/$c/dBAR-$(printf '%03d' "$n")-$id1-$id2-$cddb.bin"
 }
 
 # Titoli da MusicBrainz -> JSON di Sweetspot.
 mb_lookup() { # discid file_indice
 	local n r
+	is_yes "$(conf CD_CERCA_TITOLI si)" || return 0
 	n=$(wc -l < "$2")
 	r=$(curl -s -f -m 30 -A "$UA" "https://musicbrainz.org/ws/2/discid/$1?inc=artist-credits+recordings&fmt=json") || r=""
 	printf '%s' "$r" | jq -c --arg id "$1" --argjson n "$n" '
@@ -140,7 +149,7 @@ do_read() {
 	fi
 	rm -f "$DIR/copertina.jpg"
 	mbid=$(printf '%s' "$js" | jq -r '.mbid')
-	if [ -n "$mbid" ]; then
+	if [ -n "$mbid" ] && is_yes "$(conf CD_CERCA_TITOLI si)"; then
 		curl -s -f -L -m 30 -A "$UA" -o "$DIR/copertina.jpg" "https://coverartarchive.org/release/$mbid/front-500" ||
 			rm -f "$DIR/copertina.jpg"
 	fi
@@ -213,7 +222,7 @@ clean_orphans() {
 
 rip() ( # album artista anno
 	local need have have_run dev arch album artist year disc discs n dest work="" stage="" t title tartist num ids off db v1v2 v1 v2 conf
-	local file pending report=sweetspot-copia.txt report_error=0 ok=0 bad=0
+	local ar_off=0 file pending report=sweetspot-copia.txt report_error=0 ok=0 bad=0
 	trap '[ -z "$stage" ] || rm -rf "$stage"; [ -z "$work" ] || rm -rf "$work"; rm -f "$DIR/orfani"' EXIT
 	trap 'exit 143' TERM
 	trap 'exit 130' INT
@@ -285,6 +294,7 @@ rip() ( # album artista anno
 	fi
 	off=${off:-0}
 
+	is_yes "$(conf CD_ACCURATERIP si)" || ar_off=1
 	{
 		echo "Sweetspot - copia del CD"
 		echo "Album: $artist - $album${year:+ ($year)}"
@@ -316,7 +326,7 @@ rip() ( # album artista anno
 		elif [ -s "$db" ]; then
 			echo "Traccia $num: non confermata da AccurateRip [$v1 $v2]" >> "$work/registro.txt"
 		else
-			echo "Traccia $num: CD non presente nel database AccurateRip [$v1 $v2]" >> "$work/registro.txt"
+			echo "Traccia $num: $([ "$ar_off" = 1 ] && echo "verifica AccurateRip disattivata (CD_ACCURATERIP=no)" || echo "CD non presente nel database AccurateRip") [$v1 $v2]" >> "$work/registro.txt"
 		fi
 		file="$dest/$num - $(file_name "$title").flac"
 		pending="$stage/$num.part"
@@ -343,7 +353,8 @@ rip() ( # album artista anno
 	done
 	{
 		echo
-		if [ "$ok" = "$n" ]; then echo "Risultato: tutte le $n tracce sono copie perfette."
+		if [ "$ar_off" = 1 ]; then echo "Risultato: $n tracce copiate senza verifica AccurateRip (disattivata)."
+		elif [ "$ok" = "$n" ]; then echo "Risultato: tutte le $n tracce sono copie perfette."
 		else echo "Risultato: $ok tracce su $n confermate da AccurateRip, $bad con errori."; fi
 	} >> "$work/registro.txt"
 	if [ -e "$dest/$report" ] || [ -L "$dest/$report" ]; then
@@ -360,6 +371,8 @@ rip() ( # album artista anno
 		state errore "$n" "$n" "Rapporto di copia non salvato: consulta il registro di sistema."
 	elif [ "$bad" -gt 0 ]; then
 		state errore "$n" "$n" "$bad tracce con errori: vedi $report nella cartella dell'album"
+	elif [ "$ar_off" = 1 ]; then
+		state finita "$n" "$n" "copia completata, senza verifica AccurateRip (disattivata)"
 	elif [ "$ok" = "$n" ]; then
 		state finita "$n" "$n" "tutte le tracce verificate con AccurateRip"
 	else

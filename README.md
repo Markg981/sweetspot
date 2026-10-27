@@ -305,6 +305,15 @@ verifica ogni traccia con il database **AccurateRip** e salva FLAC con tag e
 copertina in `Artista/Album (Anno)`, con un registro della copia
 (`sweetspot-copia.txt`).
 
+**Privacy.** Durante la lettura e la copia Sweetspot contatta, sempre in
+HTTPS: `musicbrainz.org` e `coverartarchive.org` (titoli e copertina; ricevono
+l'identificativo del disco) e `www.accuraterip.com` (verifica; riceve l'indice
+del disco). Per non contattarli, in `sweetspot.txt` imposta
+`CD_CERCA_TITOLI=no` e/o `CD_ACCURATERIP=no` (predefiniti `si`). La copia
+funziona lo stesso: titoli generici ("Traccia 1"...), nessuna copertina,
+nessuna verifica AccurateRip né ricerca automatica della correzione del
+lettore (il registro lo segnala).
+
 Le tracce esistenti **non vengono sovrascritte**: un conflitto interrompe la
 copia prima di leggere il CD e viene segnalato nella pagina Archivio. Per
 una nuova copia scegli un nome album diverso. Ogni FLAC viene codificato con
