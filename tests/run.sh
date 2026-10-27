@@ -262,6 +262,26 @@ grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player:
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
 grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-stato" && ok "stato: scanner a +500 (evento rescan)" || ko "stato: scanner a +500" "presente" "assente"
 grep -q 'oom_score_adj' "$OVERLAY/usr/bin/sweetspot-copia" && ok "copia: lavoro sospendibile a +500" || ko "copia: lavoro sospendibile a +500" "presente" "assente"
+
+# Copia nell'archivio: si copia in una cartella nascosta e si rinomina a fine
+# lavoro; con un errore (disco pieno) non resta nulla di troncato.
+CP=$WORK/copia; mkdir -p "$CP/bin" "$CP/media/Album" "$CP/arch" "$CP/run"
+echo musica > "$CP/media/Album/a.flac"
+printf '#!/bin/sh\necho "$CP/arch"\n' > "$CP/bin/sweetspot-dischi"
+printf '#!/bin/sh\nexit 0\n' > "$CP/bin/sweetspot-lms"
+printf '#!/bin/sh\nexec "$@"\n' > "$CP/bin/setsid"
+printf '#!/bin/sh\n# cp finto: scrive una parte e poi fallisce, come a disco pieno\nif [ -f "$CP/rompi" ]; then d=${3%%/}/$(basename "$2"); mkdir -p "$d"; echo parziale > "$d/a.flac"; exit 1; fi\nexec /bin/cp "$@"\n' > "$CP/bin/cp"
+chmod +x "$CP/bin/"*
+copia() { CP=$CP SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
+	SWEETSPOT_MEDIA=$CP/media $TEST_SH "$OVERLAY/usr/bin/sweetspot-copia" "$@"; }
+touch "$CP/rompi"
+copia avvia "$CP/media/Album" > /dev/null; sleep 2
+expect "copia fallita: stato errore" errore "$(cat "$CP/run/copia.stato")"
+expect "copia fallita: nell'archivio non resta nulla" "" "$(ls -A "$CP/arch")"
+rm -f "$CP/rompi"
+copia avvia "$CP/media/Album" > /dev/null; sleep 2
+expect "copia riuscita: stato finita" finita "$(cat "$CP/run/copia.stato")"
+expect "copia riuscita: cartella al suo posto, niente temporanei" Album "$(ls -A "$CP/arch")"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-precarico" && ok "precarico a +500" || ko "precarico a +500" "presente" "assente"
 
