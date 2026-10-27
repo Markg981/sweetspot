@@ -181,7 +181,20 @@ prepare_slot() {
 clear_slot() { # cartella_copia copia
 	if [ "$(boot_type)" = rpi ]; then rm -rf "$1"; fi
 	mkdir -p "$1" "$STICK_MNT/boot/versioni" || return 1
-	rm -f "$1/$(kernel_file)" "$1/rootfs.cpio.zst" "$STICK_MNT/boot/versioni/$2"
+	# Prima il marcatore (e subito su disco): da qui la copia non e' piu' valida.
+	rm -f "$STICK_MNT/boot/versioni/$2"
+	sync
+	rm -f "$1/$(kernel_file)" "$1/rootfs.cpio.zst"
+}
+
+# La copia $2 (cartella $1) e' completa e avviabile: kernel, sistema e
+# marcatore boot/versioni/<copia>. Il marcatore si scrive per ultimo, dopo
+# la sync di tutti i file (install_package) e clear_slot lo toglie per primo:
+# una copia interrotta da un taglio di corrente non lo ha e non e' valida.
+# Le copie gia' installate sul campo hanno gia' questo file (lo scrivevano
+# anche le versioni precedenti), quindi restano valide senza migrazione.
+slot_valid() { # cartella_copia copia
+	[ -f "$1/$(kernel_file)" ] && [ -f "$1/rootfs.cpio.zst" ] && [ -f "$STICK_MNT/boot/versioni/$2" ]
 }
 
 # Spazio libero sulla chiavetta, in KB (vuoto se non si sa).
@@ -321,6 +334,15 @@ verify_package() { # cartella_estratta
 	echo "$v"
 }
 
+# Controlla gli hash di SHA256SUMS ($1) sui file del pacchetto gia' spostati
+# nella cartella della copia $2 (versione e architettura non si copiano).
+verify_slot_files() { # SHA256SUMS cartella_copia
+	local list="$DIR/hash.copia"
+	grep -Ev '^.{64} [ *](versione|architettura)$' "$1" > "$list" || true
+	[ -s "$list" ] || return 1
+	(cd "$2" && sha256sum -c "$list" > /dev/null 2>&1)
+}
+
 # Sostituisce la copia $3 (cartella $2) con il pacchetto verificato in $1:
 # solo adesso la versione precedente si cancella.
 install_package() { # cartella_estratta cartella_copia copia versione
@@ -331,14 +353,22 @@ install_package() { # cartella_estratta cartella_copia copia versione
 	for f in "$x"/*; do
 		case "${f##*/}" in SHA256SUMS*|versione|architettura) continue ;; esac
 		mv "$f" "$d/" || { echo "scrittura non riuscita"; return 1; }
+		# Un file alla volta su disco: un taglio di corrente non lascia
+		# file a meta' dietro a un marcatore gia' scritto.
+		sync
 	done
+	# Gli hash del pacchetto devono tornare anche sui file gia' nella copia.
+	verify_slot_files "$x/SHA256SUMS" "$d" || { echo "scrittura non riuscita"; return 1; }
 	if [ "$(boot_type)" = rpi ]; then
 		# Riga di comando della copia nuova, con i parametri adattati a questo
 		# Raspberry Pi; tryboot.txt la fa provare al prossimo riavvio.
 		rpi_cmdline "$other" "$(rpi_tune "$(running_slot)")" > "$d/cmdline.txt"
 		rpi_boot_config "$STICK_MNT/tryboot.txt" "$other" || { echo "scrittura non riuscita"; return 1; }
 	fi
-	echo "$v" > "$STICK_MNT/boot/versioni/$other"
+	# Marcatore di copia completa per ultimo, scritto e rinominato dopo la sync.
+	echo "$v" > "$STICK_MNT/boot/versioni/$other.nuovo" &&
+		sync && mv "$STICK_MNT/boot/versioni/$other.nuovo" "$STICK_MNT/boot/versioni/$other" ||
+		{ echo "scrittura non riuscita"; return 1; }
 	sync
 	# Prova una volta sola al prossimo avvio.
 	grubenv_set "$(boot_env)" "prova=$other" || { echo "scrittura non riuscita"; return 1; }
@@ -561,7 +591,7 @@ do_other() {
 	other=$(other_slot "$(running_slot)")
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
 	d=$(slot_dir "$STICK_MNT" "$other")
-	if [ ! -f "$d/$(kernel_file)" ] || [ ! -f "$d/rootfs.cpio.zst" ]; then
+	if ! slot_valid "$d" "$other"; then
 		stick_umount
 		echo "non c'e' un'altra versione installata"
 		return 1
@@ -622,7 +652,7 @@ do_watchdog_reset() {
 	echo "$n" > "$DIR/watchdog.riavvii"
 	log "aggiornamento: $n riavvii consecutivi del watchdog con la copia $slot"
 	d=$(slot_dir "$STICK_MNT" "$other")
-	if [ "$n" -ge "$WATCHDOG_MAX" ] && [ -f "$d/$(kernel_file)" ] && [ -f "$d/rootfs.cpio.zst" ] &&
+	if [ "$n" -ge "$WATCHDOG_MAX" ] && slot_valid "$d" "$other" &&
 		[ "$(grubenv_get "$env" slot)" != "$other" ]; then
 		[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$other"
 		grubenv_set "$env" "slot=$other" prova= tentato= riavvii= riavvii_copia=

@@ -2097,6 +2097,20 @@ expect "senza l'altra copia installata: conteggio ma nessun cambio" "2|a|no" "$(
 setenv slot=a prova= tentato= riavvii= riavvii_copia=
 rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
 
+# Copia interrotta da un taglio di corrente: file presenti ma senza il marcatore
+# boot/versioni/<copia> (scritto per ultimo) non e' valida ne' per "altra" ne' per il watchdog.
+echo "Copia a meta': senza marcatore non e' valida"
+echo "kernel vB" > "$UPD/stick/b/bzImage"; echo "rootfs vB" > "$UPD/stick/b/rootfs.cpio.zst"; rm -f "$UPD/stick/boot/versioni/b"
+setenv slot=a prova= tentato= riavvii=1 riavvii_copia=a
+upd watchdog
+expect "senza marcatore: il watchdog non passa alla copia B" "a|no" "$(genv slot)|$([ -f "$UPD/run/aggiornamento/watchdog.ritorno" ] && echo si || echo no)"
+expect "senza marcatore: 'altra' rifiutata" "non c'e' un'altra versione installata|" "$(upd altra 2>&1)|$(genv prova)"
+echo v9.9.9 > "$UPD/stick/boot/versioni/b"
+upd altra
+expect "con il marcatore: 'altra' ammessa" "b" "$(genv prova)"
+setenv slot=a prova= tentato= riavvii= riavvii_copia=
+rm -f "$UPD/run/aggiornamento/watchdog.riavvii" "$UPD/run/aggiornamento/watchdog.ritorno"
+
 echo "Raspberry Pi"
 PI=$WORK/rpi
 mkdir -p "$PI/proc/device-tree/chosen/bootloader" "$PI/run" "$PI/sys/devices/system/cpu/smt" "$PI/stick/a/overlays" \
