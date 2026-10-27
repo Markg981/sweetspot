@@ -38,7 +38,7 @@ def eligible(job, ref, results, compila="true"):
     expression = expression.replace("always()", "True")
     expression = expression.replace("cancelled()", repr("cancelled" in results.values()))
     expression = expression.replace("failure()", repr("failure" in results.values()))
-    expression = re.sub(r"needs\.([a-z_]+)\.result", lambda m: repr(results[m[1]]), expression)
+    expression = re.sub(r"needs\.([a-z_-]+)\.result", lambda m: repr(results[m[1]]), expression)
     expression = expression.replace("github.ref", repr(ref))
     expression = re.sub(r"startsWith\(([^,]+),\s*([^)]*)\)", r"(\1).startswith(\2)", expression)
     expression = expression.replace("&&", " and ").replace("||", " or ")
@@ -270,7 +270,7 @@ class ReleaseGateTests(unittest.TestCase):
                       if step.get("uses", "").startswith("softprops/action-gh-release@")]
         self.assertEqual(len(publishers), 1, "publish once after both architectures pass")
         job, step = publishers[0]
-        self.assertTrue({"test", "build", "firma", "lyrion"} <= ancestors(job),
+        self.assertTrue({"test", "build", "firma", "lyrion", "studio-lyrion"} <= ancestors(job),
                         "publication can run before all test/build/Lyrion jobs finish")
         self.assertFalse(step.get("continue-on-error", False))
         self.assertFalse(WORKFLOW["jobs"][job].get("continue-on-error", False))
@@ -279,7 +279,7 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_publication_rejects_failed_skipped_cancelled_and_non_tag_runs(self):
         self.assertIn("release", WORKFLOW["jobs"], "publication needs a downstream job")
-        good = {"modifiche": "success", "test": "success", "build": "success", "firma": "success", "lyrion": "success"}
+        good = {"modifiche": "success", "test": "success", "build": "success", "firma": "success", "lyrion": "success", "studio-lyrion": "success"}
         self.assertTrue(eligible("release", "refs/tags/v1.0.0", good))
         for job in good:
             for result in ("failure", "skipped", "cancelled"):
