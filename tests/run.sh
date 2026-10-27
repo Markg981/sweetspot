@@ -4451,6 +4451,7 @@ sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1
 sh "$ROOT/tests/readme-allineato.sh" || exit 1
+sh "$ROOT/tests/modello-minaccia.sh" || exit 1
 sh "$ROOT/tests/nomi-riservati.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
