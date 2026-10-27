@@ -1829,6 +1829,8 @@ expect "in prova: pacchetto dal disco rifiutato" "la versione in uso e' ancora i
 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
 expect "in prova: anche il lavoro si ferma" "errore|la versione in uso e' ancora in prova" "$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
 expect "in prova: copia A intatta e non predefinita" "A-kernel|a|b" "$(cat "$UPD/stick/bzImage")|$(genv slot)|$(genv tentato)"
+expect "in prova: libera rifiutato" "la versione in uso e' ancora in prova" "$(upd libera 2>&1 | head -1 | cut -d: -f1)"
+expect "in prova: libera lascia la copia A" "A-kernel|a|b" "$(cat "$UPD/stick/bzImage")|$(genv slot)|$(genv tentato)"
 UPD_WGET=$UPD/bin/wget-ko upd conferma
 expect "senza risposta dalla rete non si conferma" "a|b" "$(genv slot)|$(genv tentato)"
 upd conferma

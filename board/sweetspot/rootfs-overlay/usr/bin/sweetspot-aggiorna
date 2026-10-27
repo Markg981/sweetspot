@@ -582,7 +582,18 @@ do_free() {
 	slot=$(running_slot)
 	other=$(other_slot "$slot")
 	stick_mount rw || { echo "chiavetta non trovata"; return 1; }
-	[ "$(boot_type)" = rpi ] && rpi_boot_config "$STICK_MNT/config.txt" "$slot"
+	# Con la versione in uso ancora in prova la copia precedente e' l'unica
+	# sicuramente buona: non si cancella (come in do_other e start_job).
+	if [ -n "$(grubenv_get "$(boot_env)" tentato)" ]; then
+		stick_umount
+		echo "$IN_PROVA"
+		return 1
+	fi
+	if [ "$(boot_type)" = rpi ] && ! rpi_boot_config "$STICK_MNT/config.txt" "$slot"; then
+		stick_umount
+		echo "scrittura non riuscita"
+		return 1
+	fi
 	grubenv_set "$(boot_env)" "slot=$slot" prova= tentato=
 	clear_slot "$(slot_dir "$STICK_MNT" "$other")" "$other"
 	sync
