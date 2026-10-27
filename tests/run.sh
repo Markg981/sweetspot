@@ -1925,6 +1925,11 @@ expect "confronto: maggiore" "1" "$(SWEETSPOT_TEST=1 vcmp v1.10.0 v1.2.9)"
 expect "confronto: uguale (anche -dirty)" "0" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-dirty v1.2.0)"
 expect "confronto: commit dopo il tag e' piu' recente" "1" "$(SWEETSPOT_TEST=1 vcmp v1.2.0-3-gabc1234 v1.2.0)"
 expect "confronto: versione di sviluppo non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp sviluppo v1.2.0)"
+expect "confronto: quarto componente maggiore" "1" "$(SWEETSPOT_TEST=1 vcmp v1.2.3.4 v1.2.3.1)"
+expect "confronto: quarto componente minore" "-1" "$(SWEETSPOT_TEST=1 vcmp v1.2.3.1 v1.2.3.4)"
+expect "confronto: quarto componente uguale" "0" "$(SWEETSPOT_TEST=1 vcmp v1.2.3.4 v1.2.3.4)"
+expect "confronto: rc non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp v1.0.0-rc1 v1.2.0)"
+expect "confronto: hash non confrontabile" "?" "$(SWEETSPOT_TEST=1 vcmp 79ba3e4 v1.2.0)"
 echo "v3.0.0 (2026-10-01)" > "$UPD/version"
 PKG=$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar
 mkpkg v2.0.0 x86_64
@@ -1940,6 +1945,12 @@ expect "stessa versione: reinstallazione ammessa" "pronto|v3.0.0" "$(cat "$UPD/r
 mkpkg v3.1.0 x86_64
 upd _lavoro file "$PKG"
 expect "versione maggiore: accettata" "pronto|v3.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkg v1.0.0-rc1 x86_64
+upd _lavoro file "$PKG"
+expect "versione rc non confrontabile: rifiutata come downgrade" "errore|il pacchetto (v1.0.0-rc1) e' piu' vecchio della versione in uso (v3.0.0)" \
+	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "versione rc con conferma esplicita: accettata" "pronto|v1.0.0-rc1" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
 
 if command -v minisign > /dev/null; then
