@@ -233,6 +233,38 @@ rm -f "$BTDIR/hw-rifiutato"
 expect "passaggio: senza DAC il player non si tocca" "1" "$(bt '' 'dac_find() { return 1; }; handoff_start >/dev/null 2>&1; echo $?')"
 expect "passaggio: senza DAC nessun arresto" "0" "$(grep -c 'killall\|start-stop-daemon' "$BTLOG")"
 
+# Tetto di volume del telefono (bluealsa-cli finto: stato in un file).
+cat > "$T/bin/bluealsa-cli" <<'EOF'
+#!/bin/sh
+echo "bluealsa-cli $*" >> "$BTLOG"
+P=/org/bluealsa/hci0/dev_AA_BB_CC_DD_EE_02/a2dpsnk/source
+case "$1" in
+	list-pcms) echo "$P" ;;
+	volume)
+		if [ -n "$3" ]; then echo "$3" > "$BTDIR/vol"
+		else echo "Volume: $(cat "$BTDIR/vol") $(cat "$BTDIR/vol")"; fi ;;
+esac
+EOF
+chmod +x "$T/bin/bluealsa-cli"
+expect "defaults.conf: tetto del volume Bluetooth a 25" "25" "$(sed -n 's/^BLUETOOTH_VOLUME_MAX=//p' "$OVERLAY/etc/sweetspot/defaults.conf")"
+echo 127 > "$BTDIR/vol"
+: > "$BTLOG"
+bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; sleep 2; cat $BT_V_PID > '"$T"'/vpid; handoff_end' >/dev/null 2>&1
+expect "tetto: volume del telefono riportato a 25% di 127 (31)" "31" "$(cat "$BTDIR/vol")"
+expect "tetto: scritto con bluealsa-cli volume" "1" "$(grep -c '^bluealsa-cli volume /org/bluealsa/.* 31 31$' "$BTLOG" | sed 's/^[2-9]/1/')"
+expect "tetto: fine passaggio, sorvegliante fermato" "no" "$(kill -0 "$(cat "$T/vpid")" 2>/dev/null && echo si || echo no)"
+echo 10 > "$BTDIR/vol"
+: > "$BTLOG"
+bt '' 'bt_tetto_applica 31'
+expect "tetto: sotto il tetto il telefono regola liberamente" "0" "$(grep -c 'bluealsa-cli volume .* 31' "$BTLOG")"
+bt 'BLUETOOTH_VOLUME_MAX=50' 'bt_tetto_max' > "$T/max"
+expect "tetto: BLUETOOTH_VOLUME_MAX=50 e' 63" "63" "$(cat "$T/max")"
+mv "$T/bin/bluealsa-cli" "$T/bin/bluealsa-cli.no"
+: > "$T/log"
+bt '' 'tetto_start'
+expect "tetto: senza bluealsa-cli avviso nel registro e nessun sorvegliante" "1|no" "$(grep -c 'bluealsa-cli assente' "$T/log")|$([ -e "$T/run/bluealsa-tetto.pid" ] && echo si || echo no)"
+mv "$T/bin/bluealsa-cli.no" "$T/bin/bluealsa-cli"
+
 echo "Bluetooth: core isolato e interruzioni"
 printf '  45:  100  0  GICv2  uart-pl011\n  30:  900  0  PCI-MSI  xhci_hcd\n' > "$T/proc/interrupts"
 echo 3 > "$T/proc/irq/45/smp_affinity_list"
