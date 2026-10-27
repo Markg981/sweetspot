@@ -182,6 +182,7 @@ cat > "$W/guest-cut/sync" <<'FINTO'
 #!/bin/sh
 S=/run/sweetspot/chiavetta
 fermo=no
+echo "sync TAGLIO=${TAGLIO:-} b=$(ls $S/b 2>&1 | tr '\n' ' ') v=$(ls $S/boot/versioni 2>&1 | tr '\n' ' ')" >> /tmp/cut/chiamate
 case "${TAGLIO:-}" in
 	scrittura) [ -f "$S/b/bzImage" ] && [ ! -f "$S/b/rootfs.cpio.zst" ] && fermo=si ;;
 	marcatore) [ -f "$S/boot/versioni/b.nuovo" ] && fermo=si ;;
@@ -262,6 +263,7 @@ taglio_aggiornamento() {
 	avvia_aggiornamento "$2"
 	if ! attendi_guest 'test -f /tmp/cut/raggiunto' 180; then
 		esito NO "$nome: l'aggiornamento non e' arrivato al punto del taglio ($(guest 'cat /run/sweetspot/aggiornamento/stato' 2>&1))"
+		guest 'ls -l /tmp/cut/bin; cat /tmp/cut/chiamate; mount | grep -i chiavetta' 2>&1 | sed 's/^/    diag: /'
 		taglia "$nome"
 		return 0
 	fi
