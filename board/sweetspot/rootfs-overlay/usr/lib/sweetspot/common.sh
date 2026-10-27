@@ -1944,7 +1944,20 @@ grubenv_get() { # file chiave
 
 # grubenv_set FILE CHIAVE=VALORE... (valore vuoto = toglie la chiave).
 # Il file resta di 1024 byte e si riscrive al suo posto, come fa GRUB.
+# Le chiamate sono serializzate da un lock (CGI, avvio e conferma possono
+# incrociarsi): senza, leggi-modifica-scrivi perde una delle due scritture.
 grubenv_set() {
+	local rc
+	mkdir -p "$RUN"
+	(
+		flock 5
+		grubenv_set_locked "$@"
+	) 5> "$RUN/grubenv.lock"
+	rc=$?
+	return $rc
+}
+
+grubenv_set_locked() {
 	local f=$1 kv body size
 	shift
 	body=$(sed -n '/^[A-Za-z_][A-Za-z0-9_]*=/p' "$f" 2>/dev/null)
