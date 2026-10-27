@@ -223,6 +223,33 @@ do_save "$TEST_ROOT/left" "$RIGHT"
                 self.assertEqual((folder / name).read_bytes(), data, name)
         self.assert_readable_by_web()
 
+    def sh(self, body, **extra):
+        return subprocess.run(
+            ["busybox", "sh"], input='. "$DSP_SCRIPT"\n' + body, text=True,
+            capture_output=True, timeout=10, env=dict(self.env, **extra))
+
+    def test_oversized_rew_text_is_rejected_not_truncated(self):
+        big = self.root / "big"
+        big.write_text(LEFT * 600)
+        result = self.sh('parse_rew "$F"; echo "rc=$?"', F=str(big))
+        self.assertIn("errore|0|file troppo grande", result.stdout)
+        self.assertIn("rc=1", result.stdout)
+
+    def test_save_of_oversized_rew_keeps_previous_filters(self):
+        (self.root / "left").write_text(LEFT * 600)
+        result = self.save()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assert_previous(self.ram)
+        self.assert_previous(self.disk)
+
+    def test_fir_margin_accepts_only_plain_numbers_in_range(self):
+        for value, expected in (("6", "6"), ("2.5", "2.5"), (".", "3"),
+                                ("1.2.3", "3"), ("1.", "3"), ("-2", "3"),
+                                ("99", "3"), ("", "3")):
+            with self.subTest(value=value):
+                result = self.sh('conf() { echo "$M"; }; fir_margin', M=value)
+                self.assertEqual(result.stdout.strip(), expected, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

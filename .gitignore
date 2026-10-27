@@ -2,3 +2,10 @@
 /output/
 /graphify-out/
 __pycache__/
+
+# Artefatti locali nella radice (redirect `> nul` su Windows, output di prova)
+/nul
+/out.txt
+
+# Configurazione locale degli strumenti Claude Code
+/.claude/

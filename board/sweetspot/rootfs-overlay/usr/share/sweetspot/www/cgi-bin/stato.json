@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - stato in JSON, in sola lettura: restituisce la cache del
-# demone sweetspot-stato. Protetto dalla stessa password del pannello (la
-# regola "/" di httpd.conf copre anche questo percorso).
+# demone sweetspot-stato. Protetto dalla sessione delle pagine: web.sh
+# chiama auth_gate quando viene caricato (senza accesso risponde 401).
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 

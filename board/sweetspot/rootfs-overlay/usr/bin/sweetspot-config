@@ -38,6 +38,30 @@ edit_file() {
 	'
 }
 
+# encode_value CHIAVE VALORE: stampa il valore come lo rilegge
+# config_normalize. Nome e password del Wi-Fi sono letterali (ma gli spazi ai
+# bordi vengono tolti alla lettura); gli altri valori perdono " #resto", gli
+# spazi ai bordi e una coppia di virgolette: in quei casi li si racchiude fra
+# virgolette. Esce con 1 se non e' rappresentabile.
+encode_value() {
+	local k v=$2 q
+	k=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
+	case "$k" in
+		WIFI_NOME|*PASSWORD)
+			case "$v" in [[:space:]]*|*[[:space:]]) return 1 ;; esac
+			printf '%s' "$v"; return 0 ;;
+	esac
+	case "$v" in
+		[[:space:]]*|*[[:space:]]|*[[:space:]]'#'*|\"*\"|\'*\') ;;
+		*) printf '%s' "$v"; return 0 ;;
+	esac
+	for q in '"' "'"; do
+		case "$v" in *"$q"*) continue ;; esac
+		printf '%s%s%s' "$q" "$v" "$q"; return 0
+	done
+	return 1
+}
+
 OP=$1
 shift
 case "$OP" in
@@ -95,6 +119,7 @@ while [ $i -lt $n ]; do
 	check_key "$1"
 	if [ "$OP" = imposta ]; then
 		valid_value "$2" || { echo "valore non valido" >&2; exit 1; }
+		encode_value "$1" "$2" > /dev/null || { echo "valore non rappresentabile in sweetspot.txt: $1" >&2; exit 1; }
 		set -- "$@" "$1" "$2"
 		shift 2
 		i=$((i + 2))
@@ -114,7 +139,7 @@ edit_all() { # sorgente destinazione chiavi/valori...
 	while [ $# -gt 0 ]; do
 		key=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
 		if [ "$OP" = imposta ]; then
-			edit_file "$OP" "$key" "$2" < "$dst.1" > "$dst.2" || return 1
+			edit_file "$OP" "$key" "$(encode_value "$key" "$2")" < "$dst.1" > "$dst.2" || return 1
 			shift 2
 		else
 			edit_file "$OP" "$key" "" < "$dst.1" > "$dst.2" || return 1
@@ -157,7 +182,7 @@ chmod 600 "$RUN/sweetspot.txt" 2>/dev/null # contiene le password: solo root
 config_build "$RUN/sweetspot.txt"
 reopen_onboarding
 while [ $# -gt 0 ]; do
-	case "$1" in
+	case "$(printf %s "$1" | tr a-z A-Z)" in
 		*PASSWORD*) log "impostazioni: $OP $1" ;;
 		*) if [ "$OP" = imposta ]; then log "impostazioni: $OP $1=$2"; else log "impostazioni: $OP $1"; fi ;;
 	esac
