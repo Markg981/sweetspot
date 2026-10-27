@@ -275,6 +275,10 @@ login_wait() { # chiave soglia
 login_fail() { # chiave
 	local f n="" last=""
 	mkdir -p "$LOGIN_DIR" 2>/dev/null
+	# Un file per indirizzo, in RAM (tmpfs): senza tetto chi cambia indirizzo a
+	# ogni tentativo li accumulerebbe. I contatori fermi da piu' di 30 minuti
+	# (oltre l'attesa massima di 15) si cancellano: il blocco in corso resta.
+	find "$LOGIN_DIR" -maxdepth 1 -type f -mmin +30 -exec rm -f {} + 2>/dev/null
 	f=$LOGIN_DIR/$(login_key "$1")
 	[ -f "$f" ] && read -r n last < "$f"
 	case "$n" in *[!0-9]*|'') n=0 ;; esac
