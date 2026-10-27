@@ -504,6 +504,13 @@ jobs:
             tc=$(minisign -V -Q -p "$P" -m "$d/$board/SHA256SUMS" -x "$d/$board/SHA256SUMS.minisig")
             [ "$(cat "$d/$board/architettura")" = "$board" ]
             [ "$tc" = "Sweetspot $(cat "$d/$board/versione") $board" ]
+            # La versione dichiarata dal pacchetto (descrizione git in fase di
+            # build) deve essere il tag che si pubblica: sweetspot-aggiorna la
+            # confronta con l'installata per il no-downgrade.
+            [ "$(cat "$d/$board/versione")" = "$GITHUB_REF_NAME" ] || {
+              echo "::error::il pacchetto $board dichiara la versione '$(cat "$d/$board/versione")' ma il tag e' '$GITHUB_REF_NAME': release non pubblicata"
+              exit 1
+            }
             (cd "$d/$board" && find . -type f ! -path ./SHA256SUMS ! -path ./SHA256SUMS.minisig |
               sed 's|^\./||' | LC_ALL=C sort | while read -r f; do sha256sum "$f"; done) > "$d/SHA256SUMS.attesi"
             cmp "$d/$board/SHA256SUMS" "$d/SHA256SUMS.attesi"
