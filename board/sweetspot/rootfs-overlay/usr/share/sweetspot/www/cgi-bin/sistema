@@ -96,11 +96,12 @@ $(option si "Acceso" "$(if is_yes "$(conf SSH no)"; then echo si; else echo no; 
 </select>
 <label for="sshu">Utente SSH</label>
 <select id="sshu" name="ssh_utente">
-$(option assistenza "assistenza: utente senza privilegi (consigliato)" "$(lower "$(conf SSH_UTENTE root)")")
-$(option root "root: accesso completo al sistema" "$(lower "$(conf SSH_UTENTE root)")")
+$(option assistenza "assistenza: utente senza privilegi (consigliato)" "$(lower "$(conf SSH_UTENTE assistenza)")")
+$(option root "root: accesso completo al sistema" "$(lower "$(conf SSH_UTENTE assistenza)")")
 </select>
 <label for="sshp">Password SSH <span>(lascia vuoto per non cambiarla)</span></label>
 <input id="sshp" name="ssh_password" type="password" autocomplete="new-password">
+<small>Almeno 12 caratteri; vuoto = nessuna modifica (o solo chiavi).</small>
 $([ -n "$(conf PASSWORD_WEB)" ] ||
 	echo '<p class="sub">Per cambiare l'"'"'accesso SSH da qui imposta prima una password per queste pagine: SSH apre il sistema come amministratore e la modifica richiede di riscriverla. In alternativa scrivi SSH nel file sweetspot.txt con il computer.</p>')
 <label for="webp">Password di queste pagine <span>(utente admin; lascia vuoto per non cambiarla)</span></label>

@@ -248,8 +248,8 @@ for f in 0 1 2; do [ -e /proc/self/fd/$f ] || exit 1; done
 		tok=$("$WORK/priv" @conferma-nuova)
 		expect "gettone: 32 cifre esadecimali" "1" "$(printf '%s' "$tok" | grep -cE '^[0-9a-f]{32}$')"
 		expect "gettone: file nella cartella di root" "si" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
-		expect "conferma con la password giusta" "sweetspot-config|imposta|SSH|si|SSH_PASSWORD|nuova" \
-			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si SSH_PASSWORD nuova)"
+		expect "conferma con la password giusta" "sweetspot-config|imposta|SSH|si|SSH_PASSWORD|nuovapassword1" \
+			"$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si SSH_PASSWORD nuovapassword1)"
 		expect "il gettone e' monouso" "NIENTE(126)" "$(sconf segreta @conferma "$tok" sweetspot-config imposta SSH si)"
 		expect "gettone consumato: il file non c'e' piu'" "no" "$([ -f "$W/conferma/$tok" ] && echo si || echo no)"
 		tok=$("$WORK/priv" @conferma-nuova)
@@ -428,28 +428,34 @@ SISTEMA="a=sistema&nome=Salotto&modalita=completa&profilo=bilanciato&ascolto=si&
 rm -f "$A/run/sweetspot.conf"
 printf 'NOME_PLAYER=Prova\n' > "$A/run/sweetspot.web"
 : > "$A/priv.log"
-out=$(act "$SISTEMA&ssh=si&ssh_password=nuova" | tr -d '\r')
+out=$(act "$SISTEMA&ssh=si&ssh_password=nuovapassword1" | tr -d '\r')
 expect "SSH senza password del pannello: non si cambia" "0" "$(grep -c 'SSH' "$A/priv.log")"
 msg=$(httpd -d "$(printf '%s\n' "$out" | grep '^Location: ' | sed 's/^.*msg=//')")
 case "$msg" in *"imposta prima una password"*) ok "SSH senza password del pannello: il messaggio dice cosa fare" ;; *) expect "messaggio" "imposta prima una password" "$msg" ;; esac
 printf 'PASSWORD_WEB=*\nNOME_PLAYER=Prova\n' > "$A/run/sweetspot.web"
 : > "$A/priv.log"
-act "$SISTEMA&ssh=si&ssh_password=nuova" > /dev/null
+act "$SISTEMA&ssh=si&ssh_password=nuovapassword1" > /dev/null
 expect "SSH con password del pannello ma senza conferma: non si cambia" "0" "$(grep -c 'SSH' "$A/priv.log")"
 : > "$A/priv.log"
-act "$SISTEMA&ssh=si&ssh_password=nuova&ct=gettone1&conferma_password=segreta" > /dev/null
-expect "SSH con conferma: passa dalla conferma forte dell'helper" "1" "$(grep -c '^@conferma gettone1 sweetspot-config imposta SSH si SSH_UTENTE root SSH_PASSWORD nuova$' "$A/priv.log")"
+act "$SISTEMA&ssh=si&ssh_password=nuovapassword1&ct=gettone1&conferma_password=segreta" > /dev/null
+expect "SSH con conferma: passa dalla conferma forte dell'helper" "1" "$(grep -c '^@conferma gettone1 sweetspot-config imposta SSH si SSH_UTENTE assistenza SSH_PASSWORD nuovapassword1$' "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_password=corta8ch&ct=gcorta&conferma_password=segreta" > /dev/null
+expect "password SSH di 8 caratteri dal web: rifiutata" "0" "$(grep -c "SSH_PASSWORD" "$A/priv.log")"
+: > "$A/priv.log"
+act "$SISTEMA&ssh=si&ssh_password=123456789012&ct=glunga&conferma_password=segreta" > /dev/null
+expect "password SSH di 12 caratteri dal web: accettata" "1" "$(grep -c "SSH_PASSWORD 123456789012" "$A/priv.log")"
 expect "SSH: le impostazioni normali non portano le chiavi di root" "0" "$(grep '^sweetspot-config imposta NOME_PLAYER' "$A/priv.log" | grep -c 'SSH')"
 expect "le altre impostazioni si salvano comunque" "1" "$(grep -c '^sweetspot-config imposta NOME_PLAYER Salotto' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=no&ssh_password=" > /dev/null
 expect "senza cambiare SSH non serve alcuna conferma" "0" "$(grep -c '@conferma\|SSH' "$A/priv.log")"
 : > "$A/priv.log"
-act "$SISTEMA&ssh=no&ssh_password=&ssh_utente=assistenza&ct=g2&conferma_password=segreta" > /dev/null
-expect "cambio dell'utente SSH: conferma forte" "1" "$(grep -c '^@conferma g2 sweetspot-config imposta SSH no SSH_UTENTE assistenza$' "$A/priv.log")"
+act "$SISTEMA&ssh=no&ssh_password=&ssh_utente=root&ct=g2&conferma_password=segreta" > /dev/null
+expect "cambio dell'utente SSH: conferma forte" "1" "$(grep -c '^@conferma g2 sweetspot-config imposta SSH no SSH_UTENTE root$' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_utente=root%0aSSH%3dsi&ct=g3&conferma_password=segreta" > /dev/null
-expect "utente SSH inventato: ignorato, resta root" "1" "$(grep -c '^@conferma g3 sweetspot-config imposta SSH si SSH_UTENTE root$' "$A/priv.log")"
+expect "utente SSH inventato: ignorato, resta assistenza" "1" "$(grep -c '^@conferma g3 sweetspot-config imposta SSH si SSH_UTENTE assistenza$' "$A/priv.log")"
 : > "$A/priv.log"
 act "$SISTEMA&ssh=si&ssh_password=a%0aSSH%3dsi&ct=g4&conferma_password=segreta" > /dev/null
 expect "password SSH con a capo: non arriva all'helper" "0" "$(grep -c 'SSH' "$A/priv.log")"
@@ -462,8 +468,8 @@ act "$SISTEMA&ssh=no&ssh_password=&web_password=nuovissima123&ct=g5&conferma_pas
 expect "cambio password delle pagine con la vecchia: conferma forte" "1" "$(grep -c '^@conferma g5 sweetspot-config imposta PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
 expect "la password delle pagine non va con le impostazioni normali" "0" "$(grep '^sweetspot-config imposta NOME_PLAYER' "$A/priv.log" | grep -c 'PASSWORD_WEB')"
 : > "$A/priv.log"
-act "$SISTEMA&ssh=si&ssh_password=nuova&web_password=nuovissima123&ct=g6&conferma_password=segreta" > /dev/null
-expect "SSH e password delle pagine insieme: una sola conferma" "1|1" "$(grep -c '@conferma' "$A/priv.log")|$(grep -c '^@conferma g6 sweetspot-config imposta SSH si SSH_UTENTE root SSH_PASSWORD nuova PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
+act "$SISTEMA&ssh=si&ssh_password=nuovapassword1&web_password=nuovissima123&ct=g6&conferma_password=segreta" > /dev/null
+expect "SSH e password delle pagine insieme: una sola conferma" "1|1" "$(grep -c '@conferma' "$A/priv.log")|$(grep -c '^@conferma g6 sweetspot-config imposta SSH si SSH_UTENTE assistenza SSH_PASSWORD nuovapassword1 PASSWORD_WEB \$1\$nuovo\$hash$' "$A/priv.log")"
 # Un pacchetto dal disco, anche firmato ma vecchio, sostituisce il sistema.
 : > "$A/priv.log"
 act "a=aggiorna_file&file=%2Fmedia%2FUSB%2Fpacchetto.tar" > /dev/null

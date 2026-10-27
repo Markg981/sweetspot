@@ -117,7 +117,7 @@ mcopy -o -i "$W/disco.img@@1M" "$W/grub.cfg" ::/boot/grub/grub.cfg
 mcopy -o -i "$W/disco.img@@1M" ::/sweetspot.txt "$W/sweetspot.txt"
 # Credenziali di Lyrion dichiarate: il primo avvio non genera e non salva una
 # password in sweetspot.txt (scrittura che rimette in moto i servizi a riposo).
-printf '\nSSH=si\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nBLUETOOTH=si\nLYRION_UTENTE=prova\nLYRION_PASSWORD=%s\n' \
+printf '\nSSH=si\nSSH_UTENTE=root\nSSH_PASSWORD=%s\nMODALITA_ASCOLTO=no\nBLUETOOTH=si\nLYRION_UTENTE=prova\nLYRION_PASSWORD=%s\n' \
 	"$SSHPASS" "$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$W/sweetspot.txt"
 mcopy -o -i "$W/disco.img@@1M" "$W/sweetspot.txt" ::/sweetspot.txt
 
