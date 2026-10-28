@@ -4724,6 +4724,20 @@ fwfail=$(sh "$ROOT/tests/firewall-fallimento.sh" > "$WORK/fwfail.out" 2>&1; echo
 expect "firewall: caricamento fallito, fallback chiuso" 0 "$fwfail"
 [ "$fwfail" = 0 ] || cat "$WORK/fwfail.out"
 
+# Websocket di CamillaDSP (C-23): solo root (uid 0) puo' raggiungerlo.
+FWD=$OVERLAY/etc/sweetspot/firewall-dsp.nft
+expect "firewall DSP: filtro per utente sul solo loopback" "1|1" \
+	"$(grep -c 'oifname "lo" tcp dport \$DSP_PORTA meta skuid != 0 ' "$FWD")|$(grep -c 'policy accept' "$FWD")"
+printf '#!/bin/sh\nif [ "$1" = "-f" ]; then cat "$2" > "$(dirname "$0")/dsp.caricato"; fi\nexit 0\n' > "$FWE/nft"
+SWEETSPOT_NFT=$FWE/nft SWEETSPOT_RUN=$FWE/run SWEETSPOT_LOG=$FWE/log SWEETSPOT_DSP_PORTA=4321 \
+	SWEETSPOT_FIREWALL_DSP=$FWD $TEST_SH "$OVERLAY/usr/bin/sweetspot-firewall" dsp
+expect "firewall DSP: porta definita e regola caricata" "1|1" \
+	"$(grep -c '^define DSP_PORTA = 4321$' "$FWE/dsp.caricato")|$(grep -c 'skuid != 0' "$FWE/dsp.caricato")"
+if command -v nft > /dev/null 2>&1; then
+	nft -c -f "$FWE/dsp.caricato" > /dev/null 2>&1
+	expect "firewall DSP: nft -c accetta le regole" 0 "$?"
+fi
+
 # --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
 if command -v gcc > /dev/null 2>&1; then
 	expect "alsa-cdsp: dopo un timeout nella FIFO solo frame interi" "0" "$(sh "$ROOT/tests/alsa-cdsp-frame.sh" > "$WORK/frame.out" 2>&1; echo $?)"

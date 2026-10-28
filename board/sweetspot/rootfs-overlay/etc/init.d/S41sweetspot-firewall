@@ -5,8 +5,8 @@
 # quando lo accende. Vedi sweetspot-firewall.
 
 case "$1" in
-	start|restart) sweetspot-firewall applica ;;
-	stop) sweetspot-firewall ferma ;;
+	start|restart) sweetspot-firewall dsp; sweetspot-firewall applica ;;
+	stop) sweetspot-firewall ferma; nft delete table inet sweetspot_dsp 2>/dev/null ;;
 	*) echo "uso: $0 start|stop|restart" ;;
 esac
 exit 0
