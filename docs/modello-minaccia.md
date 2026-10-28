@@ -92,16 +92,17 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
 - **Difesa presente.** Spento di default (`ARCHIVIO_CONDIVISO=no`,
   `usr/bin/sweetspot-nas`). Senza password: ospite in **sola lettura**;
   con password: utente `sweetspot` autenticato, `guest ok = no`
-  (`sweetspot-nas`). Protocollo minimo SMB 2.1 (`sweetspot-nas`).
+  (`sweetspot-nas`). Protocollo minimo SMB 2.1 e, con la password, firma
+  obbligatoria (`server signing = mandatory`, `ARCHIVIO_FIRMA=si`); cifratura
+  SMB3 opzionale (`ARCHIVIO_CIFRATURA=si`, spenta per il costo di CPU).
   Hash NT in file `600` (`sweetspot-nas`); la password passa da stdin
   (`sweetspot-nas`).
-- **Rischio residuo accettato.** Nessuna firma né cifratura SMB configurate
-  (`sweetspot-nas`): un client malevolo sulla LAN può fare
-  man in the middle. Ascolta su tutte le interfacce. Con l'ospite chiunque
+- **Rischio residuo accettato.** Nessuna cifratura di default: il contenuto
+  è leggibile da chi intercetta il traffico (la firma impedisce la
+  manomissione solo con la password; l'ospite non è firmato). Ascolta su tutte le interfacce. Con l'ospite chiunque
   sulla LAN legge la libreria.
 - **Con LAN non fidata.** Password obbligatoria (mai ospite), firma SMB
-  obbligatoria (`server signing = mandatory`), cifratura dove i client la
-  supportano, `interfaces`/`hosts allow` limitati alla scheda di casa.
+  obbligatoria (già di default con la password), `ARCHIVIO_CIFRATURA=si`, `interfaces`/`hosts allow` limitati alla scheda di casa.
 
 ### 3.4 MiniDLNA (media server UPnP/DLNA)
 
