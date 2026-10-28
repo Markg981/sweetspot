@@ -444,7 +444,7 @@ def run(args):
             check("Squeezelite di prova collegato a Lyrion", bool(wait_for(connected, 20)))
             lms(["mixer", "volume", 100], mac)
         else:
-            url = "http://192.0.2.10:8200/MediaItems/42.wav"
+            url = "http://192.168.1.10:8200/MediaItems/42.wav"
         meta = didl("Brano di prova &amp; C.", url)
 
         print("== Riproduzione")
@@ -499,7 +499,7 @@ def run(args):
 
         if fake:
             print("== Seek per traccia e NextURI")
-            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "ftp://192.0.2.10/x.flac"), ("NextURIMetaData", "")])
+            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "ftp://192.168.1.10/x.flac"), ("NextURIMetaData", "")])
             check("SetNextAVTransportURI non http(s): errore 714 come CurrentURI", st == 500 and out.get("errorCode") == "714", (st, out))
             st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "file:///etc/passwd"), ("NextURIMetaData", "")])
             check("SetNextAVTransportURI file://: errore 714", st == 500 and out.get("errorCode") == "714", (st, out))
@@ -512,10 +512,26 @@ def run(args):
             check("Seek TRACK_NR 1 riparte dall'inizio ('time 0' a Lyrion)", st == 200 and any(c[0] == "time" and str(c[1]) == "0" for c in fake.calls), (st, out))
             st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "FRAME"), ("Target", "1")])
             check("Seek con unita' non supportata: errore 710", st == 500 and out.get("errorCode") == "710", (st, out))
-            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "http://192.0.2.10:8200/MediaItems/43.wav"), ("NextURIMetaData", "")])
+            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "http://192.168.1.10:8200/MediaItems/43.wav"), ("NextURIMetaData", "")])
             check("SetNextAVTransportURI http valido: accettato e messo in coda", st == 200 and any(c[:2] == ["playlist", "add"] for c in fake.calls), (st, out))
             st, out = soap(base, "AVTransport", "Seek", [("InstanceID", 0), ("Unit", "TRACK_NR"), ("Target", "2")])
             check("Seek TRACK_NR 2 con traccia in coda: salta alla successiva", st == 200 and any(c[:3] == ["playlist", "index", "+1"] for c in fake.calls), (st, out))
+
+            print("== URI ammessi")
+            n_add = len([c for c in fake.calls if c[:2] == ["playlist", "add"]])
+            for u in ("http://203.0.113.5/a.flac", "https://example.com/a.flac", "http://[2001:db8::1]/a", "http://user@192.168.1.10/a", "http://2130706433/a"):
+                st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", u), ("NextURIMetaData", "")])
+                check("NextURI non locale rifiutato (716): " + u, st == 500 and out.get("errorCode") == "716", (st, out))
+            st, out = soap(base, "AVTransport", "SetAVTransportURI", [("InstanceID", 0), ("CurrentURI", "http://203.0.113.5/a.flac"), ("CurrentURIMetaData", "")])
+            check("CurrentURI pubblico rifiutato (716)", st == 500 and out.get("errorCode") == "716", (st, out))
+            check("gli URI rifiutati non arrivano a Lyrion", len([c for c in fake.calls if c[:2] == ["playlist", "add"]]) == n_add, fake.calls)
+            for u in ("http://10.1.2.3:8200/a", "http://172.20.0.5/a", "http://127.0.0.1/a", "http://169.254.1.1/a", "http://[fd00::1]:80/a", "http://nas:8200/a", "http://nas.local/a"):
+                st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", u), ("NextURIMetaData", "")])
+                check("NextURI locale accettato: " + u, st == 200, (st, out))
+            conf.write_text(conf.read_text(encoding="utf-8") + "RENDERER_URI_PUBBLICI=si\n", encoding="utf-8")
+            st, out = soap(base, "AVTransport", "SetNextAVTransportURI", [("InstanceID", 0), ("NextURI", "http://203.0.113.5/a.flac"), ("NextURIMetaData", "")])
+            check("con RENDERER_URI_PUBBLICI=si l'host pubblico e' accettato", st == 200, (st, out))
+            conf.write_text("NOME_PLAYER=Salotto\nMODALITA=completa\nRENDERER_UPNP=si\n", encoding="utf-8")
 
             print("== Abbonati lenti e limiti")
             slow = socket.socket()
