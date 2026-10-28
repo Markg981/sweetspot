@@ -4649,6 +4649,13 @@ else
 	salta "gcc"
 fi
 
+# --- sweetspot-partizione: numeri > 4 solo su GPT (C-05) ---
+if command -v gcc > /dev/null 2>&1; then
+	expect "partizione: numeri 5-128 su GPT, max 4 su MBR" "0" "$(sh "$ROOT/tests/partizione-numeri.sh" > "$WORK/partnum.out" 2>&1; echo $?)"
+else
+	salta "gcc"
+fi
+
 echo "Archivio nello spazio libero: creazione ripresa dopo un taglio di corrente"
 SR=$WORK/spazio
 mkdir -p "$SR/bin" "$SR/dev" "$SR/run" "$SR/stick" "$SR/sys/block/sdx/queue" "$SR/sys/class/block/sdx2"
