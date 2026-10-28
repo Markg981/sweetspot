@@ -198,7 +198,7 @@ _do_create() {
 do_create() {
 	local rc
 	avvio_lock "$DIR/avvio" || { echo "creazione gia' in corso"; return 1; }
-	_do_create "$@"; rc=$?
+	_do_create; rc=$?
 	avvio_unlock "$DIR/avvio"
 	return $rc
 }
