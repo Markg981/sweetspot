@@ -419,8 +419,7 @@ do_cover() {
 	lms_auth_prepara
 	auth=$LMS_AUTH
 	tmp=$(mktemp "$RUN/cover.XXXXXX") || return 1
-	if ! "${SWEETSPOT_WGET:-wget}" -q -T 8 -O "$tmp" ${auth:+--header "$auth"} \
-		"http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" 2>/dev/null \
+	if ! lms_http "$auth" 8 "http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" > "$tmp" 2>/dev/null \
 		|| [ "$(wc -c < "$tmp")" -gt 4194304 ] || [ ! -s "$tmp" ] \
 		|| ! { head -c 3 "$tmp" | od -An -tx1 | grep -q 'ff d8 ff' || head -c 4 "$tmp" | od -An -tx1 | grep -q '89 50 4e 47'; }; then
 		rm -f "$tmp"

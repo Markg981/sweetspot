@@ -1050,10 +1050,17 @@ prev=""; for a; do [ "$prev" = --header ] && printf '%s\n' "$a" >> "$SWEETSPOT_R
 echo '{"result":{"_version":"9.1.1"}}'
 FINTO
 chmod +x "$WEB/bin/wget-auth"
+# Con le credenziali l'intestazione arriva a curl da stdin (non da argv).
+cat > "$WEB/bin/curl-auth" <<'FINTO'
+#!/bin/sh
+sed -n 's/^header = "\(.*\)"$/\1/p' >> "$SWEETSPOT_RUN/wget.headers"
+echo '{"result":{"_version":"9.1.1"}}'
+FINTO
+chmod +x "$WEB/bin/curl-auth"
 lmsauth() { # impostazioni
 	printf '%s\n' "$1" > "$WEB/s.txt"
 	rm -f "$WEB/run/wget.headers"
-	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth \
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth SWEETSPOT_CURL=$WEB/bin/curl-auth \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; lms_json '' version '?' > /dev/null"
 	grep -c '^Authorization: ' "$WEB/run/wget.headers"
 }
@@ -4382,6 +4389,7 @@ sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
 sh "$ROOT/tests/lyrion-auth.sh" || exit 1
+sh "$ROOT/tests/lyrion-argv.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
