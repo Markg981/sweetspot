@@ -399,13 +399,52 @@ ntfs_parts() { # disco
 	done
 }
 
-# Windows ibernato o spento con Avvio rapido lascia NTFS "sporco": ntfsfix -n lo
-# segnala senza scrivere. Se lo strumento manca non si puo' sapere: si va avanti.
+# Windows ibernato o spento con Avvio rapido lascia NTFS "sporco". ntfsprogs non
+# e' nell'immagine: il flag sta in $Volume (record 3 della MFT, attributo
+# $VOLUME_INFORMATION, bit 0x0001) e lo si legge con dd/od. Se qualcosa non
+# torna (strumento assente, volume illeggibile, layout strano) NON si sa: si
+# tratta come sporco, mai come pulito.
+ntfs_le() { # dispositivo offset byte -> intero little-endian
+	dd if="$1" bs=1 skip="$2" count="$3" 2> /dev/null | od -An -tu1 -v |
+		awk '{ for (i = NF; i >= 1; i--) v = v * 256 + $i } END { printf "%d", v }'
+}
+
+ntfs_part_dirty() { # dispositivo -> 0 se sporco o non verificabile, 1 se pulito
+	local p=$1 bps spc mft rec rs o a t l c fl
+	if command -v ntfsfix > /dev/null; then
+		ntfsfix -n "$p" > /dev/null 2>&1 && return 1
+		return 0
+	fi
+	bps=$(ntfs_le "$p" 11 2)
+	spc=$(ntfs_le "$p" 13 1)
+	mft=$(ntfs_le "$p" 48 8)
+	rec=$(ntfs_le "$p" 64 1)
+	[ "$bps" -gt 0 ] && [ "$spc" -gt 0 ] || return 0
+	if [ "$rec" -ge 128 ]; then rs=$((1 << (256 - rec))); else rs=$((rec * bps * spc)); fi
+	[ "$rs" -ge 512 ] && [ "$rs" -le 4096 ] || return 0
+	o=$((mft * spc * bps + 3 * rs))
+	[ "$(dd if="$p" bs=1 skip="$o" count=4 2> /dev/null)" = FILE ] || return 0
+	a=$(ntfs_le "$p" $((o + 20)) 2)
+	while [ "$a" -gt 0 ] && [ "$a" -lt "$rs" ]; do
+		t=$(ntfs_le "$p" $((o + a)) 4)
+		[ "$t" -ne 4294967295 ] || return 0
+		l=$(ntfs_le "$p" $((o + a + 4)) 4)
+		if [ "$t" -eq 112 ]; then
+			c=$(ntfs_le "$p" $((o + a + 20)) 2)
+			fl=$(ntfs_le "$p" $((o + a + c + 10)) 2)
+			[ $((fl & 1)) -eq 0 ] && return 1
+			return 0
+		fi
+		[ "$l" -gt 0 ] || return 0
+		a=$((a + l))
+	done
+	return 0
+}
+
 ntfs_dirty() { # disco
 	local p
-	command -v ntfsfix > /dev/null || return 1
 	for p in $(ntfs_parts "$1"); do
-		ntfsfix -n "$p" > /dev/null 2>&1 || return 0
+		ntfs_part_dirty "$p" && return 0
 	done
 	return 1
 }

@@ -4385,6 +4385,7 @@ sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+sh "$ROOT/tests/ntfs-sporco.sh" || exit 1
 
 # --- C17: follower del volume unico e niente picco al passaggio da fisso ---
 VF=$WORK/volfollower
