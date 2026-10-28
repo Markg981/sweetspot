@@ -4324,7 +4324,15 @@ msif() {
 ' "$1" > "$MSD/run/sweetspot.conf"
 	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica" | grep -c '^network_interface='
 }
-expect "media server: interfacce solo se valide, vuote = tutte" "1|0|0|0|0" 	"$(msif eth0,wlan0.1)|$(msif '')|$(msif 'eth0;rm')|$(msif 'eth0,,wlan0')|$(msif ',eth0')"
+msapt() {
+	mkdir -p "$MSD/sys/class/net/lo" "$MSD/sys/class/net/eth0" "$MSD/sys/class/net/wlan0"
+	printf '%s\n' "$1" > "$MSD/run/sweetspot.conf"
+	printf 'wlan0\n' > "$MSD/run/hotspot.attivo"
+	SWEETSPOT_SYSFS=$MSD/sys SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica" | grep '^network_interface='
+}
+expect "media server: interfacce fissate solo se valide, il resto ripiega sulle LAN" "network_interface=eth0,wlan0.1|network_interface=eth0|network_interface=eth0|network_interface=eth0" 	"$(msapt 'DLNA_INTERFACCE=eth0,wlan0.1')|$(msapt 'DLNA_INTERFACCE=eth0;rm')|$(msapt 'DLNA_INTERFACCE=eth0,,wlan0')|$(msapt 'DLNA_INTERFACCE=,eth0')"
+expect "media server: di serie niente hotspot, con DLNA_HOTSPOT=si c'e'" "network_interface=eth0|network_interface=eth0,wlan0" 	"$(msapt 'X=1')|$(msapt 'DLNA_HOTSPOT=si')"
+rm -f "$MSD/run/hotspot.attivo"
 expect "media server: senza privilegi, nome del player ripulito" "1|1" 	"$(printf '%s
 ' "$msconf" | grep -c '^user=dlna$')|$(printf '%s
 ' "$msconf" | grep -c '^friendly_name=Salotto_rm (libreria)$')"

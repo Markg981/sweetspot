@@ -30,15 +30,27 @@ dlna_name() {
 	printf '%s (libreria)' "$(safe_name "$(conf NOME_PLAYER Sweetspot)")" | cut -c1-64
 }
 
-# Interfacce su cui il server ascolta (DLNA_INTERFACCE): nomi separati da
-# virgola, solo [A-Za-z0-9_.-]. Vuota o non valida: tutte, come prima.
+# Interfacce su cui il server ascolta. DLNA_INTERFACCE (nomi separati da
+# virgola, solo [A-Za-z0-9_.-]) le fissa a mano. Vuota o non valida: tutte le
+# schede di rete LAN (cavo, Wi-Fi client), esclusa quella dell'hotspot di
+# configurazione ($RUN/hotspot.attivo) salvo DLNA_HOTSPOT=si. Se non resta
+# nessuna scheda ascolta solo su lo: mai "tutte" per ripiego.
 dlna_ifaces() {
-	local v
+	local v n i ap="" out=""
 	v=$(conf DLNA_INTERFACCE "")
 	case "$v" in
-		""|*[!A-Za-z0-9_.,-]*|,*|*,|*,,*) return 0 ;;
+		""|*[!A-Za-z0-9_.,-]*|,*|*,|*,,*) ;;
+		*) printf '%s' "$v"; return 0 ;;
 	esac
-	printf '%s' "$v"
+	is_yes "$(conf DLNA_HOTSPOT no)" || ap=$(cat "$RUN/hotspot.attivo" 2>/dev/null)
+	for n in "$SYS"/class/net/*; do
+		[ -e "$n" ] || continue
+		i=${n##*/}
+		case "$i" in lo|*[!A-Za-z0-9_.-]*) continue ;; esac
+		[ "$i" = "$ap" ] && continue
+		out=${out:+$out,}$i
+	done
+	printf '%s' "${out:-lo}"
 }
 
 dlna_conf() { # cartella-musica
