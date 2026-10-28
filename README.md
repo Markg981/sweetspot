@@ -284,8 +284,12 @@ sospende mentre la musica suona) e lì finiscono i CD. Con *Condividi in rete*
 l'archivio compare sul PC come `\\sweetspot.local\Musica` e sul Mac come
 `smb://sweetspot.local/Musica` (server SMB del kernel, ksmbd, minimo SMB 2.1).
 Con una **password** (utente `sweetspot`) la cartella è in lettura e scrittura,
-per copiare la musica; **senza password** è aperta agli ospiti ma in **sola
-lettura**. Il server lavora come utente `nas`, non come root, e non mostra i
+per copiare la musica, con la **firma SMB obbligatoria** (`ARCHIVIO_FIRMA=si`,
+predefinito; i client SMB1 non si collegano comunque). La **cifratura SMB3**
+(`ARCHIVIO_CIFRATURA=si`) è opzionale e spenta di default: pesa sulla CPU e
+esclude i client senza SMB3 (Windows 7, vecchi NAS). **Senza password** è
+aperta agli ospiti ma in **sola lettura**, senza firma obbligatoria (l'ospite
+non può firmare). Il server lavora come utente `nas`, non come root, e non mostra i
 file interni (cartella `.sweetspot-cache`, `artwork.db`, `imgproxy.db`). Si
 scrive solo dove l'utente `nas` ha i permessi: la cartella radice dell'archivio
 gli viene assegnata, le cartelle già presenti create da altri restano in sola
@@ -821,6 +825,7 @@ immagini x86 e Raspberry Pi) e un driver che supporti la modalità AP.
 | `CORREZIONE` | `no`, `si`, `confronto` (pari volume, senza filtri) | no |
 | `ARCHIVIO` | UUID/PARTUUID dell'archivio; nome nelle vecchie configurazioni se univoco | vuoto |
 | `ARCHIVIO_CONDIVISO`, `ARCHIVIO_PASSWORD` | cartella di rete Musica | no, vuoto |
+| `ARCHIVIO_FIRMA`, `ARCHIVIO_CIFRATURA` | firma SMB obbligatoria (con la password) e cifratura SMB3 obbligatoria (costosa, opzionale) | si, no |
 | `AGGIORNAMENTI_URL` | altra fonte degli aggiornamenti (API release di GitHub) | questo progetto |
 
 I profili cambiano solo la frequenza della CPU: *silenzio* la fissa alla

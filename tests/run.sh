@@ -1718,6 +1718,12 @@ case "$c" in *"netbios name = SALOTTO"*"path = /media/Musica"*"guest ok = yes"*)
 c=$(arun "ksmbd_conf /media/Musica" "ARCHIVIO_PASSWORD=segreta")
 case "$c" in *"guest ok = no"*"valid users = sweetspot"*) ok "cartella di rete con password" ;; *) ko "cartella di rete con password" "valid users" "$c" ;; esac
 case "$c" in *segreta*) ko "password fuori dalla configurazione" "assente" "presente" ;; *) ok "password fuori dalla configurazione" ;; esac
+case "$c" in *"server min protocol = SMB2_10"*"server signing = mandatory"*) ok "SMB: firma obbligatoria con la password" ;; *) ko "SMB: firma obbligatoria con la password" "server signing = mandatory" "$c" ;; esac
+case "$c" in *"smb3 encryption"*) ko "SMB: cifratura spenta di default" "assente" "presente" ;; *) ok "SMB: cifratura spenta di default" ;; esac
+c=$(arun "ksmbd_conf /media/Musica")
+case "$c" in *"server signing = auto"*) ok "SMB: ospite senza firma obbligatoria" ;; *) ko "SMB: ospite senza firma obbligatoria" "server signing = auto" "$c" ;; esac
+c=$(arun "ksmbd_conf /media/Musica" "$(printf 'ARCHIVIO_PASSWORD=segreta\nARCHIVIO_FIRMA=no\nARCHIVIO_CIFRATURA=si')")
+case "$c" in *"server signing = auto"*"smb3 encryption = yes"*) ok "SMB: firma e cifratura configurabili" ;; *) ko "SMB: firma e cifratura configurabili" "auto + encryption" "$c" ;; esac
 
 echo "Copia dei CD"
 CD=$WORK/cd
