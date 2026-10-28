@@ -436,9 +436,18 @@ tetto_start() {
 	}
 	t=$(bt_tetto_max)
 	bt_tetto_applica "$t"
+	# Finestra residua: il monitor di bluealsa-cli (se supportato) riporta il
+	# volume al tetto a ogni evento; il giro a 0,2 s e' la rete di sicurezza
+	# (se il monitor non c'e' o non segnala il volume).
 	(
+		trap 'kill $mon 2>/dev/null; exit 0' TERM INT
+		mon=
+		bluealsa-cli monitor 2>/dev/null | while read -r _; do
+			bt_tetto_applica "$t"
+		done &
+		mon=$!
 		while :; do
-			sleep 1
+			sleep 0.2
 			bt_tetto_applica "$t"
 		done
 	) > /dev/null 2>&1 &

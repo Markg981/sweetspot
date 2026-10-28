@@ -240,6 +240,7 @@ echo "bluealsa-cli $*" >> "$BTLOG"
 P=/org/bluealsa/hci0/dev_AA_BB_CC_DD_EE_02/a2dpsnk/source
 case "$1" in
 	list-pcms) echo "$P" ;;
+	monitor) sleep 2 ;;
 	volume)
 		if [ -n "$3" ]; then echo "$3" > "$BTDIR/vol"
 		else echo "Volume: $(cat "$BTDIR/vol") $(cat "$BTDIR/vol")"; fi ;;
@@ -252,6 +253,9 @@ echo 127 > "$BTDIR/vol"
 bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; sleep 2; cat $BT_V_PID > '"$T"'/vpid; handoff_end' >/dev/null 2>&1
 expect "tetto: volume del telefono riportato a 25% di 127 (31)" "31" "$(cat "$BTDIR/vol")"
 expect "tetto: scritto con bluealsa-cli volume" "1" "$(grep -c '^bluealsa-cli volume /org/bluealsa/.* 31 31$' "$BTLOG" | sed 's/^[2-9]/1/')"
+echo 127 > "$BTDIR/vol"
+bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; echo 127 > '"$BTDIR"'/vol; sleep 0.7; cat '"$BTDIR"'/vol > '"$T"'/vol2; handoff_end' >/dev/null 2>&1
+expect "tetto: un rialzo del telefono rientra in meno di 1 s" "31" "$(cat "$T/vol2")"
 expect "tetto: fine passaggio, sorvegliante fermato" "no" "$(kill -0 "$(cat "$T/vpid")" 2>/dev/null && echo si || echo no)"
 echo 10 > "$BTDIR/vol"
 : > "$BTLOG"
