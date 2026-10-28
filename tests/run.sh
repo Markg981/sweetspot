@@ -1082,10 +1082,17 @@ prev=""; for a; do [ "$prev" = --header ] && printf '%s\n' "$a" >> "$SWEETSPOT_R
 echo '{"result":{"_version":"9.1.1"}}'
 FINTO
 chmod +x "$WEB/bin/wget-auth"
+# Con le credenziali l'intestazione arriva a curl da stdin (non da argv).
+cat > "$WEB/bin/curl-auth" <<'FINTO'
+#!/bin/sh
+sed -n 's/^header = "\(.*\)"$/\1/p' >> "$SWEETSPOT_RUN/wget.headers"
+echo '{"result":{"_version":"9.1.1"}}'
+FINTO
+chmod +x "$WEB/bin/curl-auth"
 lmsauth() { # impostazioni
 	printf '%s\n' "$1" > "$WEB/s.txt"
 	rm -f "$WEB/run/wget.headers"
-	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth \
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth SWEETSPOT_CURL=$WEB/bin/curl-auth \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; lms_json '' version '?' > /dev/null"
 	grep -c '^Authorization: ' "$WEB/run/wget.headers"
 }
@@ -1550,6 +1557,12 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 		"$(dsp 'CORREZIONE=si' problema)|$(dsp 'CORREZIONE=si' correzione > /dev/null; echo $?)"
 	: > "$DSPE/run/correzione/fir-sinistro.wav"
 	expect "FIR vuoto: problema" "fir-sinistro.wav vuoto" "$(dsp 'CORREZIONE=si' problema)"
+	mkwav 96000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR valido (corpo completo): nessun problema" "" "$(dsp 'CORREZIONE=si' problema)"
+	mkwav 96000 1 | head -c 1000 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR con header valido e dati troncati: rifiutato" 		"fir-sinistro.wav non valido: troncato: il chunk data dichiara 2048 byte ma ne restano 956" 		"$(dsp 'CORREZIONE=si' problema)"
+	mkwav 96000 1 | head -c 44 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR senza campioni: rifiutato" "fir-sinistro.wav non valido: troncato: il chunk data dichiara 2048 byte ma ne restano 0" "$(dsp 'CORREZIONE=si' problema)"
 	mkwav 96000 1 > "$DSPE/run/correzione/fir-destro.wav"
 	rm -f "$DSPE/run/correzione/fir-sinistro.wav"
 	expect "FIR solo destro: problema" "c'e' fir-destro.wav ma manca fir-sinistro.wav" "$(dsp 'CORREZIONE=si' problema)"
@@ -1712,6 +1725,12 @@ case "$c" in *"netbios name = SALOTTO"*"path = /media/Musica"*"guest ok = yes"*)
 c=$(arun "ksmbd_conf /media/Musica" "ARCHIVIO_PASSWORD=segreta")
 case "$c" in *"guest ok = no"*"valid users = sweetspot"*) ok "cartella di rete con password" ;; *) ko "cartella di rete con password" "valid users" "$c" ;; esac
 case "$c" in *segreta*) ko "password fuori dalla configurazione" "assente" "presente" ;; *) ok "password fuori dalla configurazione" ;; esac
+case "$c" in *"server min protocol = SMB2_10"*"server signing = mandatory"*) ok "SMB: firma obbligatoria con la password" ;; *) ko "SMB: firma obbligatoria con la password" "server signing = mandatory" "$c" ;; esac
+case "$c" in *"smb3 encryption"*) ko "SMB: cifratura spenta di default" "assente" "presente" ;; *) ok "SMB: cifratura spenta di default" ;; esac
+c=$(arun "ksmbd_conf /media/Musica")
+case "$c" in *"server signing = auto"*) ok "SMB: ospite senza firma obbligatoria" ;; *) ko "SMB: ospite senza firma obbligatoria" "server signing = auto" "$c" ;; esac
+c=$(arun "ksmbd_conf /media/Musica" "$(printf 'ARCHIVIO_PASSWORD=segreta\nARCHIVIO_FIRMA=no\nARCHIVIO_CIFRATURA=si')")
+case "$c" in *"server signing = auto"*"smb3 encryption = yes"*) ok "SMB: firma e cifratura configurabili" ;; *) ko "SMB: firma e cifratura configurabili" "auto + encryption" "$c" ;; esac
 
 echo "Copia dei CD"
 CD=$WORK/cd
@@ -2073,6 +2092,61 @@ expect "versione in uso non confrontabile: rifiutata" "errore|impossibile confro
 upd _lavoro file "$PKG" downgrade
 expect "versione in uso non confrontabile con conferma: accettata" "pronto|v9.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
+
+# Anti-rollback (RS-26): build monotona nel pacchetto, minimo in grubenv.
+echo "Aggiornamenti: anti-rollback"
+mkpkgb() { # versione build  (come mkpkg, con il file build coperto da SHA256SUMS)
+	rm -rf "$UPD/pkg"; mkdir -p "$UPD/pkg"
+	echo "kernel $1" > "$UPD/pkg/bzImage"; echo "rootfs $1" > "$UPD/pkg/rootfs.cpio.zst"
+	echo "$1" > "$UPD/pkg/versione"; echo x86_64 > "$UPD/pkg/architettura"; echo "$2" > "$UPD/pkg/build"
+	(cd "$UPD/pkg" && sha256sum bzImage rootfs.cpio.zst versione architettura build > SHA256SUMS)
+	tar -C "$UPD/pkg" -cf "$PKG" SHA256SUMS versione architettura build bzImage rootfs.cpio.zst
+}
+setenv build_min= build_prova= prova= tentato=
+mkpkg v1.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "anti-rollback: senza build e senza minimo: come prima" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 2000
+upd _lavoro file "$PKG"
+expect "anti-rollback: con build e senza minimo: accettato" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+expect "anti-rollback: il minimo non sale prima della conferma" "|2000" "$(genv build_min)|$(genv build_prova)"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkgb v1.0.0 1999
+upd _lavoro file "$PKG"
+expect "anti-rollback: build inferiore rifiutata" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "anti-rollback: build inferiore rifiutata anche con conferma del downgrade" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 2000
+upd _lavoro file "$PKG"
+expect "anti-rollback: build uguale accettata" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkgb v1.0.0 2001
+upd _lavoro file "$PKG"
+expect "anti-rollback: build superiore accettata" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkg v1.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "anti-rollback: senza build rifiutato dopo il primo minimo" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 12x
+upd _lavoro file "$PKG"
+expect "anti-rollback: build non numerica rifiutata" "errore|numero di build non valido" "$(cat "$UPD/run/aggiornamento/stato")"
+# Conferma: build_prova diventa build_min solo se la nuova versione parte.
+setenv build_min=2000 build_prova=3000 prova= tentato=b
+UPD_WGET=$UPD/bin/wget-ko upd conferma
+expect "anti-rollback: conferma non riuscita, il minimo non sale" "2000|3000" "$(genv build_min)|$(genv build_prova)"
+setenv build_min=2000 build_prova=3000 prova= tentato=a
+upd conferma
+expect "anti-rollback: prova fallita (si e' tornati indietro), il minimo non sale" "2000" "$(genv build_min)"
+setenv build_min=2000 build_prova=3000 prova= tentato=b
+upd conferma
+expect "anti-rollback: dopo la conferma il minimo e' la build provata" "3000|" "$(genv build_min)|$(genv build_prova)"
+mkpkgb v1.0.0 2999
+upd _lavoro file "$PKG"
+expect "anti-rollback: dopo la conferma una build inferiore e' rifiutata" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+setenv build_min=3000 build_prova=1000 prova= tentato=b
+upd conferma
+expect "anti-rollback: il minimo non scende mai" "3000" "$(genv build_min)"
+setenv build_min= build_prova= prova= tentato=
 
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
@@ -2470,7 +2544,7 @@ if command -v sgdisk > /dev/null; then
 	expect "accanto: NTFS sporco (ibernazione), niente cambiato" "Windows non è spento del tutto (Avvio rapido o ibernazione)" \
 		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 1; }' | head -1 | cut -d: -f1)"
 	expect "accanto: NTFS pulito, si prosegue" "no" \
-		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }; ntfs_hibernated() { return 1; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
 	expect "accanto: la copia della tabella va sulla partizione nuova" "si" 		"$(grep -q '$new/gpt-$disk.bak' "$OVERLAY/usr/bin/sweetspot-installa" && echo si || echo no)"
 	# La partizione che si aggiungerebbe: 4 GiB nello spazio libero, tipo dati di base.
 	ins "sgdisk -n 4:4761600:$((4761600 + 8388608 - 1)) -t 4:\$SIDE_TYPE -c 4:\$SIDE_NAME $INS/dev/nvme0n1" > /dev/null
@@ -4421,12 +4495,15 @@ sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/renderer-limiti.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
+sh "$ROOT/tests/ssh-limite.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
 sh "$ROOT/tests/lyrion-auth.sh" || exit 1
+sh "$ROOT/tests/lyrion-argv.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/gpt-refresh-grub.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+sh "$ROOT/tests/ntfs-sporco.sh" || exit 1
 
 # --- C17: follower del volume unico e niente picco al passaggio da fisso ---
 VF=$WORK/volfollower
@@ -4488,6 +4565,7 @@ expect "player: supervisore riavviato fra fisso e software, volume <= soglia" "2
 expect "player: dopo la riduzione il marcatore e' rimosso" "no" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
 expect "player: avvio diretto in software (non da fisso) non tocca il volume" "nessuno" "$(vsw software 100 0)"
 
+sh "$ROOT/tests/volume-cambio-tipo.sh" || exit 1
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1

@@ -33,8 +33,13 @@ netbios_name() {
 }
 
 ksmbd_conf() { # percorso
-	local pass
+	local pass sign crypt=
 	pass=$(conf ARCHIVIO_PASSWORD)
+	# Firma obbligatoria solo con la password: l'ospite non puo' firmare.
+	sign=auto
+	if [ -n "$pass" ] && is_yes "$(conf ARCHIVIO_FIRMA si)"; then sign=mandatory; fi
+	# Cifratura SMB3 solo se richiesta (costosa su CPU modeste).
+	if is_yes "$(conf ARCHIVIO_CIFRATURA no)"; then crypt='	smb3 encryption = yes'; fi
 	cat <<EOF
 [global]
 	server string = Sweetspot
@@ -43,6 +48,10 @@ ksmbd_conf() { # percorso
 	guest account = nobody
 	map to guest = bad user
 	server min protocol = SMB2_10
+	server signing = $sign
+EOF
+	[ -n "$crypt" ] && printf '%s\n' "$crypt"
+	cat <<EOF
 
 [Musica]
 	path = $1

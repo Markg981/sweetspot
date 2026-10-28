@@ -23,6 +23,7 @@ expect() {
 
 echo "Utente web e httpd senza privilegi"
 expect "utente web nella tabella degli utenti" "1" "$(grep -c '^web -1 web -1 ' "$ROOT/board/sweetspot/users.txt")"
+expect "utente web fuori dal gruppo audio" "-" "$(awk '$1 == "web" {print $8}' "$ROOT/board/sweetspot/users.txt")"
 expect "httpd con -u web:web" "1" "$(grep -c -- '^HTTPD_ARGS=.*-u web:web' "$OVERLAY/etc/default/httpd")"
 expect "httpd riscritto da S03 con -u web:web" "1" "$(grep -c -- "-u web:web" "$OVERLAY/etc/init.d/S03sweetspot-early")"
 for d in x86_64 rpi; do
@@ -75,6 +76,22 @@ else
 			rc=$?
 			if [ -f "$WORK/chiamata" ]; then cat "$WORK/chiamata"; else echo "NIENTE($rc)"; fi
 		}
+		# Sonda ALSA per il pannello (web non e' nel gruppo audio): aplay finto.
+		printf '#!/bin/sh
+printf "%%s" "aplay" > "%s/chiamata"
+for a in "$@"; do printf "|%%s" "$a" >> "%s/chiamata"; done
+printf "\n" >> "%s/chiamata"
+' "$WORK" "$WORK" "$WORK" > "$B/aplay"
+		chmod +x "$B/aplay"
+		expect "alsa-sonda hw ammessa" "aplay|--dump-hw-params|-D|hw:CARD=Pro,DEV=0|-t|raw|-c|2|-f|S16_LE|-r|44100|/dev/null" "$(priv @alsa-sonda hw Pro 0)"
+		expect "alsa-sonda rate ammessa" "aplay|-v|-D|hw:CARD=Pro,DEV=0|-t|raw|-c|2|-f|DSD_U32_BE|-r|176400|/dev/null" "$(priv @alsa-sonda rate Pro 0 DSD_U32_BE 176400)"
+		expect "alsa-sonda: scheda con virgola rifiutata" "NIENTE(126)" "$(priv @alsa-sonda hw 'Pro,x' 0)"
+		expect "alsa-sonda: dispositivo non numerico rifiutato" "NIENTE(126)" "$(priv @alsa-sonda hw Pro 0,1)"
+		expect "alsa-sonda: formato con opzione rifiutato" "NIENTE(126)" "$(priv @alsa-sonda rate Pro 0 -x 44100)"
+		expect "alsa-sonda: frequenza non numerica rifiutata" "NIENTE(126)" "$(priv @alsa-sonda rate Pro 0 S32_LE 44k)"
+		expect "alsa-sonda: sottocomando ignoto rifiutato" "NIENTE(126)" "$(priv @alsa-sonda play Pro 0)"
+		# common.sh: senza root il pannello passa dall'helper.
+		expect "dac_hw_params_live e dac_rates_probe usano @alsa-sonda" "2" "$(grep -c '@alsa-sonda' "$OVERLAY/usr/lib/sweetspot/common.sh")"
 		expect "config imposta ammesso" "sweetspot-config|imposta|VOLUME|fisso|DSD|dop" "$(priv sweetspot-config imposta VOLUME fisso DSD dop)"
 		for m in 0 0.0 -0 -3 -1.5 -12 -23.9 -24 -24.0; do
 			expect "config margine DSD $m ammesso" "sweetspot-config|imposta|DSD_PCM_MARGINE_DB|$m" "$(priv sweetspot-config imposta DSD_PCM_MARGINE_DB "$m")"
@@ -139,8 +156,18 @@ SSH=si")"
 		expect "lms json stato del server" "sweetspot-lms|json||serverstatus|0|0" "$(priv sweetspot-lms json '' serverstatus 0 0)"
 		expect "lms json nome del player" "sweetspot-lms|json|aa:bb:cc:dd:ee:ff|name|Salotto" "$(priv sweetspot-lms json aa:bb:cc:dd:ee:ff name Salotto)"
 		expect "lms json brano in ascolto" "sweetspot-lms|json|aa:bb|status|-|1|tags:aloITr" "$(priv sweetspot-lms json aa:bb status - 1 tags:aloITr)"
-		expect "lms json anteprima" "sweetspot-lms|json|aa:bb|playlist|preview|url:file:///tmp/p.wav|title:Prova DoP" \
-			"$(priv sweetspot-lms json aa:bb playlist preview url:file:///tmp/p.wav 'title:Prova DoP')"
+		mkdir -p "$W/dop" "$W/dop-altro"; printf x > "$W/dop/p.wav"; printf x > "$W/dop-altro/p.wav"; printf x > "$W/fuori.wav"
+		ln -s "$W/fuori.wav" "$W/dop/esce.wav"; ln -s p.wav "$W/dop/dentro.wav"
+		D=$W/dop
+		expect "lms json anteprima" "sweetspot-lms|json|aa:bb|playlist|preview|url:file://$D/p.wav|title:Prova DoP" \
+			"$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/p.wav" 'title:Prova DoP')"
+		expect "anteprima: collegamento interno ammesso" "sweetspot-lms|json|aa:bb|playlist|preview|url:file://$D/dentro.wav|title:Prova DoP" \
+			"$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/dentro.wav" 'title:Prova DoP')"
+		expect "anteprima: collegamento che esce rifiutato" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/esce.wav" 'title:Prova DoP')"
+		expect "anteprima: cartella con prefisso simile rifiutata" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$W/dop-altro/p.wav" 'title:Prova DoP')"
+		expect "anteprima: percent-encoding rifiutato" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/%2e%2e/fuori.wav" 'title:Prova DoP')"
+		expect "anteprima: file inesistente rifiutato" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/manca.wav" 'title:Prova DoP')"
+		expect "anteprima: la cartella stessa rifiutata" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/" 'title:Prova DoP')"
 		expect "lms json altro comando (pref)" "NIENTE(126)" "$(priv sweetspot-lms json '' pref authorize 0)"
 		expect "studio album" "sweetspot-lms|json||albums|0|50|tags:ljaS|search:Blu" "$(priv sweetspot-lms json '' albums 0 50 tags:ljaS 'search:Blu')"
 		expect "studio ricerca con spazi e Unicode (un solo argomento)" "sweetspot-lms|json||artists|0|50|search:Pink Floyd è" "$(priv sweetspot-lms json '' artists 0 50 'search:Pink Floyd è')"

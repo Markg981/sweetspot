@@ -27,7 +27,8 @@ sub nt_list { @NT }
 our $AP_IP = '192.168.4.1';
 sub addr_for_peer { '10.0.0.1' }    # i peer del test non arrivano dall'hotspot
 our (@pending_resp, %ssdp_rate);
-$code =~ s{^my (@pending_resp|%ssdp_rate)}{our $1}mg;
+our %slow_until;
+$code =~ s{^my (@pending_resp|%ssdp_rate|%slow_until)}{our $1}mg;
 eval "$code; 1" or die $@;
 ok('funzioni estratte', defined &read_request && defined &soap_args && defined &handle_ssdp);
 
@@ -60,6 +61,23 @@ ok('1000 M-SEARCH: coda sotto 64', @pending_resp < 64 + 1);
 @pending_resp = (); %ssdp_rate = ();
 handle_ssdp($ms, pack_sockaddr_in(5000, inet_aton('10.1.1.1'))) for 1 .. 100;
 ok('stesso IP: rate limit (al massimo 8 M-SEARCH)', @pending_resp > 0 && @pending_resp <= 8 * @NT);
+# Client lenti: 5 connessioni mute di fila non bloccano il ciclo per 5 * scadenza
+use IO::Socket::INET;
+my $ls = IO::Socket::INET->new(Proto => 'tcp', Listen => 16, LocalAddr => '127.0.0.1', LocalPort => 0, ReuseAddr => 1) or die $!;
+my $port = $ls->sockport;
+my @mute = map { IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port) or die $! } 1 .. 5;
+$t = time;
+for (1 .. 5) { my $c = $ls->accept; my ($hh) = read_request($c); close $c }
+my $dt = time - $t;
+ok('5 client muti: blocco totale sotto 2 s', $dt < 2);
+%slow_until = ();
+my $norm = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port) or die $!;
+syswrite($norm, "GET /x HTTP/1.1
+Host: a
+
+");
+my ($nh) = read_request($ls->accept);
+ok('client normale servito dopo i lenti', defined $nh && $nh =~ /^GET /);
 print "Risultato: $pass ok, $fail falliti\n";
 exit($fail ? 1 : 0);
 PERL
