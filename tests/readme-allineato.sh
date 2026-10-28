@@ -42,5 +42,13 @@ has 'tar -xf "\$archive" -C "\$x"' "$A"; t "aggiorna: estrae in cartella tempora
 has 'non coperto dal manifesto' "$A"; t "aggiorna: copertura del manifesto verificata" $?
 has 'cartella temporanea' "$R"; t "README: verifica del manifesto su cartella temporanea" $?
 
+# Ogni chiave di defaults.conf deve comparire nel README. Chiavi interne
+# (non destinate all'utente, quindi non documentate) in questa lista esplicita.
+INTERNE=""
+for k in $(grep -o '^[A-Z][A-Z0-9_]*=' "$OV/etc/sweetspot/defaults.conf" | tr -d '='); do
+	case " $INTERNE " in *" $k "*) continue ;; esac
+	grep -q "\\b$k\\b" "$R"; t "README documenta la chiave $k di defaults.conf" $?
+done
+
 echo "readme-allineato: $PASS ok, $FAIL falliti"
 [ "$FAIL" -eq 0 ]
