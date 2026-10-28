@@ -36,12 +36,30 @@ PATH=$W/bin:$PATH SWEETSPOT_LIB=$OV/usr/lib/sweetspot SWEETSPOT_NFT=$W/nft SWEET
 ok "esito 1 anche senza fallback" 1 "$?"
 ok "scheda abbassata" "link set dev wlan0 down" "$(cat "$W/ip.log" 2>/dev/null)"
 
-# 3) validazione reale delle regole e del fallback, se possibile.
-if command -v nft >/dev/null 2>&1 && unshare -rn true 2>/dev/null; then
+# 3) validazione reale delle regole e del fallback, se possibile. nft -c apre
+# un socket netlink: come in run.sh si prova diretto, poi in un user+net
+# namespace, poi con sudo -n. Dove unshare -rn riesce ma il namespace non ha
+# i permessi (AppArmor su Ubuntu recenti) nft risponde "Operation not
+# permitted": e' un limite dell'ambiente, non un errore delle regole.
+nft_c() { # file -> esito; l'output in $W/nft.out
+	nft -c -f "$1" > "$W/nft.out" 2>&1 && return 0
+	command -v unshare >/dev/null 2>&1 && unshare -rn nft -c -f "$1" > "$W/nft.out" 2>&1 && return 0
+	command -v sudo >/dev/null 2>&1 && sudo -n nft -c -f "$1" > "$W/nft.out" 2>&1 && return 0
+	return 1
+}
+senza_privilegi() { grep -qE 'Operation not permitted|Permission denied|Operation not supported|password is required' "$W/nft.out"; }
+if command -v nft >/dev/null 2>&1; then
 	{ echo 'define AP_IF = "lo"'; cat "$OV/etc/sweetspot/firewall.nft"; } > "$W/fw.nft"
-	unshare -rn nft -c -f "$W/fw.nft" >/dev/null 2>&1; ok "nft -c: regole complete" 0 "$?"
-	unshare -rn nft -c -f "$W/fallback.nft" >/dev/null 2>&1; ok "nft -c: fallback" 0 "$?"
+	for f in fw fallback; do
+		nft_c "$W/$f.nft"; rc=$?
+		if [ "$rc" -ne 0 ] && senza_privilegi; then
+			echo "  --  salto nft -c reale su $f (privilegi insufficienti)"
+		else
+			[ "$rc" -eq 0 ] || sed 's/^/      /' "$W/nft.out"
+			ok "nft -c: $f" 0 "$rc"
+		fi
+	done
 else
-	echo "  --  salto nft -c reale (nft o unshare -rn non disponibili)"
+	echo "  --  salto nft -c reale (nft non disponibile)"
 fi
 exit $FAIL
