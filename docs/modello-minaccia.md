@@ -279,7 +279,7 @@ nel job `test` della CI.
 | RS-23 | Il rilascio è consentito solo da tag, dopo tutti i job, con segreto di firma obbligatorio per i tag ufficiali e archivi scaricati verificati con la chiave incorporata. | `tests/release-gates.py` |
 | RS-24 | Le password di Lyrion sono impostate alla protezione di Lyrion e non sovrascritte. | `tests/lyrion-auth.sh` |
 | RS-25 | Le ricerche online del CD si possono disattivare e AccurateRip va in https (PR #181). | `tests/cd-simulato.sh` |
-| RS-26 | Protezione dal rollback a una versione firmata più vecchia. | senza test (non implementato) |
+| RS-26 | Protezione dal rollback: il pacchetto firmato porta un numero di build monotono (`build`, secondi UTC, coperto da `SHA256SUMS`); `build_min` in grubenv sale alla build confermata funzionante e un pacchetto con build inferiore è rifiutato anche con `file-downgrade`. Limiti: pacchetti vecchi senza `build` valgono finché `build_min` non è impostato (poi sono rifiutati); chi azzera la chiavetta azzera il minimo; un downgrade voluto oltre il minimo non è possibile (resta «Usa l'altra copia» verso una copia già sulla chiavetta). | `tests/run.sh` (Aggiornamenti: anti-rollback) |
 
 ## 6. Punti deboli emersi dall'analisi (non corretti qui)
 
@@ -299,4 +299,4 @@ nel job `test` della CI.
 9. Pannello e SMB in chiaro sulla LAN (HTTPS spento di default, certificato
    autofirmato, `sweetspot-https`).
 10. Password dell'hotspot e dei servizi in chiaro sulla chiavetta (accettato).
-11. Nessuna protezione dal rollback degli aggiornamenti (RS-26).
+11. Anti-rollback (RS-26) legato alla chiavetta: chi può scriverla (accesso fisico) può azzerare `build_min`.
