@@ -139,8 +139,18 @@ SSH=si")"
 		expect "lms json stato del server" "sweetspot-lms|json||serverstatus|0|0" "$(priv sweetspot-lms json '' serverstatus 0 0)"
 		expect "lms json nome del player" "sweetspot-lms|json|aa:bb:cc:dd:ee:ff|name|Salotto" "$(priv sweetspot-lms json aa:bb:cc:dd:ee:ff name Salotto)"
 		expect "lms json brano in ascolto" "sweetspot-lms|json|aa:bb|status|-|1|tags:aloITr" "$(priv sweetspot-lms json aa:bb status - 1 tags:aloITr)"
-		expect "lms json anteprima" "sweetspot-lms|json|aa:bb|playlist|preview|url:file:///tmp/p.wav|title:Prova DoP" \
-			"$(priv sweetspot-lms json aa:bb playlist preview url:file:///tmp/p.wav 'title:Prova DoP')"
+		mkdir -p "$W/dop" "$W/dop-altro"; printf x > "$W/dop/p.wav"; printf x > "$W/dop-altro/p.wav"; printf x > "$W/fuori.wav"
+		ln -s "$W/fuori.wav" "$W/dop/esce.wav"; ln -s p.wav "$W/dop/dentro.wav"
+		D=$W/dop
+		expect "lms json anteprima" "sweetspot-lms|json|aa:bb|playlist|preview|url:file://$D/p.wav|title:Prova DoP" \
+			"$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/p.wav" 'title:Prova DoP')"
+		expect "anteprima: collegamento interno ammesso" "sweetspot-lms|json|aa:bb|playlist|preview|url:file://$D/dentro.wav|title:Prova DoP" \
+			"$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/dentro.wav" 'title:Prova DoP')"
+		expect "anteprima: collegamento che esce rifiutato" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/esce.wav" 'title:Prova DoP')"
+		expect "anteprima: cartella con prefisso simile rifiutata" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$W/dop-altro/p.wav" 'title:Prova DoP')"
+		expect "anteprima: percent-encoding rifiutato" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/%2e%2e/fuori.wav" 'title:Prova DoP')"
+		expect "anteprima: file inesistente rifiutato" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/manca.wav" 'title:Prova DoP')"
+		expect "anteprima: la cartella stessa rifiutata" "NIENTE(126)" "$(priv sweetspot-lms json aa:bb playlist preview "url:file://$D/" 'title:Prova DoP')"
 		expect "lms json altro comando (pref)" "NIENTE(126)" "$(priv sweetspot-lms json '' pref authorize 0)"
 		expect "studio album" "sweetspot-lms|json||albums|0|50|tags:ljaS|search:Blu" "$(priv sweetspot-lms json '' albums 0 50 tags:ljaS 'search:Blu')"
 		expect "studio ricerca con spazi e Unicode (un solo argomento)" "sweetspot-lms|json||artists|0|50|search:Pink Floyd è" "$(priv sweetspot-lms json '' artists 0 50 'search:Pink Floyd è')"
