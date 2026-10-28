@@ -68,6 +68,19 @@ Rischio residuo dichiarato: i pacchetti apt installati sui runner di GitHub
 (`ubuntu-26.04`, job `test`, prove e build) non sono fissati; i runner stessi
 sono immagini gestite da GitHub. Restano strumenti, non finiscono nell'immagine.
 
+## Hardening dei binari
+
+Buildroot 2026.08.1 (`scripts/build.sh`): per default SSP, RELRO e
+FORTIFY_SOURCE sono disattivati (`NONE`); il PIE non e' garantito. Per questo i
+due defconfig impostano in modo esplicito `BR2_SSP_STRONG`, `BR2_RELRO_FULL`,
+`BR2_FORTIFY_SOURCE_2` e `BR2_PIC_PIE`. Compatibilita': la toolchain Bootlin
+esterna e' glibc (supporta tutti e quattro); i pacchetti propri
+(`sweetspot-tools`, `alsa-cdsp`) compilano con `$(TARGET_CFLAGS)` e
+`$(TARGET_LDFLAGS)`, quindi ereditano le opzioni. Le librerie della toolchain
+sono precompilate da Bootlin e non cambiano. `tests/release-gates.py`
+(`HardeningDefconfig`) controlla che i defconfig le contengano. Non verificato
+in locale: la compilazione completa spetta alla CI.
+
 ## Protezione di main
 
 `./scripts/proteggi-main.sh --applica` (da amministratore) rende obbligatorio,
