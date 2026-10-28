@@ -42,5 +42,8 @@ has 'tar -xf "\$archive" -C "\$x"' "$A"; t "aggiorna: estrae in cartella tempora
 has 'non coperto dal manifesto' "$A"; t "aggiorna: copertura del manifesto verificata" $?
 has 'cartella temporanea' "$R"; t "README: verifica del manifesto su cartella temporanea" $?
 
+# Riferimenti file:riga nei docs: file e righe devono esistere.
+sh "$ROOT/tests/riferimenti-righe.sh"; t "riferimenti file:riga dei docs validi" $?
+
 echo "readme-allineato: $PASS ok, $FAIL falliti"
 [ "$FAIL" -eq 0 ]
