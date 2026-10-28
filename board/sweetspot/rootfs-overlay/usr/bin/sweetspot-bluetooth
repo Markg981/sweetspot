@@ -48,6 +48,7 @@ BT_D_PID=$RUN/bluetoothd.pid
 BT_A_PID=$RUN/bluealsa.pid
 BT_P_PID=$RUN/bluealsa-aplay.pid
 BT_V_PID=$RUN/bluealsa-tetto.pid
+BT_M_PID=$RUN/bluealsa-monitor.pid
 BT_STICK_FILE=sweetspot-dati/bluetooth.tar
 SUPERVISORE_PID=$RUN/supervisore.pid
 BT_SONDA=${SWEETSPOT_BT_SONDA:-1}
@@ -196,6 +197,7 @@ stop_services() {
 		[ -n "$p" ] && kill "$p" 2>/dev/null
 		rm -f "$f"
 	done
+	tetto_monitor_stop
 }
 
 adapter_present() {
@@ -428,6 +430,13 @@ bt_tetto_applica() { # tetto
 	done
 }
 
+tetto_monitor_stop() {
+	local m
+	m=$(cat "$BT_M_PID" 2>/dev/null)
+	[ -n "$m" ] && kill "$m" 2>/dev/null
+	rm -f "$BT_M_PID"
+}
+
 tetto_start() {
 	local t
 	command -v bluealsa-cli > /dev/null 2>&1 || {
@@ -438,16 +447,13 @@ tetto_start() {
 	bt_tetto_applica "$t"
 	# Finestra residua: il monitor di bluealsa-cli (se supportato) riporta il
 	# volume al tetto a ogni evento; il giro a 0,2 s e' la rete di sicurezza
-	# (se il monitor non c'e' o non segnala il volume).
+	# (se il monitor non c'e' o non segnala il volume). Il pid del monitor e'
+	# in BT_M_PID: handoff_end lo termina, cosi' non ne restano copie vive.
 	(
-		trap 'kill $mon 2>/dev/null; exit 0' TERM INT
-		mon=
-		bluealsa-cli monitor 2>/dev/null | while read -r _; do
-			bt_tetto_applica "$t"
-		done &
-		mon=$!
+		trap 'tetto_monitor_stop; exit 0' TERM INT
+		sh -c 'echo $$ > "$1"; exec bluealsa-cli monitor' sh "$BT_M_PID" 2>/dev/null 			| while read -r _; do bt_tetto_applica "$t"; done &
 		while :; do
-			sleep 0.2
+			usleep 200000
 			bt_tetto_applica "$t"
 		done
 	) > /dev/null 2>&1 &
@@ -487,6 +493,7 @@ handoff_end() {
 	p=$(cat "$BT_V_PID" 2>/dev/null)
 	[ -n "$p" ] && kill "$p" 2>/dev/null
 	rm -f "$BT_V_PID"
+	tetto_monitor_stop
 	p=$(cat "$BT_P_PID" 2>/dev/null)
 	[ -n "$p" ] && kill "$p" 2>/dev/null
 	rm -f "$BT_P_PID" "$BT_ATTIVO"

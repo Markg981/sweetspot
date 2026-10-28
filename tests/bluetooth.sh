@@ -240,13 +240,17 @@ echo "bluealsa-cli $*" >> "$BTLOG"
 P=/org/bluealsa/hci0/dev_AA_BB_CC_DD_EE_02/a2dpsnk/source
 case "$1" in
 	list-pcms) echo "$P" ;;
-	monitor) sleep 2 ;;
+	monitor) echo $$ > "$BTDIR/monpid"; exec sleep 30 ;;
 	volume)
 		if [ -n "$3" ]; then echo "$3" > "$BTDIR/vol"
 		else echo "Volume: $(cat "$BTDIR/vol") $(cat "$BTDIR/vol")"; fi ;;
 esac
 EOF
 chmod +x "$T/bin/bluealsa-cli"
+# usleep (busybox CONFIG_USLEEP): se manca sull'host, stub che lo emula.
+command -v usleep > /dev/null 2>&1 || { printf '#!/bin/sh
+sleep 0.2
+' > "$T/bin/usleep"; chmod +x "$T/bin/usleep"; }
 expect "defaults.conf: tetto del volume Bluetooth a 25" "25" "$(sed -n 's/^BLUETOOTH_VOLUME_MAX=//p' "$OVERLAY/etc/sweetspot/defaults.conf")"
 echo 127 > "$BTDIR/vol"
 : > "$BTLOG"
@@ -254,8 +258,9 @@ bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; sl
 expect "tetto: volume del telefono riportato a 25% di 127 (31)" "31" "$(cat "$BTDIR/vol")"
 expect "tetto: scritto con bluealsa-cli volume" "1" "$(grep -c '^bluealsa-cli volume /org/bluealsa/.* 31 31$' "$BTLOG" | sed 's/^[2-9]/1/')"
 echo 127 > "$BTDIR/vol"
-bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; echo 127 > '"$BTDIR"'/vol; sleep 0.7; cat '"$BTDIR"'/vol > '"$T"'/vol2; handoff_end' >/dev/null 2>&1
-expect "tetto: un rialzo del telefono rientra in meno di 1 s" "31" "$(cat "$T/vol2")"
+bt '' 'dac_find() { echo 1; }; dac_playback_dev() { echo 0; }; handoff_start; echo 127 > '"$BTDIR"'/vol; n=0; while [ "$(cat '"$BTDIR"'/vol)" != 31 ] && [ $n -lt 40 ]; do sleep 0.1; n=$((n+1)); done; cat '"$BTDIR"'/vol > '"$T"'/vol2; handoff_end' >/dev/null 2>&1
+expect "tetto: un rialzo del telefono rientra senza attendere il giro di 1 s (entro 4 s, macchina lenta)" "31" "$(cat "$T/vol2")"
+expect "tetto: dopo lo stop nessun monitor resta vivo" "no" "$(kill -0 "$(cat "$BTDIR/monpid")" 2>/dev/null && echo si || echo no)"
 expect "tetto: fine passaggio, sorvegliante fermato" "no" "$(kill -0 "$(cat "$T/vpid")" 2>/dev/null && echo si || echo no)"
 echo 10 > "$BTDIR/vol"
 : > "$BTLOG"
