@@ -25,12 +25,17 @@ else echo "FAIL ssh: passate=$ok rifiutate=$no (attese 4/16)"; exit 1; fi
 printf '#!/bin/sh\necho "Bad password attempt" >&2\n' > "$T/bin/dropbear"
 rm -rf "$T/st"; i=0
 while [ $i -lt 4 ]; do
-	( TCPREMOTEIP=10.0.0.8 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 PATH=$T/bin:$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" >/dev/null 2>&1 ) &
+	( TCPREMOTEIP=10.0.0.8 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 PATH=$T/bin:$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" >/dev/null 2>&1; echo $? >> "$T/esiti2" ) &
 	i=$((i + 1))
 done
 wait
 n=$(cat "$T/st/10.0.0.8")
-if [ "$n" = 4 ]; then echo "PASS ssh: errori paralleli contati senza perdite"; else echo "FAIL ssh: contati $n su 4"; exit 1; fi
+if [ "$n" = 4 ]; then echo "PASS ssh: errori paralleli contati senza perdite"
+else
+	# esiti 1 = connessione senza posto; tutti 0 = aggiornamento del contatore perso
+	echo "FAIL ssh: contati $n su 4 (esiti: $(sort "$T/esiti2" | tr '\n' ' '); stato: $(ls "$T/st" | tr '\n' ' '))"
+	exit 1
+fi
 # Posti orfani (processi uccisi con SIGKILL): 3 posti con pid inesistente e uno
 # senza pid e vecchio devono essere recuperati, e la connessione deve passare.
 if [ "$(uname -s)" != Linux ]; then

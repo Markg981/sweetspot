@@ -4718,7 +4718,9 @@ else
 	salta nft
 fi
 # Se nft fallisce il firewall fallisce chiuso (tests/firewall-fallimento.sh).
-expect "firewall: caricamento fallito, fallback chiuso" 0 "$(sh "$ROOT/tests/firewall-fallimento.sh" > "$WORK/fwfail.out" 2>&1; echo $?)"
+fwfail=$(sh "$ROOT/tests/firewall-fallimento.sh" > "$WORK/fwfail.out" 2>&1; echo $?)
+expect "firewall: caricamento fallito, fallback chiuso" 0 "$fwfail"
+[ "$fwfail" = 0 ] || cat "$WORK/fwfail.out"
 
 # --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
 if command -v gcc > /dev/null 2>&1; then
