@@ -48,6 +48,12 @@ Esito pass/fail: ogni misura ha una soglia, predefinita 0 (5% per le RPC);
 In CI: `--secondi 300 --intervallo 60` o la prova senza hardware
 `python3 tests/prova-collaudo.py` (Lyrion finto, qualche secondo).
 
+## Prove manuali
+
+Non girano in CI: `tests/qemu-avvio.sh [immagine] [bios|uefi]` avvia
+l'immagine in una macchina virtuale QEMU (4 core con Hyper-Threading, DAC USB
+simulato) per provarla a mano prima di scriverla sulla chiavetta.
+
 ## Libreria sintetica e benchmark
 
     python3 tools/libreria-sintetica.py /musica/sintetica --brani 100000 --dimensione-kb 64

@@ -4663,6 +4663,21 @@ expect "spazio: nodo con inizio diverso, nessun mkfs" no "$([ -e "$SR/mkfs.log" 
 expect "spazio: nodo con inizio diverso, errore" errore "$(cut -d'|' -f1 "$SR/run/spazio/stato")"
 
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
+bash "$ROOT/tests/web-limite-post.sh" || exit 1
+python3 "$ROOT/tests/prova-collaudo.py" || exit 1
+# Ogni file di tests/ deve essere richiamato (run.sh, workflow, altri test) o
+# elencato come prova manuale in docs/collaudo.md.
+for f in "$ROOT"/tests/*; do
+	[ -f "$f" ] || continue
+	b=${f##*/}
+	[ "$b" = run.sh ] && continue
+	if grep -rlF "$b" "$ROOT/tests/run.sh" "$ROOT/.github/workflows" "$ROOT/docs/collaudo.md" 2>/dev/null | grep -q . ||
+		grep -lF "$b" "$ROOT"/tests/* 2>/dev/null | grep -qv "/$b$"; then
+		ok "tests/$b richiamato o elencato"
+	else
+		ko "tests/$b orfano" "richiamato" "mai richiamato"
+	fi
+done
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
