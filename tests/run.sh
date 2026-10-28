@@ -273,6 +273,9 @@ echo musica > "$CP/media/Album/a.flac"
 printf '#!/bin/sh\necho "$CP/arch"\n' > "$CP/bin/sweetspot-dischi"
 printf '#!/bin/sh\nexit 0\n' > "$CP/bin/sweetspot-lms"
 chmod +x "$CP/bin/"*
+# Attende la fine del lavoro (sparisce il pid, dopo sync e pulizia), al massimo 30 s:
+# su un runner lento sync supera i 2 s e un nuovo avvio verrebbe rifiutato.
+attendi_copia() { local i=0; while [ -e "$CP/run/copia.pid" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; }
 copia() { CP=$CP SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
 	SWEETSPOT_MEDIA=$CP/media $TEST_SH "$OVERLAY/usr/bin/sweetspot-copia" "$@"; }
 # Errore vero a meta' copia: un file illeggibile fa fallire cp -a dopo aver
@@ -282,12 +285,12 @@ chmod 000 "$CP/media/Album/b.flac"
 if cat "$CP/media/Album/b.flac" > /dev/null 2>&1; then
 	salta "utente senza privilegi (copia fallita)"
 else
-	copia avvia "$CP/media/Album" > /dev/null; sleep 2
+	copia avvia "$CP/media/Album" > /dev/null; attendi_copia
 	expect "copia fallita: stato errore" errore "$(cat "$CP/run/copia.stato")"
 	expect "copia fallita: nell'archivio non resta nulla" "" "$(ls -A "$CP/arch")"
 fi
 chmod 644 "$CP/media/Album/b.flac"
-copia avvia "$CP/media/Album" > /dev/null; sleep 2
+copia avvia "$CP/media/Album" > /dev/null; attendi_copia
 expect "copia riuscita: stato finita" finita "$(cat "$CP/run/copia.stato")"
 expect "copia riuscita: cartella al suo posto, niente temporanei" Album "$(ls -A "$CP/arch")"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
