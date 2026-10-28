@@ -15,6 +15,15 @@
 #include <sys/ioctl.h>
 #include <linux/blkpg.h>
 
+/* Il disco ha una tabella GPT? (firma "EFI PART" all'inizio del settore 1) */
+static int is_gpt(int fd)
+{
+	char sig[8];
+
+	return pread(fd, sig, sizeof(sig), 512) == (ssize_t)sizeof(sig) &&
+	       memcmp(sig, "EFI PART", sizeof(sig)) == 0;
+}
+
 static long long number(const char *s)
 {
 	char *end;
@@ -41,7 +50,7 @@ int main(int argc, char **argv)
 	pno = number(argv[2]);
 	start = number(argv[3]);
 	size = number(argv[4]);
-	if (pno < 1 || pno > 4 || start <= 0 || size <= 0) {
+	if (pno < 1 || start <= 0 || size <= 0) {
 		fprintf(stderr, "%s: valori non validi\n", argv[0]);
 		return 2;
 	}
@@ -59,6 +68,13 @@ int main(int argc, char **argv)
 	if (fd < 0) {
 		perror(argv[1]);
 		return 1;
+	}
+	/* MBR: solo le 4 primarie; GPT: fino a 128 voci (su dischi OEM il primo
+	 * numero libero e' spesso 5 o piu'). */
+	if (pno > (is_gpt(fd) ? 128 : 4)) {
+		fprintf(stderr, "%s: numero di partizione non valido per questa tabella\n", argv[0]);
+		close(fd);
+		return 2;
 	}
 	if (ioctl(fd, BLKPG, &arg) != 0) {
 		perror("BLKPG_ADD_PARTITION");
