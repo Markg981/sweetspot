@@ -2042,6 +2042,45 @@ upd _lavoro file "$PKG" downgrade
 expect "versione in uso non confrontabile con conferma: accettata" "pronto|v9.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
 
+# Anti-rollback (RS-26): build monotona nel pacchetto, minimo in grubenv.
+echo "Aggiornamenti: anti-rollback"
+mkpkgb() { # versione build  (come mkpkg, con il file build coperto da SHA256SUMS)
+	rm -rf "$UPD/pkg"; mkdir -p "$UPD/pkg"
+	echo "kernel $1" > "$UPD/pkg/bzImage"; echo "rootfs $1" > "$UPD/pkg/rootfs.cpio.zst"
+	echo "$1" > "$UPD/pkg/versione"; echo x86_64 > "$UPD/pkg/architettura"; echo "$2" > "$UPD/pkg/build"
+	(cd "$UPD/pkg" && sha256sum bzImage rootfs.cpio.zst versione architettura build > SHA256SUMS)
+	tar -C "$UPD/pkg" -cf "$PKG" SHA256SUMS versione architettura build bzImage rootfs.cpio.zst
+}
+setenv build_min= build_prova= prova= tentato=
+mkpkg v1.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "anti-rollback: senza build e senza minimo: come prima" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 2000
+upd _lavoro file "$PKG"
+expect "anti-rollback: con build e senza minimo: accettato" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+expect "anti-rollback: il minimo non sale prima della conferma" "|2000" "$(genv build_min)|$(genv build_prova)"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkgb v1.0.0 1999
+upd _lavoro file "$PKG"
+expect "anti-rollback: build inferiore rifiutata" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "anti-rollback: build inferiore rifiutata anche con conferma del downgrade" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 2000
+upd _lavoro file "$PKG"
+expect "anti-rollback: build uguale accettata" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkgb v1.0.0 2001
+upd _lavoro file "$PKG"
+expect "anti-rollback: build superiore accettata" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkg v1.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "anti-rollback: senza build rifiutato dopo il primo minimo" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 12x
+upd _lavoro file "$PKG"
+expect "anti-rollback: build non numerica rifiutata" "errore|numero di build non valido" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min= build_prova= prova= tentato=
+
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
 	mkdir -p "$UPD/chiavi"
