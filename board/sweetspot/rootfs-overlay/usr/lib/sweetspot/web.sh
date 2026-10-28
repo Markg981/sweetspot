@@ -286,7 +286,7 @@ login_fail() { # chiave
 	# posto per un indirizzo nuovo si tolgono i piu' vecchi. Il file di chi
 	# sta sbagliando ora e' il piu' recente, quindi il suo blocco resta.
 	if [ ! -f "$f" ]; then
-		n=$(ls "$LOGIN_DIR" 2>/dev/null | grep -c .)
+		n=$(find "$LOGIN_DIR" -maxdepth 1 -type f 2>/dev/null | grep -c .)
 		if [ "$n" -ge "$LOGIN_MAX" ]; then
 			ls -t "$LOGIN_DIR" | tail -n "+$((LOGIN_MAX > 1 ? LOGIN_MAX : 1))" |
 				while read -r old; do rm -f "$LOGIN_DIR/$old"; done
