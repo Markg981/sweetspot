@@ -17,7 +17,7 @@ limite".
 
 ## I3 - spostamento della cache copertine con WAL
 
-Blocco "Cache delle copertine" di `tests/run.sh` (righe 1925-2006) eseguito da
+Blocco "Cache delle copertine" di `tests/run.sh` (righe 2519-2624) eseguito da
 solo, con `sweetspot-lms` della HEAD e con lo stesso file a cui e' stata tolta
 la sola correzione (`git show 3481f8c -- .../sweetspot-lms | git apply -R`):
 

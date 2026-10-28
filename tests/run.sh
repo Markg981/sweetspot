@@ -4383,6 +4383,7 @@ sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
 sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
+sh "$ROOT/tests/gpt-refresh-grub.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
 
@@ -4449,6 +4450,7 @@ expect "player: avvio diretto in software (non da fisso) non tocca il volume" "n
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
+sh "$ROOT/tests/installa-tabella.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1
 sh "$ROOT/tests/readme-allineato.sh" || exit 1
 sh "$ROOT/tests/modello-minaccia.sh" || exit 1

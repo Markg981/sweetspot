@@ -50,5 +50,8 @@ for k in $(grep -o '^[A-Z][A-Z0-9_]*=' "$OV/etc/sweetspot/defaults.conf" | tr -d
 	grep -q "\\b$k\\b" "$R"; t "README documenta la chiave $k di defaults.conf" $?
 done
 
+# Riferimenti file:riga nei docs: file e righe devono esistere.
+sh "$ROOT/tests/riferimenti-righe.sh"; t "riferimenti file:riga dei docs validi" $?
+
 echo "readme-allineato: $PASS ok, $FAIL falliti"
 [ "$FAIL" -eq 0 ]

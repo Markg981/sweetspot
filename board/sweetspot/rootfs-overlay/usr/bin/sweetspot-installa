@@ -247,12 +247,25 @@ release_disk() {
 					if [ -n "$a" ] && [ "$(readlink -f "$MEDIA_DIR/$name")" = "$a" ]; then
 						sweetspot-nas ferma
 					fi
-					sweetspot-dischi smonta "$name" ;;
+					SWEETSPOT_SMONTA_STRETTO=1 sweetspot-dischi smonta "$name" || return 1 ;;
 			esac
 		done < "$RUN/dischi.list"
 	fi
 	sync
 	grep -q "^$DEV/$disk" "$PROC/mounts" && return 1
+	return 0
+}
+
+# Il kernel deve vedere le partizioni esattamente dove sono state scritte,
+# altrimenti le scritture successive andrebbero su offset sbagliati.
+table_matches() { # disco inizio1 settori1 inizio2 settori2
+	local disk=$1 n s z p
+	for n in 1 2; do
+		if [ $n = 1 ]; then s=$2; z=$3; else s=$4; z=$5; fi
+		[ $n = 2 ] && [ "$z" -eq 0 ] && continue
+		p=$SYS/class/block/$(part_name "$disk" $n)
+		[ "$(cat "$p/start" 2>/dev/null)" = "$s" ] && [ "$(cat "$p/size" 2>/dev/null)" = "$z" ] || return 1
+	done
 	return 0
 }
 
@@ -352,6 +365,8 @@ install_job() { # disco si|no
 	p1=$DEV/$(part_name "$disk" 1)
 	p2=$DEV/$(part_name "$disk" 2)
 	wait_dev "$p1" || { fail 2 "il disco non mostra la nuova partizione: riavvia e riprova"; return 1; }
+	table_matches "$disk" "$1" "$2" "$3" "$4" ||
+		{ fail 2 "il sistema legge una tabella diversa da quella scritta: il disco è stato modificato, riavvia e riprova"; return 1; }
 
 	state "formatta|3|7|formattazione"
 	blockdev --setrw "$p1" 2>/dev/null
@@ -467,6 +482,9 @@ side_job() { # disco
 	[ -b "$p" ] || sweetspot-partizione "$dev" "$num" "$start" "$SYS_SECTORS" 2>/dev/null ||
 		blockdev --rereadpt "$dev" 2>/dev/null
 	wait_dev "$p" || { side_fail 2 "il disco non mostra la nuova partizione" "$dev" "$bak"; return 1; }
+	[ "$(cat "$SYS/class/block/${p##*/}/start" 2>/dev/null)" = "$start" ] &&
+		[ "$(cat "$SYS/class/block/${p##*/}/size" 2>/dev/null)" = "$SYS_SECTORS" ] ||
+		{ side_fail 2 "il sistema legge una partizione diversa da quella scritta" "$dev" "$bak"; return 1; }
 
 	state "formatta|3|6|formattazione"
 	blockdev --setrw "$p" 2>/dev/null
