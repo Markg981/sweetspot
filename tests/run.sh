@@ -4500,6 +4500,7 @@ sh "$ROOT/tests/primo-accesso.sh" || exit 1
 sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/lyrion-argv.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
+sh "$ROOT/tests/dischi-stop.sh" || exit 1
 sh "$ROOT/tests/gpt-refresh-grub.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
