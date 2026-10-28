@@ -17,8 +17,9 @@ echo "== firewall: fallimento di nft = chiuso"
 cat > "$W/nft" <<EOF
 #!/bin/sh
 [ "\$1" = -f ] || exit 0
-grep -q 'chain ingresso { type' "\$2" && { cp "\$2" "$W/fallback.nft"; exit 0; }
-exit 1
+# il file completo comincia con define AP_IF, il fallback no
+grep -q 'define AP_IF' "\$2" && exit 1
+cp "\$2" "$W/fallback.nft"
 EOF
 chmod +x "$W/nft"
 SWEETSPOT_LIB=$OV/usr/lib/sweetspot SWEETSPOT_NFT=$W/nft SWEETSPOT_RUN=$W/run SWEETSPOT_LOG=$W/log \
@@ -31,7 +32,8 @@ ok "fallback: drop su wlan0" 1 "$(grep -c 'iifname "wlan0" drop' "$W/fallback.nf
 # 2) nft fallisce sempre: la scheda viene abbassata.
 printf '#!/bin/sh\nexit 1\n' > "$W/nft"
 printf '#!/bin/sh\necho "$*" >> "%s/ip.log"\n' "$W" > "$W/bin/ip"; chmod +x "$W/bin/ip"
-PATH=$W/bin:$PATH SWEETSPOT_LIB=$OV/usr/lib/sweetspot SWEETSPOT_NFT=$W/nft SWEETSPOT_RUN=$W/run SWEETSPOT_LOG=$W/log \
+# common.sh mette /usr/sbin davanti al PATH: SWEETSPOT_PATH fa usare il finto ip.
+SWEETSPOT_PATH=$W/bin SWEETSPOT_LIB=$OV/usr/lib/sweetspot SWEETSPOT_NFT=$W/nft SWEETSPOT_RUN=$W/run SWEETSPOT_LOG=$W/log \
 	sh "$FW" applica wlan0 2>/dev/null
 ok "esito 1 anche senza fallback" 1 "$?"
 ok "scheda abbassata" "link set dev wlan0 down" "$(cat "$W/ip.log" 2>/dev/null)"
