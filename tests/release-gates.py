@@ -454,5 +454,13 @@ class SigningKeyProvisioningTests(unittest.TestCase):
         self.assertNotIn("SECRET", (ROOT / PUBKEY).read_text().upper())
 
 
+class HardeningDefconfig(unittest.TestCase):
+    def test_defconfig_have_explicit_hardening(self):
+        for f in sorted((ROOT / "configs").glob("sweetspot_*_defconfig")):
+            lines = f.read_text().splitlines()
+            for flag in ("BR2_SSP_STRONG", "BR2_RELRO_FULL", "BR2_FORTIFY_SOURCE_2", "BR2_PIC_PIE"):
+                self.assertIn(flag + "=y", lines, f"{f.name}: {flag}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

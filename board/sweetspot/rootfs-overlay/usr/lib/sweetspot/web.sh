@@ -133,6 +133,8 @@ SESSION_COOKIE=sweetspot_sid
 LOGIN_DIR=$WEBDIR/tentativi
 # shellcheck disable=SC2034
 LOGIN_FREE=${SWEETSPOT_TENTATIVI_LIBERI:-5}
+# Tetto ai file di contatore (uno per indirizzo): oltre, si tolgono i piu' vecchi.
+LOGIN_MAX=${SWEETSPOT_TENTATIVI_MAX:-200}
 
 auth_enabled() { [ -n "$(conf PASSWORD_WEB)" ]; }
 
@@ -280,6 +282,17 @@ login_fail() { # chiave
 	# (oltre l'attesa massima di 15) si cancellano: il blocco in corso resta.
 	find "$LOGIN_DIR" -maxdepth 1 -type f -mmin +30 -exec rm -f {} + 2>/dev/null
 	f=$LOGIN_DIR/$(login_key "$1")
+	# Tetto al numero di file (indirizzi IPv6 o falsificati in LAN): se manca
+	# posto per un indirizzo nuovo si tolgono i piu' vecchi. Il file di chi
+	# sta sbagliando ora e' il piu' recente, quindi il suo blocco resta.
+	if [ ! -f "$f" ]; then
+		n=$(find "$LOGIN_DIR" -maxdepth 1 -type f 2>/dev/null | grep -c .)
+		if [ "$n" -ge "$LOGIN_MAX" ]; then
+			ls -t "$LOGIN_DIR" | tail -n "+$((LOGIN_MAX > 1 ? LOGIN_MAX : 1))" |
+				while read -r old; do rm -f "$LOGIN_DIR/$old"; done
+		fi
+		n=""
+	fi
 	[ -f "$f" ] && read -r n last < "$f"
 	case "$n" in *[!0-9]*|'') n=0 ;; esac
 	printf '%s %s\n' "$((n + 1))" "$(date +%s)" > "$f"

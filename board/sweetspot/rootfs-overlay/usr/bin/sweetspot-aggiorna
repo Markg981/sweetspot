@@ -255,7 +255,7 @@ unsigned_fixture() {
 # Solo i file prodotti da post-image.sh possono entrare nella copia avviabile.
 package_payload() {
 	case "$1" in
-		"$(kernel_file)"|rootfs.cpio.zst|versione|architettura) return 0 ;;
+		"$(kernel_file)"|rootfs.cpio.zst|versione|architettura|build) return 0 ;;
 	esac
 	[ "$(boot_type)" = rpi ] || return 1
 	case "$1" in
@@ -338,20 +338,46 @@ verify_package() { # cartella_estratta
 # nella cartella della copia $2 (versione e architettura non si copiano).
 verify_slot_files() { # SHA256SUMS cartella_copia
 	local list="$DIR/hash.copia"
-	grep -Ev '^.{64} [ *](versione|architettura)$' "$1" > "$list" || true
+	grep -Ev '^.{64} [ *](versione|architettura|build)$' "$1" > "$list" || true
 	[ -s "$list" ] || return 1
 	(cd "$2" && sha256sum -c "$list" > /dev/null 2>&1)
 }
 
+# Protezione anti-rollback. Il pacchetto firmato puo' portare il file "build"
+# (secondi UTC della compilazione, coperto da SHA256SUMS e quindi dalla firma).
+# Il minimo ("build_min" in grubenv) e' la build dell'ultima versione confermata
+# funzionante: un pacchetto con build inferiore si rifiuta SEMPRE, anche con la
+# conferma del downgrade (un pacchetto vecchio ma firmato e' proprio la minaccia).
+# Pacchetti senza il file (precedenti a questa protezione) valgono come prima
+# finche' il minimo non e' impostato; dopo, senza build si rifiutano.
+# Stampa la build del pacchetto (anche vuota); errore = motivo del rifiuto.
+check_build() { # cartella_estratta
+	local b min
+	b=$(head -n 1 "$1/build" 2>/dev/null)
+	min=$(grubenv_get "$(boot_env)" build_min)
+	case "$min" in *[!0-9]*) min= ;; esac
+	if [ -n "$b" ]; then
+		case "$b" in *[!0-9]*|??????????????*) echo "numero di build non valido"; return 1 ;; esac
+		if [ -n "$min" ] && [ "$b" -lt "$min" ]; then
+			echo "il pacchetto e' una build precedente a quella gia' installata (protezione dal ritorno a versioni vecchie): non si puo' installare"
+			return 1
+		fi
+	elif [ -n "$min" ]; then
+		echo "il pacchetto non porta il numero di build: non si puo' installare dopo un aggiornamento con protezione dal ritorno a versioni vecchie"
+		return 1
+	fi
+	echo "$b"
+}
+
 # Sostituisce la copia $3 (cartella $2) con il pacchetto verificato in $1:
 # solo adesso la versione precedente si cancella.
-install_package() { # cartella_estratta cartella_copia copia versione
-	local x="$1" d="$2" other="$3" v="$4" f
+install_package() { # cartella_estratta cartella_copia copia versione [build]
+	local x="$1" d="$2" other="$3" v="$4" bld="${5:-}" f
 	clear_slot "$d" "$other" || { echo "scrittura non riuscita"; return 1; }
 	# Tutto il contenuto del pacchetto va nella copia (kernel e sistema; sul
 	# Raspberry Pi anche alberi dei dispositivi e overlay).
 	for f in "$x"/*; do
-		case "${f##*/}" in SHA256SUMS*|versione|architettura) continue ;; esac
+		case "${f##*/}" in SHA256SUMS*|versione|architettura|build) continue ;; esac
 		mv "$f" "$d/" || { echo "scrittura non riuscita"; return 1; }
 		# Un file alla volta su disco: un taglio di corrente non lascia
 		# file a meta' dietro a un marcatore gia' scritto.
@@ -371,7 +397,8 @@ install_package() { # cartella_estratta cartella_copia copia versione
 		{ echo "scrittura non riuscita"; return 1; }
 	sync
 	# Prova una volta sola al prossimo avvio.
-	grubenv_set "$(boot_env)" "prova=$other" || { echo "scrittura non riuscita"; return 1; }
+	# La build diventa il minimo solo a conferma avvenuta (do_confirm).
+	grubenv_set "$(boot_env)" "build_prova=$bld" "prova=$other" || { echo "scrittura non riuscita"; return 1; }
 	echo "$v"
 }
 
@@ -422,7 +449,7 @@ version_cmp() { # versione_a versione_b
 # downgrade accetta anche una versione piu' vecchia di quella in uso; la
 # stessa versione e' una reinstallazione, sempre ammessa.
 install_job() { # url|file SORGENTE
-	local kind="$1" src="$2" allow="${3:-}" d x other archive err="" v try=1 rc=0 cmp
+	local kind="$1" src="$2" allow="${3:-}" d x other archive err="" v try=1 rc=0 cmp bld
 	other=$(other_slot "$(running_slot)")
 	rm -f "$DIR/fallita" "$DIR/riuscita"
 	if ! stick_mount rw; then
@@ -482,22 +509,24 @@ install_job() { # url|file SORGENTE
 	elif ! v=$(verify_package "$x"); then
 		state "errore|$v"
 		rc=1
+	elif ! bld=$(check_build "$x"); then
+		state "errore|$bld"
+		rc=1
 	elif cmp=$(version_cmp "$v" "$(current_version)"); [ "$allow" != downgrade ] &&
 		{ [ "$cmp" = -1 ] || [ "$cmp" = "?" ]; }; then
 		# Una versione firmata ma vecchia puo' avere falle note: serve la
 		# conferma esplicita. Se una delle due versioni non e' confrontabile
 		# (rc, hash, "sviluppo") non c'e' modo di escludere un downgrade:
 		# si rifiuta, e file-downgrade (con conferma) e' il percorso forzato.
-		# Limite noto: a parita' di stringa di versione il pacchetto firmato
-		# non porta un identificativo monotono (la firma lega solo versione
-		# e architettura), quindi una build piu' vecchia non si distingue.
+		# Il rollback a una build piu' vecchia lo ferma check_build (sopra),
+		# con o senza conferma.
 		if [ "$cmp" = "?" ]; then
 			state "errore|impossibile confrontare il pacchetto ($v) con la versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
 		else
 			state "errore|il pacchetto ($v) e' piu' vecchio della versione in uso ($(current_version)): per installarlo comunque serve la conferma esplicita del downgrade"
 		fi
 		rc=1
-	elif v=$(install_package "$x" "$d" "$other" "$v"); then
+	elif v=$(install_package "$x" "$d" "$other" "$v" "$bld"); then
 		state "pronto|$v"
 		log "aggiornamento: versione $v installata nella copia $other, si prova al prossimo avvio"
 	else
@@ -904,7 +933,7 @@ healthy() {
 }
 
 do_confirm() {
-	local slot env def tried fail_reboot=0 werr=0
+	local slot env def tried fail_reboot=0 werr=0 nb bm
 	slot=$(running_slot)
 	mkdir -p "$DIR"
 	stick_mount rw || { log "aggiornamento: conferma non riuscita, chiavetta non scrivibile"; return 1; }
@@ -939,6 +968,12 @@ do_confirm() {
 				log "aggiornamento: conferma non riuscita, scrittura su chiavetta fallita"
 				return 1
 			fi
+			# Anti-rollback: il minimo sale (mai scende) alla build confermata.
+			nb=$(grubenv_get "$env" build_prova); bm=$(grubenv_get "$env" build_min)
+			case "$nb" in ''|*[!0-9]*) nb= ;; esac
+			case "$bm" in ''|*[!0-9]*) bm=0 ;; esac
+			if [ -n "$nb" ] && [ "$nb" -gt "$bm" ]; then grubenv_set "$env" "build_min=$nb" build_prova= || werr=1
+			else grubenv_set "$env" build_prova= || werr=1; fi
 			touch "$DIR/riuscita"
 			rm -f "$STICK_MNT/boot/conferma-fallita"
 			log "aggiornamento: la versione $(current_version) funziona ed e' ora quella in uso"

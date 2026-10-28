@@ -173,6 +173,8 @@ correction_active() {
 # piu' vicino (della stessa famiglia, 44,1 o 48 kHz, se c'e').
 # Attenuazione in piu' per i FIR: FIR_MARGINE_DB (predefinito 3 dB).
 FIR_MAX_KB=16384
+# Campioni massimi per canale in un FIR (1 Mi: oltre 20 s a 48 kHz).
+FIR_MAX_CAMPIONI=1048576
 
 # Politica per le frequenze senza FIR: blocca (predefinito) o diretto.
 fir_politica() {
@@ -192,6 +194,44 @@ wav_info() { # file
 	rate=$(od -An -tu4 -j24 -N4 "$1" | tr -d ' ')
 	[ "${ch:-0}" -ge 1 ] && [ "${ch:-0}" -le 2 ] && [ "${rate:-0}" -ge 8000 ] || return 1
 	echo "$rate $ch"
+}
+
+# Coerenza del corpo di un WAV: percorre i chunk, trova data e controlla che
+# sia completo (dimensione dichiarata entro il file), multiplo del fotogramma
+# (canali x byte per campione) e con campioni entro FIR_MAX_CAMPIONI.
+# Stampa il motivo e torna 1 se qualcosa non torna.
+wav_body_problem() { # file
+	local f=$1 total pos=12 id sz fmt ch bits frame="" n
+	total=$(wc -c < "$f" | tr -d ' ')
+	while [ $((pos + 8)) -le "$total" ]; do
+		id=$(dd if="$f" bs=1 skip=$pos count=4 2>/dev/null)
+		sz=$(od -An -tu4 -j$((pos + 4)) -N4 "$f" | tr -d ' ')
+		case "$id" in
+			"fmt ")
+				fmt=$(od -An -tu2 -j$((pos + 8)) -N2 "$f" | tr -d ' ')
+				ch=$(od -An -tu2 -j$((pos + 10)) -N2 "$f" | tr -d ' ')
+				bits=$(od -An -tu2 -j$((pos + 22)) -N2 "$f" | tr -d ' ')
+				case "${fmt:-0}:${bits:-0}" in
+					1:16|1:24|1:32|3:32|3:64|65534:16|65534:24|65534:32|65534:64) ;;
+					*) echo "formato di campione non supportato (codice $fmt, $bits bit)"; return 1 ;;
+				esac
+				frame=$((ch * bits / 8)) ;;
+			data)
+				[ -n "$frame" ] || { echo "chunk data prima del chunk fmt"; return 1; }
+				[ $((pos + 8 + sz)) -le "$total" ] ||
+					{ echo "troncato: il chunk data dichiara $sz byte ma ne restano $((total - pos - 8))"; return 1; }
+				[ "$sz" -gt 0 ] || { echo "il chunk data e' vuoto"; return 1; }
+				[ $((sz % frame)) -eq 0 ] ||
+					{ echo "il chunk data ($sz byte) non e' multiplo del fotogramma ($frame byte)"; return 1; }
+				n=$((sz / frame))
+				[ "$n" -le "$FIR_MAX_CAMPIONI" ] ||
+					{ echo "ha $n campioni per canale, oltre il limite di $FIR_MAX_CAMPIONI"; return 1; }
+				return 0 ;;
+		esac
+		pos=$((pos + 8 + sz + (sz % 2)))
+	done
+	echo "chunk data mancante o incompleto"
+	return 1
 }
 
 # File FIR presenti (con la frequenza nel nome o senza), uno per riga.
@@ -312,6 +352,7 @@ fir_problem() {
 			{ echo "$b supera $((FIR_MAX_KB / 1024)) MB"; return 1; }
 		wav_info "$f" > /dev/null ||
 			{ echo "$b non e' un WAV valido (mono o stereo, almeno 8000 Hz)"; return 1; }
+		d=$(wav_body_problem "$f") || { echo "$b non valido: $d"; return 1; }
 		case "$b" in fir-sinistro.wav|fir-destro.wav) continue ;; esac
 		n=${b%.wav}
 		n=${n##*-}
