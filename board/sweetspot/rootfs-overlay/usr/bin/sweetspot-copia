@@ -62,6 +62,8 @@ do_start() {
 	src=$(real "$1")
 	dst="$a/$(basename "$src")"
 	mkdir -p "$RUN" "$PAUSABLE"
+	# Resti di una copia uccisa di botto (qui nessuna copia e' viva).
+	rm -rf "$a"/.sweetspot-copia.??????
 	printf '%s\n' "$src" > "$JOB.src"
 	printf '%s\n' "$dst" > "$JOB.dst"
 	kb "$src" > "$JOB.tot"
@@ -72,8 +74,20 @@ do_start() {
 		# Lavoro sospendibile: per OOM killer tra i primi a cadere (la shell
 		# e il cp figlio ereditano il valore).
 		{ echo 500 > /proc/$$/oom_score_adj; } 2>/dev/null
-		if cp -a "$src" "$a/"; then echo finita > "$job.stato"
+		# Si copia in una cartella nascosta (Lyrion la ignora) dello stesso
+		# file system e si rinomina a copia finita: con annullamento, errore o
+		# disco pieno in archivio non resta una cartella troncata.
+		tmp=$(mktemp -d "$a/.sweetspot-copia.XXXXXX") || tmp=""
+		pulisci() { [ -z "$tmp" ] || rm -rf "$tmp"; }
+		term() { exit 143; }
+		trap pulisci EXIT
+		trap term TERM INT
+		n=$(basename "$src")
+		if [ -n "$tmp" ] && echo "$tmp" > "$job.tmp" && cp -a "$src" "$tmp/" && {
+			if [ -e "$a/$n" ]; then cp -a "$tmp/$n/." "$a/$n/"; else mv "$tmp/$n" "$a/$n"; fi
+		}; then echo finita > "$job.stato"
 		else [ "$(cat "$job.stato")" = annullata ] || echo errore > "$job.stato"; fi
+		pulisci
 		sync
 		rm -f "$job.pid" "$4/copia"
 		/usr/bin/sweetspot-lms aggiorna
