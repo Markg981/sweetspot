@@ -503,7 +503,7 @@ side_job() { # disco
 	log "installazione: Sweetspot installato accanto al sistema esistente su $p (voce UEFI: $efi); copia della tabella delle partizioni: gpt-$disk.bak sulla partizione SWEETSPOT (ripristino: sgdisk --load-backup)"
 }
 
-do_side() { # disco GB
+_do_side() { # disco GB
 	local d=$1 gb=""
 	[ "$(boot_type)" = grub ] || { echo "non serve su questo computer"; return 1; }
 	uefi || { echo "serve l'avvio UEFI: avvia la chiavetta in modalità UEFI"; return 1; }
@@ -521,8 +521,15 @@ do_side() { # disco GB
 	echo $! > "$PAUSABLE/installa"
 	log "installazione: avviata accanto al sistema esistente su $d"
 }
+do_side() {
+	local rc
+	avvio_lock "$DIR/avvio" || { echo "installazione gia' in corso"; return 1; }
+	_do_side "$@"; rc=$?
+	avvio_unlock "$DIR/avvio"
+	return $rc
+}
 
-do_start() { # disco si|no GB
+_do_start() { # disco si|no GB
 	local d=$1 gb=""
 	# Sul Raspberry Pi il sistema sta gia' sulla scheda SD da cui parte.
 	[ "$(boot_type)" = grub ] || { echo "non serve su questo computer"; return 1; }
@@ -541,6 +548,13 @@ do_start() { # disco si|no GB
 	echo $! > "$DIR/pid"
 	echo $! > "$PAUSABLE/installa"
 	log "installazione: avviata su $d (archivio musicale: $2)"
+}
+do_start() {
+	local rc
+	avvio_lock "$DIR/avvio" || { echo "installazione gia' in corso"; return 1; }
+	_do_start "$@"; rc=$?
+	avvio_unlock "$DIR/avvio"
+	return $rc
 }
 
 do_status() {

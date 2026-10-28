@@ -4381,6 +4381,7 @@ sh "$ROOT/tests/renderer-limiti.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
+sh "$ROOT/tests/lock-avvio.sh" || exit 1
 sh "$ROOT/tests/lyrion-auth.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1

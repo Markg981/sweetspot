@@ -184,7 +184,7 @@ job() {
 	log "archivio nello spazio libero: $p2, $((S_SIZE / 2097152)) GB"
 }
 
-do_create() {
+_do_create() {
 	running && { echo "creazione gia' in corso"; return 1; }
 	[ -n "$(sweetspot-dischi archivio)" ] && { echo "c'e' gia' un archivio musicale"; return 1; }
 	mkdir -p "$DIR" "$PAUSABLE"
@@ -194,6 +194,13 @@ do_create() {
 	echo $! > "$DIR/pid"
 	echo $! > "$PAUSABLE/spazio"
 	log "archivio nello spazio libero: creazione avviata su $S_DISK"
+}
+do_create() {
+	local rc
+	avvio_lock "$DIR/avvio" || { echo "creazione gia' in corso"; return 1; }
+	_do_create "$@"; rc=$?
+	avvio_unlock "$DIR/avvio"
+	return $rc
 }
 
 do_job_status() {
