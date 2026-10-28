@@ -225,7 +225,7 @@ do_clean() {
 
 # Toglie un disco dalla libreria (resta collegato, non viene piu' letto).
 do_umount_one() {
-	local want line name l
+	local want line name l rc=0
 	want=$(lower "$1")
 	[ -f "$LIST" ] || return 0
 	: > "$LIST.new"
@@ -237,7 +237,17 @@ do_umount_one() {
 				case "$(readlink "$l")" in "$MEDIA_DIR/$name"|"$MEDIA_DIR/$name"/*) rm -f "$l" ;; esac
 			done
 			sync
-			umount -l "$MEDIA_DIR/$name" 2>/dev/null
+			if [ "${SWEETSPOT_SMONTA_STRETTO:-}" = 1 ]; then
+				# Prima di installare: niente smontaggio differito, il disco
+				# deve liberarsi davvero (se resta in uso si rifiuta).
+				if grep -q " $MEDIA_DIR/$name " "$PROC/mounts" && ! umount "$MEDIA_DIR/$name" 2>/dev/null; then
+					echo "$line" >> "$LIST.new"
+					rc=1
+					continue
+				fi
+			else
+				umount -l "$MEDIA_DIR/$name" 2>/dev/null
+			fi
 			rmdir "$MEDIA_DIR/$name" 2>/dev/null
 			forget_archive "$name"
 			log "dischi: $name tolto dalla libreria"
@@ -246,6 +256,7 @@ do_umount_one() {
 		fi
 	done < "$LIST"
 	mv "$LIST.new" "$LIST"
+	return $rc
 }
 
 # Standby dei dischi meccanici interni, da chiamare dopo il montaggio. I dischi

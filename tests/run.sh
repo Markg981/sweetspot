@@ -4449,6 +4449,7 @@ expect "player: avvio diretto in software (non da fisso) non tocca il volume" "n
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
+sh "$ROOT/tests/installa-tabella.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1
 sh "$ROOT/tests/readme-allineato.sh" || exit 1
 sh "$ROOT/tests/modello-minaccia.sh" || exit 1
