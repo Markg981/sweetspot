@@ -4446,6 +4446,7 @@ expect "player: supervisore riavviato fra fisso e software, volume <= soglia" "2
 expect "player: dopo la riduzione il marcatore e' rimosso" "no" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
 expect "player: avvio diretto in software (non da fisso) non tocca il volume" "nessuno" "$(vsw software 100 0)"
 
+sh "$ROOT/tests/volume-cambio-tipo.sh" || exit 1
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
