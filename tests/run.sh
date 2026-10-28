@@ -55,6 +55,10 @@ verifica_salti() {
 }
 expect() { if [ "$2" = "$3" ]; then ok "$1"; else ko "$1" "$2" "$3"; fi; }
 
+# mbr_entry vive in common.sh; qui la si espone senza includerlo nella shell
+# principale (in una sottoshell, cosi' non ne eredita effetti collaterali).
+mbr_entry() ( . "$OVERLAY/usr/lib/sweetspot/common.sh"; mbr_entry "$@" )
+
 # Esegue una funzione di common.sh nell'ambiente finto $1.
 run() {
 	local env=$1
@@ -4402,6 +4406,7 @@ echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 verifica_salti
+sh "$ROOT/tests/meta-run.sh" || exit 1
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
@@ -4610,8 +4615,19 @@ expect "firewall: solo la scheda dell'AP, il resto accept" "1|1" \
 expect "firewall: Lyrion, SMB e DLNA non sono aperti" 0 "$(grep -cE '\b(9000|3483|445|8200)\b' "$FWR")"
 if command -v nft > /dev/null 2>&1; then
 	{ echo 'define AP_IF = "wlan0"'; cat "$FWR"; } > "$WORK/fw.nft"
-	nft -c -f "$WORK/fw.nft" > /dev/null 2>&1
-	expect "firewall: nft -c accetta le regole" 0 "$?"
+	# nft -c apre un socket netlink: serve root o un user+net namespace.
+	nft_out=$(nft -c -f "$WORK/fw.nft" 2>&1); nft_rc=$?
+	if [ "$nft_rc" -ne 0 ] && command -v unshare > /dev/null 2>&1; then
+		nft_out=$(unshare -rn nft -c -f "$WORK/fw.nft" 2>&1); nft_rc=$?
+	fi
+	if [ "$nft_rc" -ne 0 ] && command -v sudo > /dev/null 2>&1; then
+		nft_out=$(sudo -n nft -c -f "$WORK/fw.nft" 2>&1); nft_rc=$?
+	fi
+	case "$nft_out" in
+	*"Operation not permitted"* | *"Permission denied"* | *"Operation not supported"*)
+		salta "nft(privilegi)" ;;
+	*) expect "firewall: nft -c accetta le regole" "0" "$nft_rc" ;;
+	esac
 else
 	salta nft
 fi
@@ -4693,4 +4709,8 @@ python3 "$ROOT/tests/release-gates.py"
 rc=$?
 # Riepilogo finale: include anche i salti successivi all'ultimo controllo.
 verifica_salti
+# Gli expect dopo il primo controllo non erano ricontrollati: un ko qui deve
+# far fallire la suite anche se release-gates e' verde.
+echo "Superati: $PASS  Falliti: $FAIL"
+[ "$FAIL" -eq 0 ] || exit 1
 exit $rc
