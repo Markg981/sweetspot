@@ -2314,4 +2314,27 @@ host_guard() {
 	printf '\r\nindirizzo non valido: usa http://%s.local/\n' "$(conf NOME_RETE sweetspot)"
 	exit 0
 }
+
+# Lock di avvio dei lavori in background. Il pid del lavoro si scrive solo
+# dopo il fork: senza lock due clic ravvicinati passano entrambi il controllo
+# "gia' in corso" e avviano due lavori sullo stesso disco. mkdir e' atomico;
+# la directory contiene il pid di chi la tiene, cosi' un lock orfano (processo
+# morto) si recupera. Si prende prima dei controlli e si rilascia dopo aver
+# scritto il pid del lavoro (da li' in poi basta running()).
+#   avvio_lock <percorso>    0 = preso, 1 = un altro avvio e' in corso
+#   avvio_unlock <percorso>
+avvio_lock() {
+	local l="$1.lock" p
+	mkdir -p "$(dirname "$l")"
+	if mkdir "$l" 2>/dev/null; then echo $$ > "$l/pid"; return 0; fi
+	p=$(cat "$l/pid" 2>/dev/null)
+	# Senza pid il proprietario sta scrivendo proprio ora: occupato.
+	[ -n "$p" ] && ! kill -0 "$p" 2>/dev/null || return 1
+	# Orfano: lo si sposta (atomico, vince uno solo) e si riprova.
+	mv "$l" "$l.orfano.$$" 2>/dev/null && rm -rf "$l.orfano.$$"
+	if mkdir "$l" 2>/dev/null; then echo $$ > "$l/pid"; return 0; fi
+	return 1
+}
+avvio_unlock() { rm -rf "$1.lock"; }
+
 host_guard

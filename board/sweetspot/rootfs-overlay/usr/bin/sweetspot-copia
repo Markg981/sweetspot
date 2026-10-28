@@ -53,7 +53,7 @@ running() { [ -f "$JOB.pid" ] && kill -0 "$(cat "$JOB.pid")" 2>/dev/null; }
 
 kb() { du -sk "$1" 2>/dev/null | cut -f1; }
 
-do_start() {
+_do_start() {
 	local src dst a
 	a=$(archive)
 	[ -n "$a" ] || { echo "nessun archivio musicale"; return 1; }
@@ -95,6 +95,13 @@ do_start() {
 	echo $! > "$JOB.pid"
 	echo $! > "$PAUSABLE/copia"
 	log "copia: $src -> $a"
+}
+do_start() {
+	local rc
+	avvio_lock "$JOB" || { echo "c'e' gia' una copia in corso"; return 1; }
+	_do_start "$@"; rc=$?
+	avvio_unlock "$JOB"
+	return $rc
 }
 
 do_status() {

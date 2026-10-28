@@ -428,7 +428,7 @@ rip() ( # album artista anno
 	[ "$bad" = 0 ] && [ "$report_error" = 0 ]
 )
 
-do_copy() {
+_do_copy() {
 	[ -s "$INFO" ] || { echo "leggi prima il CD"; return 1; }
 	[ -f "$DIR/pid" ] && kill -0 "$(cat "$DIR/pid")" 2>/dev/null && { echo "copia gia' in corso"; return 1; }
 	clean_orphans
@@ -438,6 +438,13 @@ do_copy() {
 	setsid "$0" _copia "$@" > /dev/null 2>&1 < /dev/null &
 	echo $! > "$DIR/pid"
 	echo $! > "$PAUSABLE/cd"
+}
+do_copy() {
+	local rc
+	avvio_lock "$DIR/avvio" || { echo "copia gia' in corso"; return 1; }
+	_do_copy "$@"; rc=$?
+	avvio_unlock "$DIR/avvio"
+	return $rc
 }
 
 [ "${SWEETSPOT_TEST:-}" = 1 ] && return 0
