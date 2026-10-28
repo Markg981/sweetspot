@@ -247,12 +247,25 @@ release_disk() {
 					if [ -n "$a" ] && [ "$(readlink -f "$MEDIA_DIR/$name")" = "$a" ]; then
 						sweetspot-nas ferma
 					fi
-					sweetspot-dischi smonta "$name" ;;
+					SWEETSPOT_SMONTA_STRETTO=1 sweetspot-dischi smonta "$name" || return 1 ;;
 			esac
 		done < "$RUN/dischi.list"
 	fi
 	sync
 	grep -q "^$DEV/$disk" "$PROC/mounts" && return 1
+	return 0
+}
+
+# Il kernel deve vedere le partizioni esattamente dove sono state scritte,
+# altrimenti le scritture successive andrebbero su offset sbagliati.
+table_matches() { # disco inizio1 settori1 inizio2 settori2
+	local disk=$1 n s z p
+	for n in 1 2; do
+		if [ $n = 1 ]; then s=$2; z=$3; else s=$4; z=$5; fi
+		[ $n = 2 ] && [ "$z" -eq 0 ] && continue
+		p=$SYS/class/block/$(part_name "$disk" $n)
+		[ "$(cat "$p/start" 2>/dev/null)" = "$s" ] && [ "$(cat "$p/size" 2>/dev/null)" = "$z" ] || return 1
+	done
 	return 0
 }
 
@@ -352,6 +365,8 @@ install_job() { # disco si|no
 	p1=$DEV/$(part_name "$disk" 1)
 	p2=$DEV/$(part_name "$disk" 2)
 	wait_dev "$p1" || { fail 2 "il disco non mostra la nuova partizione: riavvia e riprova"; return 1; }
+	table_matches "$disk" "$1" "$2" "$3" "$4" ||
+		{ fail 2 "il sistema legge una tabella diversa da quella scritta: il disco è stato modificato, riavvia e riprova"; return 1; }
 
 	state "formatta|3|7|formattazione"
 	blockdev --setrw "$p1" 2>/dev/null
@@ -399,13 +414,81 @@ ntfs_parts() { # disco
 	done
 }
 
-# Windows ibernato o spento con Avvio rapido lascia NTFS "sporco": ntfsfix -n lo
-# segnala senza scrivere. Se lo strumento manca non si puo' sapere: si va avanti.
+# Windows ibernato o spento con Avvio rapido lascia NTFS "sporco". ntfsprogs non
+# e' nell'immagine: il flag sta in $Volume (record 3 della MFT, attributo
+# $VOLUME_INFORMATION, bit 0x0001) e lo si legge con dd/od. Se qualcosa non
+# torna (strumento assente, volume illeggibile, layout strano) NON si sa: si
+# tratta come sporco, mai come pulito.
+ntfs_le() { # dispositivo offset byte -> intero little-endian
+	dd if="$1" bs=1 skip="$2" count="$3" 2> /dev/null | od -An -tu1 -v |
+		awk '{ for (i = NF; i >= 1; i--) v = v * 256 + $i } END { printf "%d", v }'
+}
+
+ntfsfix_presente() { command -v ntfsfix > /dev/null; }
+
+ntfs_part_dirty() { # dispositivo -> 0 se sporco o non verificabile, 1 se pulito
+	local p=$1 bps spc mft rec rs o a t l c fl
+	if ntfsfix_presente; then
+		ntfsfix -n "$p" > /dev/null 2>&1 && return 1
+		return 0
+	fi
+	bps=$(ntfs_le "$p" 11 2)
+	spc=$(ntfs_le "$p" 13 1)
+	mft=$(ntfs_le "$p" 48 8)
+	rec=$(ntfs_le "$p" 64 1)
+	[ "$bps" -gt 0 ] && [ "$spc" -gt 0 ] || return 0
+	if [ "$rec" -ge 128 ]; then rs=$((1 << (256 - rec))); else rs=$((rec * bps * spc)); fi
+	[ "$rs" -ge 512 ] && [ "$rs" -le 4096 ] || return 0
+	o=$((mft * spc * bps + 3 * rs))
+	[ "$(dd if="$p" bs=1 skip="$o" count=4 2> /dev/null)" = FILE ] || return 0
+	a=$(ntfs_le "$p" $((o + 20)) 2)
+	while [ "$a" -gt 0 ] && [ "$a" -lt "$rs" ]; do
+		t=$(ntfs_le "$p" $((o + a)) 4)
+		[ "$t" -ne 4294967295 ] || return 0
+		l=$(ntfs_le "$p" $((o + a + 4)) 4)
+		if [ "$t" -eq 112 ]; then
+			c=$(ntfs_le "$p" $((o + a + 20)) 2)
+			fl=$(ntfs_le "$p" $((o + a + c + 10)) 2)
+			[ $((fl & 1)) -eq 0 ] && return 1
+			return 0
+		fi
+		[ "$l" -gt 0 ] || return 0
+		a=$((a + l))
+	done
+	return 0
+}
+
+# Avvio rapido e ibernazione di norma NON impostano il flag dirty: lo stato sta
+# in hiberfil.sys (firma "hibr"/"HIBR" se ibernato, "wake" o zeri se no).
+# Si monta il volume in sola lettura. Se non si riesce: non si sa, quindi sporco.
+ntfs_ro_mount() { # dispositivo cartella
+	modprobe ntfs3 2> /dev/null
+	mount -t ntfs3 -o ro,noatime "$1" "$2"
+}
+
+ntfs_ro_umount() { umount "$1"; }
+
+ntfs_hibernated() { # dispositivo -> 0 se ibernato o non verificabile, 1 se no
+	local m=$DIR/ntfs-ro f sig rc=1
+	mkdir -p "$m" || return 0
+	ntfs_ro_mount "$1" "$m" 2> /dev/null || { rmdir "$m" 2> /dev/null; return 0; }
+	for f in hiberfil.sys Hiberfil.sys HIBERFIL.SYS; do
+		[ -e "$m/$f" ] || continue
+		sig=$(dd if="$m/$f" bs=1 count=4 2> /dev/null)
+		case $sig in
+		[Hh][Ii][Bb][Rr]) rc=0 ;;
+		esac
+	done
+	ntfs_ro_umount "$m" 2> /dev/null || rc=0
+	rmdir "$m" 2> /dev/null
+	return $rc
+}
+
 ntfs_dirty() { # disco
 	local p
-	command -v ntfsfix > /dev/null || return 1
 	for p in $(ntfs_parts "$1"); do
-		ntfsfix -n "$p" > /dev/null 2>&1 || return 0
+		ntfs_part_dirty "$p" && return 0
+		ntfs_hibernated "$p" && return 0
 	done
 	return 1
 }
@@ -441,7 +524,7 @@ side_job() { # disco
 	num=$(gpt_slot "$dev")
 	[ -n "$num" ] || { fail 1 "la tabella delle partizioni è piena: niente è stato cambiato"; return 1; }
 	ntfs_dirty "$disk" &&
-		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, scegli Riavvia e riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
+		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, disattiva Avvio rapido, scegli Riavvia (non Arresta) e spegnilo del tutto, poi riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
 	sweetspot-dati salva > /dev/null 2>&1 || { fail 1 "salvataggio della libreria non riuscito: niente è stato cambiato"; return 1; }
 	kb=$(system_kb)
 	[ -n "$kb" ] || { fail 1 "chiavetta non leggibile: niente è stato cambiato"; return 1; }
@@ -467,6 +550,9 @@ side_job() { # disco
 	[ -b "$p" ] || sweetspot-partizione "$dev" "$num" "$start" "$SYS_SECTORS" 2>/dev/null ||
 		blockdev --rereadpt "$dev" 2>/dev/null
 	wait_dev "$p" || { side_fail 2 "il disco non mostra la nuova partizione" "$dev" "$bak"; return 1; }
+	[ "$(cat "$SYS/class/block/${p##*/}/start" 2>/dev/null)" = "$start" ] &&
+		[ "$(cat "$SYS/class/block/${p##*/}/size" 2>/dev/null)" = "$SYS_SECTORS" ] ||
+		{ side_fail 2 "il sistema legge una partizione diversa da quella scritta" "$dev" "$bak"; return 1; }
 
 	state "formatta|3|6|formattazione"
 	blockdev --setrw "$p" 2>/dev/null

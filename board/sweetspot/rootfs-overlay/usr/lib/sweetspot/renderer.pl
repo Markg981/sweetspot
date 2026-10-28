@@ -11,6 +11,7 @@
 # telecomando UPnP, non apre mai il DAC.
 #
 #   RENDERER_UPNP=si|no     (predefinito no) acceso dal pannello (Sistema)
+#   RENDERER_URI_PUBBLICI=si|no  (predefinito no) ammette URI verso host non locali
 #
 # Fa tre cose: risponde a SSDP (M-SEARCH) e annuncia il dispositivo,
 # serve il descrittore e i tre servizi (AVTransport, RenderingControl,
@@ -85,6 +86,47 @@ sub conf {
 }
 
 sub is_yes { return lc($_[0] // '') =~ /^(si|sì|s|yes|y|1|true|on|vero|attivo)$/ ? 1 : 0 }
+
+# L'URI mandato da un controller UPnP finisce a Lyrion, che lo scarica: va ammesso
+# solo http/https e, di serie, solo verso la rete locale (RFC1918, loopback,
+# link-local, IPv6 ULA fe80::/fc00::), altrimenti chiunque sia in LAN fa uscire
+# Lyrion verso host a sua scelta. I nomi host NON si risolvono (DNS lento in un
+# demone a un solo thread e riassociabile fra controllo e uso): sono locali solo
+# se senza punto o con suffisso .local/.lan/.home.arpa/.internal, il resto conta
+# come pubblico. RENDERER_URI_PUBBLICI=si toglie il controllo sull'host.
+# Ritorna 1 se ammesso, 0 altrimenti.
+sub uri_ammesso {
+	my ($uri) = @_;
+	return 0 unless $uri =~ m{^https?://([^/?#]*)}i;
+	my $auth = $1;
+	return 0 if $auth =~ /\@/;    # credenziali nell'URI: nessun motivo legittimo
+	return 1 if is_yes(conf('RENDERER_URI_PUBBLICI', 'no'));
+	my $h = lc $auth;
+	if ($h =~ /^\[([^\]]*)\](?::\d*)?$/) {
+		my $a = $1;
+		$a =~ s/%.*$//;
+		return 1 if $a eq '::1' || $a =~ /^f[cd][0-9a-f]{2}:/ || $a =~ /^fe[89ab][0-9a-f]:/;
+		return 1 if $a =~ /^::ffff:(\d+\.\d+\.\d+\.\d+)$/ && ip4_locale($1);
+		return 0;
+	}
+	$h =~ s/:\d*$//;
+	$h =~ s/\.$//;
+	return 0 if $h eq '';
+	return ip4_locale($h) if $h =~ /^\d+\.\d+\.\d+\.\d+$/;
+	return 0 if $h =~ /^[\d.x]+$/i || $h =~ /:/;    # forme numeriche anomale: rifiutate
+	return 1 if $h !~ /\./ || $h =~ /\.(local|lan|home\.arpa|internal)$/;
+	return 0;
+}
+
+sub ip4_locale {
+	my @o = split /\./, $_[0];
+	return 0 if grep { $_ > 255 } @o;
+	return 1 if $o[0] == 10 || $o[0] == 127;
+	return 1 if $o[0] == 192 && $o[1] == 168;
+	return 1 if $o[0] == 172 && $o[1] >= 16 && $o[1] <= 31;
+	return 1 if $o[0] == 169 && $o[1] == 254;
+	return 0;
+}
 
 sub solo_player { return lc(conf('MODALITA', 'completa')) =~ /^(player|solo-player|soloplayer|squeezelite|lyrion|lms)$/ ? 1 : 0 }
 
@@ -459,7 +501,10 @@ sub action {
 	if ($svc eq 'AVTransport') {
 		if ($name eq 'SetAVTransportURI') {
 			my $uri = xml_unesc($in->{CurrentURI} // '');
-			return (undef, 714, 'Illegal MIME-type') if $uri !~ m{^https?://}i && $uri ne '';
+			if ($uri ne '') {
+				return (undef, 714, 'Illegal MIME-type') if $uri !~ m{^https?://}i;
+				return (undef, 716, 'Resource not found') if !uri_ammesso($uri);
+			}
 			if ($S{owned} && $mac ne '') {
 				lms($mac, 'stop');
 				$S{owned} = 0;
@@ -470,7 +515,10 @@ sub action {
 		}
 		if ($name eq 'SetNextAVTransportURI') {
 			my $uri = xml_unesc($in->{NextURI} // '');
-			return (undef, 714, 'Illegal MIME-type') if $uri ne '' && $uri !~ m{^https?://}i;
+			if ($uri ne '') {
+				return (undef, 714, 'Illegal MIME-type') if $uri !~ m{^https?://}i;
+				return (undef, 716, 'Resource not found') if !uri_ammesso($uri);
+			}
 			@S{qw(next_uri next_meta)} = ($uri, xml_unesc($in->{NextURIMetaData}));
 			if ($S{owned} && $uri ne '' && $mac ne '') {
 				my $title = title_from_meta($S{next_meta});
@@ -889,14 +937,26 @@ sub http_reply {
 }
 
 my $MAX_BODY = 32768;    # una azione SOAP è di poche centinaia di byte
+# Il ciclo è a un solo thread: un client lento lo blocca per tutta la lettura.
+# La richiesta ha una scadenza complessiva di 1 s (una azione SOAP in LAN ne
+# impiega pochi ms) e chi la sfora è respinto subito per 10 s, così N
+# connessioni lente dallo stesso IP costano 1 s in tutto, non N * 3 s.
+my $READ_DEADLINE = 1;
+my $SLOW_PENALTY  = 10;
+my %slow_until;
 
 sub read_request {
 	my ($c) = @_;
 	my $sel = IO::Select->new($c);
 	my $buf = '';
-	my $deadline = time + 3;
+	my $peer = eval { $c->peerhost } // '';
+	my $t0 = Time::HiRes::time();
+	if ($peer ne '' && ($slow_until{$peer} // 0) > $t0) { return undef }
+	delete $slow_until{$peer};
+	%slow_until = () if keys %slow_until > 256;
+	my $deadline = $t0 + $READ_DEADLINE;
 	my ($head, $len);
-	while (time < $deadline) {
+	while (Time::HiRes::time() < $deadline) {
 		last unless $sel->can_read(0.5);
 		my $n = sysread($c, my $chunk, 8192);
 		last unless $n;
@@ -910,6 +970,9 @@ sub read_request {
 			return (undef, undef, 413) if $len > $MAX_BODY;
 		}
 		last if defined $head && length($buf) >= $len;
+	}
+	if (!defined $head || length($buf) < $len) {
+		$slow_until{$peer} = Time::HiRes::time() + $SLOW_PENALTY if $peer ne '';
 	}
 	return undef unless defined $head;
 	return ($head, $buf);

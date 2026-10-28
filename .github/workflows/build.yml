@@ -11,9 +11,12 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Un nuovo invio su un ramo ferma la compilazione precedente; su main no, così ogni merge ha la sua immagine e le sue prove QEMU.
+# Un nuovo invio su un ramo o su una PR ferma la compilazione precedente.
+# Su main ogni commit ha il suo gruppo (sha): con un gruppo unico per ref GitHub
+# tiene una sola esecuzione in attesa e annulla le altre (0 job), anche con
+# cancel-in-progress falso; così i merge ravvicinati lasciavano commit senza build.
 concurrency:
-  group: compila-${{ github.ref }}
+  group: compila-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:

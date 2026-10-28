@@ -57,6 +57,12 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
     sorgente e non in comune (PR #196).
   - L'httpd gira come utente `web` (`etc/default/httpd`); le operazioni da
     root passano da `sweetspot-priv` (3.2).
+  - `web` non è nel gruppo `audio` (C-32, `board/sweetspot/users.txt`): un CGI
+    compromesso non apre i dispositivi ALSA. Le sonde del DAC (`aplay
+    --dump-hw-params` e prova delle frequenze, `common.sh`) passano da
+    `sweetspot-priv @alsa-sonda`, che costruisce il dispositivo `hw:` da campi
+    validati e legge sempre `/dev/null`. Il resto dell'audio gira come root
+    (player, `amixer`, `sweetspot-banco`) o legge solo `/proc/asound`.
 - **Rischio residuo accettato.** Su HTTP la password viaggia in chiaro sulla
   LAN. Il segreto da cui derivano i gettoni è uno solo per tutto il dispositivo
   e cambia a ogni avvio (`web.sh`, `token_secret`): chi ruba una sessione
@@ -92,16 +98,17 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
 - **Difesa presente.** Spento di default (`ARCHIVIO_CONDIVISO=no`,
   `usr/bin/sweetspot-nas`). Senza password: ospite in **sola lettura**;
   con password: utente `sweetspot` autenticato, `guest ok = no`
-  (`sweetspot-nas`). Protocollo minimo SMB 2.1 (`sweetspot-nas`).
+  (`sweetspot-nas`). Protocollo minimo SMB 2.1 e, con la password, firma
+  obbligatoria (`server signing = mandatory`, `ARCHIVIO_FIRMA=si`); cifratura
+  SMB3 opzionale (`ARCHIVIO_CIFRATURA=si`, spenta per il costo di CPU).
   Hash NT in file `600` (`sweetspot-nas`); la password passa da stdin
   (`sweetspot-nas`).
-- **Rischio residuo accettato.** Nessuna firma né cifratura SMB configurate
-  (`sweetspot-nas`): un client malevolo sulla LAN può fare
-  man in the middle. Ascolta su tutte le interfacce. Con l'ospite chiunque
+- **Rischio residuo accettato.** Nessuna cifratura di default: il contenuto
+  è leggibile da chi intercetta il traffico (la firma impedisce la
+  manomissione solo con la password; l'ospite non è firmato). Ascolta su tutte le interfacce. Con l'ospite chiunque
   sulla LAN legge la libreria.
 - **Con LAN non fidata.** Password obbligatoria (mai ospite), firma SMB
-  obbligatoria (`server signing = mandatory`), cifratura dove i client la
-  supportano, `interfaces`/`hosts allow` limitati alla scheda di casa.
+  obbligatoria (già di default con la password), `ARCHIVIO_CIFRATURA=si`, `interfaces`/`hosts allow` limitati alla scheda di casa.
 
 ### 3.4 MiniDLNA (media server UPnP/DLNA)
 
@@ -188,12 +195,13 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
   pannello mostra solo *Primo accesso* con codice del dispositivo
   (`web.sh`, `sweetspot-accesso`).
 - **Rischio residuo accettato.** Se `nft` non carica le regole il firewall
-  **lascia tutto aperto** e lo scrive nel registro
-  (`usr/bin/sweetspot-firewall`, provato in `tests/run.sh`).
+  **fallisce chiuso**: carica un solo drop sulla scheda dell'hotspot e, se
+  nemmeno quello riesce, abbassa la scheda; esce con errore e lo scrive nel
+  registro (`usr/bin/sweetspot-firewall`, provato in `tests/run.sh`).
   La password dell'hotspot è salvata in chiaro sulla chiavetta
   (`sweetspot-hotspot`).
 - **Con LAN non fidata.** Il caso hotspot non cambia (già non fidato); il
-  firewall dovrebbe fallire chiuso e impostare `policy drop` sulla catena.
+  firewall fallisce chiuso come descritto sopra.
 
 ### 3.8 Aggiornamenti via `curl` https
 
@@ -260,6 +268,7 @@ nel job `test` della CI.
 | RS-6 | Ogni azione del pannello richiede il gettone anti-CSRF. | senza test (nessun test chiama `azione` con gettone errato) |
 | RS-7 | Il gettone anti-CSRF è legato alla sessione e il modulo di accesso ha un gettone suo (PR #193). | `tests/accesso.sh` |
 | RS-8 | L'httpd e le pagine girano come utente `web`, non root. | `tests/privilegi.sh` |
+| RS-8b | L'utente `web` non è nel gruppo `audio`; le sonde ALSA passano da `@alsa-sonda` con argomenti validati. | `tests/privilegi.sh` |
 | RS-9 | `sweetspot-priv` esegue solo l'elenco chiuso (126 altrimenti), senza percorsi, shell o argomenti non validi. | `tests/privilegi.sh` |
 | RS-10 | Le operazioni che aprono root o cancellano dischi (SSH, `PASSWORD_WEB`, pacchetti da disco, installazione) richiedono `@conferma` con gettone monouso e password attuale. | `tests/privilegi.sh` |
 | RS-11 | Senza password SMB la condivisione è ospite in sola lettura; con la password è autenticata e non ospite. | `tests/run.sh` |
@@ -277,7 +286,7 @@ nel job `test` della CI.
 | RS-23 | Il rilascio è consentito solo da tag, dopo tutti i job, con segreto di firma obbligatorio per i tag ufficiali e archivi scaricati verificati con la chiave incorporata. | `tests/release-gates.py` |
 | RS-24 | Le password di Lyrion sono impostate alla protezione di Lyrion e non sovrascritte. | `tests/lyrion-auth.sh` |
 | RS-25 | Le ricerche online del CD si possono disattivare e AccurateRip va in https (PR #181). | `tests/cd-simulato.sh` |
-| RS-26 | Protezione dal rollback a una versione firmata più vecchia. | senza test (non implementato) |
+| RS-26 | Protezione dal rollback: il pacchetto firmato porta un numero di build monotono (`build`, secondi UTC, coperto da `SHA256SUMS`); `build_min` in grubenv sale alla build confermata funzionante e un pacchetto con build inferiore è rifiutato anche con `file-downgrade`. Limiti: pacchetti vecchi senza `build` valgono finché `build_min` non è impostato (poi sono rifiutati); chi azzera la chiavetta azzera il minimo; un downgrade voluto oltre il minimo non è possibile (resta «Usa l'altra copia» verso una copia già sulla chiavetta). | `tests/run.sh` (Aggiornamenti: anti-rollback) |
 
 ## 6. Punti deboli emersi dall'analisi (non corretti qui)
 
@@ -297,4 +306,4 @@ nel job `test` della CI.
 9. Pannello e SMB in chiaro sulla LAN (HTTPS spento di default, certificato
    autofirmato, `sweetspot-https`).
 10. Password dell'hotspot e dei servizi in chiaro sulla chiavetta (accettato).
-11. Nessuna protezione dal rollback degli aggiornamenti (RS-26).
+11. Anti-rollback (RS-26) legato alla chiavetta: chi può scriverla (accesso fisico) può azzerare `build_min`.

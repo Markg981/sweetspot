@@ -68,6 +68,19 @@ Rischio residuo dichiarato: i pacchetti apt installati sui runner di GitHub
 (`ubuntu-26.04`, job `test`, prove e build) non sono fissati; i runner stessi
 sono immagini gestite da GitHub. Restano strumenti, non finiscono nell'immagine.
 
+## Hardening dei binari
+
+Buildroot 2026.08.1 (`scripts/build.sh`): per default SSP, RELRO e
+FORTIFY_SOURCE sono disattivati (`NONE`); il PIE non e' garantito. Per questo i
+due defconfig impostano in modo esplicito `BR2_SSP_STRONG`, `BR2_RELRO_FULL`,
+`BR2_FORTIFY_SOURCE_2` e `BR2_PIC_PIE`. Compatibilita': la toolchain Bootlin
+esterna e' glibc (supporta tutti e quattro); i pacchetti propri
+(`sweetspot-tools`, `alsa-cdsp`) compilano con `$(TARGET_CFLAGS)` e
+`$(TARGET_LDFLAGS)`, quindi ereditano le opzioni. Le librerie della toolchain
+sono precompilate da Bootlin e non cambiano. `tests/release-gates.py`
+(`HardeningDefconfig`) controlla che i defconfig le contengano. Non verificato
+in locale: la compilazione completa spetta alla CI.
+
 ## Protezione di main
 
 `./scripts/proteggi-main.sh --applica` (da amministratore) rende obbligatorio,
@@ -76,6 +89,13 @@ finale che fallisce se test, compilazione (con il triage delle CVE) o prove
 Lyrion sono falliti **o annullati**. Una pull request con la compilazione
 annullata non si puo' piu' unire. Senza argomenti lo script mostra la
 protezione attuale.
+
+Stato reale: la protezione NON e' garantita finche' un amministratore non
+esegue `./scripts/proteggi-main.sh --applica`; senza, main non ha controlli
+obbligatori ne' revisioni e `esito` e' solo informativo. Il controllo
+giornaliero `protezione-main.yml` fallisce finche' la regola manca. Ogni push
+su main ha una compilazione completa propria (gruppo di concorrenza per
+commit), cosi' `esito` esiste sempre per il commit unito.
 
 ## Inventario (SBOM)
 

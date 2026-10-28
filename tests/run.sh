@@ -55,6 +55,10 @@ verifica_salti() {
 }
 expect() { if [ "$2" = "$3" ]; then ok "$1"; else ko "$1" "$2" "$3"; fi; }
 
+# mbr_entry vive in common.sh; qui la si espone senza includerlo nella shell
+# principale (in una sottoshell, cosi' non ne eredita effetti collaterali).
+mbr_entry() ( . "$OVERLAY/usr/lib/sweetspot/common.sh"; mbr_entry "$@" )
+
 # Esegue una funzione di common.sh nell'ambiente finto $1.
 run() {
 	local env=$1
@@ -265,6 +269,34 @@ grep -q 'oom_adj -1000 "\$p"' "$OVERLAY/usr/bin/sweetspot-player" && ok "player:
 grep -q 'oom_adj -100 ' "$OVERLAY/usr/bin/sweetspot-lms" && ok "lms: Lyrion leggermente protetto" || ko "lms: Lyrion leggermente protetto" "presente" "assente"
 grep -q 'oom_adj_cmd 500 scanner.pl' "$OVERLAY/usr/bin/sweetspot-stato" && ok "stato: scanner a +500 (evento rescan)" || ko "stato: scanner a +500" "presente" "assente"
 grep -q 'oom_score_adj' "$OVERLAY/usr/bin/sweetspot-copia" && ok "copia: lavoro sospendibile a +500" || ko "copia: lavoro sospendibile a +500" "presente" "assente"
+
+# Copia nell'archivio: si copia in una cartella nascosta e si rinomina a fine
+# lavoro; con un errore (disco pieno) non resta nulla di troncato.
+CP=$WORK/copia; mkdir -p "$CP/bin" "$CP/media/Album" "$CP/arch" "$CP/run"
+echo musica > "$CP/media/Album/a.flac"
+printf '#!/bin/sh\necho "$CP/arch"\n' > "$CP/bin/sweetspot-dischi"
+printf '#!/bin/sh\nexit 0\n' > "$CP/bin/sweetspot-lms"
+chmod +x "$CP/bin/"*
+# Attende la fine del lavoro (sparisce il pid, dopo sync e pulizia), al massimo 30 s:
+# su un runner lento sync supera i 2 s e un nuovo avvio verrebbe rifiutato.
+attendi_copia() { local i=0; while [ -e "$CP/run/copia.pid" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; }
+copia() { CP=$CP SWEETSPOT_PATH="$CP/bin:$SWEETSPOT_PATH" SWEETSPOT_LIB=$SWEETSPOT_LIB SWEETSPOT_RUN=$CP/run SWEETSPOT_LOG=$CP/log \
+	SWEETSPOT_MEDIA=$CP/media $TEST_SH "$OVERLAY/usr/bin/sweetspot-copia" "$@"; }
+# Errore vero a meta' copia: un file illeggibile fa fallire cp -a dopo aver
+# copiato il resto (con BusyBox le applet passano davanti a un cp finto nel PATH).
+echo resto > "$CP/media/Album/b.flac"
+chmod 000 "$CP/media/Album/b.flac"
+if cat "$CP/media/Album/b.flac" > /dev/null 2>&1; then
+	salta "utente senza privilegi (copia fallita)"
+else
+	copia avvia "$CP/media/Album" > /dev/null; attendi_copia
+	expect "copia fallita: stato errore" errore "$(cat "$CP/run/copia.stato")"
+	expect "copia fallita: nell'archivio non resta nulla" "" "$(ls -A "$CP/arch")"
+fi
+chmod 644 "$CP/media/Album/b.flac"
+copia avvia "$CP/media/Album" > /dev/null; attendi_copia
+expect "copia riuscita: stato finita" finita "$(cat "$CP/run/copia.stato")"
+expect "copia riuscita: cartella al suo posto, niente temporanei" Album "$(ls -A "$CP/arch")"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-cd" && ok "ripping: lavoro sospendibile a +500" || ko "ripping: lavoro sospendibile a +500" "presente" "assente"
 grep -q 'oom_adj 500' "$OVERLAY/usr/bin/sweetspot-precarico" && ok "precarico a +500" || ko "precarico a +500" "presente" "assente"
 
@@ -1050,10 +1082,17 @@ prev=""; for a; do [ "$prev" = --header ] && printf '%s\n' "$a" >> "$SWEETSPOT_R
 echo '{"result":{"_version":"9.1.1"}}'
 FINTO
 chmod +x "$WEB/bin/wget-auth"
+# Con le credenziali l'intestazione arriva a curl da stdin (non da argv).
+cat > "$WEB/bin/curl-auth" <<'FINTO'
+#!/bin/sh
+sed -n 's/^header = "\(.*\)"$/\1/p' >> "$SWEETSPOT_RUN/wget.headers"
+echo '{"result":{"_version":"9.1.1"}}'
+FINTO
+chmod +x "$WEB/bin/curl-auth"
 lmsauth() { # impostazioni
 	printf '%s\n' "$1" > "$WEB/s.txt"
 	rm -f "$WEB/run/wget.headers"
-	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth \
+	SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_WGET=$WEB/bin/wget-auth SWEETSPOT_CURL=$WEB/bin/curl-auth \
 		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; lms_json '' version '?' > /dev/null"
 	grep -c '^Authorization: ' "$WEB/run/wget.headers"
 }
@@ -1518,6 +1557,12 @@ sys.stdout.buffer.write(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt 
 		"$(dsp 'CORREZIONE=si' problema)|$(dsp 'CORREZIONE=si' correzione > /dev/null; echo $?)"
 	: > "$DSPE/run/correzione/fir-sinistro.wav"
 	expect "FIR vuoto: problema" "fir-sinistro.wav vuoto" "$(dsp 'CORREZIONE=si' problema)"
+	mkwav 96000 1 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR valido (corpo completo): nessun problema" "" "$(dsp 'CORREZIONE=si' problema)"
+	mkwav 96000 1 | head -c 1000 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR con header valido e dati troncati: rifiutato" 		"fir-sinistro.wav non valido: troncato: il chunk data dichiara 2048 byte ma ne restano 956" 		"$(dsp 'CORREZIONE=si' problema)"
+	mkwav 96000 1 | head -c 44 > "$DSPE/run/correzione/fir-sinistro.wav"
+	expect "FIR senza campioni: rifiutato" "fir-sinistro.wav non valido: troncato: il chunk data dichiara 2048 byte ma ne restano 0" "$(dsp 'CORREZIONE=si' problema)"
 	mkwav 96000 1 > "$DSPE/run/correzione/fir-destro.wav"
 	rm -f "$DSPE/run/correzione/fir-sinistro.wav"
 	expect "FIR solo destro: problema" "c'e' fir-destro.wav ma manca fir-sinistro.wav" "$(dsp 'CORREZIONE=si' problema)"
@@ -1680,6 +1725,12 @@ case "$c" in *"netbios name = SALOTTO"*"path = /media/Musica"*"guest ok = yes"*)
 c=$(arun "ksmbd_conf /media/Musica" "ARCHIVIO_PASSWORD=segreta")
 case "$c" in *"guest ok = no"*"valid users = sweetspot"*) ok "cartella di rete con password" ;; *) ko "cartella di rete con password" "valid users" "$c" ;; esac
 case "$c" in *segreta*) ko "password fuori dalla configurazione" "assente" "presente" ;; *) ok "password fuori dalla configurazione" ;; esac
+case "$c" in *"server min protocol = SMB2_10"*"server signing = mandatory"*) ok "SMB: firma obbligatoria con la password" ;; *) ko "SMB: firma obbligatoria con la password" "server signing = mandatory" "$c" ;; esac
+case "$c" in *"smb3 encryption"*) ko "SMB: cifratura spenta di default" "assente" "presente" ;; *) ok "SMB: cifratura spenta di default" ;; esac
+c=$(arun "ksmbd_conf /media/Musica")
+case "$c" in *"server signing = auto"*) ok "SMB: ospite senza firma obbligatoria" ;; *) ko "SMB: ospite senza firma obbligatoria" "server signing = auto" "$c" ;; esac
+c=$(arun "ksmbd_conf /media/Musica" "$(printf 'ARCHIVIO_PASSWORD=segreta\nARCHIVIO_FIRMA=no\nARCHIVIO_CIFRATURA=si')")
+case "$c" in *"server signing = auto"*"smb3 encryption = yes"*) ok "SMB: firma e cifratura configurabili" ;; *) ko "SMB: firma e cifratura configurabili" "auto + encryption" "$c" ;; esac
 
 echo "Copia dei CD"
 CD=$WORK/cd
@@ -2041,6 +2092,61 @@ expect "versione in uso non confrontabile: rifiutata" "errore|impossibile confro
 upd _lavoro file "$PKG" downgrade
 expect "versione in uso non confrontabile con conferma: accettata" "pronto|v9.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
+
+# Anti-rollback (RS-26): build monotona nel pacchetto, minimo in grubenv.
+echo "Aggiornamenti: anti-rollback"
+mkpkgb() { # versione build  (come mkpkg, con il file build coperto da SHA256SUMS)
+	rm -rf "$UPD/pkg"; mkdir -p "$UPD/pkg"
+	echo "kernel $1" > "$UPD/pkg/bzImage"; echo "rootfs $1" > "$UPD/pkg/rootfs.cpio.zst"
+	echo "$1" > "$UPD/pkg/versione"; echo x86_64 > "$UPD/pkg/architettura"; echo "$2" > "$UPD/pkg/build"
+	(cd "$UPD/pkg" && sha256sum bzImage rootfs.cpio.zst versione architettura build > SHA256SUMS)
+	tar -C "$UPD/pkg" -cf "$PKG" SHA256SUMS versione architettura build bzImage rootfs.cpio.zst
+}
+setenv build_min= build_prova= prova= tentato=
+mkpkg v1.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "anti-rollback: senza build e senza minimo: come prima" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 2000
+upd _lavoro file "$PKG"
+expect "anti-rollback: con build e senza minimo: accettato" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+expect "anti-rollback: il minimo non sale prima della conferma" "|2000" "$(genv build_min)|$(genv build_prova)"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkgb v1.0.0 1999
+upd _lavoro file "$PKG"
+expect "anti-rollback: build inferiore rifiutata" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "anti-rollback: build inferiore rifiutata anche con conferma del downgrade" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 2000
+upd _lavoro file "$PKG"
+expect "anti-rollback: build uguale accettata" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkgb v1.0.0 2001
+upd _lavoro file "$PKG"
+expect "anti-rollback: build superiore accettata" "pronto|v1.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
+setenv build_min=2000 build_prova= prova= tentato=
+mkpkg v1.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "anti-rollback: senza build rifiutato dopo il primo minimo" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+mkpkgb v1.0.0 12x
+upd _lavoro file "$PKG"
+expect "anti-rollback: build non numerica rifiutata" "errore|numero di build non valido" "$(cat "$UPD/run/aggiornamento/stato")"
+# Conferma: build_prova diventa build_min solo se la nuova versione parte.
+setenv build_min=2000 build_prova=3000 prova= tentato=b
+UPD_WGET=$UPD/bin/wget-ko upd conferma
+expect "anti-rollback: conferma non riuscita, il minimo non sale" "2000|3000" "$(genv build_min)|$(genv build_prova)"
+setenv build_min=2000 build_prova=3000 prova= tentato=a
+upd conferma
+expect "anti-rollback: prova fallita (si e' tornati indietro), il minimo non sale" "2000" "$(genv build_min)"
+setenv build_min=2000 build_prova=3000 prova= tentato=b
+upd conferma
+expect "anti-rollback: dopo la conferma il minimo e' la build provata" "3000|" "$(genv build_min)|$(genv build_prova)"
+mkpkgb v1.0.0 2999
+upd _lavoro file "$PKG"
+expect "anti-rollback: dopo la conferma una build inferiore e' rifiutata" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+setenv build_min=3000 build_prova=1000 prova= tentato=b
+upd conferma
+expect "anti-rollback: il minimo non scende mai" "3000" "$(genv build_min)"
+setenv build_min= build_prova= prova= tentato=
 
 if command -v minisign > /dev/null; then
 	echo "Aggiornamenti firmati"
@@ -2438,7 +2544,7 @@ if command -v sgdisk > /dev/null; then
 	expect "accanto: NTFS sporco (ibernazione), niente cambiato" "Windows non è spento del tutto (Avvio rapido o ibernazione)" \
 		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 1; }' | head -1 | cut -d: -f1)"
 	expect "accanto: NTFS pulito, si prosegue" "no" \
-		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }; ntfs_hibernated() { return 1; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
 	expect "accanto: la copia della tabella va sulla partizione nuova" "si" 		"$(grep -q '$new/gpt-$disk.bak' "$OVERLAY/usr/bin/sweetspot-installa" && echo si || echo no)"
 	# La partizione che si aggiungerebbe: 4 GiB nello spazio libero, tipo dati di base.
 	ins "sgdisk -n 4:4761600:$((4761600 + 8388608 - 1)) -t 4:\$SIDE_TYPE -c 4:\$SIDE_NAME $INS/dev/nvme0n1" > /dev/null
@@ -4292,7 +4398,15 @@ msif() {
 ' "$1" > "$MSD/run/sweetspot.conf"
 	SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica" | grep -c '^network_interface='
 }
-expect "media server: interfacce solo se valide, vuote = tutte" "1|0|0|0|0" 	"$(msif eth0,wlan0.1)|$(msif '')|$(msif 'eth0;rm')|$(msif 'eth0,,wlan0')|$(msif ',eth0')"
+msapt() {
+	mkdir -p "$MSD/sys/class/net/lo" "$MSD/sys/class/net/eth0" "$MSD/sys/class/net/wlan0"
+	printf '%s\n' "$1" > "$MSD/run/sweetspot.conf"
+	printf 'wlan0\n' > "$MSD/run/hotspot.attivo"
+	SWEETSPOT_SYSFS=$MSD/sys SWEETSPOT_TEST=1 SWEETSPOT_LIB=$OVERLAY/usr/lib/sweetspot SWEETSPOT_RUN=$MSD/run SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/bin/sweetspot-mediaserver; dlna_conf /musica" | grep '^network_interface='
+}
+expect "media server: interfacce fissate solo se valide, il resto ripiega sulle LAN" "network_interface=eth0,wlan0.1|network_interface=eth0|network_interface=eth0|network_interface=eth0" 	"$(msapt 'DLNA_INTERFACCE=eth0,wlan0.1')|$(msapt 'DLNA_INTERFACCE=eth0;rm')|$(msapt 'DLNA_INTERFACCE=eth0,,wlan0')|$(msapt 'DLNA_INTERFACCE=,eth0')"
+expect "media server: di serie niente hotspot, con DLNA_HOTSPOT=si c'e'" "network_interface=eth0|network_interface=eth0,wlan0" 	"$(msapt 'X=1')|$(msapt 'DLNA_HOTSPOT=si')"
+rm -f "$MSD/run/hotspot.attivo"
 expect "media server: senza privilegi, nome del player ripulito" "1|1" 	"$(printf '%s
 ' "$msconf" | grep -c '^user=dlna$')|$(printf '%s
 ' "$msconf" | grep -c '^friendly_name=Salotto_rm (libreria)$')"
@@ -4374,18 +4488,23 @@ echo
 echo "Superati: $PASS  Falliti: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 verifica_salti
+sh "$ROOT/tests/meta-run.sh" || exit 1
 sh "$ROOT/tests/audio-quality.sh" || exit 1
 sh "$ROOT/tests/alsa-misura.sh" || exit 1
 sh "$ROOT/tests/privilegi.sh" || exit 1
 sh "$ROOT/tests/renderer-limiti.sh" || exit 1
 sh "$ROOT/tests/bluetooth.sh" || exit 1
 sh "$ROOT/tests/accesso.sh" || exit 1
+sh "$ROOT/tests/ssh-limite.sh" || exit 1
 sh "$ROOT/tests/primo-accesso.sh" || exit 1
 sh "$ROOT/tests/lyrion-auth.sh" || exit 1
+sh "$ROOT/tests/lyrion-argv.sh" || exit 1
 sh "$ROOT/tests/ops-safety.sh" || exit 1
 sh "$ROOT/tests/dischi-stop.sh" || exit 1
+sh "$ROOT/tests/gpt-refresh-grub.sh" || exit 1
 sh "$ROOT/tests/admin-operazioni.sh" || exit 1
 sh "$ROOT/tests/energia.sh" || exit 1
+sh "$ROOT/tests/ntfs-sporco.sh" || exit 1
 
 # --- C17: follower del volume unico e niente picco al passaggio da fisso ---
 VF=$WORK/volfollower
@@ -4447,9 +4566,11 @@ expect "player: supervisore riavviato fra fisso e software, volume <= soglia" "2
 expect "player: dopo la riduzione il marcatore e' rimosso" "no" "$([ -f "$VF/run/volume.fisso" ] && echo si || echo no)"
 expect "player: avvio diretto in software (non da fisso) non tocca il volume" "nessuno" "$(vsw software 100 0)"
 
+sh "$ROOT/tests/volume-cambio-tipo.sh" || exit 1
 sh "$ROOT/tests/demone-eventi.sh" || exit 1
 sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
+sh "$ROOT/tests/installa-tabella.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1
 sh "$ROOT/tests/readme-allineato.sh" || exit 1
 sh "$ROOT/tests/modello-minaccia.sh" || exit 1
@@ -4581,23 +4702,35 @@ expect "firewall: solo la scheda dell'AP, il resto accept" "1|1" \
 expect "firewall: Lyrion, SMB e DLNA non sono aperti" 0 "$(grep -cE '\b(9000|3483|445|8200)\b' "$FWR")"
 if command -v nft > /dev/null 2>&1; then
 	{ echo 'define AP_IF = "wlan0"'; cat "$FWR"; } > "$WORK/fw.nft"
-	nft -c -f "$WORK/fw.nft" > /dev/null 2>&1
-	expect "firewall: nft -c accetta le regole" 0 "$?"
+	# nft -c apre un socket netlink: serve root o un user+net namespace.
+	nft_out=$(nft -c -f "$WORK/fw.nft" 2>&1); nft_rc=$?
+	if [ "$nft_rc" -ne 0 ] && command -v unshare > /dev/null 2>&1; then
+		nft_out=$(unshare -rn nft -c -f "$WORK/fw.nft" 2>&1); nft_rc=$?
+	fi
+	if [ "$nft_rc" -ne 0 ] && command -v sudo > /dev/null 2>&1; then
+		nft_out=$(sudo -n nft -c -f "$WORK/fw.nft" 2>&1); nft_rc=$?
+	fi
+	case "$nft_out" in
+	*"Operation not permitted"* | *"Permission denied"* | *"Operation not supported"*)
+		salta "nft(privilegi)" ;;
+	*) expect "firewall: nft -c accetta le regole" "0" "$nft_rc" ;;
+	esac
 else
 	salta nft
 fi
-# Se nft fallisce il firewall lascia tutto aperto e lo scrive nel registro.
-FWE=$WORK/fw; mkdir -p "$FWE/run"
-printf '#!/bin/sh\nexit 1\n' > "$FWE/nft"; chmod +x "$FWE/nft"
-SWEETSPOT_NFT=$FWE/nft SWEETSPOT_RUN=$FWE/run SWEETSPOT_LOG=$FWE/log \
-	$TEST_SH "$OVERLAY/usr/bin/sweetspot-firewall" applica wlan0
-rc=$?
-expect "firewall: caricamento fallito, esito 0 e errore nel registro" "0|1" \
-	"$rc|$(grep -c 'firewall: regole non caricate' "$FWE/log")"
+# Se nft fallisce il firewall fallisce chiuso (tests/firewall-fallimento.sh).
+expect "firewall: caricamento fallito, fallback chiuso" 0 "$(sh "$ROOT/tests/firewall-fallimento.sh" > "$WORK/fwfail.out" 2>&1; echo $?)"
 
 # --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
 if command -v gcc > /dev/null 2>&1; then
 	expect "alsa-cdsp: dopo un timeout nella FIFO solo frame interi" "0" "$(sh "$ROOT/tests/alsa-cdsp-frame.sh" > "$WORK/frame.out" 2>&1; echo $?)"
+else
+	salta "gcc"
+fi
+
+# --- sweetspot-partizione: numeri > 4 solo su GPT (C-05) ---
+if command -v gcc > /dev/null 2>&1; then
+	expect "partizione: numeri 5-128 su GPT, max 4 su MBR" "0" "$(sh "$ROOT/tests/partizione-numeri.sh" > "$WORK/partnum.out" 2>&1; echo $?)"
 else
 	salta "gcc"
 fi
@@ -4664,10 +4797,29 @@ expect "spazio: nodo con inizio diverso, nessun mkfs" no "$([ -e "$SR/mkfs.log" 
 expect "spazio: nodo con inizio diverso, errore" errore "$(cut -d'|' -f1 "$SR/run/spazio/stato")"
 
 python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
+bash "$ROOT/tests/web-limite-post.sh" || exit 1
+python3 "$ROOT/tests/prova-collaudo.py" || exit 1
+# Ogni file di tests/ deve essere richiamato (run.sh, workflow, altri test) o
+# elencato come prova manuale in docs/collaudo.md.
+for f in "$ROOT"/tests/*; do
+	[ -f "$f" ] || continue
+	b=${f##*/}
+	[ "$b" = run.sh ] && continue
+	if grep -rlF "$b" "$ROOT/tests/run.sh" "$ROOT/.github/workflows" "$ROOT/docs/collaudo.md" 2>/dev/null | grep -q . ||
+		grep -lF "$b" "$ROOT"/tests/* 2>/dev/null | grep -qv "/$b$"; then
+		ok "tests/$b richiamato o elencato"
+	else
+		ko "tests/$b orfano" "richiamato" "mai richiamato"
+	fi
+done
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
 rc=$?
 # Riepilogo finale: include anche i salti successivi all'ultimo controllo.
 verifica_salti
+# Gli expect dopo il primo controllo non erano ricontrollati: un ko qui deve
+# far fallire la suite anche se release-gates e' verde.
+echo "Superati: $PASS  Falliti: $FAIL"
+[ "$FAIL" -eq 0 ] || exit 1
 exit $rc
