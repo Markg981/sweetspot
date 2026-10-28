@@ -308,6 +308,16 @@ rm -rf "$RUNDIR/web/tentativi"
 (HTTPS=on REMOTE_HOST=192.168.1.77 REMOTE_T=local: lpost "$CGI/accesso" "password=no" > /dev/null)
 expect "con HTTPS il limite e' per l'IP del client, non per quello del terminatore" "1" "$(ls "$RUNDIR/web/tentativi" | grep -c '^ip-192.168.1.77$')"
 rm -rf "$RUNDIR/web/tentativi"
+# Registro dei tentativi: i contatori fermi da piu' di 30 minuti si cancellano
+# al prossimo errore, quelli recenti (il blocco in corso) restano.
+mkdir -p "$RUNDIR/web/tentativi"
+printf '9 1\n' > "$RUNDIR/web/tentativi/ip-vecchio"
+printf '9 1\n' > "$RUNDIR/web/tentativi/ip-recente"
+touch -t 200001010000 "$RUNDIR/web/tentativi/ip-vecchio"
+(REMOTE_ADDR=10.9.9.9 lpost "$CGI/accesso" "password=no" > /dev/null)
+expect "contatore vecchio cancellato" "no" "$([ -e "$RUNDIR/web/tentativi/ip-vecchio" ] && echo si || echo no)"
+expect "contatore recente conservato" "si" "$([ -e "$RUNDIR/web/tentativi/ip-recente" ] && echo si || echo no)"
+rm -rf "$RUNDIR/web/tentativi"
 
 echo "Uscita"
 out=$(lpost "$CGI/accesso" "password=segreta")
@@ -432,6 +442,12 @@ if [ -n "$BB" ] && "$BB" mkpasswd -m sha512 -S abcdefgh test 2>/dev/null | grep 
 else
 	echo "  (mkpasswd di BusyBox con SHA-512 non disponibile: verifica delle impronte saltata)"
 fi
+
+echo "Avviso HTTP nella pagina di accesso"
+out=$(req "$CGI/accesso" GET "" "")
+expect "in HTTP la pagina di accesso avvisa" "1" "$(printf '%s\n' "$out" | grep -c 'id="avviso-http"')"
+out=$(HTTPS=on req "$CGI/accesso" GET "" "")
+expect "in HTTPS l'avviso non compare" "0" "$(printf '%s\n' "$out" | grep -c 'id="avviso-http"')"
 
 echo
 echo "Accesso - superati: $PASS  Falliti: $FAIL"

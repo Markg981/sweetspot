@@ -89,14 +89,13 @@ Riguarda solo cio' che la configurazione distribuisce.
 
 ### Eseguito: SBOM CycloneDX del rootfs x86_64 e scansione grype
 
-Il 16/10/2026 su un rootfs x86_64 estratto dall'artifact CI (run 38861841635,
-build di main 8638df6, **non** di questo ramo) con syft 1.54.1:
-`docs/evidenze/sbom-x86_64.cdx.json` (221 componenti: 102 moduli kernel e
-librerie, 113 file, 5 applicazioni: busybox, curl, ffmpeg, jq, openssl).
-Scansione con grype 0.120.1 (database del 2026-10-16): 59 corrispondenze,
-tutte su binari rilevati da syft: ffmpeg 6.1.5 (43, di cui 1 Critical,
-CVE-2026-40962, corretta in 8.1), openssl 3.6.4 (13), busybox 1.38.0 (3).
-Dettaglio in `docs/evidenze/grype-x86_64.json`. Il triage di queste
+Il 27/10/2026 su un rootfs x86_64 estratto dall'artifact CI (run 40499552114,
+build di main 39cc3db, **non** di questo ramo) con syft 1.54.1:
+`docs/evidenze/sbom-x86_64.cdx.json` (242 componenti: 113 librerie e moduli
+kernel, 123 file, 5 applicazioni: busybox, curl, ffmpeg, jq, openssl).
+Scansione con grype 0.120.1 (database del 2026-10-27): 9 corrispondenze,
+tutte su binari rilevati da syft: ffmpeg 9.0.2 (5, di cui 1 High), curl 8.22.0
+(1 High), busybox 1.38.0 (3 High). Dettaglio in `docs/evidenze/grype-x86_64.json`. Il triage di queste
 corrispondenze e' sotto ("Triage").
 
 Copertura reale e limiti, da non nascondere:
@@ -127,15 +126,15 @@ componenti e le corrispondenze per gravita', con la data del giorno.
 Subito dopo, il passo "Triage delle CVE gravi" esegue
 `scripts/triage-cve.py` sul rapporto e **blocca** la compilazione (e quindi
 firma e release) se una CVE Critical o High non ha una decisione valida (vedi
-sotto). Se la scansione non riesce (database di grype irraggiungibile) un tag
-`v*` si ferma, gli altri rami ricevono solo un avviso. Valgono le stesse
+sotto). Se la scansione non riesce (database di grype irraggiungibile) la build si
+ferma su ogni ramo, non solo sui tag `v*`. Valgono le stesse
 lacune di copertura elencate sopra (tranne "solo x86_64"). Nelle pull request che non toccano l'immagine non si
 compila, quindi non c'e' un SBOM nuovo: vale quello dell'ultima build di main.
 
 ## Triage
 
 `docs/triage-cve.tsv` ha una riga per ogni CVE Critical o High: CVE,
-pacchetto, versione (esatta o `*`), decisione e motivo.
+pacchetto, versione esatta (niente `*`: un pacchetto nuovo riapre il triage), decisione e motivo.
 
 - `non-affetta`: il codice vulnerabile non e' nell'immagine o non e'
   raggiungibile. Per ffmpeg vale per tutto cio' che non si compila: serve
@@ -152,11 +151,9 @@ pacchetto, versione (esatta o `*`), decisione e motivo.
   corretta pubblicata, da rivedere entro il 31/01/2027. CVE-2026-38754 (ash,
   ifsbreakup) e' quella da guardare: le pagine CGI sono script ash.
 - le CVE corrette da un aggiornamento non hanno riga: dopo l'aggiornamento
-  spariscono dal rapporto. Sull'istantanea di main restano scoperte, ed e'
-  voluto, solo le sette corrette qui: CVE-2026-40962 (Critical),
-  CVE-2026-96611 e CVE-2026-52297 di `mov.c` (il demuxer mov e' raggiungibile
-  da un file ALAC; corrette in ffmpeg 9.0) e le quattro High di openssl 3.6.4
-  (corrette in 3.6.5, Buildroot 2026.08.1).
+  spariscono dal rapporto. Le righe legate a una versione che non c'e' piu'
+  si tolgono. L'istantanea di main passa il controllo senza eccezioni
+  (`tests/triage-cve.py`). La scansione fallita ferma la build su ogni ramo.
 
 Le gravita' Medium e Low si contano nel riepilogo ma non bloccano. Una nuova
 CVE grave pubblicata nel database ferma la build di main il giorno stesso:

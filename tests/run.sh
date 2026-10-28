@@ -42,7 +42,10 @@ salta() {
 }
 verifica_salti() {
 	[ -n "$SALTATE" ] || return 0
-	echo "Sezioni saltate per strumenti mancanti:$SALTATE"
+	echo "=================================================================="
+	echo "ATTENZIONE: sezioni saltate per strumenti mancanti:$SALTATE"
+	echo "La suite NON ha verificato tutto: installali per una prova completa."
+	echo "=================================================================="
 	case "${SWEETSPOT_CI_STRICT:-${CI:-}}" in
 	1 | true)
 		echo "NO  in modalita' rigorosa (CI) i salti sono un errore"
@@ -1851,6 +1854,8 @@ expect "in prova: pacchetto dal disco rifiutato" "la versione in uso e' ancora i
 upd _lavoro file "$UPD/media/USB/sweetspot-x86_64-aggiornamento.tar"
 expect "in prova: anche il lavoro si ferma" "errore|la versione in uso e' ancora in prova" "$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
 expect "in prova: copia A intatta e non predefinita" "A-kernel|a|b" "$(cat "$UPD/stick/bzImage")|$(genv slot)|$(genv tentato)"
+expect "in prova: libera rifiutato" "la versione in uso e' ancora in prova" "$(upd libera 2>&1 | head -1 | cut -d: -f1)"
+expect "in prova: libera lascia la copia A" "A-kernel|a|b" "$(cat "$UPD/stick/bzImage")|$(genv slot)|$(genv tentato)"
 UPD_WGET=$UPD/bin/wget-ko upd conferma
 expect "senza risposta dalla rete non si conferma" "a|b" "$(genv slot)|$(genv tentato)"
 upd conferma
@@ -2048,10 +2053,18 @@ upd _lavoro file "$PKG"
 expect "versione maggiore: accettata" "pronto|v3.1.0" "$(cat "$UPD/run/aggiornamento/stato")"
 mkpkg v1.0.0-rc1 x86_64
 upd _lavoro file "$PKG"
-expect "versione rc non confrontabile: rifiutata come downgrade" "errore|il pacchetto (v1.0.0-rc1) e' piu' vecchio della versione in uso (v3.0.0)" \
+expect "versione rc non confrontabile: rifiutata come downgrade" "errore|impossibile confrontare il pacchetto (v1.0.0-rc1) con la versione in uso (v3.0.0)" \
 	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
 upd _lavoro file "$PKG" downgrade
 expect "versione rc con conferma esplicita: accettata" "pronto|v1.0.0-rc1" "$(cat "$UPD/run/aggiornamento/stato")"
+# Versione in uso non confrontabile (build di sviluppo): niente via libera
+# implicito, serve la conferma esplicita come per ogni possibile downgrade.
+echo "sviluppo (2026-10-01)" > "$UPD/version"
+mkpkg v9.0.0 x86_64
+upd _lavoro file "$PKG"
+expect "versione in uso non confrontabile: rifiutata" "errore|impossibile confrontare il pacchetto (v9.0.0) con la versione in uso (sviluppo)" 	"$(cut -d: -f1 "$UPD/run/aggiornamento/stato")"
+upd _lavoro file "$PKG" downgrade
+expect "versione in uso non confrontabile con conferma: accettata" "pronto|v9.0.0" "$(cat "$UPD/run/aggiornamento/stato")"
 echo "v1.0.0 (2026-10-01)" > "$UPD/version"
 
 if command -v minisign > /dev/null; then
@@ -2446,6 +2459,12 @@ if command -v sgdisk > /dev/null; then
 		"il disco non mostra la nuova partizione: la tabella delle partizioni è tornata com'era|si" \
 		"$(sidejob nvme0n1 'wait_dev() { return 1; }')"
 	expect "accanto: copia della tabella conservata" "si" "$([ -s "$INS/run/installa/gpt-nvme0n1.bak" ] && echo si || echo no)"
+	# Windows ibernato / Avvio rapido: NTFS sporco, si rifiuta senza toccare nulla.
+	expect "accanto: NTFS sporco (ibernazione), niente cambiato" "Windows non è spento del tutto (Avvio rapido o ibernazione)" \
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 1; }' | head -1 | cut -d: -f1)"
+	expect "accanto: NTFS pulito, si prosegue" "no" \
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
+	expect "accanto: la copia della tabella va sulla partizione nuova" "si" 		"$(grep -q '$new/gpt-$disk.bak' "$OVERLAY/usr/bin/sweetspot-installa" && echo si || echo no)"
 	# La partizione che si aggiungerebbe: 4 GiB nello spazio libero, tipo dati di base.
 	ins "sgdisk -n 4:4761600:$((4761600 + 8388608 - 1)) -t 4:\$SIDE_TYPE -c 4:\$SIDE_NAME $INS/dev/nvme0n1" > /dev/null
 	expect "accanto: tabella risultante integra" "si" "$(ins "gpt_ok $INS/dev/nvme0n1" && echo si || echo no)"
@@ -3144,6 +3163,13 @@ expect "backoff: primo errore subito dopo l'avvio" "2" "$(dspfn 1 'backoff_next 
 expect "backoff: raddoppia fino a 60 s" "4|8|16|32|60|60" \
 	"$(dspfn 1 'backoff_next 2 1; backoff_next 4 1; backoff_next 8 1; backoff_next 16 1; backoff_next 32 1; backoff_next 60 1' | tr '\n' '|' | sed 's/|$//')"
 expect "backoff: azzerato dopo un funzionamento stabile" "0" "$(dspfn 1 'backoff_next 60 30')"
+echo "Supervisore: sorveglianza dei processi ausiliari"
+expect "ausiliari: follower del volume morto, riavviato" "riavvio|1" 	"$(dspfn 1 'start_volume_watch() { echo riavvio; VOLPID=""; }; LATPID=""; VOLPID=999999; WATCH_N=0; watch_check; echo $WATCH_N' | tr '
+' '|' | sed 's/|$//')"
+expect "ausiliari: l'evento e' nel log" "1" "$(grep -c "follower del volume" "$DSP/log")"
+expect "ausiliari: oltre il limite non riavvia e rinuncia" "5|" 	"$(dspfn 1 'start_latency_watch() { echo X; }; VOLPID=""; LATPID=999999; WATCH_N=5; watch_check; echo "$WATCH_N|$LATPID"' | tr '
+' '|' | sed 's/|$//')"
+
 kill "$zpid" 2>/dev/null
 rm -rf "$DSP/proc/asound/card1" "$DSP/proc/asound/card2" "$DSP/proc/asound/card3" "$DSP/proc/asound/card4" "$DSP/proc/asound/pcm" "$DSP/proc/asound/cards" "$DSP/run/zone" "$DSP/sys" "$DSP/run/dac.principale"
 rm -f "$DSP/run/sweetspot.conf"
@@ -4450,6 +4476,8 @@ sh "$ROOT/tests/profili-cpu.sh" || exit 1
 sh "$ROOT/tests/diario.sh" || exit 1
 sh "$ROOT/tests/quota-log.sh" || exit 1
 sh "$ROOT/tests/readme-allineato.sh" || exit 1
+sh "$ROOT/tests/modello-minaccia.sh" || exit 1
+sh "$ROOT/tests/nomi-riservati.sh" || exit 1
 python3 "$ROOT/tests/audio-verification.py" || exit 1
 python3 "$ROOT/tests/prova-audio-tests.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dff-padding.py" || exit 1
@@ -4663,3 +4691,7 @@ python3 "$ROOT/tests/qualifica-corpus.py" || exit 1
 python3 "$ROOT/tests/prova-dop.py" || exit 1
 python3 "$ROOT/tests/triage-cve.py" || exit 1
 python3 "$ROOT/tests/release-gates.py"
+rc=$?
+# Riepilogo finale: include anche i salti successivi all'ultimo controllo.
+verifica_salti
+exit $rc

@@ -31,6 +31,7 @@ echo 'sweetspot.slot=a' > "$U/proc/cmdline"
 echo x86_64 > "$U/scheda"
 echo A-kernel > "$U/stick/bzImage"
 echo A-rootfs > "$U/stick/rootfs.cpio.zst"
+echo "v1 (2026-01-01)" > "$U/version"
 mkpkg() {
 	rm -rf "$U/pkg"; mkdir -p "$U/pkg"
 	echo B-kernel > "$U/pkg/bzImage"
@@ -44,14 +45,14 @@ upd() {
 	SWEETSPOT_TEST=${CLI_TEST:-cli} SWEETSPOT_ALLOW_UNSIGNED=${ALLOW_UNSIGNED:-1} SWEETSPOT_CHIAVE_FIRMA=${UPDATE_PUB:-$U/missing.pub} \
 		SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_ARCH=${UPDATE_ARCH:-x86_64} SWEETSPOT_SCHEDA_FILE=$U/scheda SWEETSPOT_STICK_DIR=$U/stick \
 		SWEETSPOT_AVVIO=$U/avvio \
-		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log \
+		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log SWEETSPOT_VERSION_FILE=$U/version \
 		$TEST_SH "$OVERLAY/usr/bin/sweetspot-aggiorna" _lavoro file "$U/update.tar" >/dev/null 2>&1
 }
 upd_state() { cut -d'|' -f1 "$U/run/aggiornamento/stato"; }
 upd_probe() { # mutazione dopo l'ispezione, oppure copia locale fallita
 	SWEETSPOT_TEST=1 SWEETSPOT_ALLOW_UNSIGNED=1 SWEETSPOT_CHIAVE_FIRMA=$U/missing.pub \
 		SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_ARCH=x86_64 SWEETSPOT_SCHEDA_FILE=$U/scheda SWEETSPOT_STICK_DIR=$U/stick \
-		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log \
+		SWEETSPOT_RUN=$U/run SWEETSPOT_PROCFS=$U/proc SWEETSPOT_LOG=$U/log SWEETSPOT_VERSION_FILE=$U/version \
 		$TEST_SH -c '. "$1"; sourcepkg=$2; replacement=$3; probe=$4
 			tar() {
 				command tar "$@"; result=$?
@@ -175,6 +176,19 @@ SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPO
 	SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log $TEST_SH -c '. "$1"; do_restore "$STICK_MNT/sweetspot-dati"' sh \
 	"$OVERLAY/usr/bin/sweetspot-dati" >/dev/null 2>&1
 expect 'generazione vecchia dopo interruzione: ripristinata' current "$(cat "$D/lms/prefs/server.prefs")"
+# Generazione con manifest ma senza persist.db (taglio di corrente): scartata.
+rm -rf "$D/stick/sweetspot-dati" "$D/stick/sweetspot-dati.vecchio"
+mkdir -p "$D/stick/sweetspot-dati"
+(cd "$D/lms" && tar -cf "$D/stick/sweetspot-dati/lyrion.tar" prefs)
+printf 'lyrion.tar
+persist.db
+' > "$D/stick/sweetspot-dati/manifest"
+gv() { SWEETSPOT_TEST=1 SWEETSPOT_PATH=$BASE_PATH SWEETSPOT_STICK_DIR=$D/stick SWEETSPOT_LMS_DATA=$D/lms 	SWEETSPOT_RUN=$D/run SWEETSPOT_LOG=$D/log $TEST_SH -c '. "$1"; generation_valid "$2"' sh 	"$OVERLAY/usr/bin/sweetspot-dati" "$1"; }
+if gv "$D/stick/sweetspot-dati"; then rc=0; else rc=1; fi
+expect 'generazione senza persist.db atteso dal manifest: non valida' 1 "$rc"
+rm -f "$D/stick/sweetspot-dati/manifest"
+if gv "$D/stick/sweetspot-dati"; then rc=0; else rc=1; fi
+expect 'generazione vecchia senza manifest: ancora valida' 0 "$rc"
 python3 - "$D/lms/cache/library.db" "$D/wal-ready" "$D/wal-stop" <<'PY' &
 import pathlib
 import sqlite3
@@ -476,6 +490,32 @@ expect 'do_confirm: grubenv_set fallito, errore' 1 "$(grubfail confirm)"
 STICKRC=1
 expect 'do_confirm: chiavetta non scrivibile, errore' 1 "$(grubfail confirm)"
 unset STICKRC
+
+# A1: su un disco GPT (installazione accanto a Windows) l'aggiornamento non
+# scrive GRUB per BIOS: LBA1 ("EFI PART") e le voci restano intatte.
+GP=$WORK/gpt.img
+dd if=/dev/zero of="$GP" bs=512 count=64 2>/dev/null
+printf 'EFI PART' | dd of="$GP" bs=512 seek=1 conv=notrunc 2>/dev/null
+MB=$WORK/mbr.img
+dd if=/dev/zero of="$MB" bs=512 count=64 2>/dev/null
+gptcheck() { # immagine
+	$TEST_SH -c "$(sed -n '/^disco_gpt() {/,/^}/p' "$OVERLAY/usr/bin/sweetspot-aggiorna")"'
+		disco_gpt "$1" && echo gpt || echo mbr' sh "$1"
+}
+expect 'aggiorna: disco GPT riconosciuto' gpt "$(gptcheck "$GP")"
+expect 'aggiorna: disco MBR non e GPT' mbr "$(gptcheck "$MB")"
+expect 'aggiorna: refresh_boot_grub salta il BIOS su GPT' 1 "$(sed -n '/^refresh_boot_grub() {/,/^}/p' "$OVERLAY/usr/bin/sweetspot-aggiorna" | grep -c 'if disco_gpt')"
+
+# grubenv_set concorrenti: ogni chiave scritta da un processo deve sopravvivere.
+GL=$WORK/grubenv-lock
+mkdir -p "$GL/run"
+( . "$SWEETSPOT_LIB/common.sh"; RUN=$GL/run
+  grubenv_set "$GL/env" a0=0
+  for i in 1 2 3 4 5 6 7 8; do
+	( n=0; while [ $n -lt 5 ]; do grubenv_set "$GL/env" "k${i}_$n=$n"; n=$((n + 1)); done ) &
+  done
+  wait ) >/dev/null 2>&1
+expect 'grubenv_set concorrenti: nessuna scrittura persa' 41 "$(grep -c '^[a-z0-9_]*=' "$GL/env")"
 
 printf '\nOperazioni: %s passati, %s falliti\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

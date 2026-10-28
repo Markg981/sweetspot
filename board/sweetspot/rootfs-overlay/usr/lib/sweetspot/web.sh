@@ -275,6 +275,10 @@ login_wait() { # chiave soglia
 login_fail() { # chiave
 	local f n="" last=""
 	mkdir -p "$LOGIN_DIR" 2>/dev/null
+	# Un file per indirizzo, in RAM (tmpfs): senza tetto chi cambia indirizzo a
+	# ogni tentativo li accumulerebbe. I contatori fermi da piu' di 30 minuti
+	# (oltre l'attesa massima di 15) si cancellano: il blocco in corso resta.
+	find "$LOGIN_DIR" -maxdepth 1 -type f -mmin +30 -exec rm -f {} + 2>/dev/null
 	f=$LOGIN_DIR/$(login_key "$1")
 	[ -f "$f" ] && read -r n last < "$f"
 	case "$n" in *[!0-9]*|'') n=0 ;; esac
@@ -357,11 +361,29 @@ https_redirect
 auth_gate
 
 # Legge i campi di un modulo inviato (POST) in variabili F_nome.
+# Tetto al corpo: i moduli sono di poche centinaia di byte (il piu' grande, i
+# profili DSP incollati, sta ben sotto 256 KiB); non ci sono upload di file.
+# Lunghezza non numerica o oltre il tetto: 413 e fine, senza leggere nulla.
+WEB_MAX_POST=${WEB_MAX_POST:-262144}
 read_form() {
 	local body pair k v
 	set -f
 	body=""
 	if [ "$REQUEST_METHOD" = POST ] && [ -n "$CONTENT_LENGTH" ]; then
+		case "$CONTENT_LENGTH" in
+		*[!0-9]*|??????????*) CONTENT_LENGTH=-1 ;;
+		esac
+		if [ "$CONTENT_LENGTH" -lt 0 ] || [ "$CONTENT_LENGTH" -gt "$WEB_MAX_POST" ]; then
+			printf 'Status: 413 Payload Too Large
+Content-Type: text/plain
+Cache-Control: no-store
+'
+			sec_headers
+			printf '
+Richiesta troppo grande
+'
+			exit 0
+		fi
 		body=$(head -c "$CONTENT_LENGTH")
 	fi
 	for pair in $(printf '%s' "$body" | tr '&' ' '); do
