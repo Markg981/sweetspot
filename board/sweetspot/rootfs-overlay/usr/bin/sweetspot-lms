@@ -93,7 +93,9 @@ lyrion_hash() {
 
 prefs_get() { grep "^$1:" "$PREFS/server.prefs" 2>/dev/null | tail -n 1 | cut -d: -f2- | tr -d ' "'"'"; }
 
-ensure_auth() {
+# Sottoshell con umask 077: server.prefs.tmp e l'impronta non sono mai leggibili da altri.
+ensure_auth() (
+	umask 077
 	local f=$PREFS/server.prefs u p h cur_auth cur_user cur_hash ours stato
 	u=$(conf LYRION_UTENTE)
 	p=$(conf LYRION_PASSWORD)
@@ -107,6 +109,7 @@ ensure_auth() {
 		if [ "$cur_auth" = 1 ] && [ -n "$cur_user" ] && [ -n "$cur_hash" ] && [ "$cur_hash" != "$ours" ]; then
 			mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
 			echo preesistente > "$AUTH_STATO"
+			chmod 600 "$f" 2>/dev/null
 			log "lyrion: credenziali preesistenti conservate; Sweetspot non le conosce: metti LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt"
 			return 0
 		fi
@@ -135,8 +138,9 @@ ensure_auth() {
 	mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
 	echo "$stato" > "$AUTH_STATO"
 	chmod 644 "$AUTH_STATO" 2>/dev/null
+	chmod 600 "$f" "$AUTH_HASH" 2>/dev/null
 	return 0
-}
+)
 
 # Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
 # aprono dentro l'interfaccia, come su Daphile.
