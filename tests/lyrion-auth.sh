@@ -99,6 +99,8 @@ echo "Rotazione: password tolta dalla configurazione"
 avvia
 expect "nuova password generata" 36 "$(printf '%s' "$(cfg LYRION_PASSWORD)" | wc -c | tr -d ' ')"
 expect "impronta coerente" "$(sha "$(cfg LYRION_PASSWORD)")" "$(pref password)"
+expect "server.prefs 600" "-rw-------" "$(ls -l "$PREFS/server.prefs" | cut -c1-10)"
+expect "impronta salvata 600" "-rw-------" "$(ls -l "$PREFS/sweetspot-auth.hash" | cut -c1-10)"
 
 echo "Credenziali Lyrion preesistenti"
 rm -f "$PREFS/sweetspot-auth.hash"
@@ -111,6 +113,9 @@ expect "nessuna password inventata" "" "$(cfg LYRION_PASSWORD)"
 expect "stato: preesistente" preesistente "$(cat "$WORK/run/lyrion-auth.stato")"
 avvia
 expect "conservate anche al secondo avvio" AbCdEfGhIjKl "$(pref password)"
+chmod 644 "$PREFS/server.prefs"
+avvia
+expect "preferenze preesistenti riportate a 600" "-rw-------" "$(ls -l "$PREFS/server.prefs" | cut -c1-10)"
 expect "la pagina non mostra password che Sweetspot non conosce" "" "$(lms credenziali | grep '^password=')"
 
 echo "Credenziali preesistenti dichiarate in sweetspot.txt"

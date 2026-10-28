@@ -68,6 +68,8 @@ def cd_paranoia(args):
         write_wav(out, read(s * SECTOR, (e - s + 1) * SECTOR, corr))
     else:
         t = int(span)
+        if str(t) in os.environ.get('FINTO_FALLISCI', '').split(','):
+            return 1   # errore di lettura simulato
         write_wav(out, read(b[t - 1] * SECTOR, TRACKS[t - 1] * SECTOR, corr))
     return 0
 

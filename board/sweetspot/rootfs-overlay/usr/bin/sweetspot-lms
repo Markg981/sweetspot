@@ -93,7 +93,9 @@ lyrion_hash() {
 
 prefs_get() { grep "^$1:" "$PREFS/server.prefs" 2>/dev/null | tail -n 1 | cut -d: -f2- | tr -d ' "'"'"; }
 
-ensure_auth() {
+# Sottoshell con umask 077: server.prefs.tmp e l'impronta non sono mai leggibili da altri.
+ensure_auth() (
+	umask 077
 	local f=$PREFS/server.prefs u p h cur_auth cur_user cur_hash ours stato
 	u=$(conf LYRION_UTENTE)
 	p=$(conf LYRION_PASSWORD)
@@ -107,6 +109,7 @@ ensure_auth() {
 		if [ "$cur_auth" = 1 ] && [ -n "$cur_user" ] && [ -n "$cur_hash" ] && [ "$cur_hash" != "$ours" ]; then
 			mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
 			echo preesistente > "$AUTH_STATO"
+			chmod 600 "$f" 2>/dev/null
 			log "lyrion: credenziali preesistenti conservate; Sweetspot non le conosce: metti LYRION_UTENTE e LYRION_PASSWORD in sweetspot.txt"
 			return 0
 		fi
@@ -135,8 +138,9 @@ ensure_auth() {
 	mkdir -p "$(dirname "$AUTH_STATO")" 2>/dev/null
 	echo "$stato" > "$AUTH_STATO"
 	chmod 644 "$AUTH_STATO" 2>/dev/null
+	chmod 600 "$f" "$AUTH_HASH" 2>/dev/null
 	return 0
-}
+)
 
 # Voci di Sweetspot nel menu di Material: le impostazioni del sistema si
 # aprono dentro l'interfaccia, come su Daphile.
@@ -419,8 +423,7 @@ do_cover() {
 	lms_auth_prepara
 	auth=$LMS_AUTH
 	tmp=$(mktemp "$RUN/cover.XXXXXX") || return 1
-	if ! "${SWEETSPOT_WGET:-wget}" -q -T 8 -O "$tmp" ${auth:+--header "$auth"} \
-		"http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" 2>/dev/null \
+	if ! lms_http "$auth" 8 "http://$LMS_HOST:$LMS_HTTP_PORT/music/$id/cover_${sz}x${sz}_o.jpg" > "$tmp" 2>/dev/null \
 		|| [ "$(wc -c < "$tmp")" -gt 4194304 ] || [ ! -s "$tmp" ] \
 		|| ! { head -c 3 "$tmp" | od -An -tx1 | grep -q 'ff d8 ff' || head -c 4 "$tmp" | od -An -tx1 | grep -q '89 50 4e 47'; }; then
 		rm -f "$tmp"

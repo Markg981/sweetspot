@@ -79,6 +79,9 @@ esac
 # l'impronta SHA-256 di ognuno in SHA256SUMS.
 echo "$VERSION" > "$SYS/versione"
 echo "$BOARD" > "$SYS/architettura"
+# Numero di build monotono (secondi UTC), firmato insieme al pacchetto: il
+# sistema rifiuta una build inferiore a quella gia' installata (anti-rollback).
+echo "${SOURCE_DATE_EPOCH:-$(date -u +%s)}" > "$SYS/build"
 (cd "$SYS" && find . -type f | sed 's|^\./||' | LC_ALL=C sort |
 	while read -r f; do sha256sum "$f"; done > ../SHA256SUMS)
 mv "$UPD/SHA256SUMS" "$SYS/SHA256SUMS"

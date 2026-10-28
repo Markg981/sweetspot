@@ -241,7 +241,7 @@ clean_orphans() {
 
 rip() ( # album artista anno
 	local need have have_run dev arch album artist year disc discs n dest work="" stage="" t title tartist num ids off db v1v2 v1 v2 conf
-	local ar_off=0 file pending report=sweetspot-copia.txt report_error=0 ok=0 bad=0
+	local ar_off=0 file pending report=sweetspot-copia.txt report_error=0 ok=0 bad=0 bad_list="" cover=""
 	trap '[ -z "$stage" ] || rm -rf "$stage"; [ -z "$work" ] || rm -rf "$work"; rm -f "$DIR/orfani"' EXIT
 	trap 'exit 143' TERM
 	trap 'exit 130' INT
@@ -289,11 +289,13 @@ rip() ( # album artista anno
 	stage=$(mktemp -d "$dest/.sweetspot-copia.XXXXXX") ||
 		{ state errore 0 "$n" "archivio non scrivibile o pieno"; return 1; }
 	echo "$stage" >> "$DIR/orfani"
-	if [ -f "$DIR/copertina.jpg" ] && [ ! -e "$dest/cover.jpg" ] && [ ! -L "$dest/cover.jpg" ]; then
-		if ! cp "$DIR/copertina.jpg" "$stage/cover.part" ||
-			! "$PUBLISH" "$stage/cover.part" "$dest/cover.jpg"; then
-			log "cd: copertina non salvata nell'album"
-		fi
+	# La copertina resta in preparazione e arriva nell'album solo a copia riuscita.
+	if [ -e "$dest/cover.jpg" ] || [ -L "$dest/cover.jpg" ]; then
+		if [ -f "$dest/cover.jpg" ]; then cover=$dest/cover.jpg; fi
+	elif [ -f "$DIR/copertina.jpg" ] && cp "$DIR/copertina.jpg" "$stage/cover.part"; then
+		cover=$stage/cover.part
+	else
+		log "cd: copertina non salvata nell'album"
 	fi
 
 	# Database AccurateRip e correzione del lettore.
@@ -332,7 +334,7 @@ rip() ( # album artista anno
 		state copia "$t" "$n" "$title"
 		if ! cd-paranoia -d "$dev" -q -w -O "$off" "$t" "$work/$num.wav" > /dev/null 2>&1; then
 			echo "Traccia $num: errore di lettura" >> "$work/registro.txt"
-			bad=$((bad + 1)); t=$((t + 1)); continue
+			bad=$((bad + 1)); bad_list="$bad_list${bad_list:+, }$num $title"; t=$((t + 1)); continue
 		fi
 		set -- crc "$work/$num.wav"
 		[ "$t" = 1 ] && set -- "$@" primo
@@ -356,46 +358,70 @@ rip() ( # album artista anno
 		[ -n "$(jq -r '.mbid' "$INFO")" ] && set -- "$@" -T "MUSICBRAINZ_ALBUMID=$(jq -r '.mbid' "$INFO")"
 		# Copertina dentro il file; se flac non riesce a leggerla (immagine
 		# rovinata o in un formato strano) la traccia si salva senza.
-		if { ! { [ -f "$dest/cover.jpg" ] && flac "$@" "--picture=$dest/cover.jpg" "$work/$num.wav" > /dev/null 2>&1; } &&
+		if { ! { [ -n "$cover" ] && flac "$@" "--picture=$cover" "$work/$num.wav" > /dev/null 2>&1; } &&
 			! flac "$@" "$work/$num.wav" > /dev/null 2>&1; } || [ ! -s "$pending" ]; then
 			echo "Traccia $num: errore nel salvataggio del file FLAC (disco pieno?)" >> "$work/registro.txt"
-			bad=$((bad + 1))
-		elif [ -e "$file" ] || [ -L "$file" ] ||
-			! "$PUBLISH" "$pending" "$file"; then
-			echo "Traccia $num: pubblicazione non riuscita o file gia' esistente; nessun file sovrascritto" >> "$work/registro.txt"
-			bad=$((bad + 1))
-		elif [ "$conf" -gt 0 ]; then
-			ok=$((ok + 1))
+			bad=$((bad + 1)); bad_list="$bad_list${bad_list:+, }$num $title"
+		else
+			printf '%s\n' "$num" >> "$work/pronte"
+			if [ "$conf" -gt 0 ]; then ok=$((ok + 1)); fi
 		fi
 		rm -f "$work/$num.wav"
 		t=$((t + 1))
 	done
+	# Le tracce passano nell'album solo se sono arrivate tutte: un album
+	# incompleto non deve finire nell'archivio indicizzato dalla libreria.
+	if [ "$bad" = 0 ]; then
+		while read -r num; do
+			title=$(jq -r --argjson t "${num#0}" '.tracks[] | select(.n == $t) | .title' "$INFO")
+			[ -n "$title" ] || title="Traccia ${num#0}"
+			file="$dest/$num - $(file_name "$title").flac"
+			if [ -e "$file" ] || [ -L "$file" ] || ! "$PUBLISH" "$stage/$num.part" "$file"; then
+				echo "Traccia $num: pubblicazione non riuscita o file gia' esistente; nessun file sovrascritto" >> "$work/registro.txt"
+				bad=$((bad + 1)); bad_list="$bad_list${bad_list:+, }$num $title"
+			fi
+		done < "$work/pronte"
+		if [ "$cover" = "$stage/cover.part" ]; then "$PUBLISH" "$cover" "$dest/cover.jpg" || log "cd: copertina non salvata nell'album"; fi
+	fi
 	{
 		echo
+		[ "$bad" = 0 ] || echo "ALBUM NON SALVATO nell'archivio: tracce con errori: $bad_list."
 		if [ "$ar_off" = 1 ]; then echo "Risultato: $n tracce copiate senza verifica AccurateRip (disattivata)."
 		elif [ "$ok" = "$n" ]; then echo "Risultato: tutte le $n tracce sono copie perfette."
 		else echo "Risultato: $ok tracce su $n confermate da AccurateRip, $bad con errori."; fi
 	} >> "$work/registro.txt"
-	if [ -e "$dest/$report" ] || [ -L "$dest/$report" ]; then
-		report="sweetspot-copia-$(date +%s)-$$.txt"
-	fi
-	if ! cp "$work/registro.txt" "$stage/registro.part" ||
-		! "$PUBLISH" "$stage/registro.part" "$dest/$report"; then
-		report_error=1
-		log "cd: rapporto di copia non salvato in $dest"
+	if [ "$bad" -gt 0 ]; then
+		# Nessun album parziale: il rapporto resta nella memoria di lavoro.
+		report=$DIR/registro-ultimo.txt
+		cp "$work/registro.txt" "$report" || report_error=1
+	else
+		if [ -e "$dest/$report" ] || [ -L "$dest/$report" ]; then
+			report="sweetspot-copia-$(date +%s)-$$.txt"
+		fi
+		if ! cp "$work/registro.txt" "$stage/registro.part" ||
+			! "$PUBLISH" "$stage/registro.part" "$dest/$report"; then
+			report_error=1
+			log "cd: rapporto di copia non salvato in $dest"
+		fi
 	fi
 	sync
 	eject "$dev" 2>/dev/null
 	if [ "$report_error" = 1 ]; then
 		state errore "$n" "$n" "Rapporto di copia non salvato: consulta il registro di sistema."
 	elif [ "$bad" -gt 0 ]; then
-		state errore "$n" "$n" "$bad tracce con errori: vedi $report nella cartella dell'album"
+		state errore "$n" "$n" "Album non salvato: $bad tracce con errori ($bad_list). Pulisci il disco e riprova."
+		log "cd: album non salvato, tracce con errori: $bad_list"
 	elif [ "$ar_off" = 1 ]; then
 		state finita "$n" "$n" "copia completata, senza verifica AccurateRip (disattivata)"
 	elif [ "$ok" = "$n" ]; then
 		state finita "$n" "$n" "tutte le tracce verificate con AccurateRip"
 	else
 		state finita "$n" "$n" "$ok tracce su $n verificate con AccurateRip"
+	fi
+	if [ "$bad" -gt 0 ]; then
+		rm -rf "$stage"; stage=""
+		rmdir "$dest" "${dest%/*}" 2>/dev/null
+		return 1
 	fi
 	log "cd: copiato in $dest ($ok/$n verificate)"
 	sweetspot-lms aggiorna || log "cd: libreria non aggiornata, ripeti la scansione quando Lyrion e' disponibile"

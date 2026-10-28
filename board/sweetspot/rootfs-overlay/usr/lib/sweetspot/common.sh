@@ -925,6 +925,12 @@ dac_hw_params_live() {
 	local dev id
 	dev=$(dac_playback_dev "$1") || return 1
 	id=$(dac_id "$1")
+	if [ "$(id -u)" != 0 ] && [ -x "${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" ]; then
+		# Il pannello (utente web, fuori dal gruppo audio) non apre ALSA:
+		# la sonda passa dall'helper privilegiato.
+		"${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" @alsa-sonda hw "$id" "$dev" 2>&1
+		return
+	fi
 	LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" --dump-hw-params -D "hw:CARD=$id,DEV=$dev" \
 		-t raw -c 2 -f S16_LE -r 44100 /dev/null 2>&1
 }
@@ -981,8 +987,12 @@ dac_rates_probe() { # scheda formato
 	# le frequenze standard sul medesimo formato e richiedi il valore esatto,
 	# anche quando ALSA propone una frequenza vicina. Sempre senza campioni.
 	for rate in 8000 11025 16000 22050 32000 44100 48000 88200 96000 176400 192000 352800 384000 705600 768000; do
-		out=$(LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" -v -D "hw:CARD=$id,DEV=$dev" \
-			-t raw -c 2 -f "$fmt" -r "$rate" /dev/null 2>&1) || continue
+		if [ "$(id -u)" != 0 ] && [ -x "${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" ]; then
+			out=$("${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" @alsa-sonda rate "$id" "$dev" "$fmt" "$rate" 2>&1) || continue
+		else
+			out=$(LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" -v -D "hw:CARD=$id,DEV=$dev" \
+				-t raw -c 2 -f "$fmt" -r "$rate" /dev/null 2>&1) || continue
+		fi
 		actual=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*rate[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)
 		[ "$actual" != "$rate" ] || printf '%s\n' "$rate"
 	done | tr '\n' ' ' | sed 's/ $//'
@@ -1244,6 +1254,29 @@ lms_posto_prendi() {
 	done
 }
 
+# lms_http INTESTAZIONE TIMEOUT URL [DATI_JSON]: GET o POST verso Lyrion, corpo
+# su stdout. Con le credenziali l'intestazione Authorization NON passa da argv
+# (/proc/*/cmdline e ps la mostrerebbero a ogni utente locale): si usa curl con
+# la configurazione da stdin (-K -), perche' wget di BusyBox non ha alternative.
+# Senza credenziali resta wget. I codici di curl sono ricondotti ai messaggi di
+# wget che il chiamante interpreta.
+lms_http() {
+	local auth=$1 tmo=$2 url=$3 data=$4 rc
+	if [ -z "$auth" ]; then
+		"${SWEETSPOT_WGET:-wget}" -q -T "$tmo" -O - ${data:+--header 'Content-Type: application/json' --post-data "$data"} "$url"
+		return
+	fi
+	printf 'header = "%s"\n' "$auth" | "${SWEETSPOT_CURL:-curl}" -s -f -m "$tmo" -K - \
+		${data:+--header 'Content-Type: application/json' --data-binary "$data"} "$url"
+	rc=$?
+	case "$rc" in
+		0|28) ;;
+		22|52|56) echo 'wget: error getting response' >&2 ;;
+		*) echo "wget: curl $rc" >&2 ;;
+	esac
+	return "$rc"
+}
+
 # lms_json_diretto TIMEOUT PLAYER PAROLA...: la richiesta vera, senza cache.
 lms_json_diretto() {
 	local tmo=$1 player=$2 args="" w out auth rc posto="" t0 t1 errf werr
@@ -1260,10 +1293,8 @@ lms_json_diretto() {
 	# Secondi dall'avvio (solo per misurare la durata), senza date.
 	read -r t0 _ < /proc/uptime; t0=${t0%%.*}
 	errf=${TMPDIR:-/tmp}/sweetspot-wget.$$
-	out=$("${SWEETSPOT_WGET:-wget}" -q -T "$tmo" -O - --header 'Content-Type: application/json' \
-		${auth:+--header "$auth"} \
-		--post-data "{\"id\":1,\"method\":\"slim.request\",\"params\":[\"$JQV\",[$args]]}" \
-		"http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" 2>"$errf")
+	out=$(lms_http "$auth" "$tmo" "http://$LMS_HOST:$LMS_HTTP_PORT/jsonrpc.js" \
+		"{\"id\":1,\"method\":\"slim.request\",\"params\":[\"$JQV\",[$args]]}" 2>"$errf")
 	rc=$?
 	read -r t1 _ < /proc/uptime; t1=${t1%%.*}
 	[ -z "$posto" ] || rm -rf "$RUN/lms-posti/$posto"

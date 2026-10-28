@@ -3,12 +3,73 @@
 # Sweetspot - una connessione SSH (lanciata da tcpsvd): dopo 5 errori di
 # accesso dallo stesso indirizzo fa attendere 5 secondi in piu' a ogni
 # connessione, fino a 60. Un accesso riuscito azzera il conto.
+# Le connessioni contemporanee dallo stesso indirizzo sono al massimo
+# SWEETSPOT_SSH_MAX (4): le altre vengono chiuse subito con uscita 1.
+# Il conteggio e' atomico (mkdir) perche' flock non e' nel busybox dell'immagine.
 # Uso: sweetspot-ssh-conn OPZIONI_DROPBEAR...
 
 dir=${SWEETSPOT_SSH_STATE:-/var/run/sweetspot-ssh}
 mkdir -p "$dir"
 ip=$(printf '%s' "${TCPREMOTEIP:-sconosciuto}" | tr -c 'A-Za-z0-9.:' '_')
 cnt=$dir/$ip
+max=${SWEETSPOT_SSH_MAX:-4}
+case "$max" in ''|*[!0-9]*) max=4 ;; esac
+
+# Un posto per connessione: mkdir e' atomico, quindi N connessioni parallele
+# non possono occuparne piu' di $max. Il posto si libera all'uscita (anche
+# su TERM/INT); se il processo muore con SIGKILL il posto resta orfano e viene
+# recuperato da chi trova i posti pieni (altrimenti sarebbe un lockout).
+prendi_posto() {
+	i=1
+	while [ "$i" -le "$max" ]; do
+		if mkdir "$dir/$ip.posto$i" 2> /dev/null; then
+			posto=$dir/$ip.posto$i
+			echo $$ > "$posto/pid"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	return 1
+}
+# Libera i posti orfani: pid non piu' vivo, oppure senza pid da piu' di 5 s
+# (creazione interrotta). Il posto si toglie con mv atomico in un nome unico
+# e poi rm -rf: due recuperi concorrenti non lo liberano due volte.
+recupera_posti() {
+	j=1
+	while [ "$j" -le "$max" ]; do
+		d=$dir/$ip.posto$j
+		j=$((j + 1))
+		[ -d "$d" ] || continue
+		orfano=
+		p=$(cat "$d/pid" 2> /dev/null)
+		case "$p" in
+		'')
+			t=$(stat -c %Y "$d" 2> /dev/null)
+			case "$t" in ''|*[!0-9]*) ;; *) [ $(( $(date +%s) - t )) -gt 5 ] && orfano=1 ;; esac
+			;;
+		*[!0-9]*) orfano=1 ;;
+		*) kill -0 "$p" 2> /dev/null || [ -e "/proc/$p" ] || orfano=1 ;;
+		esac
+		if [ -n "$orfano" ] && mv "$d" "$d.morto.$$" 2> /dev/null; then
+			rm -rf "$d.morto.$$"
+		fi
+	done
+}
+posto=
+prendi_posto || { recupera_posti; prendi_posto; } || exit 1
+trap 'rm -rf "$posto"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# Sezione critica sul contatore (mkdir come blocco, con recupero se orfano).
+blocca() {
+	k=0
+	until mkdir "$cnt.lock" 2> /dev/null; do
+		k=$((k + 1))
+		if [ "$k" -gt 100 ]; then rm -rf "$cnt.lock"; k=0; fi
+		sleep 0.05 2> /dev/null || sleep 1
+	done
+}
+sblocca() { rmdir "$cnt.lock" 2> /dev/null; }
 n=$(cat "$cnt" 2> /dev/null)
 case "$n" in ''|*[!0-9]*) n=0 ;; esac
 if [ "$n" -ge 5 ]; then
@@ -21,8 +82,12 @@ fi
 out=$dir/$ip.$$.log
 dropbear -i -E "$@" 2> "$out"
 if grep -q 'auth succeeded' "$out"; then
-	rm -f "$cnt"
+	blocca; rm -f "$cnt"; sblocca
 elif grep -q 'Bad password\|Login attempt for nonexistent\|Exit before auth\|auth failed' "$out"; then
-	echo $((n + 1)) > "$cnt"
+	blocca
+	m=$(cat "$cnt" 2> /dev/null)
+	case "$m" in ''|*[!0-9]*) m=0 ;; esac
+	echo $((m + 1)) > "$cnt"
+	sblocca
 fi
 rm -f "$out"
