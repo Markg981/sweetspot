@@ -30,7 +30,8 @@ applica() { # scheda
 	if ! "$NFT" -f "$tmp" 2>/dev/null; then
 		ferma
 		log "firewall: regole non caricate su $i, blocco tutto sulla scheda"
-		printf 'table inet sweetspot_hotspot { chain ingresso { type filter hook input priority 0; policy accept; iifname "%s" drop; } }\n' "$i" > "$tmp"
+		# Su piu' righe: nft non accetta "} }" su una riga sola.
+		printf 'table inet sweetspot_hotspot {\n\tchain ingresso {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tiifname "%s" drop\n\t}\n}\n' "$i" > "$tmp"
 		if ! "$NFT" -f "$tmp" 2>/dev/null; then
 			ferma
 			log "firewall: nemmeno il blocco minimo su $i, spengo la scheda"
