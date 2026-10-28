@@ -2,6 +2,40 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Sweetspot - dischi con la musica (interni e USB), in sola lettura.
 
+# Lavori in background che scrivono sull'archivio (pid nei file sotto /run).
+# Copia e rip CD: TERM al gruppo di processi (il rip ha la trap che toglie i
+# temporanei), attesa breve, poi KILL. Installazione su disco e creazione
+# nello spazio libero NON si interrompono: un taglio a meta' di partizionamento
+# o formattazione lascerebbe il disco in uno stato peggiore dell'attesa (la
+# creazione riprende comunque al riavvio); si aspetta solo fino al timeout.
+RUNDIR=${SWEETSPOT_RUN:-/run/sweetspot}
+ATTESA=${SWEETSPOT_STOP_ATTESA:-10}
+ATTESA_DISCO=${SWEETSPOT_STOP_ATTESA_DISCO:-60}
+
+vivo() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
+
+# attendi FILE-PID SECONDI
+attendi() {
+	n=0
+	while vivo "$1" && [ "$n" -lt "$2" ]; do sleep 1; n=$((n + 1)); done
+}
+
+ferma_lavori() {
+	for f in "$RUNDIR/copia.pid" "$RUNDIR/cd/pid"; do
+		vivo "$f" || continue
+		p=$(cat "$f")
+		[ "$f" = "$RUNDIR/copia.pid" ] && echo annullata > "$RUNDIR/copia.stato"
+		kill -CONT "-$p" 2>/dev/null
+		kill -TERM "-$p" 2>/dev/null
+		attendi "$f" "$ATTESA"
+		# Con KILL il rip non puo' pulire: lo fa il prossimo avvio (orfani).
+		vivo "$f" && kill -KILL "-$p" 2>/dev/null
+	done
+	for f in "$RUNDIR/installa/pid" "$RUNDIR/spazio/pid"; do
+		attendi "$f" "$ATTESA_DISCO"
+	done
+}
+
 case "$1" in
 	start)
 		printf 'Sweetspot: ricerca dei dischi con la musica... '
@@ -11,6 +45,7 @@ case "$1" in
 		echo "fatto"
 		;;
 	stop)
+		ferma_lavori
 		# L'archivio musicale e' scrivibile: si chiude per bene.
 		a=$(/usr/bin/sweetspot-dischi archivio)
 		if [ -n "$a" ]; then
