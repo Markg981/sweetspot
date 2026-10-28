@@ -2438,7 +2438,7 @@ if command -v sgdisk > /dev/null; then
 	expect "accanto: NTFS sporco (ibernazione), niente cambiato" "Windows non è spento del tutto (Avvio rapido o ibernazione)" \
 		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 1; }' | head -1 | cut -d: -f1)"
 	expect "accanto: NTFS pulito, si prosegue" "no" \
-		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
+		"$(sidejob nvme0n1 'ntfs_parts() { echo x; }; ntfsfix() { return 0; }; ntfs_hibernated() { return 1; }' | cut -c1-12 | grep -q '^Windows non' && echo si || echo no)"
 	expect "accanto: la copia della tabella va sulla partizione nuova" "si" 		"$(grep -q '$new/gpt-$disk.bak' "$OVERLAY/usr/bin/sweetspot-installa" && echo si || echo no)"
 	# La partizione che si aggiungerebbe: 4 GiB nello spazio libero, tipo dati di base.
 	ins "sgdisk -n 4:4761600:$((4761600 + 8388608 - 1)) -t 4:\$SIDE_TYPE -c 4:\$SIDE_NAME $INS/dev/nvme0n1" > /dev/null

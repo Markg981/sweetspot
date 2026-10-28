@@ -409,9 +409,11 @@ ntfs_le() { # dispositivo offset byte -> intero little-endian
 		awk '{ for (i = NF; i >= 1; i--) v = v * 256 + $i } END { printf "%d", v }'
 }
 
+ntfsfix_presente() { command -v ntfsfix > /dev/null; }
+
 ntfs_part_dirty() { # dispositivo -> 0 se sporco o non verificabile, 1 se pulito
 	local p=$1 bps spc mft rec rs o a t l c fl
-	if command -v ntfsfix > /dev/null; then
+	if ntfsfix_presente; then
 		ntfsfix -n "$p" > /dev/null 2>&1 && return 1
 		return 0
 	fi
@@ -441,10 +443,37 @@ ntfs_part_dirty() { # dispositivo -> 0 se sporco o non verificabile, 1 se pulito
 	return 0
 }
 
+# Avvio rapido e ibernazione di norma NON impostano il flag dirty: lo stato sta
+# in hiberfil.sys (firma "hibr"/"HIBR" se ibernato, "wake" o zeri se no).
+# Si monta il volume in sola lettura. Se non si riesce: non si sa, quindi sporco.
+ntfs_ro_mount() { # dispositivo cartella
+	modprobe ntfs3 2> /dev/null
+	mount -t ntfs3 -o ro,noatime "$1" "$2"
+}
+
+ntfs_ro_umount() { umount "$1"; }
+
+ntfs_hibernated() { # dispositivo -> 0 se ibernato o non verificabile, 1 se no
+	local m=$DIR/ntfs-ro f sig rc=1
+	mkdir -p "$m" || return 0
+	ntfs_ro_mount "$1" "$m" 2> /dev/null || { rmdir "$m" 2> /dev/null; return 0; }
+	for f in hiberfil.sys Hiberfil.sys HIBERFIL.SYS; do
+		[ -e "$m/$f" ] || continue
+		sig=$(dd if="$m/$f" bs=1 count=4 2> /dev/null)
+		case $sig in
+		[Hh][Ii][Bb][Rr]) rc=0 ;;
+		esac
+	done
+	ntfs_ro_umount "$m" 2> /dev/null || rc=0
+	rmdir "$m" 2> /dev/null
+	return $rc
+}
+
 ntfs_dirty() { # disco
 	local p
 	for p in $(ntfs_parts "$1"); do
 		ntfs_part_dirty "$p" && return 0
+		ntfs_hibernated "$p" && return 0
 	done
 	return 1
 }
@@ -480,7 +509,7 @@ side_job() { # disco
 	num=$(gpt_slot "$dev")
 	[ -n "$num" ] || { fail 1 "la tabella delle partizioni è piena: niente è stato cambiato"; return 1; }
 	ntfs_dirty "$disk" &&
-		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, scegli Riavvia e riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
+		{ fail 1 "Windows non è spento del tutto (Avvio rapido o ibernazione): avvialo, disattiva Avvio rapido, scegli Riavvia (non Arresta) e spegnilo del tutto, poi riprova. Prima disattiva Avvio rapido e ibernazione (powercfg /h off) e sospendi BitLocker: niente è stato cambiato"; return 1; }
 	sweetspot-dati salva > /dev/null 2>&1 || { fail 1 "salvataggio della libreria non riuscito: niente è stato cambiato"; return 1; }
 	kb=$(system_kb)
 	[ -n "$kb" ] || { fail 1 "chiavetta non leggibile: niente è stato cambiato"; return 1; }
