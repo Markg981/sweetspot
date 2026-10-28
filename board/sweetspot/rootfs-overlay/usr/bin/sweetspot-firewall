@@ -33,8 +33,21 @@ applica() { # scheda
 	return 0
 }
 
+# Il websocket di CamillaDSP non ha autenticazione: solo root (uid 0) lo usa.
+# Se le regole non si caricano resta aperto e l'errore va nel registro.
+dsp() {
+	local tmp
+	"$NFT" delete table inet sweetspot_dsp 2>/dev/null
+	tmp=$(mktemp) || return 0
+	{ printf 'define DSP_PORTA = %s\n' "$DSP_PORTA"; cat "${SWEETSPOT_FIREWALL_DSP:-/etc/sweetspot/firewall-dsp.nft}"; } > "$tmp" 2>/dev/null
+	"$NFT" -f "$tmp" 2>/dev/null || log "firewall: regole del websocket DSP non caricate"
+	rm -f "$tmp"
+	return 0
+}
+
 case "${1:-}" in
+	dsp) dsp ;;
 	applica) applica "${2:-}" ;;
 	ferma) ferma ;;
-	*) echo "uso: $0 applica [scheda]|ferma" >&2; exit 2 ;;
+	*) echo "uso: $0 applica [scheda]|ferma|dsp" >&2; exit 2 ;;
 esac

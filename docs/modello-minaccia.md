@@ -192,6 +192,14 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
   (`usr/bin/sweetspot-firewall`, provato in `tests/run.sh`).
   La password dell'hotspot è salvata in chiaro sulla chiavetta
   (`sweetspot-hotspot`).
+- **Websocket di CamillaDSP (C-23).** Ascolta solo su 127.0.0.1 ma senza
+  autenticazione: un processo locale compromesso (es. un CGI dell'utente
+  `web`) potrebbe cambiare configurazione e volume. I client previsti
+  (`sweetspot-player`, `-volume`, `-stato`, plugin cdsp) girano tutti come
+  root, quindi `etc/sweetspot/firewall-dsp.nft` (caricata all'avvio da
+  `sweetspot-firewall dsp`) respinge sul loopback le connessioni alla porta
+  DSP di ogni uid diverso da 0. Rischio residuo: root, e il fail-open se
+  `nft` non carica le regole (errore nel registro).
 - **Con LAN non fidata.** Il caso hotspot non cambia (già non fidato); il
   firewall dovrebbe fallire chiuso e impostare `policy drop` sulla catena.
 

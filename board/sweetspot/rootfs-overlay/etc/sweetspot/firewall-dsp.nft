@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Sweetspot - il websocket di CamillaDSP (solo 127.0.0.1) non ha
+# autenticazione: lo raggiunge solo root, cioe' i soli client previsti
+# (sweetspot-player, sweetspot-volume, sweetspot-stato, il plugin cdsp di
+# squeezelite). Il pannello web (utente "web") e gli altri servizi senza
+# privilegi non ne hanno bisogno e vengono respinti. Caricato da
+# sweetspot-firewall con "define DSP_PORTA" davanti.
+table inet sweetspot_dsp {
+	chain uscita {
+		type filter hook output priority 0; policy accept;
+		oifname "lo" tcp dport $DSP_PORTA meta skuid != 0 reject with tcp reset
+	}
+}
