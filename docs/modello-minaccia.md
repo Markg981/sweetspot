@@ -57,6 +57,12 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
     sorgente e non in comune (PR #196).
   - L'httpd gira come utente `web` (`etc/default/httpd`); le operazioni da
     root passano da `sweetspot-priv` (3.2).
+  - `web` non è nel gruppo `audio` (C-32, `board/sweetspot/users.txt`): un CGI
+    compromesso non apre i dispositivi ALSA. Le sonde del DAC (`aplay
+    --dump-hw-params` e prova delle frequenze, `common.sh`) passano da
+    `sweetspot-priv @alsa-sonda`, che costruisce il dispositivo `hw:` da campi
+    validati e legge sempre `/dev/null`. Il resto dell'audio gira come root
+    (player, `amixer`, `sweetspot-banco`) o legge solo `/proc/asound`.
 - **Rischio residuo accettato.** Su HTTP la password viaggia in chiaro sulla
   LAN. Il segreto da cui derivano i gettoni è uno solo per tutto il dispositivo
   e cambia a ogni avvio (`web.sh`, `token_secret`): chi ruba una sessione
@@ -260,6 +266,7 @@ nel job `test` della CI.
 | RS-6 | Ogni azione del pannello richiede il gettone anti-CSRF. | senza test (nessun test chiama `azione` con gettone errato) |
 | RS-7 | Il gettone anti-CSRF è legato alla sessione e il modulo di accesso ha un gettone suo (PR #193). | `tests/accesso.sh` |
 | RS-8 | L'httpd e le pagine girano come utente `web`, non root. | `tests/privilegi.sh` |
+| RS-8b | L'utente `web` non è nel gruppo `audio`; le sonde ALSA passano da `@alsa-sonda` con argomenti validati. | `tests/privilegi.sh` |
 | RS-9 | `sweetspot-priv` esegue solo l'elenco chiuso (126 altrimenti), senza percorsi, shell o argomenti non validi. | `tests/privilegi.sh` |
 | RS-10 | Le operazioni che aprono root o cancellano dischi (SSH, `PASSWORD_WEB`, pacchetti da disco, installazione) richiedono `@conferma` con gettone monouso e password attuale. | `tests/privilegi.sh` |
 | RS-11 | Senza password SMB la condivisione è ospite in sola lettura; con la password è autenticata e non ospite. | `tests/run.sh` |
