@@ -578,7 +578,8 @@ def run(args):
                     got = e.code
                 check("CALLBACK %s rifiutata (412)" % label, got == 412, got)
             check("CALLBACK verso l'IP del richiedente accettata", subscribe(base, "AVTransport", "http://127.0.0.1:%d/ok" % sink.port)[0] == 200)
-            with socket.create_connection(("127.0.0.1", http_port), timeout=10) as slow:
+            # da 127.0.0.2: il lento viene penalizzato per IP e non deve chiudere la porta alle prove seguenti
+            with socket.create_connection(("127.0.0.1", http_port), timeout=10, source_address=("127.0.0.2", 0)) as slow:
                 slow.sendall(b"SUBSCRIBE /evt/AVTransport HTTP/1.1\r\nHost: x\r\n")
                 t0 = time.time()
                 slow.settimeout(8)
