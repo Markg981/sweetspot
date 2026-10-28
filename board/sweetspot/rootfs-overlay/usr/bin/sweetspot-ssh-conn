@@ -17,17 +17,46 @@ case "$max" in ''|*[!0-9]*) max=4 ;; esac
 
 # Un posto per connessione: mkdir e' atomico, quindi N connessioni parallele
 # non possono occuparne piu' di $max. Il posto si libera all'uscita (anche
-# su TERM/INT); /var/run e' in RAM, quindi dopo un riavvio e' tutto pulito.
+# su TERM/INT); se il processo muore con SIGKILL il posto resta orfano e viene
+# recuperato da chi trova i posti pieni (altrimenti sarebbe un lockout).
+prendi_posto() {
+	i=1
+	while [ "$i" -le "$max" ]; do
+		if mkdir "$dir/$ip.posto$i" 2> /dev/null; then
+			posto=$dir/$ip.posto$i
+			echo $$ > "$posto/pid"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	return 1
+}
+# Libera i posti orfani: pid non piu' vivo, oppure senza pid da piu' di 5 s
+# (creazione interrotta). Il posto si toglie con mv atomico in un nome unico
+# e poi rm -rf: due recuperi concorrenti non lo liberano due volte.
+recupera_posti() {
+	j=1
+	while [ "$j" -le "$max" ]; do
+		d=$dir/$ip.posto$j
+		j=$((j + 1))
+		[ -d "$d" ] || continue
+		orfano=
+		p=$(cat "$d/pid" 2> /dev/null)
+		case "$p" in
+		'')
+			t=$(stat -c %Y "$d" 2> /dev/null)
+			case "$t" in ''|*[!0-9]*) ;; *) [ $(( $(date +%s) - t )) -gt 5 ] && orfano=1 ;; esac
+			;;
+		*[!0-9]*) orfano=1 ;;
+		*) kill -0 "$p" 2> /dev/null || [ -e "/proc/$p" ] || orfano=1 ;;
+		esac
+		if [ -n "$orfano" ] && mv "$d" "$d.morto.$$" 2> /dev/null; then
+			rm -rf "$d.morto.$$"
+		fi
+	done
+}
 posto=
-i=1
-while [ "$i" -le "$max" ]; do
-	if mkdir "$dir/$ip.posto$i" 2> /dev/null; then
-		posto=$dir/$ip.posto$i
-		break
-	fi
-	i=$((i + 1))
-done
-[ -n "$posto" ] || exit 1
+prendi_posto || { recupera_posti; prendi_posto; } || exit 1
 trap 'rm -rf "$posto"' EXIT
 trap 'exit 1' HUP INT TERM
 

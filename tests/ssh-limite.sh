@@ -31,3 +31,17 @@ done
 wait
 n=$(cat "$T/st/10.0.0.8")
 if [ "$n" = 4 ]; then echo "PASS ssh: errori paralleli contati senza perdite"; else echo "FAIL ssh: contati $n su 4"; exit 1; fi
+# Posti orfani (processi uccisi con SIGKILL): 3 posti con pid inesistente e uno
+# senza pid e vecchio devono essere recuperati, e la connessione deve passare.
+if [ "$(uname -s)" != Linux ]; then
+	echo "SKIP ssh: recupero dei posti orfani (kill -0 e /proc affidabili solo su Linux)"
+	exit 0
+fi
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/dropbear"
+rm -rf "$T/st"; mkdir -p "$T/st"
+for n in 1 2 3; do mkdir "$T/st/10.0.0.6.posto$n"; echo 999999 > "$T/st/10.0.0.6.posto$n/pid"; done
+mkdir "$T/st/10.0.0.6.posto4"; touch -d '1 minute ago' "$T/st/10.0.0.6.posto4"
+TCPREMOTEIP=10.0.0.6 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 SWEETSPOT_SSH_MAX=4 PATH=$T/bin:$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" > /dev/null 2>&1
+rc=$?
+if [ "$rc" = 0 ] && [ -z "$(ls -d "$T"/st/10.0.0.6.posto* 2> /dev/null)" ]; then echo "PASS ssh: posti orfani recuperati"
+else echo "FAIL ssh: posti orfani non recuperati (uscita $rc)"; exit 1; fi
