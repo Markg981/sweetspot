@@ -869,6 +869,54 @@ static void differito(unsigned ritardo, char *const argv[])
 	esegui(argv);
 }
 
+// Sonda ALSA senza campioni per il pannello (@alsa-sonda). L'utente web non e'
+// nel gruppo audio: apre il PCM hw: root, e questo e' l'unico modo. Forme:
+//   hw   ID DEV            aplay --dump-hw-params (capacita' del DAC)
+//   rate ID DEV FMT FREQ   aplay -v con una frequenza esatta (prova)
+// Tutto e' validato (ID alfanumerico, DEV/FREQ cifre, FMT nome di formato);
+// il dispositivo e' costruito qui, la sorgente e' sempre /dev/null.
+static int alsa_campo_ok(const char *s, int cifre, size_t max)
+{
+	size_t n = strlen(s), i;
+	if (!n || n > max)
+		return 0;
+	for (i = 0; i < n; i++)
+		if (cifre ? !isdigit((unsigned char)s[i])
+			  : (!isalnum((unsigned char)s[i]) && s[i] != '_'))
+			return 0;
+	return 1;
+}
+
+static int alsa_sonda(int argc, char **argv)
+{
+	char dev[96];
+	char *a[16];
+	int n = 0;
+
+	if (argc < 3 || !alsa_campo_ok(argv[1], 0, 32) || !alsa_campo_ok(argv[2], 1, 3))
+		return -1;
+	snprintf(dev, sizeof dev, "hw:CARD=%s,DEV=%s", argv[1], argv[2]);
+	a[n++] = BIN_DIR "aplay";
+	if (argc == 3 && !strcmp(argv[0], "hw")) {
+		a[n++] = "--dump-hw-params";
+		a[n++] = "-D"; a[n++] = dev;
+		a[n++] = "-t"; a[n++] = "raw"; a[n++] = "-c"; a[n++] = "2";
+		a[n++] = "-f"; a[n++] = "S16_LE"; a[n++] = "-r"; a[n++] = "44100";
+	} else if (argc == 5 && !strcmp(argv[0], "rate") && alsa_campo_ok(argv[3], 0, 16) &&
+		   alsa_campo_ok(argv[4], 1, 7)) {
+		a[n++] = "-v";
+		a[n++] = "-D"; a[n++] = dev;
+		a[n++] = "-t"; a[n++] = "raw"; a[n++] = "-c"; a[n++] = "2";
+		a[n++] = "-f"; a[n++] = argv[3]; a[n++] = "-r"; a[n++] = argv[4];
+	} else
+		return -1;
+	a[n++] = "/dev/null";
+	a[n] = NULL;
+	dup2(1, 2); // il pannello legge l'esito di aplay (stderr) come prima
+	esegui(a);
+	return 127;
+}
+
 static int azione_interna(const char *nome, int argc, char **argv)
 {
 	if (!strcmp(nome, "@riavvia") && argc == 0) {
@@ -887,6 +935,8 @@ static int azione_interna(const char *nome, int argc, char **argv)
 		char *a[] = {"/usr/bin/sweetspot-autotune", "--applica", NULL};
 		differito(2, a);
 	}
+	if (!strcmp(nome, "@alsa-sonda"))
+		return alsa_sonda(argc, argv);
 	if (!strcmp(nome, "@log") && argc == 1 && testo_ok(argv[0]) &&
 	    strlen(argv[0]) <= MAX_LOG) {
 		char ora[32];

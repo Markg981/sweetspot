@@ -925,6 +925,12 @@ dac_hw_params_live() {
 	local dev id
 	dev=$(dac_playback_dev "$1") || return 1
 	id=$(dac_id "$1")
+	if [ "$(id -u)" != 0 ] && [ -x "${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" ]; then
+		# Il pannello (utente web, fuori dal gruppo audio) non apre ALSA:
+		# la sonda passa dall'helper privilegiato.
+		"${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" @alsa-sonda hw "$id" "$dev" 2>&1
+		return
+	fi
 	LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" --dump-hw-params -D "hw:CARD=$id,DEV=$dev" \
 		-t raw -c 2 -f S16_LE -r 44100 /dev/null 2>&1
 }
@@ -981,8 +987,12 @@ dac_rates_probe() { # scheda formato
 	# le frequenze standard sul medesimo formato e richiedi il valore esatto,
 	# anche quando ALSA propone una frequenza vicina. Sempre senza campioni.
 	for rate in 8000 11025 16000 22050 32000 44100 48000 88200 96000 176400 192000 352800 384000 705600 768000; do
-		out=$(LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" -v -D "hw:CARD=$id,DEV=$dev" \
-			-t raw -c 2 -f "$fmt" -r "$rate" /dev/null 2>&1) || continue
+		if [ "$(id -u)" != 0 ] && [ -x "${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" ]; then
+			out=$("${SWEETSPOT_PRIV:-/usr/sbin/sweetspot-priv}" @alsa-sonda rate "$id" "$dev" "$fmt" "$rate" 2>&1) || continue
+		else
+			out=$(LC_ALL=C "${SWEETSPOT_APLAY:-aplay}" -v -D "hw:CARD=$id,DEV=$dev" \
+				-t raw -c 2 -f "$fmt" -r "$rate" /dev/null 2>&1) || continue
+		fi
 		actual=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*rate[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)
 		[ "$actual" != "$rate" ] || printf '%s\n' "$rate"
 	done | tr '\n' ' ' | sed 's/ $//'
