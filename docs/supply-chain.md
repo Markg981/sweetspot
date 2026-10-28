@@ -77,6 +77,13 @@ Lyrion sono falliti **o annullati**. Una pull request con la compilazione
 annullata non si puo' piu' unire. Senza argomenti lo script mostra la
 protezione attuale.
 
+Stato reale: la protezione NON e' garantita finche' un amministratore non
+esegue `./scripts/proteggi-main.sh --applica`; senza, main non ha controlli
+obbligatori ne' revisioni e `esito` e' solo informativo. Il controllo
+giornaliero `protezione-main.yml` fallisce finche' la regola manca. Ogni push
+su main ha una compilazione completa propria (gruppo di concorrenza per
+commit), cosi' `esito` esiste sempre per il commit unito.
+
 ## Inventario (SBOM)
 
 Dopo aver configurato una build di Buildroot:
