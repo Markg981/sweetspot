@@ -2079,6 +2079,22 @@ expect "anti-rollback: senza build rifiutato dopo il primo minimo" "errore" "$(c
 mkpkgb v1.0.0 12x
 upd _lavoro file "$PKG"
 expect "anti-rollback: build non numerica rifiutata" "errore|numero di build non valido" "$(cat "$UPD/run/aggiornamento/stato")"
+# Conferma: build_prova diventa build_min solo se la nuova versione parte.
+setenv build_min=2000 build_prova=3000 prova= tentato=b
+UPD_WGET=$UPD/bin/wget-ko upd conferma
+expect "anti-rollback: conferma non riuscita, il minimo non sale" "2000|3000" "$(genv build_min)|$(genv build_prova)"
+setenv build_min=2000 build_prova=3000 prova= tentato=a
+upd conferma
+expect "anti-rollback: prova fallita (si e' tornati indietro), il minimo non sale" "2000" "$(genv build_min)"
+setenv build_min=2000 build_prova=3000 prova= tentato=b
+upd conferma
+expect "anti-rollback: dopo la conferma il minimo e' la build provata" "3000|" "$(genv build_min)|$(genv build_prova)"
+mkpkgb v1.0.0 2999
+upd _lavoro file "$PKG"
+expect "anti-rollback: dopo la conferma una build inferiore e' rifiutata" "errore" "$(cut -d'|' -f1 "$UPD/run/aggiornamento/stato")"
+setenv build_min=3000 build_prova=1000 prova= tentato=b
+upd conferma
+expect "anti-rollback: il minimo non scende mai" "3000" "$(genv build_min)"
 setenv build_min= build_prova= prova= tentato=
 
 if command -v minisign > /dev/null; then
