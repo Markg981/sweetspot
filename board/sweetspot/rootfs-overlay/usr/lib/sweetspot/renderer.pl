@@ -889,14 +889,26 @@ sub http_reply {
 }
 
 my $MAX_BODY = 32768;    # una azione SOAP è di poche centinaia di byte
+# Il ciclo è a un solo thread: un client lento lo blocca per tutta la lettura.
+# La richiesta ha una scadenza complessiva di 1 s (una azione SOAP in LAN ne
+# impiega pochi ms) e chi la sfora è respinto subito per 10 s, così N
+# connessioni lente dallo stesso IP costano 1 s in tutto, non N * 3 s.
+my $READ_DEADLINE = 1;
+my $SLOW_PENALTY  = 10;
+my %slow_until;
 
 sub read_request {
 	my ($c) = @_;
 	my $sel = IO::Select->new($c);
 	my $buf = '';
-	my $deadline = time + 3;
+	my $peer = eval { $c->peerhost } // '';
+	my $t0 = Time::HiRes::time();
+	if ($peer ne '' && ($slow_until{$peer} // 0) > $t0) { return undef }
+	delete $slow_until{$peer};
+	%slow_until = () if keys %slow_until > 256;
+	my $deadline = $t0 + $READ_DEADLINE;
 	my ($head, $len);
-	while (time < $deadline) {
+	while (Time::HiRes::time() < $deadline) {
 		last unless $sel->can_read(0.5);
 		my $n = sysread($c, my $chunk, 8192);
 		last unless $n;
@@ -910,6 +922,9 @@ sub read_request {
 			return (undef, undef, 413) if $len > $MAX_BODY;
 		}
 		last if defined $head && length($buf) >= $len;
+	}
+	if (!defined $head || length($buf) < $len) {
+		$slow_until{$peer} = Time::HiRes::time() + $SLOW_PENALTY if $peer ne '';
 	}
 	return undef unless defined $head;
 	return ($head, $buf);
