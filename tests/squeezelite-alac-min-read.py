@@ -117,9 +117,12 @@ class AlacMinRead(unittest.TestCase):
         self.assertGreaterEqual(alc, self.packet_192_24 + READ_SIZE)
         self.assertGreaterEqual(alc, MAX_STEREO_PACKET + READ_SIZE)
 
-    def test_alac_resta_ben_sotto_streambuf(self):
-        # streambuf predefinito: 2 MB (STREAMBUF_SIZE); il decoder deve poter partire
-        self.assertLessEqual(self.patched[1], 2 * 1024 * 1024 // 8)
+    def test_alac_non_trattiene_piu_di_un_pacchetto(self):
+        # ogni chiamata a decode legge un solo pacchetto: quello che resta in
+        # streambuf oltre il pacchetto e il blocco AVIO e' audio trattenuto, e
+        # su un brano breve l'uscita si svuota (con 128 KB alac-44100-16 della
+        # prova Lyrion aveva 0,23 s di silenzio dopo i primi due pacchetti)
+        self.assertLessEqual(self.patched[1], MAX_STEREO_PACKET + READ_SIZE)
 
     def test_wma_invariato(self):
         self.assertEqual(self.patched[0], self.upstream[0])

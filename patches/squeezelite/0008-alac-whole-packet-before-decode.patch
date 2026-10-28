@@ -10,17 +10,21 @@ empty: _read_data returns 0, ffmpeg takes it as end of file, logs
 "Packet corrupt" and drops the truncated packet. 4096 frames of audio are
 lost and the output is no longer bit-identical to the source.
 
-Register the alc codec with a minimum read of 128 KB, more than any stereo
-ALAC packet, so decode is only called with a whole packet buffered. At the
-end of the stream decode still runs on whatever is left (toend in
-decode.c). wma is unchanged.
+Register the alc codec with a minimum read of the largest stereo ALAC
+packet plus READ_SIZE (about 48 KB), so decode is only called with a whole
+packet buffered. Each decode call reads one packet, so no more is needed: a
+larger minimum holds back more of the stream, and on a short track the
+decoder then waits for the end of the stream while the output runs dry (128
+KB is 0.74 s at 44.1 kHz/16 bit and left a gap of silence). At the end of
+the stream decode still runs on whatever is left (toend in decode.c). wma is
+unchanged.
 
 Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
 Upstream: Not submitted
 
 --- a/ffmpeg.c
 +++ b/ffmpeg.c
-@@ -28,6 +28,12 @@
+@@ -28,6 +28,13 @@
  
  #define READ_SIZE  4096 * 4   // this is large enough to ensure ffmpeg always gets new data when decode is called
  #define WRITE_SIZE 256 * 1024 // FIXME - make smaller, but still to absorb max wma output
@@ -29,11 +33,12 @@ Upstream: Not submitted
 +// a few header bytes for stereo 32 bit. With less buffered, _read_data returns
 +// 0 on a momentarily empty streambuf, ffmpeg takes it as end of file and drops
 +// the truncated packet ("Packet corrupt"): 4096 frames of audio are lost.
-+#define ALAC_MIN_READ 128 * 1024
++// No more than that: what is held back here can underrun a short track.
++#define ALAC_MIN_READ (4096 * 2 * 4 + 64 + READ_SIZE)
  
  // FIXME - do we need to align these params as per ffmpeg on i386? 
  #define attribute_align_arg
-@@ -783,7 +789,7 @@
+@@ -783,7 +790,7 @@
  		static struct codec ret = { 
  			'l',         // id
  			"alc",       // types
