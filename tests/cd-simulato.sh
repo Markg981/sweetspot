@@ -54,3 +54,16 @@ busybox sh "$CD" leggi
 busybox sh "$CD" _copia
 [ ! -e "$W/curl.chiamate" ] || { echo "PROVA FALLITA: rete contattata con i servizi disattivati"; cat "$W/curl.chiamate"; exit 1; }
 grep -q 'senza verifica AccurateRip' "$W/run/cd/stato" && ls "$W/media/Archivio/Artista sconosciuto"/*/01*.flac > /dev/null && echo "PROVA SENZA RETE RIUSCITA" || { echo "PROVA SENZA RETE FALLITA"; exit 1; }
+
+# Errore di lettura di un brano: nessun album parziale nell'archivio e lo
+# stato elenca i brani falliti.
+rm -rf "$W/media/Archivio"/* "$W/run/cd/stato"
+: > "$W/run/sweetspot.txt"
+busybox sh -c ". $SWEETSPOT_LIB/common.sh; config_build $W/run/sweetspot.txt"
+busybox sh "$CD" leggi
+rc=0; FINTO_FALLISCI=2 busybox sh "$CD" _copia || rc=$?
+st=$(busybox sh "$CD" stato)
+echo "stato: $st"
+[ "$rc" != 0 ] && echo "$st" | grep -q 'Album non salvato' && echo "$st" | grep -q '02 ' || { echo "PROVA COPIA PARZIALE FALLITA: stato"; exit 1; }
+[ -z "$(find "$W/media/Archivio" -mindepth 1)" ] || { echo "PROVA COPIA PARZIALE FALLITA: resta qualcosa nell'archivio"; find "$W/media/Archivio"; exit 1; }
+echo "PROVA COPIA PARZIALE RIUSCITA"
