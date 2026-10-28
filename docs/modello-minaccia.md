@@ -188,12 +188,13 @@ la LAN fidata, e cosa cambierebbe con una LAN non fidata.
   pannello mostra solo *Primo accesso* con codice del dispositivo
   (`web.sh`, `sweetspot-accesso`).
 - **Rischio residuo accettato.** Se `nft` non carica le regole il firewall
-  **lascia tutto aperto** e lo scrive nel registro
-  (`usr/bin/sweetspot-firewall`, provato in `tests/run.sh`).
+  **fallisce chiuso**: carica un solo drop sulla scheda dell'hotspot e, se
+  nemmeno quello riesce, abbassa la scheda; esce con errore e lo scrive nel
+  registro (`usr/bin/sweetspot-firewall`, provato in `tests/run.sh`).
   La password dell'hotspot è salvata in chiaro sulla chiavetta
   (`sweetspot-hotspot`).
 - **Con LAN non fidata.** Il caso hotspot non cambia (già non fidato); il
-  firewall dovrebbe fallire chiuso e impostare `policy drop` sulla catena.
+  firewall fallisce chiuso come descritto sopra.
 
 ### 3.8 Aggiornamenti via `curl` https
 

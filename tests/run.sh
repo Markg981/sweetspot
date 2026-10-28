@@ -4587,14 +4587,8 @@ if command -v nft > /dev/null 2>&1; then
 else
 	salta nft
 fi
-# Se nft fallisce il firewall lascia tutto aperto e lo scrive nel registro.
-FWE=$WORK/fw; mkdir -p "$FWE/run"
-printf '#!/bin/sh\nexit 1\n' > "$FWE/nft"; chmod +x "$FWE/nft"
-SWEETSPOT_NFT=$FWE/nft SWEETSPOT_RUN=$FWE/run SWEETSPOT_LOG=$FWE/log \
-	$TEST_SH "$OVERLAY/usr/bin/sweetspot-firewall" applica wlan0
-rc=$?
-expect "firewall: caricamento fallito, esito 0 e errore nel registro" "0|1" \
-	"$rc|$(grep -c 'firewall: regole non caricate' "$FWE/log")"
+# Se nft fallisce il firewall fallisce chiuso (tests/firewall-fallimento.sh).
+expect "firewall: caricamento fallito, fallback chiuso" 0 "$(sh "$ROOT/tests/firewall-fallimento.sh" > "$WORK/fwfail.out" 2>&1; echo $?)"
 
 # --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
 if command -v gcc > /dev/null 2>&1; then

@@ -7,8 +7,10 @@
 #                                         default quella in hotspot.attivo)
 #   sweetspot-firewall ferma              toglie le regole
 #
-# Se le regole non si caricano resta tutto aperto e l'errore va nel registro:
-# il firewall non deve mai chiudere fuori l'utente.
+# Se le regole non si caricano il firewall fallisce chiuso: sulla scheda
+# dell'hotspot carica una sola regola di drop (nessun servizio raggiungibile
+# dal Wi-Fi dell'hotspot); se nemmeno quella si carica abbassa la scheda.
+# L'errore va nel registro e l'uscita e' 1. Cavo e Wi-Fi di casa non cambiano.
 
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/common.sh"
 
@@ -27,7 +29,15 @@ applica() { # scheda
 	{ printf 'define AP_IF = "%s"\n' "$i"; cat "$REGOLE"; } > "$tmp" 2>/dev/null
 	if ! "$NFT" -f "$tmp" 2>/dev/null; then
 		ferma
-		log "firewall: regole non caricate su $i, hotspot senza filtro"
+		log "firewall: regole non caricate su $i, blocco tutto sulla scheda"
+		printf 'table inet sweetspot_hotspot { chain ingresso { type filter hook input priority 0; policy accept; iifname "%s" drop; } }\n' "$i" > "$tmp"
+		if ! "$NFT" -f "$tmp" 2>/dev/null; then
+			ferma
+			log "firewall: nemmeno il blocco minimo su $i, spengo la scheda"
+			ip link set dev "$i" down 2>/dev/null
+		fi
+		rm -f "$tmp"
+		return 1
 	fi
 	rm -f "$tmp"
 	return 0
