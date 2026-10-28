@@ -1,0 +1,44 @@
+Subject: [PATCH] ffmpeg: wait for a whole ALAC packet before decoding
+
+The ffmpeg decoder is called once streambuf holds READ_SIZE (16 KB), on the
+assumption that this always gives ffmpeg enough new data. An ALAC packet
+holds 4096 frames and can be larger: about 24.6 KB for stereo 24 bit
+uncompressed, up to 32 KB for 32 bit. When the stream fills streambuf more
+slowly than the decoder drains it (high sample rates, slow network), the
+mov demuxer asks for the rest of the packet while streambuf is momentarily
+empty: _read_data returns 0, ffmpeg takes it as end of file, logs
+"Packet corrupt" and drops the truncated packet. 4096 frames of audio are
+lost and the output is no longer bit-identical to the source.
+
+Register the alc codec with a minimum read of 128 KB, more than any stereo
+ALAC packet, so decode is only called with a whole packet buffered. At the
+end of the stream decode still runs on whatever is left (toend in
+decode.c). wma is unchanged.
+
+Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
+Upstream: Not submitted
+
+--- a/ffmpeg.c
++++ b/ffmpeg.c
+@@ -28,6 +28,12 @@
+ 
+ #define READ_SIZE  4096 * 4   // this is large enough to ensure ffmpeg always gets new data when decode is called
+ #define WRITE_SIZE 256 * 1024 // FIXME - make smaller, but still to absorb max wma output
++// A whole ALAC packet must be in streambuf before decode is called: packets
++// (4096 frames) can be larger than READ_SIZE, up to 4096 * 2 ch * 4 bytes plus
++// a few header bytes for stereo 32 bit. With less buffered, _read_data returns
++// 0 on a momentarily empty streambuf, ffmpeg takes it as end of file and drops
++// the truncated packet ("Packet corrupt"): 4096 frames of audio are lost.
++#define ALAC_MIN_READ 128 * 1024
+ 
+ // FIXME - do we need to align these params as per ffmpeg on i386? 
+ #define attribute_align_arg
+@@ -783,7 +789,7 @@
+ 		static struct codec ret = { 
+ 			'l',         // id
+ 			"alc",       // types
+-			READ_SIZE,   // min read
++			ALAC_MIN_READ, // min read
+ 			WRITE_SIZE,  // min space
+ 			ff_open_alac,// open
+ 			ff_close,    // close

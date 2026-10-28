@@ -4504,6 +4504,7 @@ python3 "$ROOT/tests/squeezelite-dsd-decimation.py" || exit 1
 python3 "$ROOT/tests/player-avvio.py" || exit 1
 python3 "$ROOT/tests/squeezelite-dither.py" || exit 1
 python3 "$ROOT/tests/squeezelite-mixer-dsd.py" || exit 1
+python3 "$ROOT/tests/squeezelite-alac-min-read.py" || exit 1
 python3 "$ROOT/tests/precarica.py" || exit 1
 echo "Wi-Fi: nomi e password particolari, dalla scansione a wpa.conf"
 WS=$WORK/wifissid
