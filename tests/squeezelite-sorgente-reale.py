@@ -7,7 +7,8 @@ commit pinnato). Controlla che (1) tutte le patch di patches/squeezelite/
 si applichino in sequenza al sorgente vero, (2) squeezelite-output-pack.c sia
 identica a output_pack.c, (3) le righe di codice di squeezelite-dsd-header.c
 compaiano nello stesso ordine in dsd.c, (4) l'estratto di output_alsa.c
-differisca dal vero solo per le righe di adattamento note (stubs.h).
+differisca dal vero solo per le righe di adattamento note (stubs.h), (5) le
+righe dell'estratto di ffmpeg.c compaiano nello stesso ordine nel vero.
 """
 import shutil
 import subprocess
@@ -73,6 +74,10 @@ def main():
          if r not in ADATTATE_ALSA and not r.startswith(("/*", " *"))]
     if m:
         errori.append("righe di squeezelite-alsa-rate.c assenti da output_alsa.c: %r" % m)
+    m = [r for r in mancanti(FIX / "squeezelite-ffmpeg-register.c", src / "ffmpeg.c")
+         if r != '#include "stubs.h"' and not r.startswith(("/*", " *"))]
+    if m:
+        errori.append("righe di squeezelite-ffmpeg-register.c assenti da ffmpeg.c: %r" % m)
     for e in errori:
         print("ERRORE:", e)
     print("fixture e patch coerenti con il sorgente vero" if not errori else "")

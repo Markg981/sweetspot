@@ -33,6 +33,6 @@ jobs:
         run: SQUEEZELITE_SRC="$RUNNER_TEMP/squeezelite" python3 tests/squeezelite-dither.py
       - name: Altri test squeezelite (fixture verificate)
         run: |
-          for t in dff-padding strict-hw dsd-decimation mixer-dsd; do
+          for t in dff-padding strict-hw dsd-decimation mixer-dsd alac-min-read; do
             python3 tests/squeezelite-$t.py
           done

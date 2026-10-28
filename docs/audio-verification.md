@@ -145,6 +145,14 @@ Oltre ai casi a frequenza costante, la prova ALSA verifica:
   campione per campione. Casi `flac-*` e `alac-*` a 44,1/16, 48/24, 96/24 e
   192/24. Gli encoder non comprimono, quindi non provano il predittore né il
   coder di Rice dei decoder: lo fa la matrice del segnale con ffmpeg.
+  Un pacchetto ALAC (4096 frame, circa 24,6 KB a 24 bit) supera i 16 KB dopo
+  i quali Squeezelite chiama il decoder ffmpeg: se lo stream si svuotava a metà
+  pacchetto, ffmpeg lo scartava come corrotto (`Packet corrupt` nel log) e
+  `alac-192000-24` falliva ogni tanto. La
+  [patch 0008](../patches/squeezelite/0008-alac-whole-packet-before-decode.patch)
+  fa partire il decoder ALAC solo con un pacchetto intero nel buffer
+  (circa 48 KB: di piu' svuoterebbe l'uscita sui brani brevi a 44,1/16); la verifica il
+  [test sull'estratto di ffmpeg.c](../tests/squeezelite-alac-min-read.py).
 - **Cambi di frequenza.** Le sei coppie fra 44,1, 48 e 96 kHz: il primo brano
   dura 4 s, la capture resta alla sua frequenza e se ne confronta l'ultimo
   secondo campione per campione; poi ammette solo silenzio, al massimo 20 ms di
