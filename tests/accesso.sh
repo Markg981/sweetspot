@@ -318,6 +318,20 @@ touch -t 200001010000 "$RUNDIR/web/tentativi/ip-vecchio"
 expect "contatore vecchio cancellato" "no" "$([ -e "$RUNDIR/web/tentativi/ip-vecchio" ] && echo si || echo no)"
 expect "contatore recente conservato" "si" "$([ -e "$RUNDIR/web/tentativi/ip-recente" ] && echo si || echo no)"
 rm -rf "$RUNDIR/web/tentativi"
+# Tetto ai file: con N+k indirizzi diversi i file restano <= N e il blocco
+# dell'indirizzo che sta sbagliando continua a funzionare.
+export SWEETSPOT_TENTATIVI_MAX=10
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+	(REMOTE_T=10.1.0.$i lpost "$CGI/accesso" "password=no" > /dev/null)
+	touch -t "2026010100$(printf '%02d' "$i")" "$RUNDIR/web/tentativi/ip-10.1.0.$i"
+done
+expect "tetto: i file di tentativi non superano il massimo" "1" "$([ "$(ls "$RUNDIR/web/tentativi" | grep -c .)" -le 10 ] && echo 1 || echo 0)"
+for i in 1 2 3 4 5; do (REMOTE_T=10.2.0.1 lpost "$CGI/accesso" "password=no$i" > /dev/null); done
+out=$(REMOTE_T=10.2.0.1 lpost "$CGI/accesso" "password=segreta")
+expect "tetto: il blocco dell'indirizzo corrente continua" "429" "$(status "$out")"
+expect "tetto: ancora entro il massimo" "1" "$([ "$(ls "$RUNDIR/web/tentativi" | grep -c .)" -le 10 ] && echo 1 || echo 0)"
+unset SWEETSPOT_TENTATIVI_MAX
+rm -rf "$RUNDIR/web/tentativi"
 
 echo "Uscita"
 out=$(lpost "$CGI/accesso" "password=segreta")
