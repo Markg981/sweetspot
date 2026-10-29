@@ -4729,14 +4729,25 @@ expect "firewall: caricamento fallito, fallback chiuso" 0 "$fwfail"
 FWD=$OVERLAY/etc/sweetspot/firewall-dsp.nft
 expect "firewall DSP: filtro per utente sul solo loopback" "1|1" \
 	"$(grep -c 'oifname "lo" tcp dport \$DSP_PORTA meta skuid != 0 ' "$FWD")|$(grep -c 'policy accept' "$FWD")"
-printf '#!/bin/sh\nif [ "$1" = "-f" ]; then cat "$2" > "$(dirname "$0")/dsp.caricato"; fi\nexit 0\n' > "$FWE/nft"
+FWE=$WORK/fw-dsp; mkdir -p "$FWE/run"
+printf '#!/bin/sh\nif [ "$1" = "-f" ]; then cat "$2" > "$(dirname "$0")/dsp.caricato"; fi\nexit 0\n' > "$FWE/nft"; chmod +x "$FWE/nft"
 SWEETSPOT_NFT=$FWE/nft SWEETSPOT_RUN=$FWE/run SWEETSPOT_LOG=$FWE/log SWEETSPOT_DSP_PORTA=4321 \
 	SWEETSPOT_FIREWALL_DSP=$FWD $TEST_SH "$OVERLAY/usr/bin/sweetspot-firewall" dsp
 expect "firewall DSP: porta definita e regola caricata" "1|1" \
 	"$(grep -c '^define DSP_PORTA = 4321$' "$FWE/dsp.caricato")|$(grep -c 'skuid != 0' "$FWE/dsp.caricato")"
 if command -v nft > /dev/null 2>&1; then
-	nft -c -f "$FWE/dsp.caricato" > /dev/null 2>&1
-	expect "firewall DSP: nft -c accetta le regole" 0 "$?"
+	nft_out=$(nft -c -f "$FWE/dsp.caricato" 2>&1); nft_rc=$?
+	if [ "$nft_rc" -ne 0 ] && command -v unshare > /dev/null 2>&1; then
+		nft_out=$(unshare -rn nft -c -f "$FWE/dsp.caricato" 2>&1); nft_rc=$?
+	fi
+	if [ "$nft_rc" -ne 0 ] && command -v sudo > /dev/null 2>&1; then
+		nft_out=$(sudo -n nft -c -f "$FWE/dsp.caricato" 2>&1); nft_rc=$?
+	fi
+	case "$nft_out" in
+	*"Operation not permitted"* | *"Permission denied"* | *"Operation not supported"*)
+		salta "nft(privilegi)" ;;
+	*) expect "firewall DSP: nft -c accetta le regole" 0 "$nft_rc" ;;
+	esac
 fi
 
 # --- alsa-cdsp: frame intero nella FIFO dopo un timeout (M18) ---
