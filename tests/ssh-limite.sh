@@ -5,12 +5,17 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OV=$ROOT/board/sweetspot/rootfs-overlay
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin"
+# Le applet di BusyBox preparate da run.sh, come sul player: il mkdir di
+# uutils di Ubuntu 26.04 (prima di uutils/coreutils@bf423f388) non rifiuta
+# un EEXIST concorrente,
+# quindi posti e blocco del contatore non sarebbero esclusivi.
+STRUMENTI=${SWEETSPOT_PATH:+$SWEETSPOT_PATH:}
 printf "#!/bin/sh
 while [ ! -e %s/via ]; do sleep 0.2; done
 " "$T" > "$T/bin/dropbear"; chmod +x "$T/bin/dropbear"
 i=0
 while [ $i -lt 20 ]; do
-	( TCPREMOTEIP=10.0.0.7 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 SWEETSPOT_SSH_MAX=4 PATH=$T/bin:$PATH \
+	( TCPREMOTEIP=10.0.0.7 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 SWEETSPOT_SSH_MAX=4 PATH=$T/bin:$STRUMENTI$PATH \
 		sh "$OV/usr/bin/sweetspot-ssh-conn" > /dev/null 2>&1; echo $? >> "$T/esiti" ) &
 	i=$((i + 1))
 done
@@ -25,7 +30,7 @@ else echo "FAIL ssh: passate=$ok rifiutate=$no (attese 4/16)"; exit 1; fi
 printf '#!/bin/sh\necho "Bad password attempt" >&2\n' > "$T/bin/dropbear"
 rm -rf "$T/st"; i=0
 while [ $i -lt 4 ]; do
-	( TCPREMOTEIP=10.0.0.8 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 PATH=$T/bin:$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" >/dev/null 2>&1; echo $? >> "$T/esiti2" ) &
+	( TCPREMOTEIP=10.0.0.8 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 PATH=$T/bin:$STRUMENTI$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" >/dev/null 2>&1; echo $? >> "$T/esiti2" ) &
 	i=$((i + 1))
 done
 wait
@@ -46,7 +51,7 @@ printf '#!/bin/sh\nexit 0\n' > "$T/bin/dropbear"
 rm -rf "$T/st"; mkdir -p "$T/st"
 for n in 1 2 3; do mkdir "$T/st/10.0.0.6.posto$n"; echo 999999 > "$T/st/10.0.0.6.posto$n/pid"; done
 mkdir "$T/st/10.0.0.6.posto4"; touch -d '1 minute ago' "$T/st/10.0.0.6.posto4"
-TCPREMOTEIP=10.0.0.6 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 SWEETSPOT_SSH_MAX=4 PATH=$T/bin:$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" > /dev/null 2>&1
+TCPREMOTEIP=10.0.0.6 SWEETSPOT_SSH_STATE=$T/st SWEETSPOT_SSH_ATTESA=0 SWEETSPOT_SSH_MAX=4 PATH=$T/bin:$STRUMENTI$PATH sh "$OV/usr/bin/sweetspot-ssh-conn" > /dev/null 2>&1
 rc=$?
 if [ "$rc" = 0 ] && [ -z "$(ls -d "$T"/st/10.0.0.6.posto* 2> /dev/null)" ]; then echo "PASS ssh: posti orfani recuperati"
 else echo "FAIL ssh: posti orfani non recuperati (uscita $rc)"; exit 1; fi
