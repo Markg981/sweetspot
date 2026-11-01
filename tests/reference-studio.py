@@ -223,9 +223,14 @@ esac
         status, _, body = self.cgi("studio-api.json", query="op=cartella&folder_id=12&count=200")
         self.assertEqual(status, 200, body)
         self.assertIn("musicfolder 0 200 folder_id:12", self.calls()[1])
+        # Cartelle volatili (non indicizzate o durante una scansione): id negativi.
+        status, _, body = self.cgi("studio-api.json", query="op=cartella&folder_id=-42&count=200")
+        self.assertEqual(status, 200, body)
+        self.assertIn("musicfolder 0 200 folder_id:-42", self.calls()[2])
 
     def test_invalid_parameters_are_rejected_before_lyrion(self):
         for q in ("op=cartella&folder_id=x", "op=cartella&folder_id=1%20url:file:///etc",
+                  "op=cartella&folder_id=--1", "op=cartella&folder_id=-", "op=cartella&folder_id=%2B1",
                   "op=albums&count=0", "op=albums&count=999", "op=albums&start=x",
                   "op=albums&sort=evil", "op=albums&genre_id=1;2", "op=stato",
                   "op=stato&player=zz zz", "op=nope"):
@@ -261,6 +266,13 @@ esac
         self.assertIn("playlistcontrol cmd:add album_id:7", self.calls()[1])
         self.cgi("studio-api.json", "POST", body="op=carica&kind=folder&id=12&mode=load&" + mac, token=self.TOKEN)
         self.assertIn("playlistcontrol cmd:load folder_id:12", self.calls()[2])
+        self.cgi("studio-api.json", "POST", body="op=carica&kind=folder&id=-12&mode=add&" + mac, token=self.TOKEN)
+        self.assertIn("playlistcontrol cmd:add folder_id:-12", self.calls()[3])
+        self.cgi("studio-api.json", "POST", body="op=carica&kind=track&id=-5&mode=load&" + mac, token=self.TOKEN)
+        self.assertIn("playlistcontrol cmd:load track_id:-5", self.calls()[4])
+        status, _, _ = self.cgi("studio-api.json", "POST", body="op=carica&kind=album&id=-7&mode=add&" + mac, token=self.TOKEN)
+        self.assertEqual(status, 400)
+        self.assertEqual(len(self.calls()), 5)
 
     def test_priv_refusal_and_bad_json_are_distinct_errors(self):
         status, _, body = self.cgi("studio-api.json", query="op=albums")
