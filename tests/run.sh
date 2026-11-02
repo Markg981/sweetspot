@@ -1124,6 +1124,10 @@ case "$(page audio 'DSD=dop')" in *"Tramite DoP, come scelto"*) ok "audio: DoP s
 case "$out" in *"-3 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-3"'*) ok "audio: margine DSD -3 dB di serie, in campo e in riga" ;; *) ko "audio margine DSD" "-3 dB di serie" "-" ;; esac
 case "$(page audio 'DSD_PCM_MARGINE_DB=-6')" in *"-6 dB nella conversione del DSD in PCM"*'name="dsd_margine"'*'value="-6"'*) ok "audio: margine DSD scelto mostrato" ;; *) ko "audio margine DSD scelto" "-6 dB" "-" ;; esac
 case "$(page audio 'DSD_PCM_MARGINE_DB=5')" in *"-3 dB nella conversione del DSD in PCM"*'value="-3"'*) ok "audio: margine DSD positivo ignorato" ;; *) ko "audio margine DSD positivo" "-3 dB" "-" ;; esac
+# Attenuazione del ricampionatore soxr: 0.5 dB di serie, scelta mostrata, fuori scala ignorata.
+case "$out" in *'name="ricam_att"'*'value="0.5"'*) ok "audio: attenuazione del ricampionatore 0.5 dB di serie" ;; *) ko "audio attenuazione" "0.5" "-" ;; esac
+case "$(page audio 'RICAMPIONAMENTO_ATTENUAZIONE_DB=0')" in *'name="ricam_att"'*'value="0"'*) ok "audio: attenuazione scelta mostrata" ;; *) ko "audio attenuazione scelta" "0" "-" ;; esac
+case "$(page audio 'RICAMPIONAMENTO_ATTENUAZIONE_DB=40')" in *'name="ricam_att"'*'value="0.5"'*) ok "audio: attenuazione fuori scala ignorata" ;; *) ko "audio attenuazione fuori scala" "0.5" "-" ;; esac
 for v in 0 0.0 -0.5 -3 -12 -23.9 -24; do
 	printf 'DSD_PCM_MARGINE_DB=%s\n' "$v" > "$WEB/s.txt"
 	expect "margine DSD $v valido" "$v" "$(SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $WEB/s.txt; dsd_margine_db")"
@@ -1194,7 +1198,7 @@ case "$diag" in *"nessuna dall'accensione"*) ko "diagnostica: nessuna continuita
 
 # Stallo da frequenza (-H) e ricampionamento "solo se serve" (flag E).
 diag_freq() { SWEETSPOT_SYSFS=$WEB/sys SWEETSPOT_PROCFS=$WEB/proc SWEETSPOT_RUN=$WEB/run SWEETSPOT_LOG=$WEB/log SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_SQLOG=$WEB/squeezelite.log $TEST_SH "$OVERLAY/usr/bin/sweetspot-check" --dati; }
-grep -q "printf '%s\\\\n' -R vLE" "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
+grep -q 'fb=$(soxr_params vLE)' "$OVERLAY/usr/bin/sweetspot-player" && ok "player: ricampiona solo se il DAC non supporta la frequenza (-R vLE)" || ko "player: -R vLE" "presente" "assente"
 grep -q '^FREQUENZA_NON_SUPPORTATA=ricampiona' "$OVERLAY/etc/sweetspot/defaults.conf" && ok "default: FREQUENZA_NON_SUPPORTATA=ricampiona" || ko "default FREQUENZA_NON_SUPPORTATA" "ricampiona" "assente"
 printf '[12:00:00] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n[12:00:05] output:1 device hw:X refuses 88200 Hz and strict hw mode (-H) forbids the plughw: fallback: not resampling, output stopped: Invalid argument\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
@@ -1205,7 +1209,7 @@ case "$diag" in *"|Frequenza|"*) ko "stato: un solo rifiuto non e' uno stallo" "
 printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite.log"
 diag=$(diag_freq)
 case "$diag" in *"ATTENZIONE|Frequenza|ricampionata (88200 -> 96000 Hz)"*) ok "stato: avviso di ricampionamento" ;; *) ko "stato: avviso di ricampionamento" "ricampionata (88200 -> 96000 Hz)" "-" ;; esac
-case "$diag" in *"abbassa il segnale di 1 dB"*) ok "stato: il ricampionamento dichiara i -1 dB" ;; *) ko "stato: -1 dB" "1 dB" "-" ;; esac
+case "$diag" in *"abbassa il segnale di 0.5 dB"*) ok "stato: il ricampionamento dichiara l'attenuazione (0.5 dB)" ;; *) ko "stato: -1 dB" "1 dB" "-" ;; esac
 # Il registro di una zona (squeezelite-<id>.log) si legge come quello principale.
 rm -f "$WEB/squeezelite.log"
 printf '[12:00:00] process:1 resampling from 88200 -> 96000\n' > "$WEB/squeezelite-Zona.log"

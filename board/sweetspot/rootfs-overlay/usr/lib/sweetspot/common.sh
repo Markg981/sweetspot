@@ -1027,6 +1027,21 @@ dsd_margine_db() {
 	if dsd_margine_valido "$v"; then printf '%s\n' "$v"; else echo -3; fi
 }
 
+# Attenuazione (dB) del ricampionatore soxr, chiave
+# RICAMPIONAMENTO_ATTENUAZIONE_DB: da 0 a 10, un decimale al massimo,
+# predefinito 0.5 (Squeezelite da solo userebbe 1 dB in silenzio).
+soxr_attenuazione_valida() {
+	case "$1" in
+		[0-9]|[0-9].[0-9]|10|10.0) return 0 ;;
+	esac
+	return 1
+}
+soxr_attenuazione_db() {
+	local v
+	v=$(conf RICAMPIONAMENTO_ATTENUAZIONE_DB 0.5)
+	if soxr_attenuazione_valida "$v"; then printf '%s\n' "$v"; else echo 0.5; fi
+}
+
 # Indirizzo PCI del controller USB a cui e' collegato il DAC.
 dac_controller() {
 	local p

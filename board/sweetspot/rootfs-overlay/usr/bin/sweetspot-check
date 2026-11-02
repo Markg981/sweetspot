@@ -522,7 +522,7 @@ check_frequenza_log() { # registro voce
 	fi
 	rate=$(printf '%s\n' "$tl" | sed -n 's/.*[Rr]esampl[a-z]* from \([0-9][0-9]*\) *\(->\|to\) *\([0-9][0-9]*\).*/\1 -> \3 Hz/p' | tail -n 1)
 	if [ -n "$rate" ] && [ "$(lower "$(conf RICAMPIONAMENTO no)")" = no ]; then
-		emit ATTENZIONE "$2" "ricampionata ($rate): il DAC non supporta la frequenza originale; il ricampionatore abbassa il segnale di 1 dB"
+		emit ATTENZIONE "$2" "ricampionata ($rate): il DAC non supporta la frequenza originale; il ricampionatore abbassa il segnale di $(soxr_attenuazione_db) dB"
 	fi
 }
 
@@ -639,7 +639,7 @@ check_player() {
 		emit INFO "Volume" "regolabile ($vol): sotto il 100% il segnale non e' piu' bit-perfect"
 	fi
 	if [ -n "$(conf RICAMPIONAMENTO)" ] && [ "$(lower "$(conf RICAMPIONAMENTO)")" != no ]; then
-		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta; il ricampionatore abbassa il segnale di 1 dB"
+		emit INFO "Ricampionamento" "attivo ($(lower "$(conf RICAMPIONAMENTO)")): il percorso non e' bit-perfect per scelta; il ricampionatore abbassa il segnale di $(soxr_attenuazione_db) dB"
 	fi
 	check_alterazioni
 	if correction_running; then
