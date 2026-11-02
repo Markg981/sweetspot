@@ -341,7 +341,7 @@ volume_note() {
 		return 0
 	fi
 	[ "$1" = software ] || return 0
-	printf '<p class="sub">%s</p>\n' "Volume software (modo di compatibilit�, consigliato il volume a 64 bit dsp): il guadagno di Squeezelite � in virgola fissa 16.16, senza rampa. Squeezelite abbassa i campioni e li arrotonda con dither TPDF (rumore di ±1 LSB, senza distorsione di troncamento). Sotto il 100% il segnale non è più bit-perfect. Il volume software non agisce sul DSD nativo (un DSF suonerebbe al 100% dopo un brano attenuato, circa 30 dB più forte): per sicurezza di orecchie e diffusori i file DSD si convertono sempre in PCM, che il volume attenua. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
+	printf '<p class="sub">%s</p>\n' "Volume software (modo di compatibilità, consigliato il volume a 64 bit dsp): il guadagno di Squeezelite è in virgola fissa 16.16, senza rampa. Squeezelite abbassa i campioni e li arrotonda con dither TPDF (rumore di ±1 LSB, senza distorsione di troncamento). Sotto il 100% il segnale non è più bit-perfect. Il volume software non agisce sul DSD nativo (un DSF suonerebbe al 100% dopo un brano attenuato, circa 30 dB più forte): per sicurezza di orecchie e diffusori i file DSD si convertono sempre in PCM, che il volume attenua. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
 }
 vol=$(lower "$(conf VOLUME fisso)")
 rs=$(lower "$(conf RICAMPIONAMENTO no)")
@@ -353,7 +353,7 @@ cat <<HTML
 $(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
 $(option dac "Dal DAC: usa il controllo hardware (dipende dal DAC)" "$vol")
 $(option dsp "A 64 bit con dither (CamillaDSP): il migliore se il volume va regolato qui" "$vol")
-$(option software "Software (compatibilit�): volume di Squeezelite a virgola fissa 16.16 con dither TPDF, non bit-perfect; consigliato il volume a 64 bit (dsp)" "$vol")
+$(option software "Software (compatibilità): volume di Squeezelite a virgola fissa 16.16 con dither TPDF, non bit-perfect; consigliato il volume a 64 bit (dsp)" "$vol")
 </select>
 $(volume_note "$vol")
 
