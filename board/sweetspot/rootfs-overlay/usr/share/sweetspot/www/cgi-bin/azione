@@ -7,6 +7,8 @@
 . "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
 
 done_to() { redirect "/cgi-bin/$1?msg=$(urlenc "$2")"; exit 0; }
+# Dopo lo spegnimento o il riavvio: la pagina d'attesa animata (arresto).
+done_arresto() { redirect "/cgi-bin/arresto?modo=$1${2:+&msg=$(urlenc "$2")}"; exit 0; }
 
 # Esito di sweetspot-config: 0 salvato, 2 solo fino al riavvio.
 saved_msg() { # codice testo
@@ -453,7 +455,7 @@ case "$F_a" in
 		rc=$?
 		[ $rc -eq 0 ] || done_to audio "$(saved_msg $rc)"
 		autotune_later
-		done_to stato "Scheda salvata: il Raspberry Pi si riavvia per caricarla (circa un minuto)." ;;
+		done_arresto riavvio "Scheda salvata: il Raspberry Pi si riavvia per caricarla." ;;
 	# --- Bluetooth: il telefono suona su Sweetspot ----------------------------
 	bluetooth_imposta)
 		case "$F_bt_attivo" in si|no) ;; *) F_bt_attivo=no ;; esac
@@ -707,7 +709,7 @@ case "$F_a" in
 	aggiorna_altra)
 		out=$(priv sweetspot-aggiorna altra) || done_to sistema "Non si può: $out."
 		reboot_later
-		done_to stato "Riavvio con l'altra versione: la pagina tornerà disponibile tra circa un minuto." ;;
+		done_arresto riavvio "Riavvio con l'altra versione." ;;
 
 	aggiorna_predefinita)
 		priv sweetspot-aggiorna predefinita > /dev/null
@@ -753,15 +755,15 @@ case "$F_a" in
 		[ $rc -eq 2 ] && done_to sistema "Chiavetta non trovata: le impostazioni iniziali valgono solo fino al riavvio."
 		priv sweetspot-accesso applica
 		reboot_later
-		done_to stato "Impostazioni iniziali ripristinate: Sweetspot si riavvia (circa un minuto)." ;;
+		done_arresto riavvio "Impostazioni iniziali ripristinate." ;;
 
 	riavvia)
 		reboot_later
-		done_to stato "Riavvio in corso: la pagina tornerà disponibile tra circa un minuto." ;;
+		done_arresto riavvio "" ;;
 
 	spegni)
 		poweroff_later
-		done_to stato "Spegnimento in corso. Puoi staccare la corrente quando il computer si è spento." ;;
+		done_arresto spegnimento "" ;;
 
 	*) done_to audio "Azione sconosciuta." ;;
 esac
