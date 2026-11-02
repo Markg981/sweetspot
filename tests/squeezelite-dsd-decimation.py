@@ -109,6 +109,19 @@ int main(int argc, char **argv) {
 		printf("%d\n", peak * DSD_PCM_FULLSCALE <= 2147483647.0);
 		return 0;
 	}
+	if (!strcmp(argv[1], "clip")) {
+		/* clip <v> -> valore limitato e contatore dei campioni tagliati */
+		double r = dsd_pcm_clip(atof(argv[2]));
+		printf("%.0f %llu\n", r, dsd_pcm_clipped);
+		return 0;
+	}
+	if (!strcmp(argv[1], "cost1")) {
+		/* filtro finale senza decimazione: stadi, flag e punti */
+		unsigned base = (unsigned)atoi(argv[2]);
+		dsd_decim_reset(&ctx, base, 0);
+		printf("%u %u %u\n", ctx.stages, ctx.keep_rate, ctx.taps[0]);
+		return 0;
+	}
 	return 2;
 }
 '''
@@ -153,6 +166,38 @@ class DsdDecimation(unittest.TestCase):
     def test_senza_decimazione_se_il_dac_accetta_dsd_diviso_8(self):
         self.assertEqual(self.run_bin("stages", "352800", "384"), ["0"])
         self.assertEqual(self.run_bin("stages", "705600", "384"), ["1"])
+
+    def test_filtro_finale_senza_decimazione(self):
+        # Il DAC accetta DSD/8 (352,8 e 705,6 kHz): niente dimezzamento, ma un
+        # passa-basso finale: stesso numero di campioni, banda piatta fino a
+        # 20 kHz, almeno 100 dB di attenuazione da 40 kHz in su (il rumore
+        # ultrasonico del modulatore non arriva al DAC).
+        for base in (352800, 705600):
+            na, nb, uguali, _ = self.run_bin("tone", "1000", "977", str(base), "0")
+            self.assertEqual((na, nb, uguali), (str(base // 2), str(base // 2), "1"))
+            stadi, tiene, punti = self.run_bin("cost1", str(base))
+            self.assertEqual((stadi, tiene), ("1", "1"))
+            self.assertLess(int(punti), 511)
+            for hz in (100, 1000, 10000, 20000):
+                with self.subTest(base=base, hz=hz):
+                    self.assertAlmostEqual(self.tone(hz, base, 0), 1.0, delta=0.0116)
+            for hz in (40000, 60000, 100000, int(base / 2 * 0.93)):
+                with self.subTest(base=base, hz=hz):
+                    self.assertLess(self.tone(hz, base, 0), 1e-5)
+
+    def test_accumulatore_in_doppia_precisione(self):
+        # Il filtro e' progettato per 110 dB: coefficienti, linea di ritardo e
+        # accumulatore in float non li reggono.
+        header = (self.work / "dsd_decim.h").read_text(encoding="utf-8")
+        self.assertIn("double acc;", header)
+        self.assertIn("double ring[", header)
+        self.assertIn("double coef[", header)
+        self.assertNotIn("float acc", header)
+
+    def test_conteggio_dei_campioni_tagliati(self):
+        self.assertEqual(self.run_bin("clip", "2147483648.0"), ["2147483647", "1"])
+        self.assertEqual(self.run_bin("clip", "-2147483649.0"), ["-2147483648", "1"])
+        self.assertEqual(self.run_bin("clip", "1000.0"), ["1000", "0"])
 
     def test_tono_1k_invariato_e_stato_continuo(self):
         na, nb, uguali, ampiezza = self.run_bin("tone", "1000", "977", "352800", "1")

@@ -433,7 +433,14 @@ fir_in_use() { correction_active && fir_ok; }
 # ricerca automatica non si sa dove sia: volume software, e lo Stato dice
 # perche').
 volume_dsp() {
-	[ "$(lower "$(conf VOLUME fisso)")" = dsp ] || return 1
+	# VOLUME=dac con un DAC senza mixer (marcatore scritto dal player): al posto
+	# del volume fisso o di quello software di Squeezelite (16.16 a virgola
+	# fissa) si usa il volume a 64 bit, se CamillaDSP e' disponibile.
+	case "$(lower "$(conf VOLUME fisso)")" in
+		dsp) ;;
+		dac) [ -f "$RUN/volume.senzamixer" ] || return 1 ;;
+		*) return 1 ;;
+	esac
 	[ "$(mode)" = completa ] || [ -n "$(conf SERVER)" ]
 }
 

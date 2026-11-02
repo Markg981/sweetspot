@@ -169,8 +169,9 @@ BR2_PACKAGE_IW=y
 BR2_PACKAGE_NFTABLES=y
 
 # Bluetooth come sorgente A2DP (spento di serie): bluez5_utils, bluez-alsa e
-# bluealsa-aplay. Solo SBC: AAC richiede fdk-aac (licenza non libera), aptX e
-# LDAC non sono in Buildroot.
+# bluealsa-aplay. Codec: SBC e aptX/aptX HD (libopenaptx, GPL-3.0+, nel Buildroot;
+# bluez-alsa lo vede da solo). AAC no: fdk-aac ha licenza non libera. LDAC no:
+# manca un decoder con rilascio verificato (vedi README, sezione Bluetooth).
 BR2_PACKAGE_DBUS=y
 BR2_PACKAGE_BLUEZ5_UTILS=y
 BR2_PACKAGE_BLUEZ5_UTILS_CLIENT=y
@@ -178,6 +179,7 @@ BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_AUDIO=y
 BR2_PACKAGE_BLUEZ_ALSA=y
 BR2_PACKAGE_BLUEZ_ALSA_APLAY=y
 BR2_PACKAGE_BLUEZ_ALSA_CLI=y
+BR2_PACKAGE_LIBOPENAPTX=y
 
 # Sistema in RAM: tutto in un initramfs compresso
 BR2_TARGET_ROOTFS_CPIO=y

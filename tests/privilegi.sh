@@ -430,11 +430,19 @@ fi
 PATH=$A/bin:$PATH
 export PATH
 : > "$A/priv.log"
-act "a=riavvia" > /dev/null
+out=$(act "a=riavvia")
 expect "riavvia: lo fa root, in sottofondo" "@riavvia" "$(cat "$A/priv.log")"
+expect "riavvia: si passa alla pagina d'attesa animata" "Location: /cgi-bin/arresto?modo=riavvio" "$(printf '%s' "$out" | tr -d '' | grep '^Location:')"
 : > "$A/priv.log"
-act "a=spegni" > /dev/null
+out=$(act "a=spegni")
 expect "spegni: lo fa root, in sottofondo" "@spegni" "$(cat "$A/priv.log")"
+expect "spegni: si passa alla pagina d'attesa animata" "Location: /cgi-bin/arresto?modo=spegnimento" "$(printf '%s' "$out" | tr -d '' | grep '^Location:')"
+# La pagina d'attesa: fase giusta, script che segue lo spegnimento, niente
+# testo arbitrario nel modo (solo riavvio o spegnimento).
+pg() { QUERY_STRING="$1" SWEETSPOT_RUN="$A/run" SWEETSPOT_LOG="$A/log" SWEETSPOT_DEFAULTS="$OVERLAY/etc/sweetspot/defaults.conf" 	sh "$OVERLAY/usr/share/sweetspot/www/cgi-bin/arresto"; }
+expect "arresto: spegnimento" "1|1" "$(pg 'modo=spegnimento' | grep -c 'data-arresto="spegnimento"')|$(pg 'modo=spegnimento' | grep -c 'src="/arresto.js')"
+expect "arresto: modo sconosciuto vale riavvio" "1|0" "$(pg 'modo=%3Cx%3E' | grep -c 'data-arresto="riavvio"')|$(pg 'modo=%3Cx%3E' | grep -c '<x>')"
+expect "arresto: il messaggio dell'azione compare (escapato)" "1|0" "$(pg 'modo=riavvio&msg=%3Cb%3Eciao' | grep -c '&lt;b&gt;ciao')|$(pg 'modo=riavvio&msg=%3Cb%3Eciao' | grep -c '<b>ciao')"
 : > "$A/priv.log"
 printf 'PASSWORD_WEB=$1$x$y\n' > "$A/run/sweetspot.web"
 act "a=ripristina&conferma=si" > /dev/null

@@ -259,8 +259,10 @@ if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$chann
 			esac ;;
 	esac
 	# 4. Guadagno effettivo.
+	dac_nv=$(head -n 1 "$RUN/dac.guadagno" 2>/dev/null)
 	case "$(volume_effettivo)" in
-		fisso) chain_row inv "4. Guadagno" "Unitario: volume fisso al 100%." ;;
+		fisso) if [ -n "$dac_nv" ]; then chain_row nv "4. Guadagno" "Guadagno del DAC non verificabile: $dac_nv; il livello del DAC non è stato modificato (solo riattivato)."
+			else chain_row inv "4. Guadagno" "Unitario: volume fisso al 100%."; fi ;;
 		hardware) chain_row inv "4. Guadagno" "Unitario sui campioni: il volume agisce nel DAC (hardware), non nel flusso digitale." ;;
 		*) chain_row mod "4. Guadagno" "Non unitario: volume digitale ($(lower "$(conf VOLUME fisso)")), con arrotondamento e dither." ;;
 	esac
@@ -359,7 +361,7 @@ volume_note() {
 		return 0
 	fi
 	[ "$1" = software ] || return 0
-	printf '<p class="sub">%s</p>\n' "Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF (rumore di ±1 LSB, senza distorsione di troncamento). Sotto il 100% il segnale non è più bit-perfect. Il volume software non agisce sul DSD nativo (un DSF suonerebbe al 100% dopo un brano attenuato, circa 30 dB più forte): per sicurezza di orecchie e diffusori i file DSD si convertono sempre in PCM, che il volume attenua. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
+	printf '<p class="sub">%s</p>\n' "Volume software (modo di compatibilità, consigliato il volume a 64 bit dsp): il guadagno di Squeezelite è in virgola fissa 16.16, senza rampa. Squeezelite abbassa i campioni e li arrotonda con dither TPDF (rumore di ±1 LSB, senza distorsione di troncamento). Sotto il 100% il segnale non è più bit-perfect. Il volume software non agisce sul DSD nativo (un DSF suonerebbe al 100% dopo un brano attenuato, circa 30 dB più forte): per sicurezza di orecchie e diffusori i file DSD si convertono sempre in PCM, che il volume attenua. Se puoi, regola il volume dall'amplificatore (fisso) o dal DAC."
 }
 vol=$(lower "$(conf VOLUME fisso)")
 rs=$(lower "$(conf RICAMPIONAMENTO no)")
@@ -371,7 +373,7 @@ cat <<HTML
 $(option fisso "Fisso al 100%: si regola dall'amplificatore (bit-perfect, consigliato)" "$vol")
 $(option dac "Dal DAC: usa il controllo hardware (dipende dal DAC)" "$vol")
 $(option dsp "A 64 bit con dither (CamillaDSP): il migliore se il volume va regolato qui" "$vol")
-$(option software "Dal software: con dither TPDF, ma non bit-perfect (solo per diffusori attivi senza volume)" "$vol")
+$(option software "Software (compatibilità): volume di Squeezelite a virgola fissa 16.16 con dither TPDF, non bit-perfect; consigliato il volume a 64 bit (dsp)" "$vol")
 </select>
 $(volume_note "$vol")
 
@@ -422,8 +424,11 @@ $(option minimo "Fase minima: niente pre-eco" "$(conf FILTRO lineare)")
 <input id="buf" name="buffer" inputmode="numeric" value="$(esc "$(conf BUFFER_ALSA_MS 400)")">
 <label for="per">Periodi ALSA <span>(2-16, predefinito 4)</span></label>
 <input id="per" name="periodi" inputmode="numeric" value="$(esc "$(conf PERIODI_ALSA 4)")">
-<label for="pf">Pausa al cambio di frequenza, in millisecondi <span>(per DAC che perdono l'inizio del brano)</span></label>
-<input id="pf" name="pausa_frequenza" inputmode="numeric" value="$(esc "$(conf PAUSA_FREQUENZA_MS 0)")">
+<label for="pf">Pausa al cambio di frequenza, in millisecondi <span>(0-5000, predefinito 250: il tempo che il DAC impiega a riagganciare il clock, dopo che la coda del brano e' uscita dal buffer)</span></label>
+<input id="pf" name="pausa_frequenza" inputmode="numeric" value="$(esc "$(conf PAUSA_FREQUENZA_MS 250)")">
+<label for="cd">Chiusura del DAC dopo inattivita', in secondi <span>(0-3600, predefinito 30, 0 = mai)</span></label>
+<input id="cd" name="chiusura_dac" inputmode="numeric" value="$(esc "$(conf CHIUSURA_DAC_S 30)")">
+<p class="sub">Chiudere il DAC quando non suona lo libera per altre sorgenti, ma alcuni DAC fanno un click e riagganciano il clock a ogni riapertura. Con 0 il DAC resta aperto: evita click e riagganci. Il Bluetooth non ne risente (ferma il player prima di usare il DAC); con CamillaDSP il DAC lo tiene gia' aperto CamillaDSP e questa opzione non cambia nulla.</p>
 <label for="pd">Pausa al passaggio tra DSD e PCM, in millisecondi</label>
 <input id="pd" name="pausa_dsd" inputmode="numeric" value="$(esc "$(conf PAUSA_DSD_MS 500)")">
 </details>

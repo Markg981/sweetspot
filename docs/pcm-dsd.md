@@ -42,6 +42,21 @@ funzione principale di prodotti come HQPlayer.
   31, 33, 35, 39, 55 e 307 punti, l'ultimo ripido ma al ritmo più basso), cioè
   una frazione piccola di un core del Raspberry Pi 4. Il test di C
   (`tests/squeezelite-dsd-decimation.py`) misura passband, stopband e costo.
+  I coefficienti, la linea di ritardo e l'accumulatore sono in doppia
+  precisione (circa 130 KiB di stato per tutta la cascata, e una
+  moltiplicazione-somma in double costa quanto una in float su un core a 64
+  bit come quello del Pi 4): con un accumulatore float i 110 dB di progetto non
+  si raggiungono.
+  Se il DAC accetta già DSD/8 (352,8 o 705,6 kHz) non si dimezza, ma si applica
+  comunque un ultimo passa-basso della stessa progettazione (piatto fino a
+  20 kHz, 110 dB sotto da 40 kHz, circa 250 punti al ritmo di ingresso: per DSD128
+  circa 90 milioni di moltiplicazioni al secondo per canale): così il rumore
+  ultrasonico del modulatore non arriva al DAC. Si preferisce questo a forzare
+  /16 perché mantiene la frequenza più alta che il DAC dichiara.
+- Campioni tagliati: Squeezelite li conta durante la conversione e, all'inizio
+  del brano successivo, scrive nel log del player un avviso con il numero
+  (`DSD to PCM: N sample(s) clipped`): se compare, abbassa il margine (valore
+  più negativo di `DSD_PCM_MARGINE_DB`).
 - Margine della conversione (`DSD_PCM_MARGINE_DB`, di serie -3 dB, da -24 a 0):
   i DSD "over" superano 0 dBFS fino a +3 dB, cioè il 50% di modulazione oltre lo
   standard, e senza margine verrebbero tagliati a 32 bit. Il prezzo è che tutto

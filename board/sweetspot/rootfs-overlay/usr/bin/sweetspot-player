@@ -118,15 +118,19 @@ announced_max_rate() { # scheda
 # uscita hw: senza plughw:. Con dsp (solo DAC principale con CamillaDSP)
 # niente ripiego ne' -H: il dispositivo ALSA e' quello di CamillaDSP.
 common_args() { # scheda registro priorita' buffer_alsa_ms dsp [buffers_nel_registro]
-	local rate_ms maxrate rs fb alsa=$4 dsp=$5
-	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 0)
+	local rate_ms close_s maxrate rs fb dsp=$5
+	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 250)
+	close_s=$(num_conf CHIUSURA_DAC_S 30)
 	maxrate=$(num_conf FREQUENZA_MAX 0)
-	printf '%s\n' -b "$(PLAYER_BUFFERS_LOG=${6:-0} player_buffers)" -C 30 -p "$3" \
+	printf '%s\n' -b "$(PLAYER_BUFFERS_LOG=${6:-0} player_buffers)" -p "$3" \
 		-d output=info -d decode=info -f "$2"
-	# Pausa fra brani a frequenza diversa: Squeezelite svuota il buffer ALSA
-	# (patch 0005) prima di riaprire il DAC; la pausa minima e' quanto il
-	# buffer reale impiega a uscire, PAUSA_FREQUENZA_MS puo' solo allungarla.
-	[ "$rate_ms" -lt "$alsa" ] && rate_ms=$alsa
+	# Chiusura del DAC dopo close_s secondi senza suonare (-C); 0 = resta
+	# aperto, niente -C. Vedi CHIUSURA_DAC_S in defaults.conf.
+	[ "$close_s" -gt 0 ] && printf '%s\n' -C "$close_s"
+	# Pausa fra brani a frequenza diversa: la patch 0005 fa uscire la coda del
+	# brano dal buffer ALSA (drain) prima di chiudere il DAC, e la pausa di -r
+	# parte solo dopo: non serve che duri quanto il buffer, e' il tempo che al
+	# DAC serve per riagganciare il clock (molti mutano 100-300 ms).
 	if [ "$maxrate" -gt 0 ]; then printf '%s\n' -r "$maxrate:$rate_ms"; else printf '%s\n' -r ":$rate_ms"; fi
 	rs=$(resample_args)
 	[ -n "$rs" ] && printf '%s\n' -R "$rs"
@@ -820,12 +824,36 @@ dac_volume_controls() {
 # DAC USB espongono un volume proprio che, se non e' al massimo, abbassa il
 # segnale dentro il DAC.
 dac_unity_gain() {
-	local card=$1 ctl
+	local card=$1 ctl db
+	local nv="$RUN/dac.guadagno"
+	rm -f "$nv"
 	dac_volume_controls "$card" | while IFS= read -r ctl; do
-		amixer -q -c "$card" sset "$ctl" 0dB unmute 2>/dev/null ||
-			amixer -q -c "$card" sset "$ctl" 100% unmute 2>/dev/null
-		log "player: controllo '$ctl' del DAC a 0 dB"
+		# Il livello si tocca solo se il controllo espone la scala in dB: il 100%
+		# di un controllo senza dB (o con 0 dB fuori scala) puo' essere oltre
+		# 0 dB su certi codec HDA/I2S (clipping analogico) o non essere unitario.
+		db=$(dac_ctl_db "$card" "$ctl")
+		if [ -z "$db" ]; then
+			amixer -q -c "$card" sset "$ctl" unmute 2>/dev/null
+			echo "il controllo '$ctl' non espone la scala in dB" >> "$nv"
+			log "player: controllo '$ctl' del DAC senza scala in dB: solo riattivato, livello invariato"
+			continue
+		fi
+		# 0 dB se e' nel range; se il massimo e' sotto, ALSA si ferma al massimo.
+		amixer -q -c "$card" sset "$ctl" 0dB unmute 2>/dev/null
+		db=$(dac_ctl_db "$card" "$ctl")
+		if [ -n "$db" ] && awk -v d="$db" 'BEGIN{exit !(d>0.05)}'; then
+			echo "il controllo '$ctl' resta a $db dB, sopra 0 dB" >> "$nv"
+			log "player: controllo '$ctl' del DAC a $db dB (oltre 0 dB, minimo del range)"
+		else
+			log "player: controllo '$ctl' del DAC a ${db:-?} dB (0 dB o il massimo del range)"
+		fi
 	done
+}
+
+# Livello in dB (il primo "[x.xxdB]") di un controllo del DAC; vuoto se
+# il controllo non ha la scala in dB.
+dac_ctl_db() { # scheda controllo
+	amixer -c "$1" sget "$2" 2>/dev/null | sed -n 's/.*\[\(-\{0,1\}[0-9.]*\)dB\].*/\1/p' | head -n 1
 }
 
 # Parametri di squeezelite per il ricampionamento facoltativo (spento di
@@ -894,6 +922,12 @@ run_player() {
 	# correzione.attiva: CamillaDSP e' nel percorso; correzione.filtri: con i
 	# filtri della stanza; volume.modo: dsp (volume a 64 bit) o riserva.
 	dsp=""
+	# VOLUME=dac su un DAC senza mixer: marcatore per sweetspot-dsp, che in quel
+	# caso offre il volume a 64 bit (volume_modo_calcola) invece del fisso.
+	rm -f "$RUN/volume.senzamixer"
+	if [ "$(lower "$(conf VOLUME fisso)")" = dac ] && [ -z "$(dac_volume_control "$card")" ]; then
+		: > "$RUN/volume.senzamixer"
+	fi
 	rm -f "$RUN/correzione.attiva" "$RUN/correzione.filtri" "$RUN/correzione.errore" "$RUN/correzione.motivo" "$RUN/volume.modo" "$RUN/volume.motivo"
 	stop_dsp
 	# Correzione chiesta ma file mancanti, illeggibili, malformati o
