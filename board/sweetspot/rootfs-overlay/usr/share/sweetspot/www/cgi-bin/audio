@@ -241,8 +241,10 @@ if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$chann
 			esac ;;
 	esac
 	# 4. Guadagno effettivo.
+	dac_nv=$(head -n 1 "$RUN/dac.guadagno" 2>/dev/null)
 	case "$(volume_effettivo)" in
-		fisso) chain_row inv "4. Guadagno" "Unitario: volume fisso al 100%." ;;
+		fisso) if [ -n "$dac_nv" ]; then chain_row nv "4. Guadagno" "Guadagno del DAC non verificabile: $dac_nv; il livello del DAC non è stato modificato (solo riattivato)."
+			else chain_row inv "4. Guadagno" "Unitario: volume fisso al 100%."; fi ;;
 		hardware) chain_row inv "4. Guadagno" "Unitario sui campioni: il volume agisce nel DAC (hardware), non nel flusso digitale." ;;
 		*) chain_row mod "4. Guadagno" "Non unitario: volume digitale ($(lower "$(conf VOLUME fisso)")), con arrotondamento e dither." ;;
 	esac

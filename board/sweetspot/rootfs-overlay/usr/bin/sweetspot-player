@@ -815,12 +815,36 @@ dac_volume_controls() {
 # DAC USB espongono un volume proprio che, se non e' al massimo, abbassa il
 # segnale dentro il DAC.
 dac_unity_gain() {
-	local card=$1 ctl
+	local card=$1 ctl db
+	local nv="$RUN/dac.guadagno"
+	rm -f "$nv"
 	dac_volume_controls "$card" | while IFS= read -r ctl; do
-		amixer -q -c "$card" sset "$ctl" 0dB unmute 2>/dev/null ||
-			amixer -q -c "$card" sset "$ctl" 100% unmute 2>/dev/null
-		log "player: controllo '$ctl' del DAC a 0 dB"
+		# Il livello si tocca solo se il controllo espone la scala in dB: il 100%
+		# di un controllo senza dB (o con 0 dB fuori scala) puo' essere oltre
+		# 0 dB su certi codec HDA/I2S (clipping analogico) o non essere unitario.
+		db=$(dac_ctl_db "$card" "$ctl")
+		if [ -z "$db" ]; then
+			amixer -q -c "$card" sset "$ctl" unmute 2>/dev/null
+			echo "il controllo '$ctl' non espone la scala in dB" >> "$nv"
+			log "player: controllo '$ctl' del DAC senza scala in dB: solo riattivato, livello invariato"
+			continue
+		fi
+		# 0 dB se e' nel range; se il massimo e' sotto, ALSA si ferma al massimo.
+		amixer -q -c "$card" sset "$ctl" 0dB unmute 2>/dev/null
+		db=$(dac_ctl_db "$card" "$ctl")
+		if [ -n "$db" ] && awk -v d="$db" 'BEGIN{exit !(d>0.05)}'; then
+			echo "il controllo '$ctl' resta a $db dB, sopra 0 dB" >> "$nv"
+			log "player: controllo '$ctl' del DAC a $db dB (oltre 0 dB, minimo del range)"
+		else
+			log "player: controllo '$ctl' del DAC a ${db:-?} dB (0 dB o il massimo del range)"
+		fi
 	done
+}
+
+# Livello in dB (il primo "[x.xxdB]") di un controllo del DAC; vuoto se
+# il controllo non ha la scala in dB.
+dac_ctl_db() { # scheda controllo
+	amixer -c "$1" sget "$2" 2>/dev/null | sed -n 's/.*\[\(-\{0,1\}[0-9.]*\)dB\].*/\1/p' | head -n 1
 }
 
 # Parametri di squeezelite per il ricampionamento facoltativo (spento di

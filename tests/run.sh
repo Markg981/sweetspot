@@ -421,6 +421,7 @@ chmod +x "$WORK/amx/amixer"
 expect "controlli di riproduzione del DAC" "PCM|Clock Source 41 Validity|" \
 	"$(SWEETSPOT_PATH="$WORK/amx:$SWEETSPOT_PATH" SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; dac_volume_controls 1" | tr '\n' '|')"
 
+
 echo "Plugin consigliati"
 CAT=$OVERLAY/usr/share/sweetspot/plugin-consigliati.txt
 bad=$(grep -v '^#' "$CAT" | grep . | awk -F'|' 'NF != 4 || $1 !~ /^[A-Za-z0-9_]+$/ || $3 == "" || $4 == ""')
