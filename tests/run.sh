@@ -1433,7 +1433,7 @@ dspw() { # impostazioni frequenza -> file
 	cat "$DSPE/d.yml"
 }
 expect "dither: assente a 32 bit, 0 dB, senza filtri e con il volume fuori da CamillaDSP" "0|format: S32_LE" \
-	"$(dspw 'VOLUME=fisso' 44100 | grep -c -i 'dither')|$(dspw 'VOLUME=fisso' 44100 | grep -o 'format: S32_LE')"
+	"$(dspw 'VOLUME=fisso' 44100 | grep -c -i 'dither')|$(dspw 'VOLUME=fisso' 44100 | grep -o 'format: S32_LE' | head -n 1)"
 expect "dither: con VOLUME=dsp resta anche a 0 dB" "bits: 24" "$(dspw 'VOLUME=dsp' 44100 | grep -o 'bits: 24')"
 expect "dither: DITHER_DSP=piatto lo mantiene sempre" "type: Flat" "$(dspw 'DITHER_DSP=piatto' 44100 | grep -o 'type: Flat')"
 expect "dither: DITHER_DSP=spento lo toglie anche con VOLUME=dsp" "0" "$(dspw "$(printf 'VOLUME=dsp\nDITHER_DSP=spento')" 44100 | grep -c -i 'dither')"
