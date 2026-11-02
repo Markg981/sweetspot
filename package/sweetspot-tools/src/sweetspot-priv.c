@@ -176,6 +176,7 @@ static const struct regola REGOLE[] = {
 //  b  si oppure no
 //  m  nome di dispositivo: lettere, cifre, spazio, . _ - (al massimo 40)
 //  g  guadagno in dB (margine): da -24 a 0, al massimo un decimale (0, -3, -1.5)
+//  t  attenuazione in dB del ricampionatore: da 0 a 10, al massimo un decimale (0, 0.5, 1)
 //  y  password di Lyrion: da 10 a 64 caratteri ASCII stampabili, senza spazi
 //     e senza % (la CLI di Lyrion decodifica gli argomenti di "login")
 struct chiave {
@@ -185,7 +186,7 @@ struct chiave {
 };
 
 static const struct chiave CHIAVI[] = {
-	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"DSD_PCM_MARGINE_DB", 'g', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
+	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"DSD_PCM_MARGINE_DB", 'g', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0}, {"RICAMPIONAMENTO_ATTENUAZIONE_DB", 't', 0},
 	{"FREQUENZA_MAX", 'd', 0}, {"BUFFER_ALSA_MS", 'd', 0}, {"PERIODI_ALSA", 'd', 0},
 	{"PAUSA_FREQUENZA_MS", 'd', 0}, {"PAUSA_DSD_MS", 'd', 0}, {"ALTRI_DAC", 'w', 0},
 	{"DAC", 'w', 0}, {"ESCLUDI_DISCHI", 'l', 0}, {"ARCHIVIO", 'q', 0},
@@ -309,6 +310,26 @@ static int margine_ok(const char *v)
 	return intero < 24 || (intero == 24 && dec == 0);
 }
 
+// Attenuazione in dB del ricampionatore: da 0 a 10, al massimo un decimale
+// ("0", "0.5", "10", "10.0"); niente segno, spazi, esponenti o altro.
+static int attenuazione_ok(const char *v)
+{
+	int intero = 0, cifre = 0, dec = 0;
+	for (; isdigit((unsigned char)*v) && cifre < 3; v++, cifre++)
+		intero = intero * 10 + (*v - '0');
+	if (cifre == 0 || cifre > 2)
+		return 0;
+	if (*v == '.') {
+		v++;
+		if (!isdigit((unsigned char)*v))
+			return 0;
+		dec = *v++ - '0';
+	}
+	if (*v)
+		return 0;
+	return intero < 10 || (intero == 10 && dec == 0);
+}
+
 // Il valore va bene per la chiave? (vuoto: sempre, e' "nessun valore")
 static int valore_ok(const char *chiave, const char *v)
 {
@@ -329,6 +350,7 @@ static int valore_ok(const char *chiave, const char *v)
 	case 'b': return !strcmp(v, "si") || !strcmp(v, "no");
 	case 'm': return solo(v, 40, c_nome);
 	case 'g': return margine_ok(v);
+	case 't': return attenuazione_ok(v);
 	case 'y': return strlen(v) >= 10 && solo(v, 64, c_password_lyrion);
 	}
 	return 0;

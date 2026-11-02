@@ -118,7 +118,7 @@ announced_max_rate() { # scheda
 # uscita hw: senza plughw:. Con dsp (solo DAC principale con CamillaDSP)
 # niente ripiego ne' -H: il dispositivo ALSA e' quello di CamillaDSP.
 common_args() { # scheda registro priorita' buffer_alsa_ms dsp [buffers_nel_registro]
-	local rate_ms maxrate rs alsa=$4 dsp=$5
+	local rate_ms maxrate rs fb alsa=$4 dsp=$5
 	rate_ms=$(num_conf PAUSA_FREQUENZA_MS 0)
 	maxrate=$(num_conf FREQUENZA_MAX 0)
 	printf '%s\n' -b "$(PLAYER_BUFFERS_LOG=${6:-0} player_buffers)" -C 30 -p "$3" \
@@ -138,7 +138,12 @@ common_args() { # scheda registro priorita' buffer_alsa_ms dsp [buffers_nel_regi
 		if [ "$(lower "$(conf FREQUENZA_NON_SUPPORTATA ricampiona)")" = blocca ]; then
 			log "player: frequenza non supportata dal DAC: rifiuto stretto (FREQUENZA_NON_SUPPORTATA=blocca)"
 		else
-			printf '%s\n' -R vLE
+			case "$(lower "$(conf FILTRO lineare)")" in
+				intermedio) fb=$(soxr_params vIE) ;;
+				minimo) fb=$(soxr_params vME) ;;
+				*) fb=$(soxr_params vLE) ;;
+			esac
+			printf '%s\n' -R "$fb"
 		fi
 	fi
 	# Originale (niente ricampionamento, uscita diretta hw:): Squeezelite non
@@ -839,7 +844,18 @@ resample_args() {
 	esac
 	recipe="v$phase"
 	[ "$mode" = asincrono ] && recipe="${recipe}X"
-	printf '%s' "$recipe"
+	printf '%s' "$(soxr_params "$recipe")"
+}
+
+# Stringa di -R per soxr: <ricetta>:<flag>:<attenuazione dB>. Squeezelite
+# lascia a soxr l'attenuazione di 1 dB se il campo e' vuoto, quindi si scrive
+# sempre: RICAMPIONAMENTO_ATTENUAZIONE_DB (0-10, predefinito 0.5) copre il
+# clipping intersample del ricampionato; 0 = nessuna attenuazione. La fase
+# viene dalla lettera della ricetta (L/I/M, da FILTRO).
+soxr_params() { # ricetta
+	local att
+	att=$(soxr_attenuazione_db)
+	printf '%s::%s' "$1" "$att"
 }
 
 # Correzione chiesta ma non applicabile: il motivo va in correzione.errore

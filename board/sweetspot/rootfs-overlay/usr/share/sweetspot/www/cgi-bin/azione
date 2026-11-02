@@ -19,7 +19,7 @@ saved_msg() { # codice testo
 
 # Campi dei moduli, riempiti da read_form.
 F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome="" F_protocollo="" F_smb1=""
-F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
+F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamento="" F_filtro="" F_ricam_att="" F_altri_dac="" F_dac=""
 F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
@@ -151,13 +151,16 @@ case "$F_a" in
 		esac
 		case "$F_ricampionamento" in no|sincrono|asincrono) ;; *) F_ricampionamento=no ;; esac
 		case "$F_filtro" in lineare|intermedio|minimo) ;; *) F_filtro=lineare ;; esac
+		[ -n "$F_ricam_att" ] || F_ricam_att=$(soxr_attenuazione_db)
+		F_ricam_att=$(printf '%s' "$F_ricam_att" | tr ',' '.')
+		soxr_attenuazione_valida "$F_ricam_att" || done_to audio "L'attenuazione del ricampionatore va da 0 a 10 dB (un decimale al massimo), es. 0.5."
 		in_range "$F_frequenza_max" 0 1536000 || done_to audio "Frequenza massima non valida: scrivi 0 oppure un valore in Hz, es. 192000."
 		in_range "$F_buffer" 20 499 || done_to audio "Il buffer ALSA va da 20 a 499 millisecondi."
 		in_range "$F_periodi" 2 16 || done_to audio "I periodi ALSA vanno da 2 a 16."
 		in_range "$F_pausa_frequenza" 0 5000 || done_to audio "La pausa al cambio di frequenza va da 0 a 5000 millisecondi."
 		in_range "$F_pausa_dsd" 0 5000 || done_to audio "La pausa tra DSD e PCM va da 0 a 5000 millisecondi."
 		priv sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" DSD_PCM_MARGINE_DB "$F_dsd_margine" RICAMPIONAMENTO "$F_ricampionamento" \
-			FILTRO "$F_filtro" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
+			FILTRO "$F_filtro" RICAMPIONAMENTO_ATTENUAZIONE_DB "$F_ricam_att" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
 			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd" \
 			ALTRI_DAC "$F_altri_dac" DAC "$F_dac"
 		rc=$?
