@@ -31,6 +31,7 @@ for cfg in sweetspot_x86_64 sweetspot_rpi; do
 	expect "$cfg: bluez5_utils, bluez-alsa e bluealsa-aplay nel defconfig" "4" \
 		"$(grep -c '^BR2_PACKAGE_\(BLUEZ5_UTILS\|BLUEZ_ALSA\|BLUEZ_ALSA_APLAY\|DBUS\)=y$' "$ROOT/configs/${cfg}_defconfig")"
 	expect "$cfg: niente fdk-aac (licenza non libera)" "0" "$(grep -c 'FDK_AAC\|BLUEZ_ALSA_ENABLE_AAC' "$ROOT/configs/${cfg}_defconfig")"
+	expect "$cfg: aptX con libopenaptx" "1" "$(grep -c '^BR2_PACKAGE_LIBOPENAPTX=y$' "$ROOT/configs/${cfg}_defconfig")"
 done
 expect "rpi: firmware Bluetooth del Pi" "1" "$(grep -c '^BR2_PACKAGE_BRCMFMAC_SDIO_FIRMWARE_RPI_BT=y$' "$ROOT/configs/sweetspot_rpi_defconfig")"
 expect "rpi: il Bluetooth non e' disabilitato nel firmware" "0" "$(grep -c '^dtoverlay=disable-bt' "$ROOT/board/sweetspot/rpi/config.txt")"
