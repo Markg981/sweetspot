@@ -460,6 +460,14 @@ expect "dsp in modalita' player senza SERVER: il motivo del player passa da volu
 rm -f "$E/run/volume.modo" "$E/run/volume.motivo"
 echo dsp > "$E/run/volume.modo"
 expect "dsp con CamillaDSP: modalita' dsp senza motivo" 'dsp|' "$(common 'volume_modo_calcola ""')"
+printf 'VOLUME=dac
+' > "$E/settings"
+common "config_build '$E/settings'"
+expect "dac senza mixer e con CamillaDSP: modalita' dsp con motivo, non fisso" 'dsp|il DAC non ha un controllo del volume: si usa il volume a 64 bit di CamillaDSP' "$(common 'volume_modo_calcola ""')"
+printf 'VOLUME=software
+' > "$E/settings"
+common "config_build '$E/settings'"
+expect "software esplicito resta software anche con CamillaDSP" 'software|' "$(common 'volume_modo_calcola ""')"
 rm -f "$E/run/volume.modo"
 # Lyrion remoto senza SERVER (preferenze non applicabili) e VOLUME=fisso: il
 # guadagno locale e' garantito da -F, non dalle preferenze del server.

@@ -772,7 +772,7 @@ case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cam
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 out=$(page audio 'VOLUME=software')
 case "$out" in *"Non bit-perfect"*"abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, dither TPDF" "-" ;; esac
-case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
+case "$out" in *'<option value="software" selected'*'Volume software (modo di compatibilità, consigliato il volume a 64 bit dsp)'*'Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
 case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
 # Catena del segnale: verdetto puro e pagina
 expect "catena: tutti invariati = bit-perfect" "bit-perfect" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv inv inv")"
