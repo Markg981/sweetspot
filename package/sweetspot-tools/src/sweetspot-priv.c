@@ -487,6 +487,10 @@ static int opzione_ok(const char *s)
 	static const char *const num[] = {"artist_id:", "album_id:", "genre_id:",
 	    "track_id:", "playlist_id:", "folder_id:", "year:", "compilation:", NULL};
 	size_t i, n;
+	// Brani e cartelle "volatili" di Lyrion (non indicizzati, o sfogliati
+	// durante una scansione) hanno id negativi: solo qui e' ammesso il meno.
+	if (!strncmp(s, "track_id:-", 10) || !strncmp(s, "folder_id:-", 11))
+		return cifre_ok(strchr(s, ':') + 2);
 	for (i = 0; num[i]; i++)
 		if (!strncmp(s, num[i], strlen(num[i])))
 			return cifre_ok(s + strlen(num[i]));

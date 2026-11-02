@@ -36,6 +36,9 @@ errore() { # CODICE_HTTP NOME [TESTO]
 }
 
 num() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "${#1}" -le 9 ]; }
+# Id di cartelle e brani: Lyrion da' id negativi agli elementi "volatili"
+# (cartelle non indicizzate o sfogliate durante una scansione).
+id_lms() { num "${1#-}"; }
 mac_ok() { case "$1" in ''|*[!0-9a-fA-F:]*) return 1 ;; esac; [ "${#1}" -le 17 ]; }
 
 # Esito di lms_json -> risposta.
@@ -110,7 +113,7 @@ if [ "$REQUEST_METHOD" != POST ]; then
 			out=$(lms_json "" players 0 100) ;;
 		cartella)
 			# Senza folder_id: la radice, cioe' i dischi e le cartelle della libreria.
-			[ -z "$P_folder" ] || num "$P_folder" || errore 400 parametro "folder_id non valido"
+			[ -z "$P_folder" ] || id_lms "$P_folder" || errore 400 parametro "folder_id non valido"
 			out=$(lms_json "" musicfolder "$P_start" "$P_count" ${P_folder:+"folder_id:$P_folder"}) ;;
 		stato)
 			[ -n "$P_player" ] || errore 400 parametro "player mancante"
@@ -150,8 +153,11 @@ case "$P_op" in
 		num "$P_v" || errore 400 parametro "posizione non valida"
 		out=$(lms_json "$P_player" time "$P_v") ;;
 	carica)
-		num "$P_id" || errore 400 parametro "id non valido"
-		case "$P_kind" in album|track|artist|playlist|folder) ;; *) errore 400 parametro "tipo non valido" ;; esac
+		case "$P_kind" in
+			track|folder) id_lms "$P_id" || errore 400 parametro "id non valido" ;;
+			album|artist|playlist) num "$P_id" || errore 400 parametro "id non valido" ;;
+			*) errore 400 parametro "tipo non valido" ;;
+		esac
 		case "$P_mode" in load|add|insert) ;; *) errore 400 parametro "modo non valido" ;; esac
 		out=$(lms_json "$P_player" playlistcontrol "cmd:$P_mode" "${P_kind}_id:$P_id") ;;
 	zona)
