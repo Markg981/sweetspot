@@ -267,8 +267,17 @@ trasmettere, il player si ferma e `bluealsa-aplay` suona sul DAC con l'uscita
 torna al player. Non c'è un ingresso nativo in Lyrion (servirebbe un plugin) e
 un loopback ALSA aggiungerebbe un dominio di clock e un ricampionamento. Limiti:
 la musica di Lyrion si ferma mentre suona il telefono e va ripresa a mano;
-l'audio è SBC (compresso), AAC richiede fdk-aac (licenza non libera), aptX e
-LDAC non sono in Buildroot; sul PC servono un dongle USB e, per alcuni modelli,
+l'audio è compresso: SBC e aptX/aptX HD (libopenaptx, GPL-3.0+, già in
+Buildroot); AAC richiede fdk-aac (licenza non libera); LDAC non c'è: bluez-alsa
+4.3.1 con `--enable-ldac` vuole i moduli pkg-config `ldacBT-enc`, `ldacBT-abr` e
+`ldacBT-dec`, e il decoder (libldac di AOSP è solo encoder) esiste solo in fork
+non ufficiali (`artem/libldac`, ramo `decode`, Apache-2.0, senza tag né rilasci;
+`libldacdec`, MIT o Apache-2.0 secondo il fork) di cui non si può fissare una
+versione verificata. Piano: riprovare quando un fork avrà un tag e un
+pkg-config `ldacBT-dec` >= 2.0.0, poi un pacchetto in `package/` e
+`BLUEZ_ALSA_CONF_OPTS += --enable-ldac` in un override.
+
+Sul PC servono un dongle USB e, per alcuni modelli,
 il suo firmware. Il Bluetooth gira solo sui core di sistema, mai su quello
 isolato dell'audio né sulle sue interruzioni.
 
