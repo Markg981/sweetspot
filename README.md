@@ -28,7 +28,9 @@ Interfaccia e documentazione sono solo in italiano; un piano per la localizzazio
    sistema) con l'interfaccia **Material** e il plugin di Sweetspot.
 7. Attende il DAC e avvia **Squeezelite**:
    - uscita diretta `hw:` su ALSA, senza plug, dmix o ricampionamento;
-   - volume fisso al 100% e volume interno del DAC a 0 dB (bit-perfect);
+   - volume fisso al 100% e volume interno del DAC a 0 dB (bit-perfect); se il
+     controllo non espone la scala in dB il livello non si tocca (solo unmute) e la
+     pagina Audio dice "guadagno del DAC non verificabile";
    - DSD nativo se il DAC lo dichiara, altrimenti DoP o PCM a scelta;
    - buffer ampi per anticipare lettura e decodifica: non garantiscono il
      caricamento e la decodifica dell'intero brano prima di suonare; i servizi
