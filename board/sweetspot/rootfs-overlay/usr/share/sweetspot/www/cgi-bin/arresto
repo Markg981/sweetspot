@@ -1,0 +1,54 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Sweetspot - pagina di attesa durante lo spegnimento e il riavvio.
+#
+# La apre "azione" subito dopo aver chiesto lo spegnimento o il riavvio:
+# un'animazione mostra a che punto si e'. Lo script /arresto.js interroga
+# /cgi-bin/vivo: finche' risponde Sweetspot sta ancora salvando e fermando i
+# servizi (il server web e' tra gli ultimi a fermarsi); quando smette, il
+# computer si sta spegnendo o riavviando; nel riavvio, quando torna a
+# rispondere, la pagina passa a Stato. Senza JavaScript resta il testo.
+
+. "${SWEETSPOT_LIB:-/usr/lib/sweetspot}/web.sh"
+
+modo=$(query_param modo)
+case "$modo" in
+	spegnimento) titolo="Spegnimento" ;;
+	*) modo=riavvio; titolo="Riavvio" ;;
+esac
+
+page_start "$titolo" ""
+if [ "$modo" = spegnimento ]; then
+	p1="Salvataggio di libreria e impostazioni"
+	p2="Spegnimento del computer"
+	p3="Spento"
+	fase="Sweetspot si sta spegnendo"
+	nota="Salva la libreria e le impostazioni, poi ferma i servizi. Non staccare la corrente finché non lo indica questa pagina."
+else
+	p1="Salvataggio di libreria e impostazioni"
+	p2="Riavvio del computer"
+	p3="Di nuovo pronto"
+	fase="Sweetspot si sta riavviando"
+	nota="Di solito basta circa un minuto: quando Sweetspot risponde di nuovo, la pagina si aggiorna da sola."
+fi
+cat <<HTML
+<section class="card arresto" data-arresto="$modo" data-dopo="/cgi-bin/stato" aria-labelledby="arresto-fase">
+<div class="arresto-anim" aria-hidden="true">
+<svg class="arresto-anello" viewBox="0 0 120 120"><circle class="arresto-traccia" cx="60" cy="60" r="54"/><circle class="arresto-arco" cx="60" cy="60" r="54"/></svg>
+<svg class="arresto-barre" viewBox="0 0 28 32" fill="currentColor"><rect x="1" y="10" width="4" height="13" rx="2"/><rect x="8" y="4" width="4" height="25" rx="2"/><rect x="15" y="1" width="4" height="30" rx="2"/><rect x="22" y="7" width="4" height="19" rx="2"/></svg>
+</div>
+<div class="arresto-testo">
+<p class="arresto-fase" id="arresto-fase" role="status" aria-live="polite">$(esc "$fase")</p>
+<p class="sub arresto-nota" data-arresto-nota>$(esc "$nota")</p>
+<ol class="arresto-passi">
+<li class="in-corso" data-passo="1">$(esc "$p1")</li>
+<li data-passo="2">$(esc "$p2")</li>
+<li data-passo="3">$(esc "$p3")</li>
+</ol>
+<p class="arresto-tempo" data-arresto-tempo hidden></p>
+<noscript><p class="sub">Questa pagina non si aggiorna da sola senza JavaScript. $(if [ "$modo" = riavvio ]; then echo 'Tra circa un minuto apri di nuovo la pagina <a href="/cgi-bin/stato">Stato</a>.'; else echo 'Stacca la corrente solo quando il computer si è spento.'; fi)</p></noscript>
+</div>
+</section>
+<script src="/arresto.js?v=1"></script>
+HTML
+page_end
