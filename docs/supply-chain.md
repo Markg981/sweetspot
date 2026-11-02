@@ -45,8 +45,11 @@ Buildroot stesso e' fissato per tag **e** commit (`BR_VERSION` e `BR_COMMIT` in
 correzioni a Buildroot non ancora pubblicate stanno in `patches/buildroot/` e
 `build.sh` le applica una volta sola; oggi c'e' l'aggiornamento di ffmpeg da
 6.1.5 a 9.0.2 (archivio verificato con la firma GPG di FFmpeg, chiave
-FCF986EA15E6E293A5644F10B4322F04D67658D8, prima di fissarne lo sha256). Va
-tolta quando Buildroot pubblica la stessa versione.
+FCF986EA15E6E293A5644F10B4322F04D67658D8, prima di fissarne lo sha256), e
+quello di libcurl da 8.22.0 a 8.23.0 (commit 1380aa11 del ramo 2026.08.x di
+Buildroot, ripreso tale e quale: corregge le CVE Critical/High di curl
+pubblicate a fine ottobre 2026). Ogni patch va tolta quando Buildroot
+pubblica la stessa versione.
 
 ## Strumenti di compilazione fissati
 
