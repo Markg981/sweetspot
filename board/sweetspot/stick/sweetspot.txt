@@ -113,6 +113,9 @@ RICAMPIONAMENTO=no
 # segnale; a 16 bit con noise shaping), piatto (sempre TPDF piatto), spento.
 #DITHER_DSP=auto
 FILTRO=lineare
+# Attenuazione (dB, da 0 a 10) del ricampionatore, anche per il ricampionamento
+# di ripiego: 0.5 lascia margine al clipping intersample, 0 nessuna attenuazione.
+RICAMPIONAMENTO_ATTENUAZIONE_DB=0.5
 
 # Correzione ambientale con i filtri misurati con REW (pagina Audio >
 # Correzione ambientale). Cambia il segnale, quindi di serie e' spenta.

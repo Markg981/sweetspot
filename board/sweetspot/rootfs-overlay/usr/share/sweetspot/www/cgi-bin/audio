@@ -124,7 +124,9 @@ verdict() { # formato frequenza canali
 	elif [ "$(lower "$(conf VOLUME fisso)")" = software ]; then
 		why="il volume è abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"
 	elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then
-		why="il ricampionamento è attivo e abbassa il segnale di 1 dB"
+		why="il ricampionamento è attivo e abbassa il segnale di $(soxr_attenuazione_db) dB"
+	elif resample_fallback_possible; then
+		why="il DAC non dichiara $src_rate Hz: Squeezelite ricampiona con soxr (FREQUENZA_NON_SUPPORTATA=ricampiona, attenuazione $(soxr_attenuazione_db) dB)"
 	elif [ "$(lower "$(conf FORMATO_USCITA auto)")" = 16 ] && [ -n "$src_bits" ] && [ "$src_bits" -gt 16 ] 2>/dev/null; then
 		why="l'uscita a 16 bit riduce il brano con dither TPDF"
 	fi
@@ -184,6 +186,21 @@ echo '</div>'
 # solo se tutti sono invariati e verificati. L'elaborazione ad alta precisione
 # (float64, headroom, dither) e' un'altra cosa: e' accurata, ma cambia i campioni.
 chain_states=""
+# Il ripiego di ricampionamento (FREQUENZA_NON_SUPPORTATA=ricampiona) scatta
+# solo se il brano ha una frequenza che il DAC non dichiara: allora Squeezelite
+# passa da soxr (con l'attenuazione di RICAMPIONAMENTO_ATTENUAZIONE_DB) e il
+# segnale cambia. Con i brani a frequenza supportata resta bit-perfect.
+resample_fallback_possible() {
+	[ -n "$card" ] && [ -n "$src_rate" ] || return 1
+	[ "$(lower "$(conf RICAMPIONAMENTO no)")" = no ] || return 1
+	[ "$(lower "$(conf FREQUENZA_NON_SUPPORTATA ricampiona)")" = blocca ] && return 1
+	case "$src_type" in dsf|dff) return 1 ;; esac
+	local r rs_all
+	rs_all=$(dac_rates "$card" 2>/dev/null)
+	[ -n "$rs_all" ] || return 1
+	for r in $rs_all; do [ "$r" = "$src_rate" ] && return 1; done
+	return 0
+}
 chain_row() { # stato(inv|mod|nv) nome descrizione
 	local sev lab
 	case "$1" in
@@ -232,7 +249,8 @@ if [ "$pcm_state" = RUNNING ] && [ -n "$fmt" ] && [ -n "$rate" ] && [ -n "$chann
 				*)
 					if [ -n "$src_rate" ] && [ "$src_rate" != "$rate" ]; then why="frequenza cambiata da $src_rate a $rate Hz"
 					elif [ -n "$src_bits" ] && [ "$src_bits" -gt "$(alsa_bits "$fmt")" ] 2>/dev/null; then why="$src_bits bit ridotti a $(alsa_bits "$fmt")"
-					elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then why="ricampionamento attivo (cala il segnale di 1 dB)"
+					elif [ "$(lower "$(conf RICAMPIONAMENTO no)")" != no ]; then why="ricampionamento attivo (cala il segnale di $(soxr_attenuazione_db) dB)"
+					elif resample_fallback_possible; then why="il DAC non dichiara $src_rate Hz e scatta il ricampionamento di ripiego (soxr, attenuazione $(soxr_attenuazione_db) dB)"
 					fi
 					if [ -n "$why" ]; then chain_row mod "3. Squeezelite" "Formato decodificato diverso dal brano: $why."
 					elif [ -z "$src_rate" ]; then chain_row nv "3. Squeezelite" "Formato decodificato $fmt, $rate Hz; senza il brano non si confronta."
@@ -398,6 +416,8 @@ $(option minimo "Fase minima: niente pre-eco" "$(conf FILTRO lineare)")
 
 <details>
 <summary>Opzioni per esperti</summary>
+<label for="rat">Attenuazione del ricampionatore in dB <span>(0-10, predefinito 0.5; vale anche per il ripiego su frequenze che il DAC non dichiara)</span></label>
+<input id="rat" name="ricam_att" inputmode="decimal" value="$(esc "$(soxr_attenuazione_db)")">
 <label for="fmax">Frequenza massima inviata al DAC <span>(0 = quella dichiarata dal DAC)</span></label>
 <input id="fmax" name="frequenza_max" inputmode="numeric" value="$(esc "$(conf FREQUENZA_MAX 0)")">
 <label for="buf">Buffer ALSA in millisecondi <span>(20-499, predefinito 400)</span></label>
