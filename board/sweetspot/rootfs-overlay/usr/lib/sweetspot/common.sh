@@ -1410,7 +1410,8 @@ volume_effettivo() {
 # se e' quella chiesta, altrimenti dice perche' si e' ripiegato.
 #   fisso    campioni invariati: Squeezelite con -F, mixer del DAC a 0 dB
 #   dac      mixer hardware del DAC (-V controllo)
-#   software volume di Squeezelite (dither TPDF)
+#   software volume di Squeezelite (16.16 a virgola fissa, dither TPDF):
+#            modo di compatibilita', solo se scelto o se manca CamillaDSP
 #   dsp      volume a 64 bit in CamillaDSP, Squeezelite con -F
 # $1: controllo di volume del DAC (vuoto se manca). volume.modo (dsp o
 # riserva) lo scrive il player prima, quando sa se CamillaDSP c'e'.
@@ -1418,7 +1419,12 @@ volume_modo_calcola() { # controllo
 	local mot
 	case "$(lower "$(conf VOLUME fisso)")" in
 		dac)
+			# Senza mixer, con CamillaDSP disponibile si preferisce il volume a 64
+			# bit al fisso; il volume software (16.16 a virgola fissa) resta
+			# solo per chi lo sceglie (VOLUME=software) o se CamillaDSP manca.
 			if [ -n "$1" ]; then echo "dac|"
+			elif [ "$(cat "$RUN/volume.modo" 2>/dev/null)" = dsp ]; then
+				echo "dsp|il DAC non ha un controllo del volume: si usa il volume a 64 bit di CamillaDSP"
 			else echo "fisso|il DAC non ha un controllo del volume"; fi ;;
 		software) echo "software|" ;;
 		dsp)

@@ -421,6 +421,7 @@ chmod +x "$WORK/amx/amixer"
 expect "controlli di riproduzione del DAC" "PCM|Clock Source 41 Validity|" \
 	"$(SWEETSPOT_PATH="$WORK/amx:$SWEETSPOT_PATH" SWEETSPOT_TEST=1 $TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; . $OVERLAY/usr/bin/sweetspot-player; dac_volume_controls 1" | tr '\n' '|')"
 
+
 echo "Plugin consigliati"
 CAT=$OVERLAY/usr/share/sweetspot/plugin-consigliati.txt
 bad=$(grep -v '^#' "$CAT" | grep . | awk -F'|' 'NF != 4 || $1 !~ /^[A-Za-z0-9_]+$/ || $3 == "" || $4 == ""')
@@ -772,7 +773,7 @@ case "$(page audio)" in *"Non bit-perfect"*"96000 Hz"*) ok "audio: frequenza cam
 printf 'access: MMAP_INTERLEAVED\nformat: S32_LE\nchannels: 2\nrate: 96000 (96000/1)\n' > "$WEB/proc/asound/card1/pcm0p/sub0/hw_params"
 out=$(page audio 'VOLUME=software')
 case "$out" in *"Non bit-perfect"*"abbassato dal software e non è bit-perfect (arrotonda con dither TPDF)"*) ok "audio: volume software segnalato" ;; *) ko "audio volume software" "Non bit-perfect, dither TPDF" "-" ;; esac
-case "$out" in *'<option value="software" selected'*'Volume software: Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
+case "$out" in *'<option value="software" selected'*'Volume software (modo di compatibilità, consigliato il volume a 64 bit dsp)'*'Squeezelite abbassa i campioni e li arrotonda con dither TPDF'*) ok "audio: volume software spiegato sotto la scelta" ;; *) ko "audio nota volume software" "nota con dither TPDF" "-" ;; esac
 case "$(page audio 'VOLUME=fisso')" in *'Volume software: Squeezelite'*) ko "audio: nessuna nota con il volume fisso" "nessuna nota" "nota presente" ;; *) ok "audio: nessuna nota con il volume fisso" ;; esac
 # Catena del segnale: verdetto puro e pagina
 expect "catena: tutti invariati = bit-perfect" "bit-perfect" "$($TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; chain_verdict inv inv inv")"
@@ -1005,14 +1006,14 @@ web_action() { # corpo senza gettone
 		$TEST_SH "$OVERLAY/usr/share/sweetspot/www/cgi-bin/azione"
 }
 rm -f "$WEB/run/config.call"
-web_action "a=audio&volume=fisso&dsd=auto&altri_dac=si&dac=292B:0A26&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500" > /dev/null
+web_action "a=audio&volume=fisso&dsd=auto&altri_dac=si&dac=292B:0A26&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=250&pausa_dsd=500&chiusura_dac=30" > /dev/null
 case "$(cat "$WEB/run/config.call")" in *"ALTRI_DAC si DAC 292b:0a26"*) ok "audio: DAC principale salvato per identificativo USB" ;; *) ko "audio DAC salvato" "DAC 292b:0a26" "$(cat "$WEB/run/config.call")" ;; esac
 rm -f "$WEB/run/config.call"
-out=$(web_action "a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=R26;reboot&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500")
+out=$(web_action "a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=R26;reboot&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=250&pausa_dsd=500&chiusura_dac=30")
 case "$out" in *"Location: /cgi-bin/audio?msg=%44%41%43%20%70%72%69%6e%63%69%70%61%6c%65%20%6e%6f%6e%20%76%61%6c%69%64%6f"*) ok "audio: DAC principale non valido rifiutato" ;; *) ko "audio DAC non valido" "rifiutato (DAC principale non valido)" "$out" ;; esac
 expect "audio: DAC non valido, niente salvato" "no" "$([ -f "$WEB/run/config.call" ] && echo si || echo no)"
 # Margine DSD -> PCM: salvato (anche con la virgola), mancante = quello in uso, non valido rifiutato.
-AUDIO_BASE="a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=auto&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=0&pausa_dsd=500"
+AUDIO_BASE="a=audio&volume=fisso&dsd=auto&altri_dac=no&dac=auto&ricampionamento=no&filtro=lineare&frequenza_max=0&buffer=400&periodi=4&pausa_frequenza=250&pausa_dsd=500&chiusura_dac=30"
 rm -f "$WEB/run/config.call"
 web_action "$AUDIO_BASE&dsd_margine=-1,5" > /dev/null
 case "$(cat "$WEB/run/config.call")" in *"DSD_PCM_MARGINE_DB -1.5 "*) ok "audio: margine DSD salvato (virgola accettata)" ;; *) ko "audio margine DSD salvato" "DSD_PCM_MARGINE_DB -1.5" "$(cat "$WEB/run/config.call")" ;; esac
@@ -3139,15 +3140,15 @@ expect "zona: MAC stabile e locale" "1|02" \
 	"$([ "$(dspfn 1 'zone_mac 2')" = "$(dspfn 1 'zone_mac 2')" ] && echo 1)|$(dspfn 1 'zone_mac 2' | cut -c1-2)"
 # Parita' con il DAC principale: le zone usano gli stessi argomenti comuni
 # (common_args), con registro e priorita' propri.
-case "$zcall" in *"-b "*":"*" -C 30 "*"-d output=info"*"-f /var/log/squeezelite-Zona.log"*) ok "zona: buffer di ingresso/uscita, -C e registro come il principale" ;; *) ko "zona: argomenti comuni" "-b ... -C 30 ... -f squeezelite-Zona.log" "$zcall" ;; esac
-case "$zcall" in *" -r :400 "*) ok "zona: frequenza massima e pausa fra frequenze come il principale" ;; *) ko "zona: -r" "-r :400" "$zcall" ;; esac
+case "$zcall" in *"-b "*":"*"-d output=info"*"-f /var/log/squeezelite-Zona.log -C 30 "*) ok "zona: buffer di ingresso/uscita, -C e registro come il principale" ;; *) ko "zona: argomenti comuni" "-b ... -C 30 ... -f squeezelite-Zona.log" "$zcall" ;; esac
+case "$zcall" in *" -r :250 "*) ok "zona: frequenza massima e pausa fra frequenze come il principale" ;; *) ko "zona: -r" "-r :250" "$zcall" ;; esac
 case "$zcall" in *"-R vLE"*) ok "zona: ricampiona solo se il DAC non regge la frequenza (come il principale)" ;; *) ko "zona: -R vLE" "presente" "$zcall" ;; esac
 case "$zcall" in *"-a 400:4:"*) ok "zona: buffer e periodi ALSA come il principale" ;; *) ko "zona: -a" "-a 400:4:" "$zcall" ;; esac
 expect "zona: gli argomenti comuni coincidono con quelli del principale" \
 	"$(dspfn 1 'common_args 1 /a 80 400 "" | grep -v "^80$" | grep -v "^/a$"')" \
 	"$(dspfn 1 'common_args 2 /b 75 400 "" | grep -v "^75$" | grep -v "^/b$"')"
 printf 'ALTRI_DAC=si\nFREQUENZA_MAX=96000\n' > "$DSP/run/sweetspot.conf"
-expect "FREQUENZA_MAX vale anche per le zone" "-r|96000:400" "$(dspfn 1 'common_args 2 /b 75 400 "" | grep -A1 "^-r$" | tr "\n" "|" | sed "s/|$//"')"
+expect "FREQUENZA_MAX vale anche per le zone" "-r|96000:250" "$(dspfn 1 'common_args 2 /b 75 400 "" | grep -A1 "^-r$" | tr "\n" "|" | sed "s/|$//"')"
 echo ALTRI_DAC=si > "$DSP/run/sweetspot.conf"
 expect "buffer delle zone: il budget si divide fra loro" "yes" \
 	"$([ "$(dspfn 1 'PLAYER_BUFFERS_DIV=4 player_buffers | cut -d: -f1')" -le "$(dspfn 1 'player_buffers | cut -d: -f1')" ] && echo yes)"

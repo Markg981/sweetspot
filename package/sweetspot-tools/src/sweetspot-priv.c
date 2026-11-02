@@ -187,7 +187,7 @@ struct chiave {
 static const struct chiave CHIAVI[] = {
 	{"VOLUME", 'w', 0}, {"DSD", 'w', 0}, {"DSD_PCM_MARGINE_DB", 'g', 0}, {"RICAMPIONAMENTO", 'w', 0}, {"FILTRO", 'w', 0},
 	{"FREQUENZA_MAX", 'd', 0}, {"BUFFER_ALSA_MS", 'd', 0}, {"PERIODI_ALSA", 'd', 0},
-	{"PAUSA_FREQUENZA_MS", 'd', 0}, {"PAUSA_DSD_MS", 'd', 0}, {"ALTRI_DAC", 'w', 0},
+	{"PAUSA_FREQUENZA_MS", 'd', 0}, {"CHIUSURA_DAC_S", 'd', 0}, {"PAUSA_DSD_MS", 'd', 0}, {"ALTRI_DAC", 'w', 0},
 	{"DAC", 'w', 0}, {"ESCLUDI_DISCHI", 'l', 0}, {"ARCHIVIO", 'q', 0},
 	{"ARCHIVIO_CONDIVISO", 'w', 0}, {"ARCHIVIO_PASSWORD", 's', 0},
 	{"WIFI_NOME", 's', 0}, {"WIFI_PASSWORD", 's', 0}, {"NOME_RETE", 'i', 0},

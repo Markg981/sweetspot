@@ -25,9 +25,9 @@
 # musica di Lyrion si ferma mentre il telefono suona e va ripresa a mano.
 #
 # L'audio A2DP e' gia' compresso con perdita (SBC): "stesso percorso" vale da
-# bluealsa in poi (nessuna elaborazione aggiunta fino al DAC). AAC, aptX e LDAC
-# non ci sono: AAC richiede fdk-aac (licenza non libera), gli altri non sono
-# in Buildroot.
+# bluealsa in poi (nessuna elaborazione aggiunta fino al DAC). Oltre a SBC c'e' aptX/aptX HD (libopenaptx). AAC
+# no: fdk-aac ha licenza non libera. LDAC no: bluez-alsa vuole un decoder
+# (ldacBT-dec) che oggi non ha un rilascio verificato (vedi README).
 #
 # Il Bluetooth lavora solo sui core di sistema: processi fissati con taskset
 # e interruzioni del Bluetooth (UART del Pi) spostate sui core di sistema.

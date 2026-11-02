@@ -482,7 +482,7 @@ ${refresh:+<meta http-equiv="refresh" content="$refresh">}
 <meta name="theme-color" content="#10151d">
 <title>$(esc "$title") - SweetSpot</title>
 <link rel="stylesheet" href="/reference-studio.css?v=2">
-<link rel="stylesheet" href="/style.css?v=reference-studio-2">
+<link rel="stylesheet" href="/style.css?v=reference-studio-3">
 <script src="/tema.js?v=1"></script>
 </head>
 <body>

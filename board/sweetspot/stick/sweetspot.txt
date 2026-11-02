@@ -131,9 +131,16 @@ FREQUENZA_MAX=0
 # al DAC di agganciarsi senza perdere l'inizio del brano.
 PAUSA_DSD_MS=500
 
-# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento.
-# 0 = nessuna pausa. Prova 300-500 se il DAC perde l'inizio dei brani.
-PAUSA_FREQUENZA_MS=0
+# Pausa (in millisecondi) a ogni cambio di frequenza di campionamento, dopo
+# che la coda del brano e' uscita dal buffer: il tempo che il DAC impiega a
+# riagganciare il clock (molti mutano 100-300 ms). 0 = nessuna pausa. Prova
+# 300-500 se il DAC perde ancora l'inizio dei brani.
+PAUSA_FREQUENZA_MS=250
+
+# Secondi di inattivita' dopo i quali Squeezelite chiude il DAC (0 = resta
+# sempre aperto). Chiuderlo libera il DAC per Bluetooth e altre sorgenti, ma
+# alcuni DAC fanno un click e riagganciano il clock a ogni riapertura.
+CHIUSURA_DAC_S=30
 
 # Usare l'uscita audio integrata del computer al posto del DAC USB.
 USCITA_INTEGRATA=no
