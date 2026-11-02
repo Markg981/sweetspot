@@ -23,7 +23,7 @@ permissions:
 
 env:
   # LMS-Community/slimserver-vendor, ramo public/9.1 (Lyrion 9.1)
-  VENDOR_REF: b62107b46a3cb9c452139cbe34d5fabbda61fb09
+  VENDOR_REF: 7bb10c1f200b9164c14d26497728a1623c601077
   FEDORA: '43'
   # Indice multi-architettura di fedora:43 (docker buildx imagetools inspect)
   FEDORA_DIGEST: sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
