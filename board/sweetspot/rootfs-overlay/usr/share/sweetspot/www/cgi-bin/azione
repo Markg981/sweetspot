@@ -20,7 +20,7 @@ saved_msg() { # codice testo
 # Campi dei moduli, riempiti da read_form.
 F_t="" F_a="" F_server="" F_cartella="" F_utente="" F_password="" F_n="" F_nome="" F_protocollo="" F_smb1=""
 F_modalita="" F_profilo="" F_dsd="" F_dsd_margine="" F_volume="" F_ricampionamento="" F_filtro="" F_altri_dac="" F_dac=""
-F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd=""
+F_frequenza_max="" F_buffer="" F_periodi="" F_pausa_frequenza="" F_pausa_dsd="" F_chiusura_dac=""
 F_wifi_nome="" F_wifi_scelta="" F_wifi_password="" F_ip_modo="" F_ip_fisso="" F_gateway="" F_dns=""
 F_nome_rete="" F_risparmio="" F_ascolto="" F_ssh="" F_ssh_password="" F_ottimizzazioni=""
 F_web_password="" F_lyrion_password="" F_ct="" F_conferma_password="" F_ssh_utente="" F_https="" F_https_reindirizza=""
@@ -155,10 +155,12 @@ case "$F_a" in
 		in_range "$F_buffer" 20 499 || done_to audio "Il buffer ALSA va da 20 a 499 millisecondi."
 		in_range "$F_periodi" 2 16 || done_to audio "I periodi ALSA vanno da 2 a 16."
 		in_range "$F_pausa_frequenza" 0 5000 || done_to audio "La pausa al cambio di frequenza va da 0 a 5000 millisecondi."
+		[ -n "$F_chiusura_dac" ] || F_chiusura_dac=$(conf CHIUSURA_DAC_S 30)
+		in_range "$F_chiusura_dac" 0 3600 || done_to audio "La chiusura del DAC va da 0 a 3600 secondi (0 = mai)."
 		in_range "$F_pausa_dsd" 0 5000 || done_to audio "La pausa tra DSD e PCM va da 0 a 5000 millisecondi."
 		priv sweetspot-config imposta VOLUME "$F_volume" DSD "$F_dsd" DSD_PCM_MARGINE_DB "$F_dsd_margine" RICAMPIONAMENTO "$F_ricampionamento" \
 			FILTRO "$F_filtro" FREQUENZA_MAX "$F_frequenza_max" BUFFER_ALSA_MS "$F_buffer" \
-			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd" \
+			PERIODI_ALSA "$F_periodi" PAUSA_FREQUENZA_MS "$F_pausa_frequenza" PAUSA_DSD_MS "$F_pausa_dsd" CHIUSURA_DAC_S "$F_chiusura_dac" \
 			ALTRI_DAC "$F_altri_dac" DAC "$F_dac"
 		rc=$?
 		[ $rc -eq 1 ] && done_to audio "$(saved_msg 1)"
