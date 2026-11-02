@@ -19,6 +19,20 @@ The 32 bit conversion is scaled by a margin in dB, -3 by default and never
 above 0, taken from SWEETSPOT_DSD_MARGINE_DB: DSD masters may peak above
 digital full scale ("over", up to +3 dB) and without margin they clip.
 
+The filter arithmetic is double precision (coefficients, delay line and
+accumulator): the filters are designed for 110 dB of stop band and a float
+accumulator would limit them to about 100 dB. The delay lines grow to about
+130 KiB for the whole cascade, and a double multiply-add costs the same as a
+float one on a 64 bit core such as the Raspberry Pi 4.
+
+When the device accepts DSD rate / 8 itself (352.8 / 705.6 kHz) no halving is
+needed, but the modulator's ultrasonic noise would reach the DAC untouched:
+a final low pass of the same design (flat to 20 kHz, 110 dB down from 40 kHz)
+runs at that rate without changing it.
+
+Samples saturated in the conversion to 32 bit are counted, and a warning with
+the count is logged when the next stream starts.
+
 Source: ralph-irving/squeezelite 72e1fd8abfa9b2f8e9636f033247526920878718
 Upstream: Not submitted (local change)
 
@@ -43,18 +57,21 @@ Upstream: Not submitted (local change)
  static u64_t unpack64be(const u8_t *p) {
  	return 
  		(u64_t)p[0] << 56 | (u64_t)p[1] << 48 | (u64_t)p[2] << 40 | (u64_t)p[3] << 32 |
-@@ -461,8 +466,9 @@
+@@ -461,10 +466,10 @@
  			if (d->channels == 1) {
  				float *iptrf = d->transfer[0];
  				dsd2pcm_translate(d->dsd2pcm_ctx[0], frames, iptrl, 1, d->lsb_first, iptrf, 1);
 +				count = frames = dsd_decim_run(&pcm_decim, 0, iptrf, frames);
  				while (count--) {
 -					double scaled = *iptrf++ * 0x7fffffff;
+-					if (scaled >  2147483647.0) scaled =  2147483647.0;
+-					if (scaled < -2147483648.0) scaled = -2147483648.0;
 +					double scaled = *iptrf++ * DSD_PCM_FULLSCALE;
- 					if (scaled >  2147483647.0) scaled =  2147483647.0;
- 					if (scaled < -2147483648.0) scaled = -2147483648.0;
++					scaled = dsd_pcm_clip(scaled);
  					*optr++ = (s32_t)scaled;
-@@ -473,9 +479,10 @@
+ 					*optr++ = (s32_t)scaled;
+ 				}
+@@ -473,13 +478,12 @@
  				float *iptrfr = d->transfer[1];
  				dsd2pcm_translate(d->dsd2pcm_ctx[0], frames, iptrl, 1, d->lsb_first, iptrfl, 1);
  				dsd2pcm_translate(d->dsd2pcm_ctx[1], frames, iptrr, 1, d->lsb_first, iptrfr, 1);
@@ -62,23 +79,32 @@ Upstream: Not submitted (local change)
  				while (count--) {
 -					double scaledl = *iptrfl++ * 0x7fffffff;
 -					double scaledr = *iptrfr++ * 0x7fffffff;
+-					if (scaledl >  2147483647.0) scaledl =  2147483647.0;
+-					if (scaledl < -2147483648.0) scaledl = -2147483648.0;
+-					if (scaledr >  2147483647.0) scaledr =  2147483647.0;
+-					if (scaledr < -2147483648.0) scaledr = -2147483648.0;
 +					double scaledl = *iptrfl++ * DSD_PCM_FULLSCALE;
 +					double scaledr = *iptrfr++ * DSD_PCM_FULLSCALE;
- 					if (scaledl >  2147483647.0) scaledl =  2147483647.0;
- 					if (scaledl < -2147483648.0) scaledl = -2147483648.0;
- 					if (scaledr >  2147483647.0) scaledr =  2147483647.0;
-@@ -678,8 +685,9 @@
++					scaledl = dsd_pcm_clip(scaledl);
++					scaledr = dsd_pcm_clip(scaledr);
+ 					*optr++ = (s32_t)scaledl;
+ 					*optr++ = (s32_t)scaledr;
+ 				}
+@@ -678,10 +682,10 @@
  		if (d->channels == 1) {
  			float *iptrf = d->transfer[0];
  			dsd2pcm_translate(d->dsd2pcm_ctx[0], frames, iptr, 1, 0, iptrf, 1);
 +			count = frames = dsd_decim_run(&pcm_decim, 0, iptrf, frames);
  			while (count--) {
 -				double scaled = *iptrf++ * 0x7fffffff;
+-				if (scaled >  2147483647.0) scaled =  2147483647.0;
+-				if (scaled < -2147483648.0) scaled = -2147483648.0;
 +				double scaled = *iptrf++ * DSD_PCM_FULLSCALE;
- 				if (scaled >  2147483647.0) scaled =  2147483647.0;
- 				if (scaled < -2147483648.0) scaled = -2147483648.0;
++				scaled = dsd_pcm_clip(scaled);
  				*optr++ = (s32_t)scaled;
-@@ -690,9 +698,10 @@
+ 				*optr++ = (s32_t)scaled;
+ 			}
+@@ -690,13 +694,12 @@
  			float *iptrfr = d->transfer[1];
  			dsd2pcm_translate(d->dsd2pcm_ctx[0], frames, iptr,     d->channels, 0, iptrfl, 1);
  			dsd2pcm_translate(d->dsd2pcm_ctx[1], frames, iptr + 1, d->channels, 0, iptrfr, 1);
@@ -86,12 +112,18 @@ Upstream: Not submitted (local change)
  			while (count--) {
 -				double scaledl = *iptrfl++ * 0x7fffffff;
 -				double scaledr = *iptrfr++ * 0x7fffffff;
+-				if (scaledl >  2147483647.0) scaledl =  2147483647.0;
+-				if (scaledl < -2147483648.0) scaledl = -2147483648.0;
+-				if (scaledr >  2147483647.0) scaledr =  2147483647.0;
+-				if (scaledr < -2147483648.0) scaledr = -2147483648.0;
 +				double scaledl = *iptrfl++ * DSD_PCM_FULLSCALE;
 +				double scaledr = *iptrfr++ * DSD_PCM_FULLSCALE;
- 				if (scaledl >  2147483647.0) scaledl =  2147483647.0;
- 				if (scaledl < -2147483648.0) scaledl = -2147483648.0;
- 				if (scaledr >  2147483647.0) scaledr =  2147483647.0;
-@@ -815,8 +824,12 @@
++				scaledl = dsd_pcm_clip(scaledl);
++				scaledr = dsd_pcm_clip(scaledr);
+ 				*optr++ = (s32_t)scaledl;
+ 				*optr++ = (s32_t)scaledr;
+ 			}
+@@ -815,8 +818,16 @@
  		}
  		
  		if (outfmt == PCM) {
@@ -99,6 +131,10 @@ Upstream: Not submitted (local change)
 -			output.next_sample_rate = decode_newstream(d->sample_rate / 8, output.supported_rates);
 +			unsigned pcm_rate = d->sample_rate / 8;
 +			unsigned stages = dsd_decim_stages_for(pcm_rate, output.supported_rates);
++			if (dsd_pcm_clipped) {
++				LOG_WARN("DSD to PCM: %llu sample(s) clipped in the previous stream, raise the margin (SWEETSPOT_DSD_MARGINE_DB)", dsd_pcm_clipped);
++				dsd_pcm_clipped = 0;
++			}
 +			dsd_pcm_set_margin(getenv("SWEETSPOT_DSD_MARGINE_DB"));
 +			dsd_decim_reset(&pcm_decim, pcm_rate, stages);
 +			LOG_INFO("DSD to PCM output, %u Hz decimated %u time(s) by 2 for the device, margin %.1f dB", pcm_rate, stages, dsd_pcm_margin_db);
@@ -108,7 +144,7 @@ Upstream: Not submitted (local change)
  			LOG_INFO("DSD%u stream, format: %s, rate: %uHz\n", d->sample_rate / 44100, fmtstr, output.next_sample_rate);
 --- /dev/null
 +++ b/dsd_decim.h
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,191 @@
 +/*
 + *  Squeezelite - lightweight headless squeezebox emulator
 + *
@@ -151,6 +187,8 @@ Upstream: Not submitted (local change)
 +#define DSD_DECIM_MAX_STAGES 8
 +#define DSD_DECIM_PASS_HZ 20000.0 // flat up to here
 +#define DSD_DECIM_STOP_DB 110.0   // design attenuation (>= 100 dB measured)
++#define DSD_DECIM_FINAL_STOP_HZ 40000.0 // final low pass (no halving): stop band from here
++#define DSD_DECIM_FINAL_MIN_RATE 176400 // below this rate there is nothing to filter
 +
 +#define DSD_PCM_MARGIN_DEFAULT_DB (-3.0)
 +#define DSD_PCM_MARGIN_MIN_DB (-24.0)
@@ -175,16 +213,26 @@ Upstream: Not submitted (local change)
 +	dsd_pcm_fullscale = 2147483647.0 * pow(10.0, db / 20.0);
 +}
 +
++static unsigned long long dsd_pcm_clipped; // samples saturated since the last report
++
++// Scaled sample to s32 range; counts what had to be clipped.
++static double dsd_pcm_clip(double v) {
++	if (v >  2147483647.0) { dsd_pcm_clipped++; return  2147483647.0; }
++	if (v < -2147483648.0) { dsd_pcm_clipped++; return -2147483648.0; }
++	return v;
++}
++
 +typedef struct {
-+	float ring[2 * DSD_DECIM_MAX_TAPS]; // every sample is stored twice: contiguous window
++	double ring[2 * DSD_DECIM_MAX_TAPS]; // every sample is stored twice: contiguous window
 +	unsigned pos;
 +	unsigned phase;
 +} dsd_decim_stage;
 +
 +typedef struct {
 +	unsigned stages;
++	unsigned keep_rate; // 1: the single stage only filters, it does not halve the rate
 +	unsigned taps[DSD_DECIM_MAX_STAGES];                           // length of each (odd) filter
-+	float coef[DSD_DECIM_MAX_STAGES][(DSD_DECIM_MAX_TAPS + 1) / 2]; // first half + centre (symmetric)
++	double coef[DSD_DECIM_MAX_STAGES][(DSD_DECIM_MAX_TAPS + 1) / 2]; // first half + centre (symmetric)
 +	dsd_decim_stage st[2][DSD_DECIM_MAX_STAGES];                   // [channel][stage]
 +} dsd_decim;
 +
@@ -200,10 +248,11 @@ Upstream: Not submitted (local change)
 +	return sum;
 +}
 +
-+// Low pass for a stage that receives rate_in and gives rate_in / 2.
-+static void dsd_decim_design(dsd_decim *c, unsigned s, double rate_in) {
++// Low pass with the stop band starting at stop Hz (rate_in / 4 for a stage that
++// halves the rate).
++static void dsd_decim_design(dsd_decim *c, unsigned s, double rate_in, double stop) {
 +	const double pi = 3.14159265358979323846;
-+	double stop = rate_in / 4, pass = DSD_DECIM_PASS_HZ, cut, beta, sum = 0;
++	double pass = DSD_DECIM_PASS_HZ, cut, beta, sum = 0;
 +	double h[DSD_DECIM_MAX_TAPS];
 +	unsigned n, m, k;
 +
@@ -221,7 +270,7 @@ Upstream: Not submitted (local change)
 +		sum += h[k];
 +	}
 +	c->taps[s] = n;
-+	for (k = 0; k <= m; k++) c->coef[s][k] = (float)(h[k] / sum); // unity gain at DC
++	for (k = 0; k <= m; k++) c->coef[s][k] = h[k] / sum; // unity gain at DC
 +}
 +
 +// Number of halvings (0 = none) bringing base_rate to a rate in rates[]
@@ -245,7 +294,14 @@ Upstream: Not submitted (local change)
 +	memset(c, 0, sizeof(*c));
 +	if (stages > DSD_DECIM_MAX_STAGES) stages = DSD_DECIM_MAX_STAGES;
 +	c->stages = stages;
-+	for (s = 0; s < stages; s++) dsd_decim_design(c, s, (double)(base_rate >> s));
++	for (s = 0; s < stages; s++) dsd_decim_design(c, s, (double)(base_rate >> s), (double)(base_rate >> s) / 4);
++	if (!stages && base_rate >= DSD_DECIM_FINAL_MIN_RATE) {
++		// The device takes DSD rate / 8: no halving, but the ultrasonic noise of
++		// the modulator must not reach the DAC. One last low pass, same design,
++		// same rate in and out.
++		c->stages = c->keep_rate = 1;
++		dsd_decim_design(c, 0, (double)base_rate, DSD_DECIM_FINAL_STOP_HZ);
++	}
 +}
 +
 +// In place; returns the number of samples left in buf.
@@ -254,19 +310,19 @@ Upstream: Not submitted (local change)
 +
 +	for (s = 0; s < c->stages; s++) {
 +		dsd_decim_stage *t = &c->st[ch][s];
-+		const float *h = c->coef[s];
++		const double *h = c->coef[s];
 +		const unsigned taps = c->taps[s], mid = (taps - 1) / 2;
 +		m = 0;
 +		for (i = 0; i < n; i++) {
-+			const float *w;
-+			float acc;
++			const double *w;
++			double acc; // double: the filter is designed for 110 dB, float would not hold it
 +			t->ring[t->pos] = t->ring[t->pos + taps] = buf[i];
 +			if (++t->pos == taps) t->pos = 0;
-+			if (t->phase++ & 1) continue;
++			if (!c->keep_rate && (t->phase++ & 1)) continue;
 +			w = &t->ring[t->pos]; // oldest sample first; the taps are symmetric
 +			acc = h[mid] * w[mid];
 +			for (k = 0; k < mid; k++) acc += h[k] * (w[k] + w[taps - 1 - k]);
-+			buf[m++] = acc;
++			buf[m++] = (float)acc;
 +		}
 +		n = m;
 +	}
