@@ -1422,6 +1422,25 @@ dsp 'VOLUME=dsp' prepara 1 > /dev/null
 expect "volume a 64 bit, DAC a 32 bit: dither a 24 bit" "S32_LE|bits: 24|dither 3" \
 	"$(grep -o 'format: S32_LE' "$DSPE/run/camilladsp.yml" | head -n 1 | cut -d' ' -f2)|$(grep -o 'bits: 24' "$DSPE/run/camilladsp.yml")|dither $(grep -c 'dither' "$DSPE/run/camilladsp.yml")"
 expect "volume a 64 bit: il volume gia' scelto resta" "-17.4 1" "$(cat "$DSPE/run/camilladsp.volume")"
+# Dither: nessuno solo se la pipeline non cambia il segnale (S32, 0 dB, nessun
+# filtro, volume fuori da CamillaDSP); con VOLUME=dsp resta anche al 100%.
+dspw() { # impostazioni frequenza -> file
+	printf '%s\n' "$1" > "$DSPE/s.txt"
+	SWEETSPOT_RUN=$DSPE/run SWEETSPOT_PROCFS=$DSPE/proc SWEETSPOT_LOG=$DSPE/log SWEETSPOT_AWK=$MATHAWK \
+		SWEETSPOT_DEFAULTS=$OVERLAY/etc/sweetspot/defaults.conf SWEETSPOT_ASOUND=$DSPE/asound.conf \
+		SWEETSPOT_CAMILLADSP=$DSPE/camilladsp-assente SWEETSPOT_TEST=1 \
+		$TEST_SH -c ". $OVERLAY/usr/lib/sweetspot/common.sh; config_build $DSPE/s.txt; . $OVERLAY/usr/bin/sweetspot-dsp; write_config 1 $2 senza 0 $DSPE/d.yml" > /dev/null
+	cat "$DSPE/d.yml"
+}
+expect "dither: assente a 32 bit, 0 dB, senza filtri e con il volume fuori da CamillaDSP" "0|format: S32_LE" \
+	"$(dspw 'VOLUME=fisso' 44100 | grep -c -i 'dither')|$(dspw 'VOLUME=fisso' 44100 | grep -o 'format: S32_LE')"
+expect "dither: con VOLUME=dsp resta anche a 0 dB" "bits: 24" "$(dspw 'VOLUME=dsp' 44100 | grep -o 'bits: 24')"
+expect "dither: DITHER_DSP=piatto lo mantiene sempre" "type: Flat" "$(dspw 'DITHER_DSP=piatto' 44100 | grep -o 'type: Flat')"
+expect "dither: DITHER_DSP=spento lo toglie anche con VOLUME=dsp" "0" "$(dspw "$(printf 'VOLUME=dsp\nDITHER_DSP=spento')" 44100 | grep -c -i 'dither')"
+printf 'Playback:\n  Interface 1\n    Format: S16_LE\n    Rates: 44100 48000 176400\n' > "$DSPE/proc/asound/card1/stream0"
+expect "dither: a 16 bit noise shaping per frequenza, piatto dove non coperta" "Shibata441|Shibata48|Flat" \
+	"$(dspw '' 44100 | sed -n 's/^      type: \(Shibata.*\)/\1/p')|$(dspw '' 48000 | sed -n 's/^      type: \(Shibata.*\)/\1/p')|$(dspw '' 176400 | sed -n 's/^      type: \(Flat\)/\1/p')"
+printf 'Playback:\n  Interface 1\n    Format: S32_LE\n    Rates: 44100 48000 96000\n' > "$DSPE/proc/asound/card1/stream0"
 if command -v camilladsp > /dev/null; then
 	if camilladsp -c "$DSPE/run/camilladsp.yml" > /dev/null 2>&1; then ok "configurazione del volume accettata da CamillaDSP"; else ko "camilladsp -c volume" "valida" "rifiutata"; fi
 else
