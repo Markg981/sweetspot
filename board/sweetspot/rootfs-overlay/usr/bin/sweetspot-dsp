@@ -633,12 +633,48 @@ filter_names() { # prefisso canale
 	active_filters "$2" | awk -v pre="$1" '{ printf "      - %s_%d\n", pre, NR }'
 }
 
+# Dither del file di CamillaDSP ("" = nessuno). DITHER_DSP:
+#   auto    (predefinito) nessun dither se la pipeline non cambia il segnale:
+#           uscita a 32 bit, attenuazione 0 dB, nessun filtro, nessun FIR
+#           (quindi nessun ricampionatore) e volume non in CamillaDSP; il
+#           percorso e' allora bit-perfect (S32_LE -> float64 -> S32_LE e'
+#           esatto). Con VOLUME=dsp il volume cambia a runtime senza riscrivere
+#           il file e sotto 0 dB arrotonda: il dither resta sempre, anche al
+#           100%. Altrimenti a 16 bit TPDF con noise shaping scelto in base alla
+#           frequenza (Shibata, 44,1 a 192 kHz; 176,4 kHz: piatto), a 24 bit
+#           piatto.
+#   piatto  sempre TPDF piatto (come prima)
+#   spento  mai (troncamento: a scelta di chi sa cosa fa)
+dither_tipo() { # formato guadagno fir frequenza
+	case "$(lower "$(conf DITHER_DSP auto)")" in
+		spento|no|off) return 0 ;;
+		piatto) echo Flat; return 0 ;;
+	esac
+	if [ "$1" = S32_LE ] && [ -z "$3" ] && ! volume_dsp \
+		&& [ "$(awk -v g="$2" 'BEGIN { print (g + 0 == 0) }')" = 1 ] \
+		&& [ -z "$(active_filters sinistro)$(active_filters destro)${PREP_NOMI_SX}${PREP_NOMI_DX}" ]; then
+		return 0
+	fi
+	if [ "$1" = S16_LE ]; then
+		case "$4" in
+			44100) echo Shibata441 ;;
+			48000) echo Shibata48 ;;
+			88200) echo Shibata882 ;;
+			96000) echo Shibata96 ;;
+			192000) echo Shibata192 ;;
+			*) echo Flat ;;
+		esac
+	else
+		echo Flat
+	fi
+}
+
 # Configurazione di CamillaDSP per una frequenza del brano. Modo:
 #   fir         il FIR di quella frequenza (FIRFREQ e' la stessa)
 #   ricampiona  il FIR di FIRFREQ: il brano e' ricampionato a quella frequenza
 #   senza       nessun FIR: solo l'attenuazione, i filtri di REW e il volume
 write_config() { # scheda frequenza modo frequenza_fir file
-	local card=$1 rate=$2 mode=$3 firrate=$4 out=$5 id dev fmt gain=0.0 ch pre side bits fir="" proc=$2 extra=8192 f
+	local card=$1 rate=$2 mode=$3 firrate=$4 out=$5 id dev fmt gain=0.0 ch pre side bits dither fir="" proc=$2 extra=8192 f
 	id=$(dac_id "$card")
 	dev=$(dac_playback_dev "$card") || return 1
 	fmt=$(dsp_out_format "$card") || { fail_reason "formato PCM del playback non disponibile"; return 1; }
@@ -650,16 +686,15 @@ write_config() { # scheda frequenza modo frequenza_fir file
 		gain=$(awk -v g="$gain" -v m="$(fir_margin)" 'BEGIN { printf "%.1f", g - m }')
 		extra=$(( $(fir_taps_rate "$firrate") + 8192 ))
 	fi
-	# Dither TPDF alla risoluzione dell'uscita: CamillaDSP modifica sempre i
-	# campioni (attenuazione, filtri o volume), quindi il passaggio da 64 bit
-	# all'uscita va fatto con il dither e non con il troncamento: a 16 bit con
-	# il DAC a 16 bit, a 24 bit negli altri casi (i DAC "a 32 bit" ne
+	# Dither alla risoluzione dell'uscita, solo dove il segnale cambia: a 16
+	# bit con il DAC a 16 bit, a 24 bit negli altri casi (i DAC "a 32 bit" ne
 	# convertono al piu' 24 in modo lineare).
 	if [ "$fmt" = S16_LE ]; then
 		bits=16
 	else
 		bits=24
 	fi
+	dither=$(dither_tipo "$fmt" "$gain" "$fir" "$proc")
 	{
 		echo "---"
 		echo "# Generato da Sweetspot (sweetspot-dsp): non modificare."
@@ -718,12 +753,14 @@ write_config() { # scheda frequenza modo frequenza_fir file
 				echo "      channel: $(fir_side_channel "$f" "$side")"
 			done
 		fi
-		echo "  dither:"
-		echo "    type: Dither"
-		echo "    parameters:"
-		echo "      type: Flat"
-		echo "      bits: $bits"
-		echo "      amplitude: 2.0"
+		if [ -n "$dither" ]; then
+			echo "  dither:"
+			echo "    type: Dither"
+			echo "    parameters:"
+			echo "      type: $dither"
+			echo "      bits: $bits"
+			[ "$dither" = Flat ] && echo "      amplitude: 2.0"
+		fi
 		echo "pipeline:"
 		for ch in 0 1; do
 			if [ $ch = 0 ]; then pre=sx; side=sinistro; else pre=dx; side=destro; fi
@@ -737,7 +774,7 @@ write_config() { # scheda frequenza modo frequenza_fir file
 				filter_names "$pre" "$side"
 			fi
 			[ -n "$fir" ] && [ "$(dsp_mode)" = si ] && echo "      - fir_$side"
-			echo "      - dither"
+			if [ -n "$dither" ]; then echo "      - dither"; fi
 		done
 	} > "$out.nuovo" && mv "$out.nuovo" "$out"
 }

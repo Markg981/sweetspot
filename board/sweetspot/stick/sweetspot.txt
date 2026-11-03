@@ -109,6 +109,9 @@ DSD_PCM_MARGINE_DB=-3
 #   asincrono = tutto alla frequenza massima del DAC
 # FILTRO: lineare (predefinito), intermedio, minimo (fase minima).
 RICAMPIONAMENTO=no
+# DITHER_DSP: auto (predefinito: nessun dither se CamillaDSP non altera il
+# segnale; a 16 bit con noise shaping), piatto (sempre TPDF piatto), spento.
+#DITHER_DSP=auto
 FILTRO=lineare
 # Attenuazione (dB, da 0 a 10) del ricampionatore, anche per il ricampionamento
 # di ripiego: 0.5 lascia margine al clipping intersample, 0 nessuna attenuazione.
